@@ -111,6 +111,12 @@ jobs:
           ls -lah bin/
           chmod +x bin/letta-*
 
+      - name: Smoke test - help
+        run: bun bin/letta.js --help
+
+      - name: Smoke test - version
+        run: bun bin/letta.js --version || echo "Version flag not implemented yet"
+
       - name: Integration smoke test (real API)
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
@@ -119,6 +125,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: bin/letta-*
           fail_on_unmatched_files: true
 
