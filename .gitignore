@@ -2,6 +2,7 @@ node_modules
 bun.lockb
 dist
 bin/
+!bin/letta.js
 .DS_Store
 
 # Logs
