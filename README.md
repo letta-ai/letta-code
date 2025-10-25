@@ -28,33 +28,6 @@ Then run `letta` to start Letta Code (see various command-line options below):
 letta
 ```
 
-## Quickstart (from source)
-
-First, install Bun if you don't have it yet: [https://bun.com/docs/installation](https://bun.com/docs/installation)
-
-### Run directly from source (dev workflow)
-```bash
-# install deps
-bun install
-
-# run the CLI from TypeScript sources (pick up changes immediately)
-bun run dev:ui
-bun run dev:ui -- -p "Hello world"  # example with args
-```
-
-### Build + link the standalone binary
-```bash
-# build bin/letta (includes prompts + schemas)
-bun run build
-
-# expose the binary globally (adjust to your preference)
-bun link --global   # or: bun add --global .
-
-# now you can run the compiled CLI
-letta
-```
-> Whenever you change source files, rerun `bun run build` before using the linked `letta` binary so it picks up your edits.
-
 ## Usage
 
 ### Interactive Mode
@@ -118,6 +91,33 @@ Permissions are also configured in `.letta/settings.json`:
   }
 }
 ```
+
+## Installing from source
+
+First, install Bun if you don't have it yet: [https://bun.com/docs/installation](https://bun.com/docs/installation)
+
+### Run directly from source (dev workflow)
+```bash
+# install deps
+bun install
+
+# run the CLI from TypeScript sources (pick up changes immediately)
+bun run dev:ui
+bun run dev:ui -- -p "Hello world"  # example with args
+```
+
+### Build + link the standalone binary
+```bash
+# build bin/letta (includes prompts + schemas)
+bun run build
+
+# expose the binary globally (adjust to your preference)
+bun link --global   # or: bun add --global .
+
+# now you can run the compiled CLI
+letta
+```
+> Whenever you change source files, rerun `bun run build` before using the linked `letta` binary so it picks up your edits.
 
 ---
 
