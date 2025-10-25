@@ -26,12 +26,17 @@ OPTIONS
   -c, --continue        Resume previous session (uses settings.lastAgent)
   -a, --agent <id>      Use a specific agent ID
   -p, --prompt          Headless prompt mode
+  --output-format <fmt> Output format for headless mode (text, json, stream-json)
+                        Default: text
 
 EXAMPLES
   # when installed as an executable
   letta --help
   letta --continue
   letta --agent agent_123
+  
+  # headless with JSON output (includes stats)
+  letta -p "hello" --output-format json
 
 `.trim();
 
@@ -58,6 +63,7 @@ async function main() {
         disallowedTools: { type: "string" },
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
+        "output-format": { type: "string" },
       },
       strict: true,
       allowPositionals: true,

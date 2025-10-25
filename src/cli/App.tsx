@@ -4,6 +4,7 @@ import { Letta } from "@letta-ai/letta-client";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendMessageStream } from "../agent/message";
+import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import {
@@ -24,6 +25,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
+import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 // import { UserMessage } from "./components/UserMessage";
@@ -127,6 +129,12 @@ export default function App({
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingMessage(),
   );
+
+  // Session stats tracking
+  const sessionStatsRef = useRef(new SessionStats());
+
+  // Show exit stats on exit
+  const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -353,11 +361,16 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          const { stopReason, approval } = await drainStream(
+          const { stopReason, approval, apiDurationMs } = await drainStream(
             stream,
             buffersRef.current,
             refreshDerivedThrottled,
           );
+
+          // Track API duration
+          sessionStatsRef.current.endTurn(apiDurationMs);
+          sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
+
           // Immediate refresh after stream completes to show final state
           refreshDerived();
 
@@ -479,6 +492,14 @@ export default function App({
     [agentId, appendError, refreshDerived, refreshDerivedThrottled],
   );
 
+  const handleExit = useCallback(() => {
+    setShowExitStats(true);
+    // Give React time to render the stats, then exit
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
+  }, []);
+
   const onSubmit = useCallback(
     async (message?: string) => {
       const msg = message?.trim() ?? "";
@@ -506,6 +527,12 @@ export default function App({
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
+          return;
+        }
+
+        // Special handling for /exit command - show stats and exit
+        if (msg.trim() === "/exit") {
+          handleExit();
           return;
         }
 
@@ -658,6 +685,7 @@ export default function App({
       tokenStreamingEnabled,
       refreshDerived,
       agentId,
+      handleExit,
     ],
   );
 
@@ -1061,10 +1089,21 @@ export default function App({
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
+
+            {/* Show exit stats when exiting */}
+            {showExitStats && (
+              <SessionStatsComponent
+                stats={sessionStatsRef.current.getSnapshot()}
+              />
+            )}
+
             {/* Input row - always mounted to preserve state */}
             <Input
               visible={
-                !pendingApproval && !modelSelectorOpen && !planApprovalPending
+                !showExitStats &&
+                !pendingApproval &&
+                !modelSelectorOpen &&
+                !planApprovalPending
               }
               streaming={streaming}
               commandRunning={commandRunning}
@@ -1073,6 +1112,7 @@ export default function App({
               onSubmit={onSubmit}
               permissionMode={uiPermissionMode}
               onPermissionModeChange={setUiPermissionMode}
+              onExit={handleExit}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}

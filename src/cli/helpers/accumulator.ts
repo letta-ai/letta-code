@@ -55,6 +55,14 @@ export type Buffers = {
   toolCallIdToLineId: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
   pendingRefresh?: boolean; // Track throttled refresh state
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    reasoningTokens: number;
+    stepCount: number;
+  };
 };
 
 export function createBuffers(): Buffers {
@@ -65,6 +73,14 @@ export function createBuffers(): Buffers {
     pendingToolByRun: new Map(),
     toolCallIdToLineId: new Map(),
     lastOtid: null,
+    usage: {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      reasoningTokens: 0,
+      stepCount: 0,
+    },
   };
 }
 
@@ -339,8 +355,26 @@ export function onChunk(
       break;
     }
 
+    case "usage_statistics": {
+      // Accumulate usage statistics from the stream
+      // These messages arrive after stop_reason in the stream
+      if (chunk.promptTokens !== undefined) {
+        b.usage.promptTokens += chunk.promptTokens;
+      }
+      if (chunk.completionTokens !== undefined) {
+        b.usage.completionTokens += chunk.completionTokens;
+      }
+      if (chunk.totalTokens !== undefined) {
+        b.usage.totalTokens += chunk.totalTokens;
+      }
+      if (chunk.stepCount !== undefined) {
+        b.usage.stepCount += chunk.stepCount;
+      }
+      break;
+    }
+
     default:
-      break; // ignore ping/usage/etc
+      break; // ignore ping/etc
   }
 }
 
