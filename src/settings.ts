@@ -4,7 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
-import { readFile, writeFile, exists } from "./utils/fs.js";
+import { exists, readFile, writeFile } from "./utils/fs.js";
 
 export type UIMode = "simple" | "rich";
 

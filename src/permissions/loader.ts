@@ -1,4 +1,4 @@
-import { readFile, writeFile, exists } from "../utils/fs.js";
+import { exists, readFile, writeFile } from "../utils/fs.js";
 // src/permissions/loader.ts
 // Load and merge permission settings from hierarchical sources
 

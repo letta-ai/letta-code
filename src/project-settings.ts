@@ -2,7 +2,7 @@
 // Manages project-level settings stored in ./.letta/settings.json
 
 import { join } from "node:path";
-import { readFile, writeFile, exists } from "./utils/fs.js";
+import { exists, readFile, writeFile } from "./utils/fs.js";
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>; // label -> blockId mapping for project-local blocks
