@@ -93,12 +93,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
                 nextCursorWidth = input.length;
             }
         }
-        if (cursorOffset < 0) {
-            nextCursorOffset = 0;
-        }
-        if (cursorOffset > originalValue.length) {
-            nextCursorOffset = originalValue.length;
-        }
+        nextCursorOffset = Math.max(0, Math.min(nextCursorOffset, nextValue.length));
         setState({ cursorOffset: nextCursorOffset, cursorWidth: nextCursorWidth });
         if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
         if (nextValue !== originalValue) {
@@ -112,4 +107,3 @@ export function UncontrolledTextInput({ initialValue = '', ...props }) {
     const [value, setValue] = useState(initialValue);
     return React.createElement(TextInput, { ...props, value: value, onChange: setValue });
 }
-
