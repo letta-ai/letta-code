@@ -29,6 +29,13 @@ export const commands: Record<string, Command> = {
       return "Toggling token streaming...";
     },
   },
+  "/exit": {
+    desc: "Exit and show session stats",
+    handler: () => {
+      // Handled specially in App.tsx to show stats
+      return "Exiting...";
+    },
+  },
 };
 
 /**
