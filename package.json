@@ -1,0 +1,53 @@
+{
+  "name": "@letta-ai/letta-code",
+  "version": "0.1.2",
+  "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
+  "type": "module",
+  "bin": {
+    "letta": "bin/letta"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "bin",
+    "scripts",
+    "vendor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/letta-ai/letta-code.git"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/diff": "^8.0.0",
+    "typescript": "^5.0.0",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.4"
+  },
+  "dependencies": {
+    "@letta-ai/letta-client": "1.0.0-alpha.2",
+    "diff": "^8.0.2",
+    "ink": "^5.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^5.0.0",
+    "minimatch": "^10.0.3",
+    "react": "18.2.0"
+  },
+  "scripts": {
+    "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
+    "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
+    "dev:ui": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
+    "build": "bun build src/index.ts --compile --loader:.md=text --loader:.mdx=text --loader:.txt=text --outfile bin/letta",
+    "prepublishOnly": "bun run build",
+    "postinstall": "bun scripts/postinstall-patches.js || true"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md}": [
+      "bunx --bun @biomejs/biome@2.2.5 check --write"
+    ]
+  }
+}

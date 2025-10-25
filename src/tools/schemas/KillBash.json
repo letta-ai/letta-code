@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "shell_id": {
+      "type": "string",
+      "description": "The ID of the shell to terminate"
+    }
+  },
+  "required": ["shell_id"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

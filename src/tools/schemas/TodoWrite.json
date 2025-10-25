@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "todos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "completed"]
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": ["content", "status", "id"],
+        "additionalProperties": false
+      },
+      "description": "The updated todo list"
+    }
+  },
+  "required": ["todos"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
