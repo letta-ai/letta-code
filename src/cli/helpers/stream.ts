@@ -16,6 +16,7 @@ type DrainResult = {
   lastRunId?: string | null;
   lastSeqId?: number | null;
   approval?: ApprovalRequest | null; // present only if we ended due to approval
+  apiDurationMs: number; // time spent in API call
 };
 
 export async function drainStream(
@@ -23,6 +24,8 @@ export async function drainStream(
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
 ): Promise<DrainResult> {
+  const startTime = performance.now();
+
   let approvalRequestId: string | null = null;
   let toolCallId: string | null = null;
   let toolName: string | null = null;
@@ -78,8 +81,13 @@ export async function drainStream(
 
     if (chunk.messageType === "stop_reason") {
       stopReason = chunk.stopReason;
-      break; // end of turn
+      // Continue reading stream to get usage_statistics that may come after
     }
+  }
+
+  // Stream has ended, check if we captured a stop reason
+  if (!stopReason) {
+    stopReason = Letta.StopReasonType.Error;
   }
 
   // Mark the final line as finished now that stream has ended
@@ -96,9 +104,7 @@ export async function drainStream(
         }
       : null;
 
-  if (!stopReason) {
-    stopReason = Letta.StopReasonType.Error;
-  }
+  const apiDurationMs = performance.now() - startTime;
 
-  return { stopReason, approval, lastRunId, lastSeqId };
+  return { stopReason, approval, lastRunId, lastSeqId, apiDurationMs };
 }

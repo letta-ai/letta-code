@@ -26,6 +26,7 @@ export function Input({
   onSubmit,
   permissionMode: externalMode,
   onPermissionModeChange,
+  onExit,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -35,6 +36,7 @@ export function Input({
   onSubmit: (message?: string) => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
+  onExit?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -84,7 +86,8 @@ export function Input({
   useInput((input, key) => {
     if (input === "c" && key.ctrl) {
       if (ctrlCPressed) {
-        // Second CTRL-C - exit application
+        // Second CTRL-C - call onExit callback then exit application
+        if (onExit) onExit();
         process.exit(0);
       } else {
         // First CTRL-C - start 1-second timer
@@ -209,7 +212,7 @@ export function Input({
               message={thinkingMessage}
               shimmerOffset={shimmerOffset}
             />
-            {shouldShowTokenCount && <Text dimColor> ({tokenCount}↑)</Text>}
+            {shouldShowTokenCount && <Text dimColor> ({tokenCount} ↑)</Text>}
           </Box>
         </Box>
       )}
