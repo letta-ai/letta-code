@@ -143,6 +143,8 @@ export default function App({
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   useEffect(() => {
     const prev = prevColumnsRef.current;
+    if (columns === prev) return;
+
     if (
       columns < prev &&
       typeof process !== "undefined" &&
@@ -151,8 +153,9 @@ export default function App({
       process.stdout.isTTY
     ) {
       process.stdout.write(CLEAR_SCREEN_AND_HOME);
-      setStaticRenderEpoch((epoch) => epoch + 1);
     }
+
+    setStaticRenderEpoch((epoch) => epoch + 1);
     prevColumnsRef.current = columns;
   }, [columns]);
 
