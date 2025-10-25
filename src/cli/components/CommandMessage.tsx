@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { memo, useEffect, useState } from "react";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
@@ -34,13 +35,7 @@ const BlinkDot: React.FC<{ color?: string }> = ({ color = "yellow" }) => {
  * - Consistent symbols (● for command, ⎿ for result)
  */
 export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? ((process.stdout as { columns?: number }).columns ?? 80)
-      : 80;
-
+  const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
 
   // Determine dot state based on phase and success

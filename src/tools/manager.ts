@@ -50,11 +50,17 @@ type ToolRegistry = Map<string, ToolDefinition>;
 // Use globalThis to ensure singleton across bundle
 // This prevents Bun's bundler from creating duplicate instances of the registry
 const REGISTRY_KEY = Symbol.for("@letta/toolRegistry");
+
+type GlobalWithRegistry = typeof globalThis & {
+  [key: symbol]: ToolRegistry;
+};
+
 function getRegistry(): ToolRegistry {
-  if (!(globalThis as any)[REGISTRY_KEY]) {
-    (globalThis as any)[REGISTRY_KEY] = new Map();
+  const global = globalThis as GlobalWithRegistry;
+  if (!global[REGISTRY_KEY]) {
+    global[REGISTRY_KEY] = new Map();
   }
-  return (globalThis as any)[REGISTRY_KEY];
+  return global[REGISTRY_KEY];
 }
 
 const toolRegistry = getRegistry();

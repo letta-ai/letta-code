@@ -5,6 +5,7 @@ import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { CommandPreview } from "./CommandPreview";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -55,13 +56,8 @@ export function Input({
   // Shimmer animation state
   const [shimmerOffset, setShimmerOffset] = useState(-3);
 
-  // Get terminal width for proper column sizing
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? ((process.stdout as { columns?: number }).columns ?? 80)
-      : 80;
+  // Terminal width (reactive to window resizing)
+  const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
 
   // Handle escape key for double-escape-to-clear

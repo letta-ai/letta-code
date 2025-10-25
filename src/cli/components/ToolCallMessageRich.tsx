@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { memo, useEffect, useState } from "react";
 import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { TodoRenderer } from "./TodoRenderer.js";
@@ -41,12 +42,7 @@ const BlinkDot: React.FC<{ color?: string }> = ({
  * - Result shown with ⎿ prefix underneath
  */
 export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? ((process.stdout as { columns?: number }).columns ?? 80)
-      : 80;
+  const columns = useTerminalWidth();
 
   // Parse and format the tool call
   const rawName = line.name ?? "?";

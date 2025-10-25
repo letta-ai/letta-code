@@ -44,6 +44,9 @@ import {
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStream } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { useTerminalWidth } from "./hooks/useTerminalWidth";
+
+const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -61,7 +64,7 @@ function getPlanModeReminder(): string {
   return PLAN_MODE_REMINDER;
 }
 
-// items that we push into <Static> that are not part of the live transcript
+// Items that have finished rendering and no longer change
 type StaticItem =
   | {
       kind: "welcome";
@@ -134,7 +137,26 @@ export default function App({
   // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
 
-  // Commit immutable/finished lines into <Static>
+  // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
+  const columns = useTerminalWidth();
+  const prevColumnsRef = useRef(columns);
+  const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
+  useEffect(() => {
+    const prev = prevColumnsRef.current;
+    if (
+      columns < prev &&
+      typeof process !== "undefined" &&
+      process.stdout &&
+      "write" in process.stdout &&
+      process.stdout.isTTY
+    ) {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      setStaticRenderEpoch((epoch) => epoch + 1);
+    }
+    prevColumnsRef.current = columns;
+  }, [columns]);
+
+  // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
     // console.log(`[COMMIT] Checking ${b.order.length} lines for commit eligibility`);
@@ -254,7 +276,7 @@ export default function App({
     ) {
       // Set flag FIRST to prevent double-execution in strict mode
       hasBackfilledRef.current = true;
-      // Append welcome snapshot FIRST so it appears above history in <Static>
+      // Append welcome snapshot FIRST so it appears above history
       if (!welcomeCommittedRef.current) {
         welcomeCommittedRef.current = true;
         setStaticItems((prev) => [
@@ -973,7 +995,11 @@ export default function App({
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Static items={staticItems} style={{ flexDirection: "column" }}>
+      <Static
+        key={staticRenderEpoch}
+        items={staticItems}
+        style={{ flexDirection: "column" }}
+      >
         {(item: StaticItem, index: number) => (
           <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
             {item.kind === "welcome" ? (

@@ -7,6 +7,7 @@ import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
 } from "../helpers/diff";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
 
@@ -196,6 +197,9 @@ function Line({
 export function AdvancedDiffRenderer(
   props: Props & { precomputed?: AdvancedDiffSuccess },
 ) {
+  // Must call hooks at top level before any early returns
+  const columns = useTerminalWidth();
+
   const result = useMemo(() => {
     if (props.precomputed) return props.precomputed;
     if (props.kind === "write") {
@@ -350,12 +354,6 @@ export function AdvancedDiffRenderer(
       : `Updated ${relative}`;
 
   // Best-effort width clamp for rendering inside approval panel (border + padding + indent ~ 8 cols)
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? (process.stdout as NodeJS.WriteStream & { columns: number }).columns
-      : 80;
   const panelInnerWidth = Math.max(20, columns - 8); // keep a reasonable minimum
 
   return (
