@@ -46,20 +46,20 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      - name: Build binary
+      - name: Build bundle
         run: bun run build
 
       - name: CLI help smoke test
-        run: ./bin/letta --help
+        run: ./letta.js --help
 
       - name: CLI version smoke test
-        run: ./bin/letta --version || true
+        run: ./letta.js --version || true
 
       - name: Headless smoke test (API)
         if: ${{ github.event_name == 'push' }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: ./bin/letta --prompt "ping" --tools "" --permission-mode plan
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
 
       - name: Publish dry-run
         if: ${{ github.event_name == 'push' }}
