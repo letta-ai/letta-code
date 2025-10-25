@@ -15,19 +15,37 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
     const fd = await fs.open(filePath, "r");
     try {
       const stats = await fd.stat();
-      const bufferSize = Math.min(4096, stats.size);
+      const bufferSize = Math.min(8192, stats.size);
       if (bufferSize === 0) return false;
       const buffer = Buffer.alloc(bufferSize);
       const { bytesRead } = await fd.read(buffer, 0, bufferSize, 0);
       if (bytesRead === 0) return false;
-      for (let i = 0; i < bytesRead; i++) if (buffer[i] === 0) return true;
-      let nonPrintableCount = 0;
+
+      // Check for null bytes (definite binary indicator)
       for (let i = 0; i < bytesRead; i++) {
-        const byte = buffer[i];
-        if (byte < 9 || (byte > 13 && byte < 32) || byte > 126)
-          nonPrintableCount++;
+        if (buffer[i] === 0) return true;
       }
-      return nonPrintableCount / bytesRead > 0.3;
+
+      // Try to decode as UTF-8 and check if valid
+      try {
+        const text = buffer.slice(0, bytesRead).toString("utf-8");
+        // Check for replacement characters (indicates invalid UTF-8)
+        if (text.includes("\uFFFD")) return true;
+
+        // Count control characters (excluding whitespace)
+        let controlCharCount = 0;
+        for (let i = 0; i < text.length; i++) {
+          const code = text.charCodeAt(i);
+          // Allow tab(9), newline(10), carriage return(13)
+          if (code < 9 || (code > 13 && code < 32)) {
+            controlCharCount++;
+          }
+        }
+        return controlCharCount / text.length > 0.3;
+      } catch {
+        // Invalid UTF-8 = binary
+        return true;
+      }
     } finally {
       await fd.close();
     }
