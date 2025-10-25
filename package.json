@@ -21,14 +21,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {},
   "devDependencies": {
     "@types/bun": "latest",
     "@types/diff": "^8.0.0",
     "typescript": "^5.0.0",
     "husky": "9.1.7",
-    "lint-staged": "16.2.4"
-  },
-  "dependencies": {
+    "lint-staged": "16.2.4",
     "@letta-ai/letta-client": "1.0.0-alpha.2",
     "diff": "^8.0.2",
     "ink": "^5.0.0",
