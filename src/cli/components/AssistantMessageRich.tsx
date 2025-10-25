@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
 // Helper function to normalize text - copied from old codebase
@@ -28,12 +29,7 @@ type AssistantLine = {
  * - Support for markdown rendering (when MarkdownDisplay is available)
  */
 export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? ((process.stdout as { columns?: number }).columns ?? 80)
-      : 80;
+  const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
 
   const normalizedText = normalize(line.text);
