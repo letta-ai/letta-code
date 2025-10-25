@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
+import { readFile, writeFile, exists } from "./utils/fs.js";
 
 export type UIMode = "simple" | "rich";
 
@@ -32,18 +33,18 @@ function getSettingsPath(): string {
  */
 export async function loadSettings(): Promise<Settings> {
   const settingsPath = getSettingsPath();
-  const file = Bun.file(settingsPath);
 
   try {
     // Check if settings file exists
-    if (!(await file.exists())) {
-      // Create default settings file (Bun.write auto-creates parent directories)
+    if (!exists(settingsPath)) {
+      // Create default settings file
       await saveSettings(DEFAULT_SETTINGS);
       return DEFAULT_SETTINGS;
     }
 
-    // Read and parse settings using Bun's built-in JSON parser
-    const settings = (await file.json()) as Settings;
+    // Read and parse settings
+    const content = await readFile(settingsPath);
+    const settings = JSON.parse(content) as Settings;
 
     // Merge with defaults in case new fields were added
     return { ...DEFAULT_SETTINGS, ...settings };
@@ -60,8 +61,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
   const settingsPath = getSettingsPath();
 
   try {
-    // Bun.write automatically creates parent directories
-    await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2));
   } catch (error) {
     console.error("Error saving settings:", error);
     throw error;

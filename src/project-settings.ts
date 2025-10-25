@@ -2,6 +2,7 @@
 // Manages project-level settings stored in ./.letta/settings.json
 
 import { join } from "node:path";
+import { readFile, writeFile, exists } from "./utils/fs.js";
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>; // label -> blockId mapping for project-local blocks
@@ -28,14 +29,14 @@ export async function loadProjectSettings(
   workingDirectory: string = process.cwd(),
 ): Promise<ProjectSettings> {
   const settingsPath = getProjectSettingsPath(workingDirectory);
-  const file = Bun.file(settingsPath);
 
   try {
-    if (!(await file.exists())) {
+    if (!exists(settingsPath)) {
       return DEFAULT_PROJECT_SETTINGS;
     }
 
-    const settings = (await file.json()) as RawProjectSettings;
+    const content = await readFile(settingsPath);
+    const settings = JSON.parse(content) as RawProjectSettings;
 
     // Extract only localSharedBlockIds (permissions and other fields handled elsewhere)
     return {
@@ -56,13 +57,13 @@ export async function saveProjectSettings(
   updates: Partial<ProjectSettings>,
 ): Promise<void> {
   const settingsPath = getProjectSettingsPath(workingDirectory);
-  const file = Bun.file(settingsPath);
 
   try {
     // Read existing settings (might have permissions, etc.)
     let existingSettings: RawProjectSettings = {};
-    if (await file.exists()) {
-      existingSettings = (await file.json()) as RawProjectSettings;
+    if (exists(settingsPath)) {
+      const content = await readFile(settingsPath);
+      existingSettings = JSON.parse(content) as RawProjectSettings;
     }
 
     // Merge updates with existing settings
@@ -71,8 +72,7 @@ export async function saveProjectSettings(
       ...updates,
     };
 
-    // Bun.write automatically creates parent directories (.letta/)
-    await Bun.write(settingsPath, JSON.stringify(newSettings, null, 2));
+    await writeFile(settingsPath, JSON.stringify(newSettings, null, 2));
   } catch (error) {
     console.error("Error saving project settings:", error);
     throw error;

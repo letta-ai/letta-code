@@ -1,3 +1,4 @@
+import { readFile, writeFile, exists } from "../utils/fs.js";
 // src/permissions/loader.ts
 // Load and merge permission settings from hierarchical sources
 
@@ -38,10 +39,10 @@ export async function loadPermissions(
   ];
 
   for (const settingsPath of sources) {
-    const file = Bun.file(settingsPath);
     try {
-      if (await file.exists()) {
-        const settings = (await file.json()) as SettingsFile;
+      if (exists(settingsPath)) {
+        const content = await readFile(settingsPath);
+        const settings = JSON.parse(content) as SettingsFile;
         if (settings.permissions) {
           mergePermissions(merged, settings.permissions as PermissionRules);
         }
@@ -103,11 +104,11 @@ export async function savePermissionRule(
   }
 
   // Load existing settings
-  const file = Bun.file(settingsPath);
   let settings: SettingsFile = {};
   try {
-    if (await file.exists()) {
-      settings = (await file.json()) as SettingsFile;
+    if (exists(settingsPath)) {
+      const content = await readFile(settingsPath);
+      settings = JSON.parse(content) as SettingsFile;
     }
   } catch (_error) {
     // Start with empty settings if file doesn't exist or is invalid
@@ -126,8 +127,8 @@ export async function savePermissionRule(
     settings.permissions[ruleType].push(rule);
   }
 
-  // Save settings (Bun.write creates parent directories automatically)
-  await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+  // Save settings
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
 
   // If saving to .letta/settings.local.json, ensure it's gitignored
   if (scope === "local") {
@@ -142,14 +143,12 @@ async function ensureLocalSettingsIgnored(
   workingDirectory: string,
 ): Promise<void> {
   const gitignorePath = join(workingDirectory, ".gitignore");
-  const gitignoreFile = Bun.file(gitignorePath);
-
   const pattern = ".letta/settings.local.json";
 
   try {
     let content = "";
-    if (await gitignoreFile.exists()) {
-      content = await gitignoreFile.text();
+    if (exists(gitignorePath)) {
+      content = await readFile(gitignorePath);
     }
 
     // Check if pattern already exists
@@ -158,7 +157,7 @@ async function ensureLocalSettingsIgnored(
       const newContent = `${
         content + (content.endsWith("\n") ? "" : "\n") + pattern
       }\n`;
-      await Bun.write(gitignorePath, newContent);
+      await writeFile(gitignorePath, newContent);
     }
   } catch (_error) {
     // Silently fail if we can't update .gitignore
