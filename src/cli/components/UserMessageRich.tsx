@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
 type UserLine = {
@@ -18,12 +19,7 @@ type UserLine = {
  * - Full markdown rendering support
  */
 export const UserMessage = memo(({ line }: { line: UserLine }) => {
-  const columns =
-    typeof process !== "undefined" &&
-    process.stdout &&
-    "columns" in process.stdout
-      ? ((process.stdout as { columns?: number }).columns ?? 80)
-      : 80;
+  const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
 
   return (
