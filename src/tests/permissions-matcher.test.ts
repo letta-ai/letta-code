@@ -84,6 +84,8 @@ test("File pattern: any .ts file", () => {
 });
 
 test("File pattern: absolute path with // prefix", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   expect(
     matchesFilePattern(
       "Read(/Users/test/docs/api.md)",
@@ -94,6 +96,8 @@ test("File pattern: absolute path with // prefix", () => {
 });
 
 test("File pattern: tilde expansion", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const homedir = require("node:os").homedir();
   expect(
     matchesFilePattern(

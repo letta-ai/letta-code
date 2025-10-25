@@ -17,7 +17,9 @@ describe("Glob tool", () => {
 
     const result = await glob({ pattern: "*.ts", path: testDir.path });
 
-    const basenames = result.files.map((f) => f.split("/").pop());
+    // Use path separator that works on both Unix and Windows
+    const pathSep = process.platform === "win32" ? "\\" : "/";
+    const basenames = result.files.map((f) => f.split(pathSep).pop());
     expect(basenames).toContain("test.ts");
     expect(basenames).not.toContain("test.js");
     expect(basenames).not.toContain("README.md");

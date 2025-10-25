@@ -55,6 +55,11 @@ describe("Bash tool", () => {
   });
 
   test("handles complex commands with pipes", async () => {
+    // Skip on Windows - pipe syntax is different
+    if (process.platform === "win32") {
+      return;
+    }
+
     const result = await bash({
       command: "echo -e 'foo\\nbar\\nbaz' | grep bar",
       description: "Test pipe",
