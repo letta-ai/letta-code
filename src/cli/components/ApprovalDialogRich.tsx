@@ -255,6 +255,13 @@ export function ApprovalDialog({
       return;
     }
 
+    if (key.escape) {
+      // Shortcut: ESC immediately opens the deny reason prompt
+      setSelectedOption(options.length - 1);
+      setIsEnteringReason(true);
+      return;
+    }
+
     // Navigate with arrow keys
     if (key.upArrow) {
       setSelectedOption((prev) => (prev > 0 ? prev - 1 : options.length - 1));
