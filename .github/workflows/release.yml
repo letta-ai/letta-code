@@ -11,8 +11,11 @@ on:
       - "v*"
 
 jobs:
-  verify-tag:
+  publish:
     runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,33 +30,6 @@ jobs:
             exit 1
           fi
 
-  build:
-    needs: verify-tag
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS arm64
-            runner: macos-14
-            binary: letta-macos-arm64
-          - name: macOS x64
-            runner: macos-13
-            binary: letta-macos-x64
-          - name: Linux x64
-            runner: ubuntu-24.04
-            binary: letta-linux-x64
-          - name: Linux arm64
-            runner: ubuntu-24.04-arm
-            binary: letta-linux-arm64
-          - name: Windows x64
-            runner: windows-latest
-            binary: letta-windows-x64.exe
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -62,71 +38,25 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build binary
+      - name: Build bundle
         run: bun run build
 
-      - name: Rename binary
-        shell: bash
-        run: |
-          if [[ "${{ matrix.runner }}" == windows* ]]; then
-            mv bin/letta.exe bin/${{ matrix.binary }}
-          else
-            mv bin/letta bin/${{ matrix.binary }}
-          fi
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.binary }}
-          path: bin/${{ matrix.binary }}
-          if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: npm-publish
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: 1.3.0
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: bin-artifacts
-
-      - name: Move binaries to bin directory
-        run: |
-          mkdir -p bin
-          mv bin-artifacts/*/* bin/
-          ls -lah bin/
-          chmod +x bin/letta-*
-
       - name: Smoke test - help
-        run: bun bin/letta.js --help
+        run: ./letta.js --help
 
       - name: Smoke test - version
-        run: bun bin/letta.js --version || echo "Version flag not implemented yet"
+        run: ./letta.js --version || echo "Version flag not implemented yet"
 
       - name: Integration smoke test (real API)
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun bin/letta.js --prompt "ping" --tools "" --permission-mode plan
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: bin/letta-*
+          files: letta.js
           fail_on_unmatched_files: true
 
       - name: Publish to npm

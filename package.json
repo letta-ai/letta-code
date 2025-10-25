@@ -4,12 +4,12 @@
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
-    "letta": "bin/letta.js"
+    "letta": "letta.js"
   },
   "files": [
     "LICENSE",
     "README.md",
-    "bin",
+    "letta.js",
     "scripts",
     "vendor"
   ],
@@ -40,9 +40,9 @@
   "scripts": {
     "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
-    "dev:ui": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
-    "build": "bun build src/index.ts --compile --loader:.md=text --loader:.mdx=text --loader:.txt=text --outfile bin/letta",
-    "prepublishOnly": "echo 'Binaries should be built in CI. Run bun run build for local development.'",
+    "dev": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
+    "build": "bun run build.js",
+    "prepare": "bun run build",
     "postinstall": "bun scripts/postinstall-patches.js || true"
   },
   "lint-staged": {
