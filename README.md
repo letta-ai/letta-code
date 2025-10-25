@@ -11,7 +11,7 @@ https://github.com/user-attachments/assets/5561a3ff-afd9-42a9-8601-55d245946394
 Letta Code is a command-line harness around the stateful Letta [Agents API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
 
 > [!IMPORTANT]
-> Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our Discord at [discord.gg/letta](https:/discord.gg/letta). Contributions welcome, join the fun.
+> Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https:/discord.gg/letta). Contributions welcome, join the fun.
 
 ## Quickstart
 
