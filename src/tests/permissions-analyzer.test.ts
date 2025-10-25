@@ -208,6 +208,8 @@ test("Unknown command suggests exact match", () => {
 // ============================================================================
 
 test("Read outside working directory suggests directory pattern", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Read",
     { file_path: "/Users/test/docs/api.md" },
@@ -245,6 +247,8 @@ test("Write suggests session-only approval", () => {
 });
 
 test("Edit suggests directory pattern for project-level", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Edit",
     { file_path: "src/utils/helper.ts" },
@@ -258,6 +262,8 @@ test("Edit suggests directory pattern for project-level", () => {
 });
 
 test("Edit at project root suggests project pattern", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Edit",
     { file_path: "README.md" },
@@ -269,6 +275,8 @@ test("Edit at project root suggests project pattern", () => {
 });
 
 test("Glob outside working directory suggests directory pattern", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Glob",
     { path: "/Users/test/docs" },
@@ -280,6 +288,8 @@ test("Glob outside working directory suggests directory pattern", () => {
 });
 
 test("Grep outside working directory suggests directory pattern", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Grep",
     { path: "/Users/test/docs" },

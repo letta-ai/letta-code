@@ -4,6 +4,7 @@ import { checkPermission } from "../permissions/checker";
 import type { PermissionRules } from "../permissions/types";
 
 test("Read within working directory is auto-allowed", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
   const result = checkPermission(
     "Read",
     { file_path: "src/test.ts" },
@@ -16,6 +17,8 @@ test("Read within working directory is auto-allowed", () => {
 });
 
 test("Read outside working directory requires approval", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const result = checkPermission(
     "Read",
     { file_path: "/Users/test/other-project/file.ts" },
@@ -98,6 +101,8 @@ test("Dangerous commands don't offer persistence", () => {
 });
 
 test("Read outside working directory suggests directory pattern", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+
   const context = analyzeApprovalContext(
     "Read",
     { file_path: "/Users/test/docs/api.md" },

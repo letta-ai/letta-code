@@ -8,6 +8,7 @@ import type { PermissionRules } from "../permissions/types";
 // ============================================================================
 
 test("Read within working directory is auto-allowed", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
   const result = checkPermission(
     "Read",
     { file_path: "src/test.ts" },
@@ -170,6 +171,7 @@ test("Deny directory blocks all files within", () => {
 // ============================================================================
 
 test("Allow rule for file outside working directory", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
   const permissions: PermissionRules = {
     allow: ["Read(/Users/test/docs/**)"],
     deny: [],
@@ -385,6 +387,7 @@ test("Allow takes precedence over ask", () => {
 });
 
 test("Ask takes precedence over default", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
   const permissions: PermissionRules = {
     allow: [],
     deny: [],
@@ -523,6 +526,7 @@ test("Parent directory traversal", () => {
 });
 
 test("Absolute path handling", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
   const permissions: PermissionRules = {
     allow: [],
     deny: ["Read(/etc/**)"],
