@@ -1098,21 +1098,22 @@ export default function App({
             )}
 
             {/* Input row - always mounted to preserve state */}
-            {!showExitStats && (
-              <Input
-                visible={
-                  !pendingApproval && !modelSelectorOpen && !planApprovalPending
-                }
-                streaming={streaming}
-                commandRunning={commandRunning}
-                tokenCount={tokenCount}
-                thinkingMessage={thinkingMessage}
-                onSubmit={onSubmit}
-                permissionMode={uiPermissionMode}
-                onPermissionModeChange={setUiPermissionMode}
-                onExit={handleExit}
-              />
-            )}
+            <Input
+              visible={
+                !showExitStats &&
+                !pendingApproval &&
+                !modelSelectorOpen &&
+                !planApprovalPending
+              }
+              streaming={streaming}
+              commandRunning={commandRunning}
+              tokenCount={tokenCount}
+              thinkingMessage={thinkingMessage}
+              onSubmit={onSubmit}
+              permissionMode={uiPermissionMode}
+              onPermissionModeChange={setUiPermissionMode}
+              onExit={handleExit}
+            />
 
             {/* Model Selector - conditionally mounted as overlay */}
             {modelSelectorOpen && (
