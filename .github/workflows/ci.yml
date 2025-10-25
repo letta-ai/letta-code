@@ -46,6 +46,9 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Run tests
+        run: bun test
+
       - name: Build bundle
         run: bun run build
 
