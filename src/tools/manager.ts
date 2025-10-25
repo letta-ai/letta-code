@@ -47,7 +47,17 @@ export type ToolExecutionResult = {
 
 type ToolRegistry = Map<string, ToolDefinition>;
 
-const toolRegistry: ToolRegistry = new Map();
+// Use globalThis to ensure singleton across bundle
+// This prevents Bun's bundler from creating duplicate instances of the registry
+const REGISTRY_KEY = Symbol.for("@letta/toolRegistry");
+function getRegistry(): ToolRegistry {
+  if (!(globalThis as any)[REGISTRY_KEY]) {
+    (globalThis as any)[REGISTRY_KEY] = new Map();
+  }
+  return (globalThis as any)[REGISTRY_KEY];
+}
+
+const toolRegistry = getRegistry();
 
 /**
  * Generates a Python stub for a tool that will be executed client-side.
