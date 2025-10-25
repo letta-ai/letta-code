@@ -46,7 +46,7 @@ async function main() {
   let values: Record<string, unknown>;
   try {
     const parsed = parseArgs({
-      args: Bun.argv,
+      args: process.argv,
       options: {
         help: { type: "boolean", short: "h" },
         continue: { type: "boolean", short: "c" },
@@ -149,7 +149,7 @@ async function main() {
     await upsertToolsToServer(client);
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(Bun.argv);
+    await handleHeadlessCommand(process.argv);
     return;
   }
 

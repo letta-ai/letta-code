@@ -70,8 +70,6 @@ export type AdvancedDiffResult =
 
 function readFileOrNull(p: string): string | null {
   try {
-    const _file = Bun.file(p);
-    // Note: Bun.file().text() is async, but we need sync for diff preview
     // Fall back to node:fs for sync reading
     return require("node:fs").readFileSync(p, "utf-8");
   } catch {
