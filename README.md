@@ -2,6 +2,10 @@
 
 A self-improving, stateful coding agent that can learn from experience and improve with use.
 
+https://github.com/user-attachments/assets/5561a3ff-afd9-42a9-8601-55d245946394
+
+---
+
 ## What is Letta Code?
 
 Letta Code is a command-line harness around the stateful Letta [Agents API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
@@ -28,12 +32,36 @@ Then run `letta` to start Letta Code (see various command-line options below):
 letta
 ```
 
+Any of the agents you create in Letta Code will be viewable (and fully interactable!) inside the [Agent Development Environment](https://app.letta.com).
+
+## Persistence
+
+All agents in Letta are *stateful*: they live and maintain context forever, and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks) via memory tools.
+Different agents in Letta can share the same memory blocks: for example, you can have multiple agents working on different coding projects that all share a memory about the user's general coding style preferences, while also having independent memory blocks storing memory specific to their own project.
+
+In Letta Code, we provide a default memory configuration that has both globally and locally shared blocks:
+```text
+\ ~/.letta/settings.json (shared across all agents spawned on your device)
+--> persona block (determines the behavior of your coding agent)
+--> human block (tracks important information about user coding preferences)
+
+\ [your-current-dir]/.letta/settings.json (shared across agents spawned specifically in this directory)
+--> project block (tracks important information about this specific coding project)
+```
+
+There are three main ways to start Letta:
+1. Run `letta`: creates a new agent, looks in `settings.json` files for shared memory blocks IDs to connect to (creates new if they don't exist).
+2. Run `letta --continue`: will resume your connection with your last recently used agent
+3. Run `letta --agent <agent-id>`: will resume your connection with a specific agent
+
+Memory blocks in Letta are incredibly general and highly configurable (see our [docs](https://docs.letta.com/guides/agents/memory-blocks)), and you can reconfigure the persistence behavior to be more to your liking. We're still experimenting with figuring out the right way to do persistence for coding agents, so let us know on our [Discord](https://discord.gg/letta) if you have any suggestions!
+
 ## Usage
 
 ### Interactive Mode
 ```bash
-letta                    # Start new session
-letta --continue         # Resume last session
+letta                    # Start new session (new agent with shared memory blocks)
+letta --continue         # Resume last session (last recently used agent)
 letta --agent <id>       # Open specific agent
 ```
 
