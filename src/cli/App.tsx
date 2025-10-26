@@ -3,6 +3,7 @@
 import { Letta } from "@letta-ai/letta-client";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
@@ -97,6 +98,9 @@ export default function App({
 }) {
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
+
+  // Whether an interrupt has been requested for the current stream
+  const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
   const [commandRunning, setCommandRunning] = useState(false);
@@ -499,6 +503,25 @@ export default function App({
       process.exit(0);
     }, 100);
   }, []);
+
+  const handleInterrupt = useCallback(async () => {
+    if (!streaming || interruptRequested) return;
+
+    setInterruptRequested(true);
+    try {
+      const client = getClient();
+      await client.agents.messages.cancel(agentId);
+    } catch (e) {
+      // Silently ignore cancel errors (e.g. if stream already ended)
+    }
+  }, [agentId, streaming, interruptRequested]);
+
+  // Reset interrupt flag when streaming ends
+  useEffect(() => {
+    if (!streaming) {
+      setInterruptRequested(false);
+    }
+  }, [streaming]);
 
   const onSubmit = useCallback(
     async (message?: string) => {
@@ -1114,6 +1137,8 @@ export default function App({
               permissionMode={uiPermissionMode}
               onPermissionModeChange={setUiPermissionMode}
               onExit={handleExit}
+              onInterrupt={handleInterrupt}
+              interruptRequested={interruptRequested}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
