@@ -3,6 +3,7 @@ import type { SessionStatsSnapshot } from "../../agent/stats";
 
 interface SessionStatsProps {
   stats: SessionStatsSnapshot;
+  agentId?: string;
 }
 
 function formatDuration(ms: number): string {
@@ -16,7 +17,7 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-export function SessionStats({ stats }: SessionStatsProps) {
+export function SessionStats({ stats, agentId }: SessionStatsProps) {
   const wallDuration = formatDuration(stats.totalWallMs);
   const apiDuration = formatDuration(stats.totalApiMs);
 
@@ -29,6 +30,7 @@ export function SessionStats({ stats }: SessionStatsProps) {
         {formatNumber(stats.usage.promptTokens)} input,{" "}
         {formatNumber(stats.usage.completionTokens)} output
       </Text>
+      {agentId && <Text dimColor>Agent ID: {agentId}</Text>}
     </Box>
   );
 }

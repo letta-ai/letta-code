@@ -1094,6 +1094,7 @@ export default function App({
             {showExitStats && (
               <SessionStatsComponent
                 stats={sessionStatsRef.current.getSnapshot()}
+                agentId={agentId}
               />
             )}
 
