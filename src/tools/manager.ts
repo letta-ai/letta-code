@@ -98,7 +98,7 @@ function generatePythonStub(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
-  return TOOL_PERMISSIONS[toolName] || { requiresApproval: false };
+  return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
 }
 
 /**
@@ -108,7 +108,7 @@ export function getToolPermissions(toolName: string) {
  * @deprecated Use checkToolPermission instead for full permission system support
  */
 export function requiresApproval(toolName: string): boolean {
-  return TOOL_PERMISSIONS[toolName]?.requiresApproval ?? false;
+  return TOOL_PERMISSIONS[toolName as ToolName]?.requiresApproval ?? false;
 }
 
 /**
