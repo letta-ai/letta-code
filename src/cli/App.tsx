@@ -384,6 +384,13 @@ export default function App({
             return;
           }
 
+          // Case 1.5: Stream was cancelled by user
+          if (stopReason === "cancelled") {
+            // appendError("Stream interrupted by user");
+            setStreaming(false);
+            return;
+          }
+
           // Case 2: Requires approval
           if (stopReason === Letta.StopReasonType.RequiresApproval) {
             if (!approval) {
@@ -512,9 +519,10 @@ export default function App({
       const client = getClient();
       await client.agents.messages.cancel(agentId);
     } catch (e) {
-      // Silently ignore cancel errors (e.g. if stream already ended)
+      appendError(`Failed to interrupt stream: ${String(e)}`);
+      setInterruptRequested(false);
     }
-  }, [agentId, streaming, interruptRequested]);
+  }, [agentId, streaming, interruptRequested, appendError]);
 
   // Reset interrupt flag when streaming ends
   useEffect(() => {
