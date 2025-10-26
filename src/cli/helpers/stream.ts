@@ -2,6 +2,7 @@ import { Letta } from "@letta-ai/letta-client";
 import {
   type createBuffers,
   markCurrentLineAsFinished,
+  // markIncompleteToolsAsCancelled,
   onChunk,
 } from "./accumulator";
 
@@ -23,6 +24,7 @@ export async function drainStream(
   stream: AsyncIterable<Letta.LettaStreamingResponse>,
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
+  abortSignal?: AbortSignal,
 ): Promise<DrainResult> {
   const startTime = performance.now();
 
@@ -36,6 +38,14 @@ export async function drainStream(
   let lastSeqId: number | null = null;
 
   for await (const chunk of stream) {
+    // Check if stream was aborted
+    if (abortSignal?.aborted) {
+      stopReason = "cancelled" as Letta.StopReasonType;
+      // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
+      markIncompleteToolsAsCancelled(buffers);
+      queueMicrotask(refresh);
+      break;
+    }
     // Store the runId and seqId to re-connect if stream is interrupted
     if ("runId" in chunk && "seqId" in chunk && chunk.runId && chunk.seqId) {
       lastRunId = chunk.runId;

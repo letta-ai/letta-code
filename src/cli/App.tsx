@@ -149,6 +149,9 @@ export default function App({
   // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
 
+  // AbortController for stream cancellation
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
   const prevColumnsRef = useRef(columns);
@@ -361,6 +364,7 @@ export default function App({
 
       try {
         setStreaming(true);
+        abortControllerRef.current = new AbortController();
 
         while (true) {
           // Stream one turn
@@ -369,6 +373,7 @@ export default function App({
             stream,
             buffersRef.current,
             refreshDerivedThrottled,
+            abortControllerRef.current.signal,
           );
 
           // Track API duration
@@ -386,7 +391,7 @@ export default function App({
 
           // Case 1.5: Stream was cancelled by user
           if (stopReason === "cancelled") {
-            // appendError("Stream interrupted by user");
+            appendError("Stream interrupted by user");
             setStreaming(false);
             return;
           }
@@ -498,6 +503,8 @@ export default function App({
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
+      } finally {
+        abortControllerRef.current = null;
       }
     },
     [agentId, appendError, refreshDerived, refreshDerivedThrottled],
@@ -517,7 +524,25 @@ export default function App({
     setInterruptRequested(true);
     try {
       const client = getClient();
+
+      // Send cancel request to backend
       await client.agents.messages.cancel(agentId);
+
+      // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
+      // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
+      // This gives the backend 5 seconds to gracefully close the stream before forcing abort
+      // const abortTimeout = setTimeout(() => {
+      //   if (abortControllerRef.current) {
+      //     abortControllerRef.current.abort();
+      //   }
+      // }, 5000);
+      //
+      // // The timeout will be cleared in processConversation's finally block when stream ends
     } catch (e) {
       appendError(`Failed to interrupt stream: ${String(e)}`);
       setInterruptRequested(false);
