@@ -86,9 +86,8 @@ export function Input({
   useInput((input, key) => {
     if (input === "c" && key.ctrl) {
       if (ctrlCPressed) {
-        // Second CTRL-C - call onExit callback then exit application
+        // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
-        process.exit(0);
       } else {
         // First CTRL-C - start 1-second timer
         setCtrlCPressed(true);
