@@ -10,6 +10,8 @@ https://github.com/user-attachments/assets/5561a3ff-afd9-42a9-8601-55d245946394
 
 Letta Code is a command-line harness around the stateful Letta [Agents API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
 
+Letta Code is model agnostic, and supports Sonnet 4.5, GPT-5, Gemini 2.5, GLM-4.6, and more.
+
 > [!IMPORTANT]
 > Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https:/discord.gg/letta). Contributions welcome, join the fun.
 
