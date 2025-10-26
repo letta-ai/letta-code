@@ -2,8 +2,8 @@
   {
     "id": "default",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
-    "label": "Default (recommended)",
-    "description": "Use the default model (currently Sonnet 4.5)",
+    "label": "Claude Sonnet 4.5 (default)",
+    "description": "The recommended default model (currently Sonnet 4.5)",
     "isDefault": true,
     "updateArgs": { "contextWindow": 200000 }
   },
@@ -23,6 +23,15 @@
       "reasoningEffort": "medium",
       "verbosity": "medium",
       "contextWindow": 272000
+    }
+  },
+  {
+    "id": "glm-4.6",
+    "handle": "letta/z-ai/glm-4.6:exacto",
+    "label": "GLM-4.6",
+    "description": "The best open weights coding model",
+    "updateArgs": {
+      "contextWindow": 200000
     }
   },
   {
