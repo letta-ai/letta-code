@@ -10,6 +10,8 @@ https://github.com/user-attachments/assets/5561a3ff-afd9-42a9-8601-55d245946394
 
 Letta Code is a command-line harness around the stateful Letta [Agents API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
 
+Letta Code is model agnostic, and supports Sonnet 4.5, GPT-5, Gemini 2.5, GLM-4.6, and more.
+
 > [!IMPORTANT]
 > Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https:/discord.gg/letta). Contributions welcome, join the fun.
 
@@ -88,6 +90,30 @@ Compared to disallowing the tool, this will additionally remove the tool schema 
 ```bash
 letta -p "run tests" --tools "Bash,Read"         # Only load specific tools
 letta -p "analyze code" --tools ""               # No tools (analysis only)
+```
+
+Use `--output-format json` to get additional information, including the agent ID ("session_id"):
+```bash
+# regular text output
+$ letta -p "hi there"
+Hi! How can I help you today?
+
+# structured output
+$ letta -p "hi there" --output-format json
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 5454,
+  "duration_api_ms": 2098,
+  "num_turns": 1,
+  "result": "Hi! How can I help you today?",
+  "session_id": "agent-8ab431ca-63e0-4ca1-ba83-b64d66d95a0f",
+  "usage": {
+    "input_tokens": 294,
+    "output_tokens": 97
+  }
+}
 ```
 
 ### Permissions
