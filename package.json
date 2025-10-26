@@ -48,7 +48,7 @@
     "postinstall": "bun scripts/postinstall-patches.js || true"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,json,md}": [
+    "*.{ts,tsx,js,jsx,json}": [
       "bunx --bun @biomejs/biome@2.2.5 check --write"
     ]
   }

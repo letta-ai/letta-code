@@ -135,8 +135,8 @@ First, install Bun if you don't have it yet: [https://bun.com/docs/installation]
 bun install
 
 # run the CLI from TypeScript sources (pick up changes immediately)
-bun run dev:ui
-bun run dev:ui -- -p "Hello world"  # example with args
+bun run dev
+bun run dev -- -p "Hello world"  # example with args
 ```
 
 ### Build + link the standalone binary
