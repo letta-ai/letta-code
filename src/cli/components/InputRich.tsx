@@ -89,7 +89,8 @@ export function Input({
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
       } else {
-        // First CTRL-C - start 1-second timer
+        // First CTRL-C - wipe input and start 1-second timer
+        setValue("");
         setCtrlCPressed(true);
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
         ctrlCTimerRef.current = setTimeout(() => {
