@@ -36,6 +36,13 @@ export const commands: Record<string, Command> = {
       return "Exiting...";
     },
   },
+  "/clear": {
+    desc: "Clear conversation history",
+    handler: () => {
+      // Handled specially in App.tsx to access client and agent ID
+      return "Clearing messages...";
+    },
+  },
 };
 
 /**

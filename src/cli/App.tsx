@@ -1,6 +1,11 @@
 // src/cli/App.tsx
 
-import { Letta } from "@letta-ai/letta-client";
+import type Letta from "@letta-ai/letta-client";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaMessageUnion,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getResumeData } from "../agent/check-approval";
@@ -99,7 +104,7 @@ export default function App({
     | "ready";
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null;
-  messageHistory?: Letta.LettaMessageUnion[];
+  messageHistory?: LettaMessageUnion[];
   tokenStreaming?: boolean;
 }) {
   // Whether a stream is in flight (disables input)
@@ -337,9 +342,9 @@ export default function App({
           const { getClient } = await import("../agent/client");
           const client = getClient();
           const agent = await client.agents.retrieve(agentId);
-          setLlmConfig(agent.llmConfig);
+          setLlmConfig(agent.llm_config);
         } catch (error) {
-          console.error("Error fetching llmConfig:", error);
+          console.error("Error fetching llm_config:", error);
         }
       };
       fetchConfig();
@@ -364,7 +369,7 @@ export default function App({
   // Core streaming function - iterative loop that processes conversation turns
   const processConversation = useCallback(
     async (
-      initialInput: Array<Letta.MessageCreate | Letta.ApprovalCreate>,
+      initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       let currentInput = initialInput;
 
@@ -390,7 +395,7 @@ export default function App({
           refreshDerived();
 
           // Case 1: Turn ended normally
-          if (stopReason === Letta.StopReasonType.EndTurn) {
+          if (stopReason === "end_turn") {
             setStreaming(false);
             return;
           }
@@ -403,7 +408,7 @@ export default function App({
           }
 
           // Case 2: Requires approval
-          if (stopReason === Letta.StopReasonType.RequiresApproval) {
+          if (stopReason === "requires_approval") {
             if (!approval) {
               appendError(
                 `Unexpected null approval with stop reason: ${stopReason}`,
@@ -445,7 +450,7 @@ export default function App({
               await processConversation([
                 {
                   type: "approval",
-                  approvalRequestId: toolCallId,
+                  approval_request_id: toolCallId,
                   approve: false,
                   reason: denyReason,
                 },
@@ -471,11 +476,11 @@ export default function App({
 
             // Update buffers with tool return
             onChunk(buffersRef.current, {
-              messageType: "tool_return_message",
+              message_type: "tool_return_message",
               id: "dummy",
-              date: new Date(),
-              toolCallId,
-              toolReturn: toolResult.toolReturn,
+              date: new Date().toISOString(),
+              tool_call_id: toolCallId,
+              tool_return: toolResult.toolReturn,
               status: toolResult.status,
               stdout: toolResult.stdout,
               stderr: toolResult.stderr,
@@ -489,8 +494,8 @@ export default function App({
                 approvals: [
                   {
                     type: "tool",
-                    toolCallId,
-                    toolReturn: toolResult.toolReturn,
+                    tool_call_id: toolCallId,
+                    tool_return: toolResult.toolReturn,
                     status: toolResult.status,
                     stdout: toolResult.stdout,
                     stderr: toolResult.stderr,
@@ -652,6 +657,61 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /clear command - reset conversation
+        if (msg.trim() === "/clear") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Clearing conversation...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = getClient();
+            await client.agents.messages.reset(agentId, {
+              add_default_initial_messages: false,
+            });
+
+            // Clear local buffers and static items
+            // buffersRef.current.byId.clear();
+            // buffersRef.current.order = [];
+            // buffersRef.current.tokenCount = 0;
+            // emittedIdsRef.current.clear();
+            // setStaticItems([]);
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Conversation cleared",
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
@@ -770,8 +830,8 @@ export default function App({
       // Start the conversation loop
       await processConversation([
         {
-          role: Letta.MessageCreateRole.User,
-          content: messageContent as unknown as Letta.MessageCreate["content"],
+          role: "user",
+          content: messageContent as unknown as MessageCreate["content"],
         },
       ]);
 
@@ -805,11 +865,11 @@ export default function App({
 
       // Update buffers with tool return
       onChunk(buffersRef.current, {
-        messageType: "tool_return_message",
+        message_type: "tool_return_message",
         id: "dummy",
-        date: new Date(),
-        toolCallId,
-        toolReturn: toolResult.toolReturn,
+        date: new Date().toISOString(),
+        tool_call_id: toolCallId,
+        tool_return: toolResult.toolReturn,
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
@@ -825,8 +885,8 @@ export default function App({
           approvals: [
             {
               type: "tool",
-              toolCallId,
-              toolReturn: toolResult.toolReturn,
+              tool_call_id: toolCallId,
+              tool_return: toolResult.toolReturn,
               status: toolResult.status,
               stdout: toolResult.stdout,
               stderr: toolResult.stderr,
@@ -885,7 +945,7 @@ export default function App({
         await processConversation([
           {
             type: "approval",
-            approvalRequestId: toolCallId,
+            approval_request_id: toolCallId,
             approve: false,
             reason: reason || "User denied the tool execution",
             // TODO the above is legacy?
@@ -1019,11 +1079,11 @@ export default function App({
 
         // Update buffers with tool return
         onChunk(buffersRef.current, {
-          messageType: "tool_return_message",
+          message_type: "tool_return_message",
           id: "dummy",
-          date: new Date(),
-          toolCallId,
-          toolReturn: toolResult.toolReturn,
+          date: new Date().toISOString(),
+          tool_call_id: toolCallId,
+          tool_return: toolResult.toolReturn,
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
@@ -1040,8 +1100,8 @@ export default function App({
             approvals: [
               {
                 type: "tool",
-                toolCallId,
-                toolReturn: toolResult.toolReturn,
+                tool_call_id: toolCallId,
+                tool_return: toolResult.toolReturn,
                 status: toolResult.status,
                 stdout: toolResult.stdout,
                 stderr: toolResult.stderr,
@@ -1073,7 +1133,7 @@ export default function App({
         await processConversation([
           {
             type: "approval",
-            approvalRequestId: toolCallId,
+            approval_request_id: toolCallId,
             approve: false,
             reason:
               reason ||

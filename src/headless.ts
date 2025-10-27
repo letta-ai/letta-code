@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
-import { Letta } from "@letta-ai/letta-client";
+import type Letta from "@letta-ai/letta-client";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
@@ -92,9 +94,9 @@ export async function handleHeadlessCommand(argv: string[]) {
   const sessionStats = new SessionStats();
 
   // Send message and process stream loop
-  let currentInput: Array<Letta.MessageCreate | Letta.ApprovalCreate> = [
+  let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
-      role: Letta.MessageCreateRole.User,
+      role: "user",
       content: [{ type: "text", text: prompt }],
     },
   ];
@@ -114,12 +116,12 @@ export async function handleHeadlessCommand(argv: string[]) {
       sessionStats.endTurn(apiDurationMs);
 
       // Case 1: Turn ended normally
-      if (stopReason === Letta.StopReasonType.EndTurn) {
+      if (stopReason === "end_turn") {
         break;
       }
 
       // Case 2: Requires approval
-      if (stopReason === Letta.StopReasonType.RequiresApproval) {
+      if (stopReason === "requires_approval") {
         if (!approval) {
           console.error("Unexpected null approval");
           process.exit(1);
@@ -140,7 +142,7 @@ export async function handleHeadlessCommand(argv: string[]) {
           currentInput = [
             {
               type: "approval",
-              approvalRequestId: toolCallId,
+              approval_request_id: toolCallId,
               approve: false,
               reason: denyReason,
             },
@@ -153,7 +155,7 @@ export async function handleHeadlessCommand(argv: string[]) {
           currentInput = [
             {
               type: "approval",
-              approvalRequestId: toolCallId,
+              approval_request_id: toolCallId,
               approve: false,
               reason: "Tool requires approval (headless mode)",
             },
@@ -170,8 +172,8 @@ export async function handleHeadlessCommand(argv: string[]) {
             approvals: [
               {
                 type: "tool",
-                toolCallId,
-                toolReturn: toolResult.toolReturn,
+                tool_call_id: toolCallId,
+                tool_return: toolResult.toolReturn,
                 status: toolResult.status,
                 stdout: toolResult.stdout,
                 stderr: toolResult.stderr,

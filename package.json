@@ -31,7 +31,7 @@
     "typescript": "^5.0.0",
     "husky": "9.1.7",
     "lint-staged": "16.2.4",
-    "@letta-ai/letta-client": "1.0.0-alpha.2",
+    "@letta-ai/letta-client": "1.0.0-alpha.7",
     "diff": "^8.0.2",
     "ink": "^5.0.0",
     "ink-spinner": "^5.0.0",
