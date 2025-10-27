@@ -78,12 +78,17 @@ type StaticItem =
   | {
       kind: "welcome";
       id: string;
-      snapshot: { continueSession: boolean; agentId?: string };
+      snapshot: {
+        continueSession: boolean;
+        agentState?: Letta.AgentState | null;
+        terminalWidth: number;
+      };
     }
   | Line;
 
 export default function App({
   agentId,
+  agentState,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -91,6 +96,7 @@ export default function App({
   tokenStreaming = true,
 }: {
   agentId: string;
+  agentState?: Letta.AgentState | null;
   loadingState?:
     | "assembling"
     | "upserting"
@@ -310,7 +316,8 @@ export default function App({
             id: `welcome-${Date.now().toString(36)}`,
             snapshot: {
               continueSession,
-              agentId: agentId !== "loading" ? agentId : undefined,
+              agentState,
+              terminalWidth: columns,
             },
           },
         ]);
@@ -325,8 +332,9 @@ export default function App({
     messageHistory,
     refreshDerived,
     commitEligibleLines,
-    agentId,
     continueSession,
+    columns,
+    agentState,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -1119,12 +1127,19 @@ export default function App({
           id: `welcome-${Date.now().toString(36)}`,
           snapshot: {
             continueSession,
-            agentId: agentId !== "loading" ? agentId : undefined,
+            agentState,
+            terminalWidth: columns,
           },
         },
       ]);
     }
-  }, [loadingState, continueSession, agentId, messageHistory.length]);
+  }, [
+    loadingState,
+    continueSession,
+    messageHistory.length,
+    columns,
+    agentState,
+  ]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -1160,7 +1175,7 @@ export default function App({
           <WelcomeScreen
             loadingState={loadingState}
             continueSession={continueSession}
-            agentId={agentId !== "loading" ? agentId : undefined}
+            agentState={agentState}
           />
         )}
 
