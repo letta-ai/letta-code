@@ -3,6 +3,7 @@
 import { Letta } from "@letta-ai/letta-client";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
@@ -50,6 +51,11 @@ import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
+
+// Feature flag: Check for pending approvals before sending messages
+// This prevents infinite thinking state when there's an orphaned approval
+// Can be disabled if the latency check adds too much overhead
+const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -557,16 +563,16 @@ export default function App({
   }, [streaming]);
 
   const onSubmit = useCallback(
-    async (message?: string) => {
+    async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      if (!msg || streaming || commandRunning) return;
+      if (!msg || streaming || commandRunning) return { submitted: false };
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
         // Special handling for /model command - opens selector
         if (msg.trim() === "/model") {
           setModelSelectorOpen(true);
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /agent command - show agent link
@@ -583,13 +589,13 @@ export default function App({
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /exit command - show stats and exit
         if (msg.trim() === "/exit") {
           handleExit();
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /stream command - toggle and save
@@ -643,7 +649,7 @@ export default function App({
             // Unlock input
             setCommandRunning(false);
           }
-          return;
+          return { submitted: true };
         }
 
         // Immediately add command to transcript with "running" phase
@@ -690,7 +696,7 @@ export default function App({
           // Unlock input
           setCommandRunning(false);
         }
-        return; // Don't send commands to Letta agent
+        return { submitted: true }; // Don't send commands to Letta agent
       }
 
       // Build message content from display value (handles placeholders for text/images)
@@ -708,7 +714,7 @@ export default function App({
               ]
             : contentParts;
 
-      // Append the user message to transcript (keep placeholders as-is for display)
+      // Append the user message to transcript IMMEDIATELY (optimistic update)
       const userId = uid("user");
       buffersRef.current.byId.set(userId, {
         kind: "user",
@@ -721,7 +727,45 @@ export default function App({
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
       setThinkingMessage(getRandomThinkingMessage());
+      // Show streaming state immediately for responsiveness
+      setStreaming(true);
       refreshDerived();
+
+      // Check for pending approvals before sending message
+      if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+        try {
+          const client = getClient();
+          const { pendingApproval: existingApproval } = await getResumeData(
+            client,
+            agentId,
+          );
+
+          if (existingApproval) {
+            // There's a pending approval - show it and DON'T send the message yet
+            // The message will be restored to the input field for the user to decide
+            // Note: The user message is already in the transcript (optimistic update)
+            setStreaming(false); // Stop streaming indicator
+            setPendingApproval(existingApproval);
+
+            // Analyze approval context
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              existingApproval.toolArgs,
+              {},
+            );
+            const context = await analyzeToolApproval(
+              existingApproval.toolName,
+              parsedArgs,
+            );
+            setApprovalContext(context);
+
+            // Return false = message NOT submitted, will be restored to input
+            return { submitted: false };
+          }
+        } catch (error) {
+          // If check fails, proceed anyway (don't block user)
+          console.error("Failed to check pending approvals:", error);
+        }
+      }
 
       // Start the conversation loop
       await processConversation([
@@ -733,6 +777,8 @@ export default function App({
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
+
+      return { submitted: true };
     },
     [
       streaming,

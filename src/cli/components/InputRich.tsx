@@ -35,7 +35,7 @@ export function Input({
   commandRunning?: boolean;
   tokenCount: number;
   thinkingMessage: string;
-  onSubmit: (message?: string) => void;
+  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -171,12 +171,17 @@ export function Input({
     return () => clearInterval(id);
   }, [streaming, thinkingMessage]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (streaming || commandRunning) {
       return;
     }
-    onSubmit(value);
-    setValue("");
+    const previousValue = value;
+    setValue(""); // Clear immediately for responsiveness
+    const result = await onSubmit(previousValue);
+    // If message was NOT submitted (e.g. pending approval), restore it
+    if (!result.submitted) {
+      setValue(previousValue);
+    }
   };
 
   // Get display name and color for permission mode
