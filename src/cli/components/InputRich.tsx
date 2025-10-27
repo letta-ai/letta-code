@@ -12,7 +12,7 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
-const Spinner = SpinnerLib as ComponentType;
+const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
@@ -27,16 +27,20 @@ export function Input({
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
+  onInterrupt,
+  interruptRequested = false,
 }: {
   visible?: boolean;
   streaming: boolean;
   commandRunning?: boolean;
   tokenCount: number;
   thinkingMessage: string;
-  onSubmit: (message?: string) => void;
+  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
+  onInterrupt?: () => void;
+  interruptRequested?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -62,22 +66,30 @@ export function Input({
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
 
-  // Handle escape key for double-escape-to-clear
+  // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
-    if (key.escape && value) {
-      // Only work when input is non-empty
-      if (escapePressed) {
-        // Second escape - clear input
-        setValue("");
-        setEscapePressed(false);
-        if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
-      } else {
-        // First escape - start 1-second timer
-        setEscapePressed(true);
-        if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
-        escapeTimerRef.current = setTimeout(() => {
+    if (key.escape) {
+      // When streaming, use Esc to interrupt
+      if (streaming && onInterrupt && !interruptRequested) {
+        onInterrupt();
+        return;
+      }
+
+      // When input is non-empty, use double-escape to clear
+      if (value) {
+        if (escapePressed) {
+          // Second escape - clear input
+          setValue("");
           setEscapePressed(false);
-        }, 1000);
+          if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
+        } else {
+          // First escape - start 1-second timer
+          setEscapePressed(true);
+          if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
+          escapeTimerRef.current = setTimeout(() => {
+            setEscapePressed(false);
+          }, 1000);
+        }
       }
     }
   });
@@ -159,12 +171,17 @@ export function Input({
     return () => clearInterval(id);
   }, [streaming, thinkingMessage]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (streaming || commandRunning) {
       return;
     }
-    onSubmit(value);
-    setValue("");
+    const previousValue = value;
+    setValue(""); // Clear immediately for responsiveness
+    const result = await onSubmit(previousValue);
+    // If message was NOT submitted (e.g. pending approval), restore it
+    if (!result.submitted) {
+      setValue(previousValue);
+    }
   };
 
   // Get display name and color for permission mode
@@ -212,7 +229,12 @@ export function Input({
               message={thinkingMessage}
               shimmerOffset={shimmerOffset}
             />
-            {shouldShowTokenCount && <Text dimColor> ({tokenCount} ↑)</Text>}
+            <Text dimColor>
+              {" ("}
+              {interruptRequested ? "interrupting" : "esc to interrupt"}
+              {shouldShowTokenCount && ` · ${tokenCount} ↑`}
+              {")"}
+            </Text>
           </Box>
         </Box>
       )}
