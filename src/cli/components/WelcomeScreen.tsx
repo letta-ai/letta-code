@@ -1,4 +1,7 @@
 import { Box, Text } from "ink";
+import { getAsciiArtWidth } from "../helpers/asciiUtils";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { longAsciiLogo, shortAsciiLogo, tinyAsciiLogo } from "./AsciiArt";
 import { colors } from "./colors";
 
 type LoadingState =
@@ -17,6 +20,18 @@ export function WelcomeScreen({
   continueSession?: boolean;
   agentId?: string;
 }) {
+  const terminalWidth = useTerminalWidth();
+  const widthOfLongLogo = getAsciiArtWidth(longAsciiLogo);
+  const widthOfShortLogo = getAsciiArtWidth(shortAsciiLogo);
+
+  let displayTitle: string;
+  if (terminalWidth >= widthOfLongLogo) {
+    displayTitle = longAsciiLogo;
+  } else if (terminalWidth >= widthOfShortLogo) {
+    displayTitle = shortAsciiLogo;
+  } else {
+    displayTitle = tinyAsciiLogo;
+  }
   const getInitializingMessage = () => {
     if (continueSession && agentId) {
       return `Resuming agent ${agentId}...`;
@@ -45,7 +60,7 @@ export function WelcomeScreen({
   return (
     <Box flexDirection="column">
       <Text bold color={colors.welcome.accent}>
-        Letta Code
+        {displayTitle}
       </Text>
       <Text dimColor>{stateMessages[loadingState]}</Text>
     </Box>
