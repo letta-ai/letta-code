@@ -1,12 +1,13 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import RawTextInput from "ink-text-input";
 import { type ComponentType, memo, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
+import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import type { ApprovalRequest } from "../helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 type Props = {
   approvalRequest: ApprovalRequest;
@@ -247,7 +248,9 @@ export function ApprovalDialog({
     if (isEnteringReason) {
       // When entering reason, only handle enter/escape
       if (key.return) {
-        onDeny(denyReason);
+        // Resolve placeholders before sending denial reason
+        const resolvedReason = resolvePlaceholders(denyReason);
+        onDeny(resolvedReason);
       } else if (key.escape) {
         setIsEnteringReason(false);
         setDenyReason("");
@@ -358,15 +361,7 @@ export function ApprovalDialog({
           <Box height={1} />
           <Box>
             <Text dimColor>{"> "}</Text>
-            {(() => {
-              const TextInputAny = RawTextInput as unknown as ComponentType<{
-                value: string;
-                onChange: (s: string) => void;
-              }>;
-              return (
-                <TextInputAny value={denyReason} onChange={setDenyReason} />
-              );
-            })()}
+            <PasteAwareTextInput value={denyReason} onChange={setDenyReason} />
           </Box>
         </Box>
         <Box height={1} />
