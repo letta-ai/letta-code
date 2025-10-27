@@ -1,3 +1,4 @@
+import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
 import Link from "ink-link";
 import { getVersion } from "../../version";
@@ -16,11 +17,13 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentId,
+  agentState,
   terminalWidth: frozenWidth,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentId?: string;
+  agentState?: Letta.AgentState | null;
   terminalWidth?: number;
 }) {
   const currentWidth = useTerminalWidth();
@@ -35,27 +38,41 @@ export function WelcomeScreen({
   const isWide = terminalWidth >= 120;
   const isMedium = terminalWidth >= 80;
 
+  const getMemoryBlocksText = () => {
+    if (!agentState?.memory?.blocks) {
+      return null;
+    }
+
+    const blocks = agentState.memory.blocks;
+    const count = blocks.length;
+    const labels = blocks
+      .map((b) => b.label)
+      .filter(Boolean)
+      .join(", ");
+
+    if (isWide && labels) {
+      return `attached ${count} memory block${count !== 1 ? "s" : ""} (${labels})`;
+    }
+    if (isMedium) {
+      return `attached ${count} memory block${count !== 1 ? "s" : ""}`;
+    }
+    return null;
+  };
+
   const getAgentMessage = () => {
     if (loadingState === "ready") {
-      if (continueSession && agentId) {
-        if (isWide) {
-          return "Resumed agent, attached 3 memory blocks (persona, human, project)";
-        }
-        if (isMedium) {
-          return "Resumed agent, attached 3 memory blocks";
-        }
-        return "Resumed agent";
+      const memoryText = getMemoryBlocksText();
+      const baseText =
+        continueSession && agentId
+          ? "Resumed agent"
+          : agentId
+            ? "Created a new agent"
+            : "Ready to go!";
+
+      if (memoryText) {
+        return `${baseText}, ${memoryText}`;
       }
-      if (agentId) {
-        if (isWide) {
-          return "Created a new agent, attached 3 memory blocks (persona, human, project)";
-        }
-        if (isMedium) {
-          return "Created a new agent, attached 3 memory blocks";
-        }
-        return "Created a new agent";
-      }
-      return "Ready to go!";
+      return baseText;
     }
     if (loadingState === "initializing") {
       return continueSession ? "Resuming agent..." : "Creating agent...";

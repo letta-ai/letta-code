@@ -81,6 +81,7 @@ type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentId?: string;
+        agentState?: Letta.AgentState | null;
         terminalWidth: number;
       };
     }
@@ -88,6 +89,7 @@ type StaticItem =
 
 export default function App({
   agentId,
+  agentState,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -95,6 +97,7 @@ export default function App({
   tokenStreaming = true,
 }: {
   agentId: string;
+  agentState?: Letta.AgentState | null;
   loadingState?:
     | "assembling"
     | "upserting"
@@ -315,6 +318,7 @@ export default function App({
             snapshot: {
               continueSession,
               agentId: agentId !== "loading" ? agentId : undefined,
+              agentState,
               terminalWidth: columns,
             },
           },
@@ -333,6 +337,7 @@ export default function App({
     agentId,
     continueSession,
     columns,
+    agentState,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -1126,12 +1131,20 @@ export default function App({
           snapshot: {
             continueSession,
             agentId: agentId !== "loading" ? agentId : undefined,
+            agentState,
             terminalWidth: columns,
           },
         },
       ]);
     }
-  }, [loadingState, continueSession, agentId, messageHistory.length, columns]);
+  }, [
+    loadingState,
+    continueSession,
+    agentId,
+    messageHistory.length,
+    columns,
+    agentState,
+  ]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -1168,6 +1181,7 @@ export default function App({
             loadingState={loadingState}
             continueSession={continueSession}
             agentId={agentId !== "loading" ? agentId : undefined}
+            agentState={agentState}
           />
         )}
 
