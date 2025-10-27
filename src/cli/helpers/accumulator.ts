@@ -150,6 +150,26 @@ export function markCurrentLineAsFinished(b: Buffers) {
   }
 }
 
+/**
+ * Mark any incomplete tool calls as cancelled when stream is interrupted.
+ * This prevents blinking tool calls from staying in progress state.
+ */
+export function markIncompleteToolsAsCancelled(b: Buffers) {
+  for (const [id, line] of b.byId.entries()) {
+    if (line.kind === "tool_call" && line.phase !== "finished") {
+      const updatedLine = {
+        ...line,
+        phase: "finished" as const,
+        resultOk: false,
+        resultText: "Interrupted by user",
+      };
+      b.byId.set(id, updatedLine);
+    }
+  }
+  // Also mark any streaming assistant/reasoning lines as finished
+  markCurrentLineAsFinished(b);
+}
+
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;
 
 // Flatten common SDK "parts" → text
