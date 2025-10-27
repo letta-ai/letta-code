@@ -55,6 +55,7 @@ async function main() {
       args: process.argv,
       options: {
         help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
         agent: { type: "string", short: "a" },
         prompt: { type: "boolean", short: "p" },
