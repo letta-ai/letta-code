@@ -1,7 +1,6 @@
 import { Box, Text } from "ink";
-import { getAsciiArtWidth } from "../helpers/asciiUtils";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { longAsciiLogo, shortAsciiLogo, tinyAsciiLogo } from "./AsciiArt";
+import { getVersion } from "../../version";
+import { asciiLogo } from "./AsciiArt";
 import { colors } from "./colors";
 
 type LoadingState =
@@ -20,18 +19,6 @@ export function WelcomeScreen({
   continueSession?: boolean;
   agentId?: string;
 }) {
-  const terminalWidth = useTerminalWidth();
-  const widthOfLongLogo = getAsciiArtWidth(longAsciiLogo);
-  const widthOfShortLogo = getAsciiArtWidth(shortAsciiLogo);
-
-  let displayTitle: string;
-  if (terminalWidth >= widthOfLongLogo) {
-    displayTitle = longAsciiLogo;
-  } else if (terminalWidth >= widthOfShortLogo) {
-    displayTitle = shortAsciiLogo;
-  } else {
-    displayTitle = tinyAsciiLogo;
-  }
   const getInitializingMessage = () => {
     if (continueSession && agentId) {
       return `Resuming agent ${agentId}...`;
@@ -57,12 +44,32 @@ export function WelcomeScreen({
     ready: getReadyMessage(),
   };
 
+  const cwd = process.cwd();
+  const version = getVersion();
+
+  // Split logo into lines for side-by-side rendering
+  const logoLines = asciiLogo.trim().split("\n");
+
   return (
-    <Box flexDirection="column">
-      <Text bold color={colors.welcome.accent}>
-        {displayTitle}
-      </Text>
-      <Text dimColor>{stateMessages[loadingState]}</Text>
+    <Box flexDirection="row" marginTop={1}>
+      {/* Left column: Logo */}
+      <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
+        {logoLines.map((line, idx) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
+          <Text key={idx} bold color={colors.welcome.accent}>
+            {idx === 0 ? `  ${line}` : line}
+          </Text>
+        ))}
+      </Box>
+
+      {/* Right column: Text info (offset down 1 line) */}
+      <Box flexDirection="column" marginTop={0}>
+        <Text bold color={colors.welcome.accent}>
+          Letta Code v{version}
+        </Text>
+        <Text dimColor>{stateMessages[loadingState]}</Text>
+        <Text dimColor>{cwd}</Text>
+      </Box>
     </Box>
   );
 }

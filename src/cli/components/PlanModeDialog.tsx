@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { type ComponentType, memo, useState } from "react";
+import { memo, useState } from "react";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";

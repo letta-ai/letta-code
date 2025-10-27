@@ -91,6 +91,13 @@ async function main() {
     process.exit(0);
   }
 
+  // Handle version flag
+  if (values.version) {
+    const { getVersion } = await import("./version");
+    console.log(`${getVersion()} (Letta Code)`);
+    process.exit(0);
+  }
+
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
