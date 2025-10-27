@@ -6,6 +6,6 @@ export function getClient() {
     console.error("Missing LETTA_API_KEY");
     process.exit(1);
   }
-  // add baseUrl if you're not hitting the default
-  return new Letta({ apiKey: token /*, baseURL: "http://localhost:8283"*/ });
+  const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+  return new Letta({ apiKey: token, baseURL });
 }
