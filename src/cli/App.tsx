@@ -80,7 +80,6 @@ type StaticItem =
       id: string;
       snapshot: {
         continueSession: boolean;
-        agentId?: string;
         agentState?: Letta.AgentState | null;
         terminalWidth: number;
       };
@@ -317,7 +316,6 @@ export default function App({
             id: `welcome-${Date.now().toString(36)}`,
             snapshot: {
               continueSession,
-              agentId: agentId !== "loading" ? agentId : undefined,
               agentState,
               terminalWidth: columns,
             },
@@ -334,7 +332,6 @@ export default function App({
     messageHistory,
     refreshDerived,
     commitEligibleLines,
-    agentId,
     continueSession,
     columns,
     agentState,
@@ -1130,7 +1127,6 @@ export default function App({
           id: `welcome-${Date.now().toString(36)}`,
           snapshot: {
             continueSession,
-            agentId: agentId !== "loading" ? agentId : undefined,
             agentState,
             terminalWidth: columns,
           },
@@ -1140,7 +1136,6 @@ export default function App({
   }, [
     loadingState,
     continueSession,
-    agentId,
     messageHistory.length,
     columns,
     agentState,
@@ -1180,7 +1175,6 @@ export default function App({
           <WelcomeScreen
             loadingState={loadingState}
             continueSession={continueSession}
-            agentId={agentId !== "loading" ? agentId : undefined}
             agentState={agentState}
           />
         )}

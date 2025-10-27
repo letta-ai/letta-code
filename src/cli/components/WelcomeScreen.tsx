@@ -16,13 +16,11 @@ type LoadingState =
 export function WelcomeScreen({
   loadingState,
   continueSession,
-  agentId,
   agentState,
   terminalWidth: frozenWidth,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
-  agentId?: string;
   agentState?: Letta.AgentState | null;
   terminalWidth?: number;
 }) {
@@ -30,6 +28,7 @@ export function WelcomeScreen({
   const terminalWidth = frozenWidth ?? currentWidth;
   const cwd = process.cwd();
   const version = getVersion();
+  const agentId = agentState?.id;
 
   // Split logo into lines for side-by-side rendering
   const logoLines = asciiLogo.trim().split("\n");
