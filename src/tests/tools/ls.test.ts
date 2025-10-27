@@ -45,4 +45,10 @@ describe("LS tool", () => {
 
     await expect(ls({ path: file })).rejects.toThrow(/Not a directory/);
   });
+
+  test("throws error when path is missing", async () => {
+    await expect(ls({} as any)).rejects.toThrow(
+      /missing required parameter.*path/,
+    );
+  });
 });

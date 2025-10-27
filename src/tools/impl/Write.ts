@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { validateRequiredParams } from "./validation.js";
 
 interface WriteArgs {
   file_path: string;
@@ -10,6 +11,7 @@ interface WriteResult {
 }
 
 export async function write(args: WriteArgs): Promise<WriteResult> {
+  validateRequiredParams(args, ["file_path", "content"], "Write");
   const { file_path, content } = args;
   if (!path.isAbsolute(file_path))
     throw new Error(`File path must be absolute, got: ${file_path}`);

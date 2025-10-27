@@ -78,4 +78,10 @@ describe("Bash tool", () => {
     expect(result.content).toBeDefined();
     expect(result.content[0].text).toBeDefined();
   });
+
+  test("throws error when command is missing", async () => {
+    await expect(bash({} as any)).rejects.toThrow(
+      /missing required parameter.*command/,
+    );
+  });
 });

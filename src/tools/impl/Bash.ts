@@ -2,6 +2,7 @@ import type { ExecOptions } from "node:child_process";
 import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
+import { validateRequiredParams } from "./validation.js";
 
 const execAsync = promisify(exec);
 
@@ -21,6 +22,7 @@ interface BashResult {
 }
 
 export async function bash(args: BashArgs): Promise<BashResult> {
+  validateRequiredParams(args, ["command"], "Bash");
   const {
     command,
     timeout = 120000,

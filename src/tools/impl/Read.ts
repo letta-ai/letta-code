@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { validateRequiredParams } from "./validation.js";
 
 interface ReadArgs {
   file_path: string;
@@ -79,6 +80,7 @@ function formatWithLineNumbers(
 }
 
 export async function read(args: ReadArgs): Promise<ReadResult> {
+  validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
   if (!path.isAbsolute(file_path))
     throw new Error(`File path must be absolute, got: ${file_path}`);

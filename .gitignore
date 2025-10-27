@@ -4,6 +4,7 @@ bin/
 letta.js
 letta.js.map
 .DS_Store
+.letta
 
 # Logs
 logs
