@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
+import Link from "ink-link";
 import { getVersion } from "../../version";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { asciiLogo } from "./AsciiArt";
 import { colors } from "./colors";
 
@@ -14,41 +16,86 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentId,
+  terminalWidth: frozenWidth,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentId?: string;
+  terminalWidth?: number;
 }) {
-  const getInitializingMessage = () => {
-    if (continueSession && agentId) {
-      return `Resuming agent ${agentId}...`;
-    }
-    return "Creating agent...";
-  };
-
-  const getReadyMessage = () => {
-    if (continueSession && agentId) {
-      return `Resumed agent (${agentId}). Ready to go!`;
-    }
-    if (agentId) {
-      return `Created a new agent (${agentId}). Ready to go!`;
-    }
-    return "Ready to go!";
-  };
-
-  const stateMessages: Record<LoadingState, string> = {
-    assembling: "Assembling tools...",
-    upserting: "Upserting tools...",
-    initializing: getInitializingMessage(),
-    checking: "Checking for pending approvals...",
-    ready: getReadyMessage(),
-  };
-
+  const currentWidth = useTerminalWidth();
+  const terminalWidth = frozenWidth ?? currentWidth;
   const cwd = process.cwd();
   const version = getVersion();
 
   // Split logo into lines for side-by-side rendering
   const logoLines = asciiLogo.trim().split("\n");
+
+  // Determine verbosity level based on terminal width
+  const isWide = terminalWidth >= 120;
+  const isMedium = terminalWidth >= 80;
+
+  const getAgentMessage = () => {
+    if (loadingState === "ready") {
+      if (continueSession && agentId) {
+        if (isWide) {
+          return "Resumed agent, attached 3 memory blocks (persona, human, project)";
+        }
+        if (isMedium) {
+          return "Resumed agent, attached 3 memory blocks";
+        }
+        return "Resumed agent";
+      }
+      if (agentId) {
+        if (isWide) {
+          return "Created a new agent, attached 3 memory blocks (persona, human, project)";
+        }
+        if (isMedium) {
+          return "Created a new agent, attached 3 memory blocks";
+        }
+        return "Created a new agent";
+      }
+      return "Ready to go!";
+    }
+    if (loadingState === "initializing") {
+      return continueSession ? "Resuming agent..." : "Creating agent...";
+    }
+    if (loadingState === "assembling") {
+      return "Assembling tools...";
+    }
+    if (loadingState === "upserting") {
+      return "Upserting tools...";
+    }
+    if (loadingState === "checking") {
+      return "Checking for pending approvals...";
+    }
+    return "";
+  };
+
+  const getPathLine = () => {
+    if (isMedium) {
+      return `Running in ${cwd}`;
+    }
+    return cwd;
+  };
+
+  const getAgentLink = () => {
+    if (loadingState === "ready" && agentId) {
+      const url = `https://app.letta.com/projects/default-project/agents/${agentId}`;
+      if (isWide) {
+        return { text: url, url };
+      }
+      if (isMedium) {
+        return { text: agentId, url };
+      }
+      return { text: "Click to view in ADE", url };
+    }
+    return null;
+  };
+
+  const agentMessage = getAgentMessage();
+  const pathLine = getPathLine();
+  const agentLink = getAgentLink();
 
   return (
     <Box flexDirection="row" marginTop={1}>
@@ -62,13 +109,18 @@ export function WelcomeScreen({
         ))}
       </Box>
 
-      {/* Right column: Text info (offset down 1 line) */}
+      {/* Right column: Text info */}
       <Box flexDirection="column" marginTop={0}>
         <Text bold color={colors.welcome.accent}>
           Letta Code v{version}
         </Text>
-        <Text dimColor>{stateMessages[loadingState]}</Text>
-        <Text dimColor>{cwd}</Text>
+        <Text dimColor>{pathLine}</Text>
+        {agentMessage && <Text dimColor>{agentMessage}</Text>}
+        {agentLink && (
+          <Link url={agentLink.url}>
+            <Text dimColor>{agentLink.text}</Text>
+          </Link>
+        )}
       </Box>
     </Box>
   );

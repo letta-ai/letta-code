@@ -21,7 +21,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ink-link": "^5.0.0"
+  },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
   },

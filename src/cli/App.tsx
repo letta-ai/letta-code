@@ -78,7 +78,11 @@ type StaticItem =
   | {
       kind: "welcome";
       id: string;
-      snapshot: { continueSession: boolean; agentId?: string };
+      snapshot: {
+        continueSession: boolean;
+        agentId?: string;
+        terminalWidth: number;
+      };
     }
   | Line;
 
@@ -311,6 +315,7 @@ export default function App({
             snapshot: {
               continueSession,
               agentId: agentId !== "loading" ? agentId : undefined,
+              terminalWidth: columns,
             },
           },
         ]);
@@ -327,6 +332,7 @@ export default function App({
     commitEligibleLines,
     agentId,
     continueSession,
+    columns,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -1120,11 +1126,12 @@ export default function App({
           snapshot: {
             continueSession,
             agentId: agentId !== "loading" ? agentId : undefined,
+            terminalWidth: columns,
           },
         },
       ]);
     }
-  }, [loadingState, continueSession, agentId, messageHistory.length]);
+  }, [loadingState, continueSession, agentId, messageHistory.length, columns]);
 
   return (
     <Box flexDirection="column" gap={1}>
