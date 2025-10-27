@@ -97,7 +97,7 @@ export function WelcomeScreen({
 
   const getAgentLink = () => {
     if (loadingState === "ready" && agentId) {
-      const url = `https://app.letta.com/projects/default-project/agents/${agentId}`;
+      const url = `https://app.letta.com/agents/${agentId}`;
       if (isWide) {
         return { text: url, url };
       }
