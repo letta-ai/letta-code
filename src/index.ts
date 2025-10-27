@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
+import { permissionMode } from "./permissions/mode";
 import { loadSettings } from "./settings";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
 
@@ -123,8 +124,6 @@ async function main() {
   const yoloMode = values.yolo as boolean | undefined;
 
   if (yoloMode || permissionModeValue) {
-    const { permissionMode } = await import("./permissions/mode");
-
     if (yoloMode) {
       // --yolo is an alias for --permission-mode bypassPermissions
       permissionMode.setMode("bypassPermissions");
