@@ -1,6 +1,8 @@
 import { parseArgs } from "node:util";
-import type Letta from "@letta-ai/letta-client";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
@@ -50,7 +52,7 @@ export async function handleHeadlessCommand(argv: string[]) {
   const client = getClient();
 
   // Resolve agent (same logic as interactive mode)
-  let agent: Letta.AgentState | null = null;
+  let agent: AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
 

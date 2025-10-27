@@ -1,11 +1,11 @@
 // src/cli/App.tsx
 
-import type Letta from "@letta-ai/letta-client";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaMessageUnion,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getResumeData } from "../agent/check-approval";
@@ -131,7 +131,7 @@ export default function App({
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [llmConfig, setLlmConfig] = useState<Letta.LlmConfig | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =

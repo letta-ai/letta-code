@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
-import type { Letta } from "@letta-ai/letta-client";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { permissionMode } from "./permissions/mode";
@@ -191,7 +191,7 @@ async function main() {
         const { createAgent } = await import("./agent/create");
         const { updateSettings } = await import("./settings");
 
-        let agent: Letta.AgentState | null = null;
+        let agent: AgentState | null = null;
 
         // Priority 1: Try to use --agent specified ID
         if (agentIdArg) {
