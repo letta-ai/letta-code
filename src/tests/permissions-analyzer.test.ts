@@ -353,3 +353,45 @@ test("Unknown tool suggests session-only", () => {
   expect(context.defaultScope).toBe("session");
   expect(context.safetyLevel).toBe("moderate");
 });
+
+// ============================================================================
+// Long Command Bugs
+// ============================================================================
+
+test("Long complex bash commands should generate smart wildcard patterns", () => {
+  // Bug: When command is >40 chars, analyzer saves exact match instead of wildcard
+  // Example: "cd /path && git diff file.ts | head -100"
+  // Should generate: "Bash(cd /path && git diff:*)" to also match "... | tail -30"
+
+  const longCommand =
+    "cd /Users/test/project && git diff src/file.ts | head -100";
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: longCommand },
+    "/Users/test/project",
+  );
+
+  // Should extract "git diff" pattern, not save full command
+  expect(context.recommendedRule).toBe(
+    "Bash(cd /Users/test/project && git diff:*)",
+  );
+  // Button text should reflect the wildcard pattern
+  expect(context.approveAlwaysText).not.toContain("...");
+});
+
+test("Very long non-git commands should generate prefix-based wildcards", () => {
+  // For commands that don't match known patterns (npm, git, etc)
+  // we should still be smarter than exact match
+  const longCommand = "cd /Users/test/project && npm run lint 2>&1 | tail -20";
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    { command: longCommand },
+    "/Users/test/project",
+  );
+
+  // Should generate wildcard for "npm run lint"
+  expect(context.recommendedRule).toBe("Bash(npm run lint:*)");
+  expect(context.approveAlwaysText).toContain("npm run lint");
+});

@@ -306,6 +306,81 @@ function analyzeBashApproval(
     };
   }
 
+  // Handle complex piped/chained commands (cd /path && git diff | head)
+  // Extract the most significant command and generate a wildcard pattern
+  if (
+    command.includes("&&") ||
+    command.includes("|") ||
+    command.includes(";")
+  ) {
+    // Split on these delimiters and analyze each part
+    const segments = command.split(/\s*(?:&&|\||;)\s*/);
+
+    for (const segment of segments) {
+      const segmentParts = segment.trim().split(/\s+/);
+      const segmentBase = segmentParts[0];
+      const segmentArg = segmentParts[1] || "";
+
+      // Check if this segment is git command
+      if (segmentBase === "git") {
+        const gitSubcommand = segmentArg;
+        const safeGitCommands = ["status", "diff", "log", "show", "branch"];
+        const writeGitCommands = ["push", "pull", "fetch", "commit", "add"];
+
+        if (
+          safeGitCommands.includes(gitSubcommand) ||
+          writeGitCommands.includes(gitSubcommand)
+        ) {
+          // Generate wildcard pattern that includes the leading commands
+          // e.g., "cd /path && git diff:*"
+          const beforeGit = command.substring(0, command.indexOf("git"));
+          const pattern = `${beforeGit}git ${gitSubcommand}:*`;
+
+          return {
+            recommendedRule: `Bash(${pattern})`,
+            ruleDescription: `'${beforeGit}git ${gitSubcommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for '${beforeGit}git ${gitSubcommand}' commands in this project`,
+            defaultScope: "project",
+            allowPersistence: true,
+            safetyLevel: safeGitCommands.includes(gitSubcommand)
+              ? "safe"
+              : "moderate",
+          };
+        }
+      }
+
+      // Check if this segment is npm/bun/yarn/pnpm
+      if (["npm", "bun", "yarn", "pnpm"].includes(segmentBase)) {
+        const subcommand = segmentArg;
+        const thirdPart = segmentParts[2];
+
+        if (subcommand === "run" && thirdPart) {
+          const fullCommand = `${segmentBase} ${subcommand} ${thirdPart}`;
+          return {
+            recommendedRule: `Bash(${fullCommand}:*)`,
+            ruleDescription: `'${fullCommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
+            defaultScope: "project",
+            allowPersistence: true,
+            safetyLevel: "safe",
+          };
+        }
+
+        if (subcommand) {
+          const fullCommand = `${segmentBase} ${subcommand}`;
+          return {
+            recommendedRule: `Bash(${fullCommand}:*)`,
+            ruleDescription: `'${fullCommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
+            defaultScope: "project",
+            allowPersistence: true,
+            safetyLevel: "safe",
+          };
+        }
+      }
+    }
+  }
+
   // Default: allow this specific command only
   const displayCommand =
     command.length > 40 ? `${command.slice(0, 40)}...` : command;
