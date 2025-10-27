@@ -1,6 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { type ComponentType, memo, useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";

@@ -91,6 +91,13 @@ async function main() {
     process.exit(0);
   }
 
+  // Handle version flag
+  if (values.version) {
+    const { getVersion } = await import("./version");
+    console.log(`${getVersion()} (Letta Code)`);
+    process.exit(0);
+  }
+
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
@@ -176,6 +183,7 @@ async function main() {
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
     >("assembling");
     const [agentId, setAgentId] = useState<string | null>(null);
+    const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
 
     useEffect(() => {
@@ -232,6 +240,7 @@ async function main() {
         }
 
         setAgentId(agent.id);
+        setAgentState(agent);
         setLoadingState("ready");
       }
 
@@ -253,6 +262,7 @@ async function main() {
 
     return React.createElement(App, {
       agentId,
+      agentState,
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,

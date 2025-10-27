@@ -26,7 +26,7 @@ describe("Bash background tools", () => {
     // Extract bash_id from the response text
     const match = startResult.content[0].text.match(/bash_(\d+)/);
     expect(match).toBeDefined();
-    const bashId = `bash_${match![1]}`;
+    const bashId = `bash_${match?.[1]}`;
 
     // Wait for command to complete
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -52,7 +52,7 @@ describe("Bash background tools", () => {
     });
 
     const match = startResult.content[0].text.match(/bash_(\d+)/);
-    const bashId = `bash_${match![1]}`;
+    const bashId = `bash_${match?.[1]}`;
 
     // Kill it (KillBash uses shell_id parameter)
     const killResult = await kill_bash({ shell_id: bashId });
