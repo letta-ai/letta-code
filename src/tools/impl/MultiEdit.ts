@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { validateRequiredParams } from "./validation.js";
 
 interface Edit {
   old_string: string;
@@ -18,11 +19,17 @@ interface MultiEditResult {
 export async function multi_edit(
   args: MultiEditArgs,
 ): Promise<MultiEditResult> {
+  validateRequiredParams(args, ["file_path", "edits"], "MultiEdit");
   const { file_path, edits } = args;
   if (!path.isAbsolute(file_path))
     throw new Error(`File path must be absolute, got: ${file_path}`);
   if (!edits || edits.length === 0) throw new Error("No edits provided");
   for (let i = 0; i < edits.length; i++) {
+    validateRequiredParams(
+      edits[i] as Record<string, unknown>,
+      ["old_string", "new_string"],
+      `MultiEdit (edit ${i + 1})`,
+    );
     if (edits[i].old_string === edits[i].new_string)
       throw new Error(
         `Edit ${i + 1}: No changes to make: old_string and new_string are exactly the same.`,

@@ -1,4 +1,5 @@
 import { backgroundProcesses } from "./process_manager.js";
+import { validateRequiredParams } from "./validation.js";
 
 interface KillBashArgs {
   shell_id: string;
@@ -8,6 +9,7 @@ interface KillBashResult {
 }
 
 export async function kill_bash(args: KillBashArgs): Promise<KillBashResult> {
+  validateRequiredParams(args, ["shell_id"], "KillBash");
   const { shell_id } = args;
   const proc = backgroundProcesses.get(shell_id);
   if (!proc) return { killed: false };
