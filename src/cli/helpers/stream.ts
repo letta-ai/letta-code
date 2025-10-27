@@ -2,7 +2,7 @@ import { Letta } from "@letta-ai/letta-client";
 import {
   type createBuffers,
   markCurrentLineAsFinished,
-  // markIncompleteToolsAsCancelled,
+  markIncompleteToolsAsCancelled,
   onChunk,
 } from "./accumulator";
 
