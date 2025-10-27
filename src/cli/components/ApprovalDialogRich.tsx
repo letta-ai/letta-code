@@ -82,6 +82,23 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
+  if (t === "ls") {
+    const pathVal = parsedArgs?.path;
+    const path = typeof pathVal === "string" ? pathVal : "(current directory)";
+    const ignoreVal = parsedArgs?.ignore;
+    const ignore =
+      Array.isArray(ignoreVal) && ignoreVal.length > 0
+        ? ` (ignoring: ${ignoreVal.join(", ")})`
+        : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>List files in: {path}</Text>
+        {ignore ? <Text dimColor>{ignore}</Text> : null}
+      </Box>
+    );
+  }
+
   // File edit previews: write/edit/multi_edit
   if ((t === "write" || t === "edit" || t === "multiedit") && parsedArgs) {
     try {

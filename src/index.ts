@@ -55,6 +55,7 @@ async function main() {
       args: process.argv,
       options: {
         help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
         agent: { type: "string", short: "a" },
         prompt: { type: "boolean", short: "p" },
@@ -88,6 +89,13 @@ async function main() {
   // Handle help flag first
   if (values.help) {
     printHelp();
+    process.exit(0);
+  }
+
+  // Handle version flag
+  if (values.version) {
+    const { getVersion } = await import("./version");
+    console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
   }
 
@@ -176,6 +184,7 @@ async function main() {
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
     >("assembling");
     const [agentId, setAgentId] = useState<string | null>(null);
+    const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
 
     useEffect(() => {
@@ -232,6 +241,7 @@ async function main() {
         }
 
         setAgentId(agent.id);
+        setAgentState(agent);
         setLoadingState("ready");
       }
 
@@ -253,6 +263,7 @@ async function main() {
 
     return React.createElement(App, {
       agentId,
+      agentState,
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,

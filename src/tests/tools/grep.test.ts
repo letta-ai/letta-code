@@ -56,4 +56,10 @@ describe("Grep tool", () => {
       }
     }
   });
+
+  test("throws error when pattern is missing", async () => {
+    await expect(grep({} as any)).rejects.toThrow(
+      /missing required parameter.*pattern/,
+    );
+  });
 });
