@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import picomatch from "picomatch";
+import { validateRequiredParams } from "./validation.js";
 
 interface GlobArgs {
   pattern: string;
@@ -32,6 +33,7 @@ async function walkDirectory(dir: string): Promise<string[]> {
 }
 
 export async function glob(args: GlobArgs): Promise<GlobResult> {
+  validateRequiredParams(args, ["pattern"], "Glob");
   const { pattern, path: searchPath } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
   let baseDir: string;

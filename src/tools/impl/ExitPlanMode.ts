@@ -3,6 +3,8 @@
  * Exits plan mode by presenting the plan to the user for approval
  */
 
+import { validateRequiredParams } from "./validation.js";
+
 interface ExitPlanModeArgs {
   plan: string;
 }
@@ -10,6 +12,7 @@ interface ExitPlanModeArgs {
 export async function exit_plan_mode(
   args: ExitPlanModeArgs,
 ): Promise<{ message: string }> {
+  validateRequiredParams(args, ["plan"], "ExitPlanMode");
   const { plan: _plan } = args;
 
   // Return confirmation message that plan was approved

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { validateRequiredParams } from "./validation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +41,7 @@ interface GrepResult {
 }
 
 export async function grep(args: GrepArgs): Promise<GrepResult> {
+  validateRequiredParams(args, ["pattern"], "Grep");
   const {
     pattern,
     path: searchPath,

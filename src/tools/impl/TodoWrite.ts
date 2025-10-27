@@ -1,3 +1,5 @@
+import { validateRequiredParams } from "./validation.js";
+
 interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed";
@@ -14,6 +16,7 @@ interface TodoWriteResult {
 export async function todo_write(
   args: TodoWriteArgs,
 ): Promise<TodoWriteResult> {
+  validateRequiredParams(args, ["todos"], "TodoWrite");
   if (!args.todos || !Array.isArray(args.todos))
     throw new Error("todos must be an array");
   for (const todo of args.todos) {
