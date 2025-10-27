@@ -205,7 +205,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   );
 };
 
-export function ApprovalDialog({
+export const ApprovalDialog = memo(function ApprovalDialog({
   approvalRequest,
   approvalContext,
   onApprove,
@@ -403,7 +403,9 @@ export function ApprovalDialog({
       <Box height={1} />
     </Box>
   );
-}
+});
+
+ApprovalDialog.displayName = "ApprovalDialog";
 
 // Helper functions for tool name mapping
 function getHeaderLabel(toolName: string): string {

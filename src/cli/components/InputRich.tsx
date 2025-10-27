@@ -158,7 +158,7 @@ export function Input({
 
   // Shimmer animation effect
   useEffect(() => {
-    if (!streaming) return;
+    if (!streaming || !visible) return;
 
     const id = setInterval(() => {
       setShimmerOffset((prev) => {
@@ -169,7 +169,7 @@ export function Input({
     }, 120); // Speed of shimmer animation
 
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage]);
+  }, [streaming, thinkingMessage, visible]);
 
   const handleSubmit = async () => {
     if (streaming || commandRunning) {

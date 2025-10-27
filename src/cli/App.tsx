@@ -1167,27 +1167,29 @@ export default function App({
         {loadingState === "ready" && (
           <>
             {/* Transcript */}
-            {liveItems.length > 0 && (
-              <Box flexDirection="column">
-                {liveItems.map((ln) => (
-                  <Box key={ln.id} marginTop={1}>
-                    {ln.kind === "user" ? (
-                      <UserMessage line={ln} />
-                    ) : ln.kind === "reasoning" ? (
-                      <ReasoningMessage line={ln} />
-                    ) : ln.kind === "assistant" ? (
-                      <AssistantMessage line={ln} />
-                    ) : ln.kind === "tool_call" ? (
-                      <ToolCallMessage line={ln} />
-                    ) : ln.kind === "error" ? (
-                      <ErrorMessage line={ln} />
-                    ) : (
-                      <CommandMessage line={ln} />
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            )}
+            {liveItems.length > 0 &&
+              !pendingApproval &&
+              !planApprovalPending && (
+                <Box flexDirection="column">
+                  {liveItems.map((ln) => (
+                    <Box key={ln.id} marginTop={1}>
+                      {ln.kind === "user" ? (
+                        <UserMessage line={ln} />
+                      ) : ln.kind === "reasoning" ? (
+                        <ReasoningMessage line={ln} />
+                      ) : ln.kind === "assistant" ? (
+                        <AssistantMessage line={ln} />
+                      ) : ln.kind === "tool_call" ? (
+                        <ToolCallMessage line={ln} />
+                      ) : ln.kind === "error" ? (
+                        <ErrorMessage line={ln} />
+                      ) : (
+                        <CommandMessage line={ln} />
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              )}
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
