@@ -83,6 +83,10 @@ letta -p "run tests" --disallowedTools "Bash"    # Control tool permissions
 echo "Explain this code" | letta -p
 cat file.txt | letta -p
 gh pr diff 123 | letta -p --yolo                 # Review PR changes
+
+# Output formats
+letta -p "analyze code" --output-format json        # Structured JSON at end
+letta -p "analyze code" --output-format stream-json # JSONL stream (one event per line)
 ```
 
 You can also use the `--tools` flag to control the underlying *attachment* of tools (not just the permissions).
@@ -92,13 +96,13 @@ letta -p "run tests" --tools "Bash,Read"         # Only load specific tools
 letta -p "analyze code" --tools ""               # No tools (analysis only)
 ```
 
-Use `--output-format json` to get additional information, including the agent ID ("session_id"):
+Use `--output-format json` to get structured output with metadata:
 ```bash
 # regular text output
 $ letta -p "hi there"
 Hi! How can I help you today?
 
-# structured output
+# structured output (single JSON object at end)
 $ letta -p "hi there" --output-format json
 {
   "type": "result",
@@ -108,12 +112,27 @@ $ letta -p "hi there" --output-format json
   "duration_api_ms": 2098,
   "num_turns": 1,
   "result": "Hi! How can I help you today?",
-  "session_id": "agent-8ab431ca-63e0-4ca1-ba83-b64d66d95a0f",
+  "agent_id": "agent-8ab431ca-63e0-4ca1-ba83-b64d66d95a0f",
   "usage": {
-    "input_tokens": 294,
-    "output_tokens": 97
+    "prompt_tokens": 294,
+    "completion_tokens": 97,
+    "total_tokens": 391
   }
 }
+
+# streaming JSON output (JSONL - one event per line, token-level streaming)
+$ letta -p "hi there" --output-format stream-json
+{"type":"init","agent_id":"agent-...","model":"claude-sonnet-4-5-20250929","tools":[...]}
+{"type":"message","messageType":"reasoning_message","reasoning":"The user is asking","otid":"...","seqId":1}
+{"type":"message","messageType":"reasoning_message","reasoning":" me to say hello","otid":"...","seqId":2}
+{"type":"message","messageType":"reasoning_message","reasoning":". This is a simple","otid":"...","seqId":3}
+{"type":"message","messageType":"reasoning_message","reasoning":" greeting.","otid":"...","seqId":4}
+{"type":"message","messageType":"assistant_message","content":"Hi! How can I help you today?","otid":"...","seqId":5}
+{"type":"message","messageType":"stop_reason","stopReason":"end_turn"}
+{"type":"message","messageType":"usage_statistics","promptTokens":294,"completionTokens":97,"totalTokens":391}
+{"type":"result","subtype":"success","result":"Hi! How can I help you today?","agent_id":"agent-...","usage":{...}}
+
+Note: Messages are streamed at the token level - each chunk has the same otid and incrementing seqId.
 ```
 
 ### Permissions
