@@ -7,6 +7,7 @@ import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { CommandPreview } from "./CommandPreview";
+import { FileAutocomplete } from "./FileAutocomplete";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ShimmerText } from "./ShimmerText";
@@ -51,6 +52,9 @@ export function Input({
   const [currentMode, setCurrentMode] = useState<PermissionMode>(
     externalMode || permissionMode.getMode(),
   );
+  const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
+  const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
+  const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
 
   // Sync with external mode changes (from plan approval dialog)
   useEffect(() => {
@@ -172,6 +176,11 @@ export function Input({
   }, [streaming, thinkingMessage, visible]);
 
   const handleSubmit = async () => {
+    // Don't submit if autocomplete is active with matches
+    if (isAutocompleteActive) {
+      return;
+    }
+
     if (streaming || commandRunning) {
       return;
     }
@@ -182,6 +191,38 @@ export function Input({
     if (!result.submitted) {
       setValue(previousValue);
     }
+  };
+
+  // Handle file selection from autocomplete
+  const handleFileSelect = (selectedPath: string) => {
+    // Find the last "@" and replace everything after it with the selected path
+    const atIndex = value.lastIndexOf("@");
+    if (atIndex === -1) return;
+
+    const beforeAt = value.slice(0, atIndex);
+    const afterAt = value.slice(atIndex + 1);
+    const spaceIndex = afterAt.indexOf(" ");
+
+    let newValue: string;
+    let newCursorPos: number;
+
+    // Replace the query part with the selected path
+    if (spaceIndex === -1) {
+      // No space after @query, replace to end
+      newValue = `${beforeAt}@${selectedPath} `;
+      newCursorPos = newValue.length;
+    } else {
+      // Space exists, replace only the query part
+      const afterQuery = afterAt.slice(spaceIndex);
+      newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
+      newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
+    }
+
+    setValue(newValue);
+    setCursorPos(newCursorPos);
+
+    // Reset cursor position after a short delay so it only applies once
+    setTimeout(() => setCursorPos(undefined), 50);
   };
 
   // Get display name and color for permission mode
@@ -254,6 +295,8 @@ export function Input({
               value={value}
               onChange={setValue}
               onSubmit={handleSubmit}
+              cursorPosition={cursorPos}
+              onCursorMove={setCurrentCursorPosition}
             />
           </Box>
         </Box>
@@ -261,28 +304,34 @@ export function Input({
         {/* Bottom horizontal divider */}
         <Text dimColor>{horizontalLine}</Text>
 
-        {value.startsWith("/") ? (
+        {value.includes("@") ? (
+          <FileAutocomplete
+            currentInput={value}
+            cursorPosition={currentCursorPosition}
+            onSelect={handleFileSelect}
+            onActiveChange={setIsAutocompleteActive}
+          />
+        ) : value.startsWith("/") ? (
           <CommandPreview currentInput={value} />
-        ) : (
-          <Box justifyContent="space-between" marginBottom={1}>
-            {ctrlCPressed ? (
-              <Text dimColor>Press CTRL-C again to exit</Text>
-            ) : escapePressed ? (
-              <Text dimColor>Press Esc again to clear</Text>
-            ) : modeInfo ? (
-              <Text>
-                <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
-                <Text color={modeInfo.color} dimColor>
-                  {" "}
-                  (shift+tab to cycle)
-                </Text>
+        ) : null}
+        <Box justifyContent="space-between" marginBottom={1}>
+          {ctrlCPressed ? (
+            <Text dimColor>Press CTRL-C again to exit</Text>
+          ) : escapePressed ? (
+            <Text dimColor>Press Esc again to clear</Text>
+          ) : modeInfo ? (
+            <Text>
+              <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
+              <Text color={modeInfo.color} dimColor>
+                {" "}
+                (shift+tab to cycle)
               </Text>
-            ) : (
-              <Text dimColor>Press / for commands</Text>
-            )}
-            <Text dimColor>https://discord.gg/letta</Text>
-          </Box>
-        )}
+            </Text>
+          ) : (
+            <Text dimColor>Press / for commands or @ for files</Text>
+          )}
+          <Text dimColor>https://discord.gg/letta</Text>
+        </Box>
       </Box>
     </Box>
   );

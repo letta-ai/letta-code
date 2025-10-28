@@ -20,6 +20,8 @@ interface PasteAwareTextInputProps {
   onSubmit?: (value: string) => void;
   placeholder?: string;
   focus?: boolean;
+  cursorPosition?: number;
+  onCursorMove?: (position: number) => void;
 }
 
 function countLines(text: string): number {
@@ -32,6 +34,8 @@ export function PasteAwareTextInput({
   onSubmit,
   placeholder,
   focus = true,
+  cursorPosition,
+  onCursorMove,
 }: PasteAwareTextInputProps) {
   const [displayValue, setDisplayValue] = useState(value);
   const [actualValue, setActualValue] = useState(value);
@@ -41,6 +45,20 @@ export function PasteAwareTextInput({
   const [nudgeCursorOffset, setNudgeCursorOffset] = useState<
     number | undefined
   >(undefined);
+
+  // Apply cursor position from parent
+  useEffect(() => {
+    if (typeof cursorPosition === "number") {
+      setNudgeCursorOffset(cursorPosition);
+      caretOffsetRef.current = cursorPosition;
+    }
+  }, [cursorPosition]);
+
+  // Notify parent of cursor position changes
+  // Default assumption: cursor is at the end when typing
+  useEffect(() => {
+    onCursorMove?.(displayValue.length);
+  }, [displayValue, onCursorMove]);
   const TextInputAny = RawTextInput as unknown as React.ComponentType<{
     value: string;
     onChange: (value: string) => void;
@@ -218,7 +236,7 @@ export function PasteAwareTextInput({
     const resolved = resolvePlaceholders(newValue);
     setActualValue(resolved);
     onChange(newValue);
-    // Default caret behavior on typing/appends: move to end
+    // Default: cursor moves to end (most common case)
     caretOffsetRef.current = newValue.length;
   };
 
