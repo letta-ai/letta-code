@@ -45,7 +45,7 @@ export async function handleHeadlessCommand(argv: string[]) {
     process.exit(1);
   }
 
-  const client = getClient();
+  const client = await getClient();
 
   // Resolve agent (same logic as interactive mode)
   let agent: Letta.AgentState | null = null;
