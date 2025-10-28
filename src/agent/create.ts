@@ -17,7 +17,7 @@ export async function createAgent(
   name = "letta-cli-agent",
   model = "anthropic/claude-sonnet-4-5-20250929",
 ) {
-  const client = getClient();
+  const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
   const toolNames = [

@@ -14,6 +14,7 @@ export interface Settings {
   tokenStreaming: boolean;
   globalSharedBlockIds: Record<string, string>; // label -> blockId mapping (persona, human; style moved to project settings)
   permissions?: PermissionRules;
+  env?: Record<string, string>;
 }
 
 const DEFAULT_SETTINGS: Settings = {

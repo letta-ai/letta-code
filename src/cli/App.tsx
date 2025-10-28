@@ -343,7 +343,7 @@ export default function App({
       const fetchConfig = async () => {
         try {
           const { getClient } = await import("../agent/client");
-          const client = getClient();
+          const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llmConfig);
         } catch (error) {
@@ -541,7 +541,7 @@ export default function App({
 
     setInterruptRequested(true);
     try {
-      const client = getClient();
+      const client = await getClient();
 
       // Send cancel request to backend
       await client.agents.messages.cancel(agentId);
@@ -746,7 +746,7 @@ export default function App({
       // Check for pending approvals before sending message
       if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
         try {
-          const client = getClient();
+          const client = await getClient();
           const { pendingApproval: existingApproval } = await getResumeData(
             client,
             agentId,

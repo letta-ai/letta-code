@@ -20,7 +20,7 @@ export async function updateAgentLLMConfig(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): Promise<Letta.LlmConfig> {
-  const client = getClient();
+  const client = await getClient();
 
   // Step 1: Update model (top-level field)
   await client.agents.modify(agentId, { model: modelHandle });
