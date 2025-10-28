@@ -91,6 +91,17 @@ export async function handleHeadlessCommand(argv: string[]) {
   // Initialize session stats
   const sessionStats = new SessionStats();
 
+  // Output init event for stream-json format
+  if (outputFormat === "stream-json") {
+    const initEvent = {
+      type: "init",
+      agent_id: agent.id,
+      model: agent.llmConfig?.model,
+      tools: agent.tools?.map((t) => t.name) || [],
+    };
+    console.log(JSON.stringify(initEvent));
+  }
+
   // Send message and process stream loop
   let currentInput: Array<Letta.MessageCreate | Letta.ApprovalCreate> = [
     {
@@ -103,12 +114,69 @@ export async function handleHeadlessCommand(argv: string[]) {
     while (true) {
       const stream = await sendMessageStream(agent.id, currentInput);
 
-      // Drain stream and collect approval requests
-      const { stopReason, approval, apiDurationMs } = await drainStream(
-        stream,
-        buffers,
-        () => {}, // No UI refresh needed in headless mode
-      );
+      // For stream-json, output each chunk as it arrives
+      let stopReason: Letta.StopReasonType;
+      let approval: {
+        toolCallId: string;
+        toolName: string;
+        toolArgs: string;
+      } | null = null;
+      let apiDurationMs: number;
+
+      if (outputFormat === "stream-json") {
+        const startTime = performance.now();
+        let lastStopReason: Letta.StopReasonType | null = null;
+
+        for await (const chunk of stream) {
+          // Output chunk as message event
+          console.log(
+            JSON.stringify({
+              type: "message",
+              ...chunk,
+            }),
+          );
+
+          // Still accumulate for approval tracking
+          const { onChunk } = await import("./cli/helpers/accumulator");
+          onChunk(buffers, chunk);
+
+          // Track stop reason and approval
+          if (chunk.messageType === "stop_reason") {
+            lastStopReason = chunk.stopReason;
+          }
+
+          // Track approval requests
+          if (chunk.messageType === "approval_request_message") {
+            const toolCall = (chunk as any).toolCall;
+            if (toolCall?.toolCallId && toolCall?.name) {
+              approval = {
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.name,
+                toolArgs: toolCall.arguments || "{}",
+              };
+            }
+          }
+        }
+
+        stopReason = lastStopReason || Letta.StopReasonType.Error;
+        apiDurationMs = performance.now() - startTime;
+
+        // Mark final line as finished
+        const { markCurrentLineAsFinished } = await import(
+          "./cli/helpers/accumulator"
+        );
+        markCurrentLineAsFinished(buffers);
+      } else {
+        // Normal mode: use drainStream
+        const result = await drainStream(
+          stream,
+          buffers,
+          () => {}, // No UI refresh needed in headless mode
+        );
+        stopReason = result.stopReason;
+        approval = result.approval || null;
+        apiDurationMs = result.apiDurationMs;
+      }
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
@@ -220,16 +288,33 @@ export async function handleHeadlessCommand(argv: string[]) {
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
       result: resultText,
-      session_id: agent.id,
+      agent_id: agent.id,
       usage: {
-        input_tokens: stats.usage.promptTokens,
-        output_tokens: stats.usage.completionTokens,
+        prompt_tokens: stats.usage.promptTokens,
+        completion_tokens: stats.usage.completionTokens,
+        total_tokens: stats.usage.totalTokens,
       },
     };
     console.log(JSON.stringify(output, null, 2));
   } else if (outputFormat === "stream-json") {
-    console.error("stream-json format not yet implemented");
-    process.exit(1);
+    // Output final result event
+    const stats = sessionStats.getSnapshot();
+    const resultEvent = {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: Math.round(stats.totalWallMs),
+      duration_api_ms: Math.round(stats.totalApiMs),
+      num_turns: stats.usage.stepCount,
+      result: resultText,
+      agent_id: agent.id,
+      usage: {
+        prompt_tokens: stats.usage.promptTokens,
+        completion_tokens: stats.usage.completionTokens,
+        total_tokens: stats.usage.totalTokens,
+      },
+    };
+    console.log(JSON.stringify(resultEvent));
   } else {
     // text format (default)
     if (!lastAssistant || !("text" in lastAssistant)) {
