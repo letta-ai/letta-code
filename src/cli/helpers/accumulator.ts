@@ -198,6 +198,27 @@ export function onChunk(
   b: Buffers,
   chunk: Letta.agents.LettaStreamingResponse,
 ) {
+  // TODO remove once SDK v1 has proper typing for in-stream errors
+  // Check for streaming error objects (not typed in SDK but emitted by backend)
+  // These are emitted when LLM errors occur during streaming (rate limits, timeouts, etc.)
+  const chunkAny = chunk as any;
+  if (chunkAny.error && !chunk.messageType) {
+    const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errorMsg = chunkAny.error.message || "An error occurred";
+    const errorDetail = chunkAny.error.detail || "";
+    const fullErrorText = errorDetail
+      ? `${errorMsg}: ${errorDetail}`
+      : errorMsg;
+
+    b.byId.set(errorId, {
+      kind: "error",
+      id: errorId,
+      text: `⚠ ${fullErrorText}`,
+    });
+    b.order.push(errorId);
+    return;
+  }
+
   switch (chunk.messageType) {
     case "reasoning_message": {
       const id = chunk.otid;

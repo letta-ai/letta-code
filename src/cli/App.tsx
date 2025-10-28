@@ -510,6 +510,10 @@ export default function App({
           }
 
           // Unexpected stop reason
+          // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
+          // using lastRunId to get full error message from step.errorData
+          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
+          // Then display step.errorData.message or full error details instead of generic message
           appendError(`Unexpected stop reason: ${stopReason}`);
           setStreaming(false);
           return;
