@@ -24,7 +24,7 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
-Make sure you have your Letta API key set in your environment:
+Set your Letta API key via environment variable:
 ```bash
 export LETTA_API_KEY=...
 ```
@@ -38,44 +38,59 @@ Any of the agents you create in Letta Code will be viewable (and fully interacta
 
 ## Persistence
 
-All agents in Letta are **stateful**: they maintain context forever and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks). Agents can share memory blocks across projects—for example, multiple agents can share user coding preferences while maintaining project-specific memories independently.
+All agents in Letta are **stateful**: they maintain context forever and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks). 
+
+### Project-Level Agent Persistence
+
+**Letta Code automatically remembers the last agent used in each directory.**
+When you run `letta` in a project, it resumes where you left off with the same agent.
+
+**How it works:**
+- First time running `letta` in a directory → creates new agent (with shared memory blocks across all Letta Code agents)
+- Subsequent runs → automatically resumes that agent
+- Agent ID stored in `.letta/settings.local.json` (gitignored, personal to you)
+
+```bash
+letta                    # Auto-resumes project agent (or creates new if first time)
+letta --new              # Force create new agent
+letta --agent <id>       # Use specific agent ID
+```
 
 ### Memory Configuration
 
-Letta Code uses a hierarchical memory system with both global and local blocks:
+Letta Code uses a hierarchical memory system:
 
 **Global** (`~/.letta/settings.json`)
+- API keys and credentials
 - `persona` block - defines agent behavior 
 - `human` block - stores user coding preferences
 
-**Local** (`./.letta/settings.json`)  
+**Project** (`./.letta/settings.local.json`)  
+- Last agent ID for this directory (auto-resumes)
+- Gitignored - personal to you, not shared with your team
+
+**Project Shared** (`./.letta/settings.json`)  
 - `project` block - stores project-specific context
+- Can be committed - shared with team
 
-### Starting Letta Code
-
-```bash
-letta                    # New agent (attaches to existing memory blocks or creates new)
-letta --continue         # Resume last agent session
-letta --agent <id>       # Resume specific agent session
-```
-
-When you start a new agent, it automatically connects to existing memory block IDs from your settings files. If none exist, it creates them.
-
-Memory blocks are highly configurable — see our [docs](https://docs.letta.com/guides/agents/memory-blocks) for advanced configuration options. Join our [Discord](https://discord.gg/letta) to share feedback on persistence patterns for coding agents.
+Memory blocks are highly configurable — see our [docs](https://docs.letta.com/guides/agents/memory-blocks) for advanced configuration options.
+Join our [Discord](https://discord.gg/letta) to share feedback on persistence patterns for coding agents.
 
 ## Usage
 
 ### Interactive Mode
 ```bash
-letta                    # Start new session (new agent with shared memory blocks)
-letta --continue         # Resume last session (last recently used agent)
-letta --agent <id>       # Open specific agent
+letta                    # Auto-resume project agent (or create new if first time)
+letta --new              # Force create new agent
+letta --agent <id>       # Use specific agent ID
+letta --continue         # Resume global last agent (deprecated, use project-based)
 ```
 
 ### Headless Mode
 ```bash
-letta -p "Run bun lint and correct errors"              # Run non-interactive
-letta -p "Pick up where you left off" --continue        # Continue previous session
+letta -p "Run bun lint and correct errors"              # Auto-resumes project agent
+letta -p "Pick up where you left off"                   # Same - auto-resumes by default
+letta -p "Start fresh" --new                            # Force new agent
 letta -p "Run all the test" --allowedTools "Bash"       # Control tool permissions
 letta -p "Just read the code" --disallowedTools "Bash"  # Control tool permissions
 
@@ -198,7 +213,7 @@ bun run dev -- -p "Hello world"  # example with args
 bun run build
 
 # expose the binary globally (adjust to your preference)
-bun link --global   # or: bun add --global .
+bun link
 
 # now you can run the compiled CLI
 letta

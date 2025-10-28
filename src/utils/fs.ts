@@ -35,3 +35,13 @@ export async function writeFile(path: string, content: string): Promise<void> {
 export function exists(path: string): boolean {
   return existsSync(path);
 }
+
+/**
+ * Create a directory, including parent directories
+ */
+export async function mkdir(
+  path: string,
+  options?: { recursive?: boolean },
+): Promise<void> {
+  mkdirSync(path, options);
+}

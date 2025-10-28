@@ -14,17 +14,19 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Start a new agent session
-  letta --continue      Resume the last agent session
+  letta                 Auto-resume project agent (from .letta/settings.local.json)
+  letta --new           Force create a new agent
+  letta --continue      Resume global last agent (deprecated, use project-based)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
-  letta --prompt        One-off prompt in headless mode (no TTY UI)
+  letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
-  -c, --continue        Resume previous session (uses settings.lastAgent)
+  --new                 Force create new agent (skip auto-resume)
+  -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -p, --prompt          Headless prompt mode
   -m, --model <model>   Model to use for agent (ID from models.json or full handle)
@@ -32,10 +34,14 @@ OPTIONS
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
 
+BEHAVIOR
+  By default, letta auto-resumes the last agent used in the current directory
+  (stored in .letta/settings.local.json). Use --new to force a new agent.
+
 EXAMPLES
   # when installed as an executable
-  letta --help
-  letta --continue
+  letta                 # Auto-resume project agent or create new
+  letta --new           # Force new agent
   letta --agent agent_123
   
   # headless with JSON output (includes stats)
@@ -59,6 +65,7 @@ async function main() {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
+        new: { type: "boolean" },
         agent: { type: "string", short: "a" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
@@ -103,6 +110,7 @@ async function main() {
   }
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
+  const forceNew = (values.new as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
@@ -182,9 +190,11 @@ async function main() {
 
   function LoadingApp({
     continueSession,
+    forceNew,
     agentIdArg,
   }: {
     continueSession: boolean;
+    forceNew: boolean;
     agentIdArg: string | null;
   }) {
     const [loadingState, setLoadingState] = useState<
@@ -193,6 +203,7 @@ async function main() {
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
+    const [isResumingSession, setIsResumingSession] = useState(false);
 
     useEffect(() => {
       async function init() {
@@ -205,7 +216,8 @@ async function main() {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
-        const { updateSettings } = await import("./settings");
+        const { updateSettings, loadProjectSettings, updateProjectSettings } =
+          await import("./settings");
 
         let agent: Letta.AgentState | null = null;
 
@@ -221,7 +233,28 @@ async function main() {
           }
         }
 
-        // Priority 2: Try to reuse lastAgent if --continue flag is passed
+        // Priority 2: Check if --new flag was passed (skip all resume logic)
+        if (!agent && forceNew) {
+          // Create new agent, don't check any lastAgent fields
+          agent = await createAgent();
+        }
+
+        // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+        if (!agent) {
+          const projectSettings = await loadProjectSettings();
+          if (projectSettings?.lastAgent) {
+            try {
+              agent = await client.agents.retrieve(projectSettings.lastAgent);
+              // console.log(`Resuming project agent ${projectSettings.lastAgent}...`);
+            } catch (error) {
+              console.error(
+                `Project agent ${projectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
+              );
+            }
+          }
+        }
+
+        // Priority 4: Try to reuse global lastAgent if --continue flag is passed
         if (!agent && continueSession && settings.lastAgent) {
           try {
             agent = await client.agents.retrieve(settings.lastAgent);
@@ -233,7 +266,7 @@ async function main() {
           }
         }
 
-        // Priority 3: Create a new agent
+        // Priority 5: Create a new agent
         if (!agent) {
           const modelValue = values.model as string | undefined;
           let modelHandle = modelValue;
@@ -251,8 +284,6 @@ async function main() {
           }
           
           agent = await createAgent(undefined, modelHandle);
-          // Save the new agent ID to settings
-          await updateSettings({ lastAgent: agent.id });
         }
 
         // Get resume data (pending approval + message history) if continuing session or using specific agent
@@ -268,9 +299,7 @@ async function main() {
       }
 
       init();
-    }, [continueSession, agentIdArg]);
-
-    const isResumingSession = continueSession || !!agentIdArg;
+    }, [continueSession, forceNew, agentIdArg]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -297,6 +326,7 @@ async function main() {
   render(
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,
+      forceNew: forceNew,
       agentIdArg: specifiedAgentId,
     }),
     {
