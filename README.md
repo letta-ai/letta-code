@@ -51,7 +51,7 @@ Letta Code uses a hierarchical memory system with both global and local blocks:
 **Local** (`./.letta/settings.json`)  
 - `project` block - stores project-specific context
 
-### Starting Letta
+### Starting Letta Code
 
 ```bash
 letta                    # New agent (attaches to existing memory blocks or creates new)
@@ -150,6 +150,11 @@ Permissions are also configured in `.letta/settings.json`:
   }
 }
 ```
+
+## Self-hosting
+
+To use Letta Code with a self-hosted server, set `LETTA_BASE_URL` to your server IP, e.g. `export LETTA_BASE_URL="http://localhost:8283"`.
+See our [self-hosting guide](https://docs.letta.com/guides/selfhosting) for more information.
 
 ## Installing from source
 
