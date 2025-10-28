@@ -74,26 +74,26 @@ letta --agent <id>       # Open specific agent
 
 ### Headless Mode
 ```bash
-letta -p "your prompt"                           # Run non-interactive
-letta -p "commit changes" --continue             # Continue previous session
-letta -p "run tests" --allowedTools "Bash"       # Control tool permissions
-letta -p "run tests" --disallowedTools "Bash"    # Control tool permissions
+letta -p "Run bun lint and correct errors"              # Run non-interactive
+letta -p "Pick up where you left off" --continue        # Continue previous session
+letta -p "Run all the test" --allowedTools "Bash"       # Control tool permissions
+letta -p "Just read the code" --disallowedTools "Bash"  # Control tool permissions
 
 # Pipe input from stdin
 echo "Explain this code" | letta -p
 cat file.txt | letta -p
-gh pr diff 123 | letta -p --yolo                 # Review PR changes
+gh pr diff 123 | letta -p --yolo
 
 # Output formats
-letta -p "analyze code" --output-format json        # Structured JSON at end
-letta -p "analyze code" --output-format stream-json # JSONL stream (one event per line)
+letta -p "Analyze this codebase" --output-format json         # Structured JSON at end
+letta -p "Analyze this codebase" --output-format stream-json  # JSONL stream (one event per line)
 ```
 
 You can also use the `--tools` flag to control the underlying *attachment* of tools (not just the permissions).
 Compared to disallowing the tool, this will additionally remove the tool schema from the agent's context window.
 ```bash
-letta -p "run tests" --tools "Bash,Read"         # Only load specific tools
-letta -p "analyze code" --tools ""               # No tools (analysis only)
+letta -p "Run all tests" --tools "Bash,Read"         # Only load specific tools
+letta -p "Just analyze the code" --tools ""          # No tools (analysis only)
 ```
 
 Use `--output-format json` to get structured output with metadata:
@@ -119,8 +119,13 @@ $ letta -p "hi there" --output-format json
     "total_tokens": 391
   }
 }
+```
 
+Use `--output-format stream-json` to get streaming outputs, in addition to a final JSON response.
+This is useful if you need to have data flowing to prevent automatic timeouts:
+```bash
 # streaming JSON output (JSONL - one event per line, token-level streaming)
+# Note: Messages are streamed at the token level - each chunk has the same otid and incrementing seqId.
 $ letta -p "hi there" --output-format stream-json
 {"type":"init","agent_id":"agent-...","model":"claude-sonnet-4-5-20250929","tools":[...]}
 {"type":"message","messageType":"reasoning_message","reasoning":"The user is asking","otid":"...","seqId":1}
@@ -131,8 +136,6 @@ $ letta -p "hi there" --output-format stream-json
 {"type":"message","messageType":"stop_reason","stopReason":"end_turn"}
 {"type":"message","messageType":"usage_statistics","promptTokens":294,"completionTokens":97,"totalTokens":391}
 {"type":"result","subtype":"success","result":"Hi! How can I help you today?","agent_id":"agent-...","usage":{...}}
-
-Note: Messages are streamed at the token level - each chunk has the same otid and incrementing seqId.
 ```
 
 ### Permissions
