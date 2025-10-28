@@ -13,7 +13,7 @@ Letta Code is a command-line harness around the stateful Letta [Agents API](http
 Letta Code is model agnostic, and supports Sonnet 4.5, GPT-5, Gemini 2.5, GLM-4.6, and more.
 
 > [!IMPORTANT]
-> Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https:/discord.gg/letta). Contributions welcome, join the fun.
+> Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https://discord.gg/letta). Contributions welcome, join the fun.
 
 ## Quickstart
 
