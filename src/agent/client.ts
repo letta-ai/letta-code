@@ -1,5 +1,5 @@
 import { LettaClient } from "@letta-ai/letta-client";
-import { loadSettings } from "../settings";
+import { loadSettings, updateSettings } from "../settings";
 
 export async function getClient() {
   const settings = await loadSettings();
@@ -18,6 +18,24 @@ export async function getClient() {
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
+
+  // Auto-cache: if env vars are set but not in settings, write them to settings
+  let needsUpdate = false;
+  const updatedEnv = { ...settings.env };
+
+  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
+    updatedEnv.LETTA_API_KEY = process.env.LETTA_API_KEY;
+    needsUpdate = true;
+  }
+
+  if (process.env.LETTA_BASE_URL && !settings.env?.LETTA_BASE_URL) {
+    updatedEnv.LETTA_BASE_URL = process.env.LETTA_BASE_URL;
+    needsUpdate = true;
+  }
+
+  if (needsUpdate) {
+    await updateSettings({ env: updatedEnv });
+  }
 
   return new LettaClient({ token, baseUrl });
 }
