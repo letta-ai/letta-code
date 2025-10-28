@@ -2,6 +2,7 @@
 .letta/settings.local.json
 .letta
 
+.idea
 node_modules
 bun.lockb
 bin/
