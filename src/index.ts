@@ -27,7 +27,8 @@ OPTIONS
   -c, --continue        Resume previous session (uses settings.lastAgent)
   -a, --agent <id>      Use a specific agent ID
   -p, --prompt          Headless prompt mode
-  -m, --model <model>   Model to use for agent (e.g., anthropic/claude-sonnet-4-5-20250929)
+  -m, --model <model>   Model to use for agent (ID from models.json or full handle)
+                        Examples: opus, gpt-5-codex, anthropic/claude-sonnet-4-5-20250929
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
 
@@ -235,7 +236,21 @@ async function main() {
         // Priority 3: Create a new agent
         if (!agent) {
           const modelValue = values.model as string | undefined;
-          agent = await createAgent(undefined, modelValue);
+          let modelHandle = modelValue;
+          
+          // If model is provided, check if it's an ID from models.json
+          if (modelValue) {
+            const modelsModule = await import("./models.json");
+            const models = modelsModule.default;
+            const selectedModel = models.find((m) => m.id === modelValue);
+            
+            if (selectedModel) {
+              modelHandle = selectedModel.handle;
+            }
+            // If not found in models.json, assume it's a raw handle and use it directly
+          }
+          
+          agent = await createAgent(undefined, modelHandle);
           // Save the new agent ID to settings
           await updateSettings({ lastAgent: agent.id });
         }
