@@ -1,10 +1,13 @@
+# Letta Code local settings
+.letta/settings.local.json
+.letta
+
 node_modules
 bun.lockb
 bin/
 letta.js
 letta.js.map
 .DS_Store
-.letta
 
 # Logs
 logs
@@ -145,6 +148,3 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-
-# Letta Code local settings
-.letta/settings.local.json
