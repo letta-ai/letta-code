@@ -18,6 +18,7 @@ export async function handleHeadlessCommand(argv: string[]) {
     args: argv,
     options: {
       continue: { type: "boolean", short: "c" },
+      new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       "output-format": { type: "string" },
     },
@@ -51,7 +52,9 @@ export async function handleHeadlessCommand(argv: string[]) {
   let agent: Letta.AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
+  const forceNew = values.new as boolean | undefined;
 
+  // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
@@ -60,6 +63,27 @@ export async function handleHeadlessCommand(argv: string[]) {
     }
   }
 
+  // Priority 2: Check if --new flag was passed (skip all resume logic)
+  if (!agent && forceNew) {
+    agent = await createAgent();
+  }
+
+  // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+  if (!agent) {
+    const { loadProjectSettings } = await import("./settings");
+    const projectSettings = await loadProjectSettings();
+    if (projectSettings?.lastAgent) {
+      try {
+        agent = await client.agents.retrieve(projectSettings.lastAgent);
+      } catch (_error) {
+        console.error(
+          `Project agent ${projectSettings.lastAgent} not found, creating new one...`,
+        );
+      }
+    }
+  }
+
+  // Priority 4: Try to reuse global lastAgent if --continue flag is passed
   if (!agent && shouldContinue && settings.lastAgent) {
     try {
       agent = await client.agents.retrieve(settings.lastAgent);
@@ -70,10 +94,15 @@ export async function handleHeadlessCommand(argv: string[]) {
     }
   }
 
+  // Priority 5: Create a new agent
   if (!agent) {
     agent = await createAgent();
-    await updateSettings({ lastAgent: agent.id });
   }
+
+  // Save agent ID to both project and global settings
+  const { updateProjectSettings } = await import("./settings");
+  await updateProjectSettings({ lastAgent: agent.id });
+  await updateSettings({ lastAgent: agent.id });
 
   // Validate output format
   const outputFormat =
