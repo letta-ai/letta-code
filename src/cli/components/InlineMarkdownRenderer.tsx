@@ -4,6 +4,7 @@ import { colors } from "./colors.js";
 
 interface InlineMarkdownProps {
   text: string;
+  dimColor?: boolean;
 }
 
 /**
@@ -11,7 +12,10 @@ interface InlineMarkdownProps {
  * Based on Gemini CLI's approach - NO ANSI codes!
  * Note: dimColor should be handled by parent Text component for proper wrapping
  */
-export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({ text }) => {
+export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
+  text,
+  dimColor,
+}) => {
   // Early return for plain text without markdown (treat underscores as plain text)
   if (!/[*~`[]/.test(text)) {
     return <>{text}</>;
@@ -43,7 +47,7 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({ text }) => {
     ) {
       // Bold
       nodes.push(
-        <Text key={key} bold>
+        <Text key={key} bold dimColor={dimColor}>
           {fullMatch.slice(2, -2)}
         </Text>,
       );
@@ -54,7 +58,7 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({ text }) => {
     ) {
       // Italic
       nodes.push(
-        <Text key={key} italic>
+        <Text key={key} italic dimColor={dimColor}>
           {fullMatch.slice(1, -1)}
         </Text>,
       );
@@ -65,7 +69,7 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({ text }) => {
     ) {
       // Strikethrough
       nodes.push(
-        <Text key={key} strikethrough>
+        <Text key={key} strikethrough dimColor={dimColor}>
           {fullMatch.slice(2, -2)}
         </Text>,
       );
