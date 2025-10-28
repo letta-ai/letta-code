@@ -286,6 +286,19 @@ async function main() {
           agent = await createAgent(undefined, modelHandle);
         }
 
+        // Save agent ID to both project and global settings
+        await updateProjectSettings({ lastAgent: agent.id });
+        await updateSettings({ lastAgent: agent.id });
+
+        // Check if we're resuming an existing agent
+        const projectSettings = await loadProjectSettings();
+        const isResumingProject =
+          !forceNew &&
+          projectSettings?.lastAgent &&
+          agent.id === projectSettings.lastAgent;
+        const resuming = continueSession || !!agentIdArg || isResumingProject;
+        setIsResumingSession(resuming);
+
         // Get resume data (pending approval + message history) if continuing session or using specific agent
         if (continueSession || agentIdArg) {
           setLoadingState("checking");
