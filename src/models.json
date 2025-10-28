@@ -15,6 +15,13 @@
     "updateArgs": { "contextWindow": 200000 }
   },
   {
+    "id": "haiku",
+    "handle": "anthropic/claude-haiku-4-5-20251001",
+    "label": "Claude Haiku 4.5",
+    "description": "Anthropic's fastest model",
+    "updateArgs": { "contextWindow": 200000 }
+  },
+  {
     "id": "gpt-5-codex",
     "handle": "openai/gpt-5-codex",
     "label": "GPT-5-Codex",
