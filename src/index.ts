@@ -299,8 +299,8 @@ async function main() {
         const resuming = continueSession || !!agentIdArg || isResumingProject;
         setIsResumingSession(resuming);
 
-        // Get resume data (pending approval + message history) if continuing session or using specific agent
-        if (continueSession || agentIdArg) {
+        // Get resume data (pending approval + message history) if resuming
+        if (resuming) {
           setLoadingState("checking");
           const data = await getResumeData(client, agent.id);
           setResumeData(data);
