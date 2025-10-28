@@ -147,7 +147,14 @@ export async function handleHeadlessCommand(argv: string[]) {
 
           // Track approval requests
           if (chunk.messageType === "approval_request_message") {
-            const toolCall = (chunk as any).toolCall;
+            const chunkWithToolCall = chunk as typeof chunk & {
+              toolCall?: {
+                toolCallId?: string;
+                name?: string;
+                arguments?: string;
+              };
+            };
+            const toolCall = chunkWithToolCall.toolCall;
             if (toolCall?.toolCallId && toolCall?.name) {
               approval = {
                 toolCallId: toolCall.toolCallId,
