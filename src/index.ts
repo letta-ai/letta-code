@@ -27,6 +27,7 @@ OPTIONS
   -c, --continue        Resume previous session (uses settings.lastAgent)
   -a, --agent <id>      Use a specific agent ID
   -p, --prompt          Headless prompt mode
+  -m, --model <model>   Model to use for agent (e.g., anthropic/claude-sonnet-4-5-20250929)
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
 
@@ -66,6 +67,7 @@ async function main() {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        model: { type: "string", short: "m" },
       },
       strict: true,
       allowPositionals: true,
@@ -232,7 +234,8 @@ async function main() {
 
         // Priority 3: Create a new agent
         if (!agent) {
-          agent = await createAgent();
+          const modelValue = values.model as string | undefined;
+          agent = await createAgent(undefined, modelValue);
           // Save the new agent ID to settings
           await updateSettings({ lastAgent: agent.id });
         }

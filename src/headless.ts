@@ -20,6 +20,7 @@ export async function handleHeadlessCommand(argv: string[]) {
       continue: { type: "boolean", short: "c" },
       agent: { type: "string", short: "a" },
       "output-format": { type: "string" },
+      model: { type: "string", short: "m" },
     },
     strict: false,
     allowPositionals: true,
@@ -71,7 +72,8 @@ export async function handleHeadlessCommand(argv: string[]) {
   }
 
   if (!agent) {
-    agent = await createAgent();
+    const modelValue = values.model as string | undefined;
+    agent = await createAgent(undefined, modelValue);
     await updateSettings({ lastAgent: agent.id });
   }
 
