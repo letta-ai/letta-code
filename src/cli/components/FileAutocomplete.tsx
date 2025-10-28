@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
-import { colors } from "./colors";
+import { useCallback, useEffect, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
+import { colors } from "./colors";
 
 interface FileMatch {
   path: string;
@@ -27,52 +27,55 @@ export function FileAutocomplete({
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
 
   // Extract the text after the "@" symbol where the cursor is positioned
-  const extractSearchQuery = (
-    input: string,
-    cursor: number,
-  ): { query: string; hasSpaceAfter: boolean; atIndex: number } | null => {
-    // Find all @ positions
-    const atPositions: number[] = [];
-    for (let i = 0; i < input.length; i++) {
-      if (input[i] === "@") {
-        // Only count @ at start or after space
-        if (i === 0 || input[i - 1] === " ") {
-          atPositions.push(i);
+  const extractSearchQuery = useCallback(
+    (
+      input: string,
+      cursor: number,
+    ): { query: string; hasSpaceAfter: boolean; atIndex: number } | null => {
+      // Find all @ positions
+      const atPositions: number[] = [];
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "@") {
+          // Only count @ at start or after space
+          if (i === 0 || input[i - 1] === " ") {
+            atPositions.push(i);
+          }
         }
       }
-    }
 
-    if (atPositions.length === 0) return null;
+      if (atPositions.length === 0) return null;
 
-    // Find which @ the cursor is in
-    let atIndex = -1;
-    for (const pos of atPositions) {
-      // Find the end of this @reference (next space or end of string)
-      const afterAt = input.slice(pos + 1);
-      const spaceIndex = afterAt.indexOf(" ");
-      const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
+      // Find which @ the cursor is in
+      let atIndex = -1;
+      for (const pos of atPositions) {
+        // Find the end of this @reference (next space or end of string)
+        const afterAt = input.slice(pos + 1);
+        const spaceIndex = afterAt.indexOf(" ");
+        const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
 
-      // Check if cursor is within this @reference
-      if (cursor >= pos && cursor <= endPos) {
-        atIndex = pos;
-        break;
+        // Check if cursor is within this @reference
+        if (cursor >= pos && cursor <= endPos) {
+          atIndex = pos;
+          break;
+        }
       }
-    }
 
-    // If cursor is not in any @reference, don't show autocomplete
-    if (atIndex === -1) return null;
+      // If cursor is not in any @reference, don't show autocomplete
+      if (atIndex === -1) return null;
 
-    // Get text after "@" until next space or end
-    const afterAt = input.slice(atIndex + 1);
-    const spaceIndex = afterAt.indexOf(" ");
-    const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
-    const hasSpaceAfter = spaceIndex !== -1;
+      // Get text after "@" until next space or end
+      const afterAt = input.slice(atIndex + 1);
+      const spaceIndex = afterAt.indexOf(" ");
+      const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
+      const hasSpaceAfter = spaceIndex !== -1;
 
-    return { query, hasSpaceAfter, atIndex };
-  };
+      return { query, hasSpaceAfter, atIndex };
+    },
+    [],
+  );
 
   // Handle keyboard navigation
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (!matches.length || isLoading) return;
 
     const maxIndex = Math.min(matches.length, 10) - 1;
@@ -183,7 +186,14 @@ export function FileAutocomplete({
         setIsLoading(false);
         onActiveChange?.(false);
       });
-  }, [currentInput, cursorPosition, onActiveChange]);
+  }, [
+    currentInput,
+    cursorPosition,
+    onActiveChange,
+    extractSearchQuery,
+    lastValidQuery,
+    matches[0]?.path,
+  ]);
 
   // Don't show if no "@" in input
   if (!currentInput.includes("@")) {
@@ -210,7 +220,7 @@ export function FileAutocomplete({
         <Text dimColor>Searching...</Text>
       ) : (
         matches.slice(0, 10).map((item, idx) => (
-          <Box key={idx} flexDirection="row" gap={1}>
+          <Box key={item.path} flexDirection="row" gap={1}>
             <Text
               color={
                 idx === selectedIndex

@@ -70,10 +70,7 @@ function searchDirectoryRecursive(
             results,
           );
         }
-      } catch {
-        // Skip entries that can't be accessed
-        continue;
-      }
+      } catch {}
     }
   } catch {
     // Can't read directory, skip
@@ -159,10 +156,7 @@ export async function searchFiles(
             path: relativePath,
             type: stats.isDirectory() ? "dir" : "file",
           });
-        } catch {
-          // Skip entries that can't be accessed
-          continue;
-        }
+        } catch {}
       }
     }
 

@@ -6,9 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { CommandPreview } from "./CommandPreview";
-import { FileAutocomplete } from "./FileAutocomplete";
 import { colors } from "./colors";
+import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ShimmerText } from "./ShimmerText";
 
@@ -304,16 +303,13 @@ export function Input({
         {/* Bottom horizontal divider */}
         <Text dimColor>{horizontalLine}</Text>
 
-        {value.includes("@") ? (
-          <FileAutocomplete
-            currentInput={value}
-            cursorPosition={currentCursorPosition}
-            onSelect={handleFileSelect}
-            onActiveChange={setIsAutocompleteActive}
-          />
-        ) : value.startsWith("/") ? (
-          <CommandPreview currentInput={value} />
-        ) : null}
+        <InputAssist
+          currentInput={value}
+          cursorPosition={currentCursorPosition}
+          onFileSelect={handleFileSelect}
+          onAutocompleteActiveChange={setIsAutocompleteActive}
+        />
+
         <Box justifyContent="space-between" marginBottom={1}>
           {ctrlCPressed ? (
             <Text dimColor>Press CTRL-C again to exit</Text>
