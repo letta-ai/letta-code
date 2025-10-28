@@ -148,3 +148,4 @@ vite.config.ts.timestamp-*
 
 # Letta Code local settings
 .letta/settings.local.json
+.idea
