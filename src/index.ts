@@ -104,9 +104,13 @@ async function main() {
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Validate API key early before any UI rendering
-  const apiKey = process.env.LETTA_API_KEY;
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   if (!apiKey) {
     console.error("Missing LETTA_API_KEY");
+    console.error(
+      "Set it via environment variable or add it to ~/.letta/settings.json:",
+    );
+    console.error('  { "env": { "LETTA_API_KEY": "sk-let-..." } }');
     process.exit(1);
   }
 
@@ -158,7 +162,7 @@ async function main() {
   if (isHeadless) {
     // For headless mode, load tools synchronously
     await loadTools();
-    const client = getClient();
+    const client = await getClient();
     await upsertToolsToServer(client);
 
     const { handleHeadlessCommand } = await import("./headless");
@@ -193,7 +197,7 @@ async function main() {
         await loadTools();
 
         setLoadingState("upserting");
-        const client = getClient();
+        const client = await getClient();
         await upsertToolsToServer(client);
 
         setLoadingState("initializing");
