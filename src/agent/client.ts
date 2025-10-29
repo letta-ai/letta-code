@@ -1,8 +1,8 @@
 import Letta from "@letta-ai/letta-client";
-import { loadSettings, updateSettings } from "../settings";
+import { settingsManager } from "../settings-manager";
 
 export async function getClient() {
-  const settings = await loadSettings();
+  const settings = settingsManager.getSettings();
 
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   if (!apiKey) {
@@ -34,7 +34,7 @@ export async function getClient() {
   }
 
   if (needsUpdate) {
-    await updateSettings({ env: updatedEnv });
+    settingsManager.updateSettings({ env: updatedEnv });
   }
 
   return new Letta({ apiKey, baseURL });

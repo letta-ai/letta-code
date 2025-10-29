@@ -4,7 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { permissionMode } from "./permissions/mode";
-import { loadSettings } from "./settings";
+import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
 
 function printHelp() {
@@ -51,8 +51,9 @@ EXAMPLES
 }
 
 async function main() {
-  // Load settings first (creates default settings file if it doesn't exist)
-  const settings = await loadSettings();
+  // Initialize settings manager (loads settings once into memory)
+  await settingsManager.initialize();
+  const settings = settingsManager.getSettings();
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
@@ -213,8 +214,6 @@ async function main() {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
-        const { updateSettings, loadProjectSettings, updateProjectSettings } =
-          await import("./settings");
 
         let agent: AgentState | null = null;
 
@@ -238,14 +237,15 @@ async function main() {
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
         if (!agent) {
-          const projectSettings = await loadProjectSettings();
-          if (projectSettings?.lastAgent) {
+          await settingsManager.loadLocalProjectSettings();
+          const localProjectSettings = settingsManager.getLocalProjectSettings();
+          if (localProjectSettings?.lastAgent) {
             try {
-              agent = await client.agents.retrieve(projectSettings.lastAgent);
-              // console.log(`Resuming project agent ${projectSettings.lastAgent}...`);
+              agent = await client.agents.retrieve(localProjectSettings.lastAgent);
+              // console.log(`Resuming project agent ${localProjectSettings.lastAgent}...`);
             } catch (error) {
               console.error(
-                `Project agent ${projectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
+                `Project agent ${localProjectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
               );
             }
           }
@@ -269,15 +269,15 @@ async function main() {
         }
 
         // Save agent ID to both project and global settings
-        await updateProjectSettings({ lastAgent: agent.id });
-        await updateSettings({ lastAgent: agent.id });
+        settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
+        settingsManager.updateSettings({ lastAgent: agent.id });
 
         // Check if we're resuming an existing agent
-        const projectSettings = await loadProjectSettings();
+        const localProjectSettings = settingsManager.getLocalProjectSettings();
         const isResumingProject =
           !forceNew &&
-          projectSettings?.lastAgent &&
-          agent.id === projectSettings.lastAgent;
+          localProjectSettings?.lastAgent &&
+          agent.id === localProjectSettings.lastAgent;
         const resuming = continueSession || !!agentIdArg || isResumingProject;
         setIsResumingSession(resuming);
 
