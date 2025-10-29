@@ -22,6 +22,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@letta-ai/letta-client": "https://pkg.stainless.com/s/letta-sdk-typescript/ce462c8e6782f4b540cadd1851b51b8896fe4636",
     "ink-link": "^5.0.0"
   },
   "optionalDependencies": {
