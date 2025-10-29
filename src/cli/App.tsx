@@ -988,8 +988,7 @@ export default function App({
 
       try {
         // Find the selected model from models.json first (for loading message)
-        const modelsModule = await import("../models.json");
-        const models = modelsModule.default;
+        const { models } = await import("../model");
         const selectedModel = models.find((m) => m.id === modelId);
 
         if (!selectedModel) {

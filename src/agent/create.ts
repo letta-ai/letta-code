@@ -13,14 +13,31 @@ import {
 } from "../project-settings";
 import { loadSettings, updateSettings } from "../settings";
 import { getToolNames } from "../tools/manager";
+import { resolveModel, formatAvailableModels } from "../model";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import { SYSTEM_PROMPT } from "./promptAssets";
 
 export async function createAgent(
   name = "letta-cli-agent",
-  model = "anthropic/claude-sonnet-4-5-20250929",
+  model?: string,
 ) {
+  // Resolve model identifier to handle
+  let modelHandle: string;
+  if (model) {
+    const resolved = resolveModel(model);
+    if (!resolved) {
+      console.error(`Error: Unknown model "${model}"`);
+      console.error("Available models:");
+      console.error(formatAvailableModels());
+      process.exit(1);
+    }
+    modelHandle = resolved;
+  } else {
+    // Use default model
+    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+  }
+
   const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
@@ -139,7 +156,7 @@ export async function createAgent(
     agent_type: "letta_v1_agent" as AgentType,
     system: SYSTEM_PROMPT,
     name,
-    model,
+    model: modelHandle,
     context_window_limit: 200_000,
     tools: toolNames,
     block_ids: blockIds,
