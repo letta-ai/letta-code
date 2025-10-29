@@ -23,7 +23,7 @@ export async function updateAgentLLMConfig(
   const client = await getClient();
 
   // Step 1: Update model (top-level field)
-  await client.agents.update(agentId, { model: modelHandle });
+  await client.agents.modify(agentId, { model: modelHandle });
 
   // Step 2: Get updated agent to retrieve current llm_config
   const agent = await client.agents.retrieve(agentId);
@@ -35,7 +35,7 @@ export async function updateAgentLLMConfig(
       ...finalConfig,
       ...updateArgs,
     } as LlmConfig;
-    await client.agents.update(agentId, { llm_config: updatedLlmConfig });
+    await client.agents.modify(agentId, { llm_config: updatedLlmConfig });
 
     // Retrieve final state
     const finalAgent = await client.agents.retrieve(agentId);
