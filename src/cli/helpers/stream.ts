@@ -1,5 +1,7 @@
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import type { LettaStreamingChunk } from "../../agent/message";
+
 import {
   type createBuffers,
   markCurrentLineAsFinished,
@@ -22,7 +24,7 @@ type DrainResult = {
 };
 
 export async function drainStream(
-  stream: AsyncIterable<LettaStreamingChunk>,
+  stream: Stream<LettaStreamingResponse>,
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
@@ -39,6 +41,8 @@ export async function drainStream(
   let lastSeqId: number | null = null;
 
   for await (const chunk of stream) {
+    // console.log("chunk", chunk);
+
     // Check if stream was aborted
     if (abortSignal?.aborted) {
       stopReason = "cancelled";

@@ -2,20 +2,13 @@
  * Utilities for sending messages to an agent
  **/
 
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  LettaMessageUnion,
-  LettaResponse,
+  LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./client";
-
-// Streaming response is a union of all message types plus control messages
-export type LettaStreamingChunk =
-  | LettaMessageUnion
-  | LettaResponse["stop_reason"]
-  | LettaResponse["usage"]
-  | { message_type: "ping" };
 
 export async function sendMessageStream(
   agentId: string,
@@ -25,11 +18,11 @@ export async function sendMessageStream(
     background?: boolean;
     // add more later: includePings, request timeouts, etc.
   } = { streamTokens: true, background: true },
-): Promise<AsyncIterable<LettaStreamingChunk>> {
+): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
   return client.agents.messages.stream(agentId, {
     messages: messages,
     stream_tokens: opts.streamTokens ?? true,
     background: opts.background ?? true,
-  }) as Promise<AsyncIterable<LettaStreamingChunk>>;
+  });
 }

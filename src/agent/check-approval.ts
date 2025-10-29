@@ -26,7 +26,8 @@ export async function getResumeData(
   agentId: string,
 ): Promise<ResumeData> {
   try {
-    const messages = await client.agents.messages.list(agentId);
+    const messagesPage = await client.agents.messages.list(agentId);
+    const messages = messagesPage.items;
     if (!messages || messages.length === 0) {
       return { pendingApproval: null, messageHistory: [] };
     }
