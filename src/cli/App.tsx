@@ -348,7 +348,7 @@ export default function App({
       const fetchConfig = async () => {
         try {
           const { getClient } = await import("../agent/client");
-          const client = getClient();
+          const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
         } catch (error) {
@@ -515,6 +515,10 @@ export default function App({
           }
 
           // Unexpected stop reason
+          // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
+          // using lastRunId to get full error message from step.errorData
+          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
+          // Then display step.errorData.message or full error details instead of generic message
           appendError(`Unexpected stop reason: ${stopReason}`);
           setStreaming(false);
           return;
@@ -542,7 +546,7 @@ export default function App({
 
     setInterruptRequested(true);
     try {
-      const client = getClient();
+      const client = await getClient();
 
       // Send cancel request to backend
       await client.agents.messages.cancel(agentId);
@@ -802,7 +806,7 @@ export default function App({
       // Check for pending approvals before sending message
       if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
         try {
-          const client = getClient();
+          const client = await getClient();
           const { pendingApproval: existingApproval } = await getResumeData(
             client,
             agentId,

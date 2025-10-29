@@ -26,7 +26,7 @@ export async function sendMessageStream(
     // add more later: includePings, request timeouts, etc.
   } = { streamTokens: true, background: true },
 ): Promise<AsyncIterable<LettaStreamingChunk>> {
-  const client = getClient();
+  const client = await getClient();
   return client.agents.messages.stream(agentId, {
     messages: messages,
     stream_tokens: opts.streamTokens ?? true,

@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { CommandPreview } from "./CommandPreview";
 import { colors } from "./colors";
+import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ShimmerText } from "./ShimmerText";
 
@@ -51,6 +51,14 @@ export function Input({
   const [currentMode, setCurrentMode] = useState<PermissionMode>(
     externalMode || permissionMode.getMode(),
   );
+  const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
+  const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
+  const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
+
+  // Command history
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [temporaryInput, setTemporaryInput] = useState("");
 
   // Sync with external mode changes (from plan approval dialog)
   useEffect(() => {
@@ -137,6 +145,44 @@ export function Input({
     }
   });
 
+  // Handle up/down arrow keys for command history
+  useInput((_input, key) => {
+    // Don't interfere with autocomplete navigation
+    if (isAutocompleteActive) {
+      return;
+    }
+
+    if (key.upArrow) {
+      // Navigate backwards in history
+      if (history.length === 0) return;
+
+      if (historyIndex === -1) {
+        // Starting to navigate history - save current input
+        setTemporaryInput(value);
+        // Go to most recent command
+        setHistoryIndex(history.length - 1);
+        setValue(history[history.length - 1] ?? "");
+      } else if (historyIndex > 0) {
+        // Go to older command
+        setHistoryIndex(historyIndex - 1);
+        setValue(history[historyIndex - 1] ?? "");
+      }
+    } else if (key.downArrow) {
+      // Navigate forwards in history
+      if (historyIndex === -1) return; // Not in history mode
+
+      if (historyIndex < history.length - 1) {
+        // Go to newer command
+        setHistoryIndex(historyIndex + 1);
+        setValue(history[historyIndex + 1] ?? "");
+      } else {
+        // At the end of history - restore temporary input
+        setHistoryIndex(-1);
+        setValue(temporaryInput);
+      }
+    }
+  });
+
   // Reset escape and ctrl-c state when user types (value changes)
   useEffect(() => {
     if (value !== previousValueRef.current && value !== "") {
@@ -147,6 +193,16 @@ export function Input({
     }
     previousValueRef.current = value;
   }, [value]);
+
+  // Exit history mode when user starts typing
+  useEffect(() => {
+    // If user is in history mode and the value changes (they're typing)
+    // Exit history mode but keep the modified text
+    if (historyIndex !== -1 && value !== history[historyIndex]) {
+      setHistoryIndex(-1);
+      setTemporaryInput("");
+    }
+  }, [value, historyIndex, history]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -172,16 +228,63 @@ export function Input({
   }, [streaming, thinkingMessage, visible]);
 
   const handleSubmit = async () => {
+    // Don't submit if autocomplete is active with matches
+    if (isAutocompleteActive) {
+      return;
+    }
+
     if (streaming || commandRunning) {
       return;
     }
     const previousValue = value;
+
+    // Add to history if not empty and not a duplicate of the last entry
+    if (previousValue.trim() && previousValue !== history[history.length - 1]) {
+      setHistory([...history, previousValue]);
+    }
+
+    // Reset history navigation
+    setHistoryIndex(-1);
+    setTemporaryInput("");
+
     setValue(""); // Clear immediately for responsiveness
     const result = await onSubmit(previousValue);
     // If message was NOT submitted (e.g. pending approval), restore it
     if (!result.submitted) {
       setValue(previousValue);
     }
+  };
+
+  // Handle file selection from autocomplete
+  const handleFileSelect = (selectedPath: string) => {
+    // Find the last "@" and replace everything after it with the selected path
+    const atIndex = value.lastIndexOf("@");
+    if (atIndex === -1) return;
+
+    const beforeAt = value.slice(0, atIndex);
+    const afterAt = value.slice(atIndex + 1);
+    const spaceIndex = afterAt.indexOf(" ");
+
+    let newValue: string;
+    let newCursorPos: number;
+
+    // Replace the query part with the selected path
+    if (spaceIndex === -1) {
+      // No space after @query, replace to end
+      newValue = `${beforeAt}@${selectedPath} `;
+      newCursorPos = newValue.length;
+    } else {
+      // Space exists, replace only the query part
+      const afterQuery = afterAt.slice(spaceIndex);
+      newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
+      newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
+    }
+
+    setValue(newValue);
+    setCursorPos(newCursorPos);
+
+    // Reset cursor position after a short delay so it only applies once
+    setTimeout(() => setCursorPos(undefined), 50);
   };
 
   // Get display name and color for permission mode
@@ -254,6 +357,8 @@ export function Input({
               value={value}
               onChange={setValue}
               onSubmit={handleSubmit}
+              cursorPosition={cursorPos}
+              onCursorMove={setCurrentCursorPosition}
             />
           </Box>
         </Box>
@@ -261,28 +366,31 @@ export function Input({
         {/* Bottom horizontal divider */}
         <Text dimColor>{horizontalLine}</Text>
 
-        {value.startsWith("/") ? (
-          <CommandPreview currentInput={value} />
-        ) : (
-          <Box justifyContent="space-between" marginBottom={1}>
-            {ctrlCPressed ? (
-              <Text dimColor>Press CTRL-C again to exit</Text>
-            ) : escapePressed ? (
-              <Text dimColor>Press Esc again to clear</Text>
-            ) : modeInfo ? (
-              <Text>
-                <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
-                <Text color={modeInfo.color} dimColor>
-                  {" "}
-                  (shift+tab to cycle)
-                </Text>
+        <InputAssist
+          currentInput={value}
+          cursorPosition={currentCursorPosition}
+          onFileSelect={handleFileSelect}
+          onAutocompleteActiveChange={setIsAutocompleteActive}
+        />
+
+        <Box justifyContent="space-between" marginBottom={1}>
+          {ctrlCPressed ? (
+            <Text dimColor>Press CTRL-C again to exit</Text>
+          ) : escapePressed ? (
+            <Text dimColor>Press Esc again to clear</Text>
+          ) : modeInfo ? (
+            <Text>
+              <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
+              <Text color={modeInfo.color} dimColor>
+                {" "}
+                (shift+tab to cycle)
               </Text>
-            ) : (
-              <Text dimColor>Press / for commands</Text>
-            )}
-            <Text dimColor>https://discord.gg/letta</Text>
-          </Box>
-        )}
+            </Text>
+          ) : (
+            <Text dimColor>Press / for commands or @ for files</Text>
+          )}
+          <Text dimColor>https://discord.gg/letta</Text>
+        </Box>
       </Box>
     </Box>
   );

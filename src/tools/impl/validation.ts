@@ -1,9 +1,9 @@
-export function validateRequiredParams(
-  args: Record<string, unknown>,
+export function validateRequiredParams<T extends object>(
+  args: T,
   required: string[],
   toolName: string,
 ): void {
-  const missing = required.filter((key) => args[key] === undefined);
+  const missing = required.filter((key) => !(key in args));
   if (missing.length > 0) {
     const received = Object.keys(args).join(", ");
     throw new Error(

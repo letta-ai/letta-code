@@ -195,7 +195,30 @@ function extractTextPart(v: unknown): string {
 
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(b: Buffers, chunk: LettaStreamingChunk) {
-  switch (chunk.message_type) {
+  // TODO remove once SDK v1 has proper typing for in-stream errors
+  // Check for streaming error objects (not typed in SDK but emitted by backend)
+  // These are emitted when LLM errors occur during streaming (rate limits, timeouts, etc.)
+  const chunkWithError = chunk as typeof chunk & {
+    error?: { message?: string; detail?: string };
+  };
+  if (chunkWithError.error && !chunk.messageType) {
+    const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errorMsg = chunkWithError.error.message || "An error occurred";
+    const errorDetail = chunkWithError.error.detail || "";
+    const fullErrorText = errorDetail
+      ? `${errorMsg}: ${errorDetail}`
+      : errorMsg;
+
+    b.byId.set(errorId, {
+      kind: "error",
+      id: errorId,
+      text: `⚠ ${fullErrorText}`,
+    });
+    b.order.push(errorId);
+    return;
+  }
+
+  switch (chunk.messageType) {
     case "reasoning_message": {
       const id = chunk.otid;
       // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);

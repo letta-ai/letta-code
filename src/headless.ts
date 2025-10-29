@@ -22,6 +22,7 @@ export async function handleHeadlessCommand(argv: string[]) {
     args: argv,
     options: {
       continue: { type: "boolean", short: "c" },
+      new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       "output-format": { type: "string" },
     },
@@ -49,13 +50,15 @@ export async function handleHeadlessCommand(argv: string[]) {
     process.exit(1);
   }
 
-  const client = getClient();
+  const client = await getClient();
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
+  const forceNew = values.new as boolean | undefined;
 
+  // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
@@ -64,6 +67,27 @@ export async function handleHeadlessCommand(argv: string[]) {
     }
   }
 
+  // Priority 2: Check if --new flag was passed (skip all resume logic)
+  if (!agent && forceNew) {
+    agent = await createAgent();
+  }
+
+  // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+  if (!agent) {
+    const { loadProjectSettings } = await import("./settings");
+    const projectSettings = await loadProjectSettings();
+    if (projectSettings?.lastAgent) {
+      try {
+        agent = await client.agents.retrieve(projectSettings.lastAgent);
+      } catch (_error) {
+        console.error(
+          `Project agent ${projectSettings.lastAgent} not found, creating new one...`,
+        );
+      }
+    }
+  }
+
+  // Priority 4: Try to reuse global lastAgent if --continue flag is passed
   if (!agent && shouldContinue && settings.lastAgent) {
     try {
       agent = await client.agents.retrieve(settings.lastAgent);
@@ -74,10 +98,15 @@ export async function handleHeadlessCommand(argv: string[]) {
     }
   }
 
+  // Priority 5: Create a new agent
   if (!agent) {
     agent = await createAgent();
-    await updateSettings({ lastAgent: agent.id });
   }
+
+  // Save agent ID to both project and global settings
+  const { updateProjectSettings } = await import("./settings");
+  await updateProjectSettings({ lastAgent: agent.id });
+  await updateSettings({ lastAgent: agent.id });
 
   // Validate output format
   const outputFormat =
@@ -95,6 +124,17 @@ export async function handleHeadlessCommand(argv: string[]) {
   // Initialize session stats
   const sessionStats = new SessionStats();
 
+  // Output init event for stream-json format
+  if (outputFormat === "stream-json") {
+    const initEvent = {
+      type: "init",
+      agent_id: agent.id,
+      model: agent.llmConfig?.model,
+      tools: agent.tools?.map((t) => t.name) || [],
+    };
+    console.log(JSON.stringify(initEvent));
+  }
+
   // Send message and process stream loop
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
@@ -107,12 +147,76 @@ export async function handleHeadlessCommand(argv: string[]) {
     while (true) {
       const stream = await sendMessageStream(agent.id, currentInput);
 
-      // Drain stream and collect approval requests
-      const { stopReason, approval, apiDurationMs } = await drainStream(
-        stream,
-        buffers,
-        () => {}, // No UI refresh needed in headless mode
-      );
+      // For stream-json, output each chunk as it arrives
+      let stopReason: Letta.StopReasonType;
+      let approval: {
+        toolCallId: string;
+        toolName: string;
+        toolArgs: string;
+      } | null = null;
+      let apiDurationMs: number;
+
+      if (outputFormat === "stream-json") {
+        const startTime = performance.now();
+        let lastStopReason: Letta.StopReasonType | null = null;
+
+        for await (const chunk of stream) {
+          // Output chunk as message event
+          console.log(
+            JSON.stringify({
+              type: "message",
+              ...chunk,
+            }),
+          );
+
+          // Still accumulate for approval tracking
+          const { onChunk } = await import("./cli/helpers/accumulator");
+          onChunk(buffers, chunk);
+
+          // Track stop reason and approval
+          if (chunk.messageType === "stop_reason") {
+            lastStopReason = chunk.stopReason;
+          }
+
+          // Track approval requests
+          if (chunk.messageType === "approval_request_message") {
+            const chunkWithToolCall = chunk as typeof chunk & {
+              toolCall?: {
+                toolCallId?: string;
+                name?: string;
+                arguments?: string;
+              };
+            };
+            const toolCall = chunkWithToolCall.toolCall;
+            if (toolCall?.toolCallId && toolCall?.name) {
+              approval = {
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.name,
+                toolArgs: toolCall.arguments || "{}",
+              };
+            }
+          }
+        }
+
+        stopReason = lastStopReason || Letta.StopReasonType.Error;
+        apiDurationMs = performance.now() - startTime;
+
+        // Mark final line as finished
+        const { markCurrentLineAsFinished } = await import(
+          "./cli/helpers/accumulator"
+        );
+        markCurrentLineAsFinished(buffers);
+      } else {
+        // Normal mode: use drainStream
+        const result = await drainStream(
+          stream,
+          buffers,
+          () => {}, // No UI refresh needed in headless mode
+        );
+        stopReason = result.stopReason;
+        approval = result.approval || null;
+        apiDurationMs = result.apiDurationMs;
+      }
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
@@ -187,6 +291,10 @@ export async function handleHeadlessCommand(argv: string[]) {
       }
 
       // Unexpected stop reason
+      // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
+      // using lastRunId to get full error message from step.errorData
+      // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
+      // Then display step.errorData.message or full error details instead of generic message
       console.error(`Unexpected stop reason: ${stopReason}`);
       process.exit(1);
     }
@@ -220,16 +328,33 @@ export async function handleHeadlessCommand(argv: string[]) {
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
       result: resultText,
-      session_id: agent.id,
+      agent_id: agent.id,
       usage: {
-        input_tokens: stats.usage.promptTokens,
-        output_tokens: stats.usage.completionTokens,
+        prompt_tokens: stats.usage.promptTokens,
+        completion_tokens: stats.usage.completionTokens,
+        total_tokens: stats.usage.totalTokens,
       },
     };
     console.log(JSON.stringify(output, null, 2));
   } else if (outputFormat === "stream-json") {
-    console.error("stream-json format not yet implemented");
-    process.exit(1);
+    // Output final result event
+    const stats = sessionStats.getSnapshot();
+    const resultEvent = {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: Math.round(stats.totalWallMs),
+      duration_api_ms: Math.round(stats.totalApiMs),
+      num_turns: stats.usage.stepCount,
+      result: resultText,
+      agent_id: agent.id,
+      usage: {
+        prompt_tokens: stats.usage.promptTokens,
+        completion_tokens: stats.usage.completionTokens,
+        total_tokens: stats.usage.totalTokens,
+      },
+    };
+    console.log(JSON.stringify(resultEvent));
   } else {
     // text format (default)
     if (!lastAssistant || !("text" in lastAssistant)) {
