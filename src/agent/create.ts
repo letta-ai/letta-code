@@ -3,6 +3,7 @@
  **/
 
 import { Letta } from "@letta-ai/letta-client";
+import models from "../models.json";
 import {
   loadProjectSettings,
   updateProjectSettings,
@@ -12,7 +13,6 @@ import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import { SYSTEM_PROMPT } from "./promptAssets";
-import models from "../models.json";
 
 export async function createAgent(
   name = "letta-cli-agent",
