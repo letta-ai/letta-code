@@ -4,7 +4,7 @@
 // - Tool calls update in-place (same toolCallId for call+return).
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
-import type { LettaStreamingChunk } from "../../agent/message";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -194,14 +194,14 @@ function extractTextPart(v: unknown): string {
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(b: Buffers, chunk: LettaStreamingChunk) {
+export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
   // TODO remove once SDK v1 has proper typing for in-stream errors
   // Check for streaming error objects (not typed in SDK but emitted by backend)
   // These are emitted when LLM errors occur during streaming (rate limits, timeouts, etc.)
   const chunkWithError = chunk as typeof chunk & {
     error?: { message?: string; detail?: string };
   };
-  if (chunkWithError.error && !chunk.messageType) {
+  if (chunkWithError.error && !chunk.message_type) {
     const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const errorMsg = chunkWithError.error.message || "An error occurred";
     const errorDetail = chunkWithError.error.detail || "";
@@ -218,7 +218,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingChunk) {
     return;
   }
 
-  switch (chunk.messageType) {
+  switch (chunk.message_type) {
     case "reasoning_message": {
       const id = chunk.otid;
       // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);
