@@ -43,6 +43,13 @@ export const commands: Record<string, Command> = {
       return "Clearing messages...";
     },
   },
+  "/clean": {
+    desc: "Choose old agents to delete",
+    handler: () => {
+      // Handled specially in App.tsx to access client and show agent list
+      return "Loading agents...";
+    },
+  },
 };
 
 /**

@@ -134,7 +134,8 @@ export const colors = {
   },
 
   // Error display
-  error: {
+  error: brandColors.statusError,
+  errorBox: {
     border: "red",
     text: "red",
   },
