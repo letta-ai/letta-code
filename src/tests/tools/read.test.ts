@@ -104,7 +104,7 @@ export default box;
   });
 
   test("throws error when file_path is missing", async () => {
-    await expect(read({} as any)).rejects.toThrow(
+    await expect(read({} as Parameters<typeof read>[0])).rejects.toThrow(
       /missing required parameter.*file_path/,
     );
   });

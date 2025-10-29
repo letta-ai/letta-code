@@ -45,7 +45,7 @@ describe("MultiEdit tool", () => {
     await expect(
       multi_edit({
         edits: [{ old_string: "foo", new_string: "bar" }],
-      } as any),
+      } as Parameters<typeof multi_edit>[0]),
     ).rejects.toThrow(/missing required parameter.*file_path/);
   });
 
@@ -56,7 +56,7 @@ describe("MultiEdit tool", () => {
     await expect(
       multi_edit({
         file_path: file,
-      } as any),
+      } as Parameters<typeof multi_edit>[0]),
     ).rejects.toThrow(/missing required parameter.*edits/);
   });
 
@@ -67,7 +67,9 @@ describe("MultiEdit tool", () => {
     await expect(
       multi_edit({
         file_path: file,
-        edits: [{ new_string: "bar" } as any],
+        edits: [
+          { new_string: "bar" } as Parameters<typeof multi_edit>[0]["edits"][0],
+        ],
       }),
     ).rejects.toThrow(/missing required parameter.*old_string/);
   });
@@ -79,7 +81,9 @@ describe("MultiEdit tool", () => {
     await expect(
       multi_edit({
         file_path: file,
-        edits: [{ old_string: "foo" } as any],
+        edits: [
+          { old_string: "foo" } as Parameters<typeof multi_edit>[0]["edits"][0],
+        ],
       }),
     ).rejects.toThrow(/missing required parameter.*new_string/);
   });
@@ -91,7 +95,11 @@ describe("MultiEdit tool", () => {
     await expect(
       multi_edit({
         file_path: file,
-        edits: [{ old_string: "foo", new_str: "baz" } as any],
+        edits: [
+          { old_string: "foo", new_str: "baz" } as Parameters<
+            typeof multi_edit
+          >[0]["edits"][0],
+        ],
       }),
     ).rejects.toThrow(/missing required parameter.*new_string/);
   });

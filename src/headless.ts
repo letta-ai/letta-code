@@ -14,10 +14,7 @@ import { drainStream } from "./cli/helpers/stream";
 import { loadSettings, updateSettings } from "./settings";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
-export async function handleHeadlessCommand(
-  argv: string[],
-  model?: string,
-) {
+export async function handleHeadlessCommand(argv: string[], model?: string) {
   const settings = await loadSettings();
 
   // Parse CLI args

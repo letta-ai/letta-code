@@ -80,7 +80,7 @@ describe("Bash tool", () => {
   });
 
   test("throws error when command is missing", async () => {
-    await expect(bash({} as any)).rejects.toThrow(
+    await expect(bash({} as Parameters<typeof bash>[0])).rejects.toThrow(
       /missing required parameter.*command/,
     );
   });
