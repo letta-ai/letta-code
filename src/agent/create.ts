@@ -11,6 +11,7 @@ import { loadSettings, updateSettings } from "../settings";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
+import { resolveModelHandle } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
 
 export async function createAgent(
@@ -24,7 +25,6 @@ export async function createAgent(
 
   // If model ID or handle is provided, use it, otherwise use default
   if (modelIdOrHandle) {
-    const { resolveModelHandle } = await import("./modify");
     model = resolveModelHandle(modelIdOrHandle);
   }
 

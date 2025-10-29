@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
+import { resolveModelHandle, updateAgentLLMConfig } from "./agent/modify";
 import { permissionMode } from "./permissions/mode";
 import { loadSettings } from "./settings";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -277,9 +278,6 @@ async function main() {
         const modelValue = values.model as string | undefined;
         const wasResumed = !forceNew && agent.id;
         if (modelValue && wasResumed) {
-          const { resolveModelHandle, updateAgentLLMConfig } = await import(
-            "./agent/modify"
-          );
           const modelHandle = resolveModelHandle(modelValue);
           await updateAgentLLMConfig(agent.id, modelHandle);
           agent = await client.agents.retrieve(agent.id);

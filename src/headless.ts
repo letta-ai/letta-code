@@ -3,6 +3,7 @@ import { Letta } from "@letta-ai/letta-client";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
+import { resolveModelHandle, updateAgentLLMConfig } from "./agent/modify";
 import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
@@ -106,9 +107,6 @@ export async function handleHeadlessCommand(argv: string[]) {
   const modelValue = values.model as string | undefined;
   const wasResumed = !forceNew && agent.id;
   if (modelValue && wasResumed) {
-    const { resolveModelHandle, updateAgentLLMConfig } = await import(
-      "./agent/modify"
-    );
     const modelHandle = resolveModelHandle(modelValue);
     await updateAgentLLMConfig(agent.id, modelHandle);
     agent = await client.agents.retrieve(agent.id);
