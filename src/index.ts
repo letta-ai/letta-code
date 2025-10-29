@@ -21,6 +21,7 @@ USAGE
 
   # headless
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
+  letta --temp -p "..." Create ephemeral agent (deleted after completion)
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -29,6 +30,7 @@ OPTIONS
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -p, --prompt          Headless prompt mode
+  --temp                Create ephemeral agent (headless only, deleted after completion)
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
 
@@ -44,6 +46,9 @@ EXAMPLES
   
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
+  
+  # ephemeral agent (created and deleted after completion)
+  letta --temp -p "Analyze this codebase"
 
 `.trim();
 
@@ -73,6 +78,7 @@ async function main() {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        temp: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -110,6 +116,13 @@ async function main() {
   const forceNew = (values.new as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const isTemp = (values.temp as boolean | undefined) ?? false;
+
+  // Validate --temp flag (only works in headless mode)
+  if (isTemp && !isHeadless) {
+    console.error("Error: --temp flag can only be used in headless mode (with -p or --prompt)");
+    process.exit(1);
+  }
 
   // Validate API key early before any UI rendering
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;

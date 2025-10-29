@@ -25,6 +25,7 @@ export async function handleHeadlessCommand(argv: string[]) {
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       "output-format": { type: "string" },
+      temp: { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -57,56 +58,62 @@ export async function handleHeadlessCommand(argv: string[]) {
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const isTemp = values.temp as boolean | undefined;
 
-  // Priority 1: Try to use --agent specified ID
-  if (specifiedAgentId) {
-    try {
-      agent = await client.agents.retrieve(specifiedAgentId);
-    } catch (_error) {
-      console.error(`Agent ${specifiedAgentId} not found, creating new one...`);
-    }
-  }
-
-  // Priority 2: Check if --new flag was passed (skip all resume logic)
-  if (!agent && forceNew) {
+  // Priority 0: If --temp flag, always create new ephemeral agent (skip all resume logic)
+  if (isTemp) {
     agent = await createAgent();
-  }
-
-  // Priority 3: Try to resume from project settings (.letta/settings.local.json)
-  if (!agent) {
-    const { loadProjectSettings } = await import("./settings");
-    const projectSettings = await loadProjectSettings();
-    if (projectSettings?.lastAgent) {
+  } else {
+    // Priority 1: Try to use --agent specified ID
+    if (specifiedAgentId) {
       try {
-        agent = await client.agents.retrieve(projectSettings.lastAgent);
+        agent = await client.agents.retrieve(specifiedAgentId);
+      } catch (_error) {
+        console.error(`Agent ${specifiedAgentId} not found, creating new one...`);
+      }
+    }
+
+    // Priority 2: Check if --new flag was passed (skip all resume logic)
+    if (!agent && forceNew) {
+      agent = await createAgent();
+    }
+
+    // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+    if (!agent) {
+      const { loadProjectSettings } = await import("./settings");
+      const projectSettings = await loadProjectSettings();
+      if (projectSettings?.lastAgent) {
+        try {
+          agent = await client.agents.retrieve(projectSettings.lastAgent);
+        } catch (_error) {
+          console.error(
+            `Project agent ${projectSettings.lastAgent} not found, creating new one...`,
+          );
+        }
+      }
+    }
+
+    // Priority 4: Try to reuse global lastAgent if --continue flag is passed
+    if (!agent && shouldContinue && settings.lastAgent) {
+      try {
+        agent = await client.agents.retrieve(settings.lastAgent);
       } catch (_error) {
         console.error(
-          `Project agent ${projectSettings.lastAgent} not found, creating new one...`,
+          `Previous agent ${settings.lastAgent} not found, creating new one...`,
         );
       }
     }
-  }
 
-  // Priority 4: Try to reuse global lastAgent if --continue flag is passed
-  if (!agent && shouldContinue && settings.lastAgent) {
-    try {
-      agent = await client.agents.retrieve(settings.lastAgent);
-    } catch (_error) {
-      console.error(
-        `Previous agent ${settings.lastAgent} not found, creating new one...`,
-      );
+    // Priority 5: Create a new agent
+    if (!agent) {
+      agent = await createAgent();
     }
-  }
 
-  // Priority 5: Create a new agent
-  if (!agent) {
-    agent = await createAgent();
+    // Save agent ID to both project and global settings (skip for temp agents)
+    const { updateProjectSettings } = await import("./settings");
+    await updateProjectSettings({ lastAgent: agent.id });
+    await updateSettings({ lastAgent: agent.id });
   }
-
-  // Save agent ID to both project and global settings
-  const { updateProjectSettings } = await import("./settings");
-  await updateProjectSettings({ lastAgent: agent.id });
-  await updateSettings({ lastAgent: agent.id });
 
   // Validate output format
   const outputFormat =
@@ -362,5 +369,14 @@ export async function handleHeadlessCommand(argv: string[]) {
       process.exit(1);
     }
     console.log(lastAssistant.text);
+  }
+
+  // Clean up ephemeral agent if --temp flag was used
+  if (isTemp) {
+    try {
+      await client.agents.delete(agent.id);
+    } catch (error) {
+      console.error(`Warning: Failed to delete temporary agent ${agent.id}:`, error);
+    }
   }
 }
