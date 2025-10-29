@@ -145,6 +145,7 @@ export async function createAgent(
     context_window_limit: 200_000,
     tools: toolNames,
     block_ids: blockIds,
+    tags: ["origin:letta-code"],
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,
