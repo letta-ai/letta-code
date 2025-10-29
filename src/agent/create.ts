@@ -21,6 +21,7 @@ import { SYSTEM_PROMPT } from "./promptAssets";
 export async function createAgent(
   name = "letta-cli-agent",
   model?: string,
+  embeddingModel = "openai/text-embedding-3-small",
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -156,6 +157,7 @@ export async function createAgent(
     agent_type: "letta_v1_agent" as AgentType,
     system: SYSTEM_PROMPT,
     name,
+    embedding: embeddingModel,
     model: modelHandle,
     context_window_limit: 200_000,
     tools: toolNames,
