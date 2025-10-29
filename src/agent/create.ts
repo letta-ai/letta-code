@@ -38,7 +38,7 @@ export async function createAgent(
     "memory",
     "web_search",
     "conversation_search",
-    "fetch_web",
+    "fetch_webpage",
   ];
 
   // Load memory blocks from .mdx files
