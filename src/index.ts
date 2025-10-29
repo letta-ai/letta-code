@@ -236,7 +236,8 @@ async function main() {
         // Priority 2: Check if --new flag was passed (skip all resume logic)
         if (!agent && forceNew) {
           // Create new agent, don't check any lastAgent fields
-          agent = await createAgent();
+          const modelValue = values.model as string | undefined;
+          agent = await createAgent(undefined, modelValue);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -269,21 +270,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const modelValue = values.model as string | undefined;
-          let modelHandle = modelValue;
-          
-          // If model is provided, check if it's an ID from models.json
-          if (modelValue) {
-            const modelsModule = await import("./models.json");
-            const models = modelsModule.default;
-            const selectedModel = models.find((m) => m.id === modelValue);
-            
-            if (selectedModel) {
-              modelHandle = selectedModel.handle;
-            }
-            // If not found in models.json, assume it's a raw handle and use it directly
-          }
-          
-          agent = await createAgent(undefined, modelHandle);
+          agent = await createAgent(undefined, modelValue);
         }
 
         // Save agent ID to both project and global settings

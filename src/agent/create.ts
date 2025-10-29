@@ -12,12 +12,22 @@ import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import { SYSTEM_PROMPT } from "./promptAssets";
+import models from "../models.json";
 
 export async function createAgent(
   name = "letta-cli-agent",
-  model = "anthropic/claude-sonnet-4-5-20250929",
+  modelIdOrHandle?: string,
 ) {
   const client = await getClient();
+
+  // Default model
+  let model = "anthropic/claude-sonnet-4-5-20250929";
+
+  // If model ID or handle is provided, use it, otherwise use default
+  if (modelIdOrHandle) {
+    const selectedModel = models.find((m) => m.id === modelIdOrHandle);
+    model = selectedModel ? selectedModel.handle : modelIdOrHandle;
+  }
 
   // Get loaded tool names (tools are already registered with Letta)
   const toolNames = [
