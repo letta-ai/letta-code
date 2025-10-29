@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
