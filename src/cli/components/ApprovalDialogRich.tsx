@@ -374,7 +374,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
           flexDirection="column"
           paddingX={1}
         >
-          <Text bold>Enter reason for denial (ESC to cancel):</Text>
+          <Text bold>What should Letta do differently? (esc to cancel):</Text>
           <Box height={1} />
           <Box>
             <Text dimColor>{"> "}</Text>
