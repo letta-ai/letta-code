@@ -83,8 +83,12 @@ Join our [Discord](https://discord.gg/letta) to share feedback on persistence pa
 letta                    # Auto-resume project agent (or create new if first time)
 letta --new              # Force create new agent
 letta --agent <id>       # Use specific agent ID
+letta --model <model>    # Specify model (e.g., claude-sonnet-4.5, gpt-4o)
+letta -m <model>         # Short form of --model
 letta --continue         # Resume global last agent (deprecated, use project-based)
 ```
+
+> **Note:** The `--model` flag is inconsistent when resuming sessions. We recommend using the `/model` command instead to change models in interactive mode.
 
 ### Headless Mode
 ```bash
@@ -93,6 +97,7 @@ letta -p "Pick up where you left off"                   # Same - auto-resumes by
 letta -p "Start fresh" --new                            # Force new agent
 letta -p "Run all the test" --allowedTools "Bash"       # Control tool permissions
 letta -p "Just read the code" --disallowedTools "Bash"  # Control tool permissions
+letta -p "Explain this code" -m gpt-4o                  # Use specific model
 
 # Pipe input from stdin
 echo "Explain this code" | letta -p
