@@ -3,7 +3,6 @@
  **/
 
 import { Letta } from "@letta-ai/letta-client";
-import models from "../models.json";
 import {
   loadProjectSettings,
   updateProjectSettings,
@@ -25,8 +24,8 @@ export async function createAgent(
 
   // If model ID or handle is provided, use it, otherwise use default
   if (modelIdOrHandle) {
-    const selectedModel = models.find((m) => m.id === modelIdOrHandle);
-    model = selectedModel ? selectedModel.handle : modelIdOrHandle;
+    const { resolveModelHandle } = await import("./modify");
+    model = resolveModelHandle(modelIdOrHandle);
   }
 
   // Get loaded tool names (tools are already registered with Letta)

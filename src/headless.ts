@@ -102,6 +102,18 @@ export async function handleHeadlessCommand(argv: string[]) {
     agent = await createAgent(undefined, modelValue);
   }
 
+  // If --model flag was provided and we resumed an existing agent, update the model
+  const modelValue = values.model as string | undefined;
+  const wasResumed = !forceNew && agent.id;
+  if (modelValue && wasResumed) {
+    const { resolveModelHandle, updateAgentLLMConfig } = await import(
+      "./agent/modify"
+    );
+    const modelHandle = resolveModelHandle(modelValue);
+    await updateAgentLLMConfig(agent.id, modelHandle);
+    agent = await client.agents.retrieve(agent.id);
+  }
+
   // Save agent ID to both project and global settings
   const { updateProjectSettings } = await import("./settings");
   await updateProjectSettings({ lastAgent: agent.id });

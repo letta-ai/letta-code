@@ -2,7 +2,21 @@
 // Utilities for modifying agent configuration
 
 import type { Letta } from "@letta-ai/letta-client";
+import models from "../models.json";
 import { getClient } from "./client";
+
+/**
+ * Resolves a model ID or handle to a full model handle.
+ * If the input matches an ID in models.json, returns that model's handle.
+ * Otherwise, assumes it's already a full handle and returns it as-is.
+ *
+ * @param modelIdOrHandle - Model ID (e.g., "opus") or full handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
+ * @returns The full model handle
+ */
+export function resolveModelHandle(modelIdOrHandle: string): string {
+  const selectedModel = models.find((m) => m.id === modelIdOrHandle);
+  return selectedModel ? selectedModel.handle : modelIdOrHandle;
+}
 
 /**
  * Updates an agent's model and LLM configuration.
