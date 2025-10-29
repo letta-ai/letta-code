@@ -1,11 +1,11 @@
-import { LettaClient } from "@letta-ai/letta-client";
+import Letta from "@letta-ai/letta-client";
 import { loadSettings, updateSettings } from "../settings";
 
 export async function getClient() {
   const settings = await loadSettings();
 
-  const token = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  if (!token) {
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  if (!apiKey) {
     console.error("Missing LETTA_API_KEY");
     console.error(
       "Set it via environment variable or add it to ~/.letta/settings.json:",
@@ -14,7 +14,7 @@ export async function getClient() {
     process.exit(1);
   }
 
-  const baseUrl =
+  const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
@@ -37,5 +37,5 @@ export async function getClient() {
     await updateSettings({ env: updatedEnv });
   }
 
-  return new LettaClient({ token, baseUrl });
+  return new Letta({ apiKey, baseURL });
 }

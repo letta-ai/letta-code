@@ -1,7 +1,8 @@
 // src/agent/check-approval.ts
 // Check for pending approvals and retrieve recent message history when resuming an agent
 
-import type { Letta, LettaClient } from "@letta-ai/letta-client";
+import type Letta from "@letta-ai/letta-client";
+import type { LettaMessageUnion } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 
 // Number of recent messages to backfill when resuming a session
@@ -9,7 +10,7 @@ const MESSAGE_HISTORY_LIMIT = 15;
 
 export interface ResumeData {
   pendingApproval: ApprovalRequest | null;
-  messageHistory: Letta.LettaMessageUnion[];
+  messageHistory: LettaMessageUnion[];
 }
 
 /**
@@ -21,11 +22,12 @@ export interface ResumeData {
  * @returns Pending approval (if any) and recent message history
  */
 export async function getResumeData(
-  client: LettaClient,
+  client: Letta,
   agentId: string,
 ): Promise<ResumeData> {
   try {
-    const messages = await client.agents.messages.list(agentId);
+    const messagesPage = await client.agents.messages.list(agentId);
+    const messages = messagesPage.items;
     if (!messages || messages.length === 0) {
       return { pendingApproval: null, messageHistory: [] };
     }
@@ -33,14 +35,25 @@ export async function getResumeData(
     // Check for pending approval (last message)
     let pendingApproval: ApprovalRequest | null = null;
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.messageType === "approval_request_message") {
-      const approvalMessage = lastMessage as Letta.ApprovalRequestMessage;
-      const toolCall = approvalMessage.toolCall;
-      pendingApproval = {
-        toolCallId: toolCall.toolCallId || "",
-        toolName: toolCall.name || "",
-        toolArgs: toolCall.arguments || "",
-      };
+    if (lastMessage?.message_type === "approval_request_message") {
+      // Use tool_calls array (new) or fallback to tool_call (deprecated)
+      const toolCalls = Array.isArray(lastMessage.tool_calls)
+        ? lastMessage.tool_calls
+        : lastMessage.tool_call
+          ? [lastMessage.tool_call]
+          : [];
+
+      if (toolCalls.length > 0) {
+        const toolCall = toolCalls[0];
+        // Ensure all required fields are present (type guard for ToolCall vs ToolCallDelta)
+        if (toolCall?.tool_call_id && toolCall.name && toolCall.arguments) {
+          pendingApproval = {
+            toolCallId: toolCall.tool_call_id,
+            toolName: toolCall.name,
+            toolArgs: toolCall.arguments,
+          };
+        }
+      }
     }
 
     // Get last N messages for backfill
@@ -48,7 +61,7 @@ export async function getResumeData(
     let messageHistory = messages.slice(-historyCount);
 
     // Skip if starts with orphaned tool_return (incomplete turn)
-    if (messageHistory[0]?.messageType === "tool_return_message") {
+    if (messageHistory[0]?.message_type === "tool_return_message") {
       messageHistory = messageHistory.slice(1);
     }
 

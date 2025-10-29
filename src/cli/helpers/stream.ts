@@ -1,4 +1,7 @@
-import { Letta } from "@letta-ai/letta-client";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+
 import {
   type createBuffers,
   markCurrentLineAsFinished,
@@ -13,7 +16,7 @@ export type ApprovalRequest = {
 };
 
 type DrainResult = {
-  stopReason: Letta.StopReasonType;
+  stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
   approval?: ApprovalRequest | null; // present only if we ended due to approval
@@ -21,7 +24,7 @@ type DrainResult = {
 };
 
 export async function drainStream(
-  stream: AsyncIterable<Letta.LettaStreamingResponse>,
+  stream: Stream<LettaStreamingResponse>,
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
@@ -33,29 +36,36 @@ export async function drainStream(
   let toolName: string | null = null;
   let toolArgs: string | null = null;
 
-  let stopReason: Letta.StopReasonType | null = null;
+  let stopReason: StopReasonType | null = null;
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
 
   for await (const chunk of stream) {
+    // console.log("chunk", chunk);
+
     // Check if stream was aborted
     if (abortSignal?.aborted) {
-      stopReason = "cancelled" as Letta.StopReasonType;
+      stopReason = "cancelled";
       // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
       markIncompleteToolsAsCancelled(buffers);
       queueMicrotask(refresh);
       break;
     }
-    // Store the runId and seqId to re-connect if stream is interrupted
-    if ("runId" in chunk && "seqId" in chunk && chunk.runId && chunk.seqId) {
-      lastRunId = chunk.runId;
-      lastSeqId = chunk.seqId;
+    // Store the run_id and seq_id to re-connect if stream is interrupted
+    if (
+      "run_id" in chunk &&
+      "seq_id" in chunk &&
+      chunk.run_id &&
+      chunk.seq_id
+    ) {
+      lastRunId = chunk.run_id;
+      lastSeqId = chunk.seq_id;
     }
 
-    if (chunk.messageType === "ping") continue;
+    if (chunk.message_type === "ping") continue;
 
     // Need to store the approval request ID to send an approval in a new run
-    if (chunk.messageType === "approval_request_message") {
+    if (chunk.message_type === "approval_request_message") {
       approvalRequestId = chunk.id;
     }
 
@@ -63,25 +73,32 @@ export async function drainStream(
     // in both the onChunk handler and here, we could refactor to instead pull the tool name
     // and JSON args from the mutated lines (eg last mutated line)
     if (
-      chunk.messageType === "tool_call_message" ||
-      chunk.messageType === "approval_request_message"
+      chunk.message_type === "tool_call_message" ||
+      chunk.message_type === "approval_request_message"
     ) {
-      if (chunk.toolCall?.toolCallId) {
-        toolCallId = chunk.toolCall.toolCallId;
+      // Use deprecated tool_call or new tool_calls array
+      const toolCall =
+        chunk.tool_call ||
+        (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
+          ? chunk.tool_calls[0]
+          : null);
+
+      if (toolCall?.tool_call_id) {
+        toolCallId = toolCall.tool_call_id;
       }
-      if (chunk.toolCall?.name) {
+      if (toolCall?.name) {
         if (toolName) {
           // TODO would expect that we should allow stacking? I guess not?
-          //   toolName = toolName + chunk.toolCall.name;
+          //   toolName = toolName + toolCall.name;
         } else {
-          toolName = chunk.toolCall.name;
+          toolName = toolCall.name;
         }
       }
-      if (chunk.toolCall?.arguments) {
+      if (toolCall?.arguments) {
         if (toolArgs) {
-          toolArgs = toolArgs + chunk.toolCall.arguments;
+          toolArgs = toolArgs + toolCall.arguments;
         } else {
-          toolArgs = chunk.toolCall.arguments;
+          toolArgs = toolCall.arguments;
         }
       }
     }
@@ -89,15 +106,15 @@ export async function drainStream(
     onChunk(buffers, chunk);
     queueMicrotask(refresh);
 
-    if (chunk.messageType === "stop_reason") {
-      stopReason = chunk.stopReason;
+    if (chunk.message_type === "stop_reason") {
+      stopReason = chunk.stop_reason;
       // Continue reading stream to get usage_statistics that may come after
     }
   }
 
   // Stream has ended, check if we captured a stop reason
   if (!stopReason) {
-    stopReason = Letta.StopReasonType.Error;
+    stopReason = "error";
   }
 
   // Mark the final line as finished now that stream has ended

@@ -1,4 +1,8 @@
-import type { Letta } from "@letta-ai/letta-client";
+import type {
+  LettaAssistantMessageContentUnion,
+  LettaMessageUnion,
+  LettaUserMessageContentUnion,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { Buffers } from "./accumulator";
 
 // const PASTE_LINE_THRESHOLD = 5;
@@ -16,7 +20,7 @@ function clip(s: string, limit: number): string {
 }
 
 function renderAssistantContentParts(
-  parts: Letta.AssistantMessageContent,
+  parts: string | LettaAssistantMessageContentUnion[],
 ): string {
   // AssistantContent can be a string or an array of text parts
   if (typeof parts === "string") return parts;
@@ -29,7 +33,9 @@ function renderAssistantContentParts(
   return out;
 }
 
-function renderUserContentParts(parts: Letta.UserMessageContent): string {
+function renderUserContentParts(
+  parts: string | LettaUserMessageContentUnion[],
+): string {
   // UserContent can be a string or an array of text OR image parts
   // for text parts, we clip them if they're too big (eg copy-pasted chunks)
   // for image parts, we just show a placeholder
@@ -49,7 +55,7 @@ function renderUserContentParts(parts: Letta.UserMessageContent): string {
 
 export function backfillBuffers(
   buffers: Buffers,
-  history: Letta.LettaMessageUnion[],
+  history: LettaMessageUnion[],
 ): void {
   // Clear buffers to ensure idempotency (in case this is called multiple times)
   buffers.order = [];
@@ -65,7 +71,7 @@ export function backfillBuffers(
     // Use otid as line ID when available (like streaming does), fall back to msg.id
     const lineId = "otid" in msg && msg.otid ? msg.otid : msg.id;
 
-    switch (msg.messageType) {
+    switch (msg.message_type) {
       // user message - content parts may include text and image parts
       case "user_message": {
         const exists = buffers.byId.has(lineId);
@@ -107,9 +113,16 @@ export function backfillBuffers(
       // tool call message OR approval request (they're the same in history)
       case "tool_call_message":
       case "approval_request_message": {
-        if ("toolCall" in msg && msg.toolCall?.toolCallId) {
-          const toolCall = msg.toolCall;
-          const toolCallId = toolCall.toolCallId;
+        // Use tool_calls array (new) or fallback to tool_call (deprecated)
+        const toolCalls = Array.isArray(msg.tool_calls)
+          ? msg.tool_calls
+          : msg.tool_call
+            ? [msg.tool_call]
+            : [];
+
+        if (toolCalls.length > 0 && toolCalls[0]?.tool_call_id) {
+          const toolCall = toolCalls[0];
+          const toolCallId = toolCall.tool_call_id;
           const exists = buffers.byId.has(lineId);
 
           buffers.byId.set(lineId, {
@@ -130,7 +143,7 @@ export function backfillBuffers(
 
       // tool return message - merge into the existing tool call line
       case "tool_return_message": {
-        const toolCallId = msg.toolCallId;
+        const toolCallId = msg.tool_call_id;
         if (!toolCallId) break;
 
         // Look up the line using the mapping (like streaming does)
@@ -143,7 +156,7 @@ export function backfillBuffers(
         // Update the existing line with the result
         buffers.byId.set(toolCallLineId, {
           ...existingLine,
-          resultText: msg.toolReturn,
+          resultText: msg.tool_return,
           resultOk: msg.status === "success",
           phase: "finished",
         });
