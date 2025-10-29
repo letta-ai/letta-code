@@ -2,7 +2,11 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import { Letta } from "@letta-ai/letta-client";
+import type {
+  AgentType,
+  Block,
+  CreateBlock,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import {
   loadProjectSettings,
   updateProjectSettings,
@@ -39,7 +43,7 @@ export async function createAgent(
   const localSharedBlockIds = projectSettings.localSharedBlockIds;
 
   // Retrieve existing blocks (both global and local) and match them with defaults
-  const existingBlocks = new Map<string, Letta.Block>();
+  const existingBlocks = new Map<string, Block>();
 
   // Load global blocks (persona, human)
   for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
@@ -69,7 +73,7 @@ export async function createAgent(
 
   // Separate blocks into existing (reuse) and new (create)
   const blockIds: string[] = [];
-  const blocksToCreate: Array<{ block: Letta.CreateBlock; label: string }> = [];
+  const blocksToCreate: Array<{ block: CreateBlock; label: string }> = [];
 
   for (const defaultBlock of defaultMemoryBlocks) {
     const existingBlock = existingBlocks.get(defaultBlock.label);
@@ -131,17 +135,17 @@ export async function createAgent(
 
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
-    agentType: Letta.AgentType.LettaV1Agent,
+    agent_type: "letta_v1_agent" as AgentType,
     system: SYSTEM_PROMPT,
     name,
     model,
-    contextWindowLimit: 200_000,
+    context_window_limit: 200_000,
     tools: toolNames,
-    blockIds,
+    block_ids: blockIds,
     // should be default off, but just in case
-    includeBaseTools: false,
-    includeBaseToolRules: false,
-    initialMessageSequence: [],
+    include_base_tools: false,
+    include_base_tool_rules: false,
+    initial_message_sequence: [],
   });
   return agent; // { id, ... }
 }
