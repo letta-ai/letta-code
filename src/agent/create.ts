@@ -20,7 +20,7 @@ import { SYSTEM_PROMPT } from "./promptAssets";
 export async function createAgent(
   name = "letta-cli-agent",
   model = "anthropic/claude-sonnet-4-5-20250929",
-  embeddingModel  = "openai/text-embedding-3-small"
+  embeddingModel = "openai/text-embedding-3-small"
 ) {
   const client = await getClient();
 
