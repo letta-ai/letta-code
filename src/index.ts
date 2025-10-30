@@ -55,6 +55,14 @@ async function main() {
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
 
+  // set LETTA_API_KEY from environment if available
+  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
+    settings.env = settings.env || {};
+    settings.env.LETTA_API_KEY = process.env.LETTA_API_KEY;
+
+    settingsManager.updateSettings({ env: settings.env });
+  }
+
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
   try {
@@ -113,7 +121,7 @@ async function main() {
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Validate API key early before any UI rendering
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+  const apiKey = settings.env?.LETTA_API_KEY;
   if (!apiKey) {
     console.error("Missing LETTA_API_KEY");
     console.error(
