@@ -4,7 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { permissionMode } from "./permissions/mode";
-import { settingsManager } from "./settings-manager";
+import { loadSettings } from "./settings";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
 
 function printHelp() {
@@ -51,17 +51,8 @@ EXAMPLES
 }
 
 async function main() {
-  // Initialize settings manager (loads settings once into memory)
-  await settingsManager.initialize();
-  const settings = settingsManager.getSettings();
-
-  // set LETTA_API_KEY from environment if available
-  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
-    settings.env = settings.env || {};
-    settings.env.LETTA_API_KEY = process.env.LETTA_API_KEY;
-
-    settingsManager.updateSettings({ env: settings.env });
-  }
+  // Load settings first (creates default settings file if it doesn't exist)
+  const settings = await loadSettings();
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
@@ -121,7 +112,7 @@ async function main() {
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Validate API key early before any UI rendering
-  const apiKey = settings.env?.LETTA_API_KEY;
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   if (!apiKey) {
     console.error("Missing LETTA_API_KEY");
     console.error(
@@ -222,6 +213,8 @@ async function main() {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
+        const { updateSettings, loadProjectSettings, updateProjectSettings } =
+          await import("./settings");
 
         let agent: AgentState | null = null;
 
@@ -245,18 +238,14 @@ async function main() {
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
         if (!agent) {
-          await settingsManager.loadLocalProjectSettings();
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
+          const projectSettings = await loadProjectSettings();
+          if (projectSettings?.lastAgent) {
             try {
-              agent = await client.agents.retrieve(
-                localProjectSettings.lastAgent,
-              );
-              // console.log(`Resuming project agent ${localProjectSettings.lastAgent}...`);
+              agent = await client.agents.retrieve(projectSettings.lastAgent);
+              // console.log(`Resuming project agent ${projectSettings.lastAgent}...`);
             } catch (error) {
               console.error(
-                `Project agent ${localProjectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
+                `Project agent ${projectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
               );
             }
           }
@@ -280,15 +269,15 @@ async function main() {
         }
 
         // Save agent ID to both project and global settings
-        settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-        settingsManager.updateSettings({ lastAgent: agent.id });
+        await updateProjectSettings({ lastAgent: agent.id });
+        await updateSettings({ lastAgent: agent.id });
 
         // Check if we're resuming an existing agent
-        const localProjectSettings = settingsManager.getLocalProjectSettings();
+        const projectSettings = await loadProjectSettings();
         const isResumingProject =
           !forceNew &&
-          localProjectSettings?.lastAgent &&
-          agent.id === localProjectSettings.lastAgent;
+          projectSettings?.lastAgent &&
+          agent.id === projectSettings.lastAgent;
         const resuming = continueSession || !!agentIdArg || isResumingProject;
         setIsResumingSession(resuming);
 

@@ -638,8 +638,8 @@ export default function App({
             setTokenStreamingEnabled(newValue);
 
             // Save to settings
-            const { settingsManager } = await import("../settings-manager");
-            settingsManager.updateSettings({ tokenStreaming: newValue });
+            const { updateSettings } = await import("../settings");
+            await updateSettings({ tokenStreaming: newValue });
 
             // Update the same command with final result
             buffersRef.current.byId.set(cmdId, {
