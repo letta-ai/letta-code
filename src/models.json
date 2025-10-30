@@ -5,21 +5,21 @@
     "label": "Default (recommended)",
     "description": "Use the default model (currently Sonnet 4.5)",
     "isDefault": true,
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "opus",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
     "description": "Anthropic's smartest (and slowest) model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "haiku",
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Claude Haiku 4.5",
     "description": "Anthropic's fastest model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "gpt-5-codex",
@@ -81,27 +81,27 @@
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
     "description": "Google's fastest model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "gemini-pro",
     "handle": "google_ai/gemini-2.5-pro",
     "label": "Gemini 2.5 Pro",
     "description": "Google's smartest model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "gpt-4.1",
     "handle": "openai/gpt-4.1",
     "label": "GPT-4.1",
     "description": "OpenAI's most recent non-reasoner model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   },
   {
     "id": "o4-mini",
     "handle": "openai/o4-mini",
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
-    "updateArgs": { "contextWindow": 200000 }
+    "updateArgs": { "contextWindow": 180000 }
   }
 ]

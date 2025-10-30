@@ -28,6 +28,7 @@ OPTIONS
   --new                 Force create new agent (skip auto-resume)
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
+  -m, --model <id>      Model ID or handle (e.g., "opus" or "anthropic/claude-opus-4-1-20250805")
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
@@ -74,6 +75,7 @@ async function main() {
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
         agent: { type: "string", short: "a" },
+        model: { type: "string", short: "m" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
         tools: { type: "string" },
@@ -118,6 +120,7 @@ async function main() {
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
+  const specifiedModel = (values.model as string | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Validate API key early before any UI rendering
@@ -183,7 +186,7 @@ async function main() {
     await upsertToolsToServer(client);
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(process.argv);
+    await handleHeadlessCommand(process.argv, specifiedModel);
     return;
   }
 
@@ -198,10 +201,12 @@ async function main() {
     continueSession,
     forceNew,
     agentIdArg,
+    model,
   }: {
     continueSession: boolean;
     forceNew: boolean;
     agentIdArg: string | null;
+    model?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
@@ -240,7 +245,7 @@ async function main() {
         // Priority 2: Check if --new flag was passed (skip all resume logic)
         if (!agent && forceNew) {
           // Create new agent, don't check any lastAgent fields
-          agent = await createAgent();
+          agent = await createAgent(undefined, model);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -276,7 +281,7 @@ async function main() {
 
         // Priority 5: Create a new agent
         if (!agent) {
-          agent = await createAgent();
+          agent = await createAgent(undefined, model);
         }
 
         // Save agent ID to both project and global settings
@@ -305,7 +310,7 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, agentIdArg]);
+    }, [continueSession, forceNew, agentIdArg, model]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -334,6 +339,7 @@ async function main() {
       continueSession: shouldContinue,
       forceNew: forceNew,
       agentIdArg: specifiedAgentId,
+      model: specifiedModel,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard

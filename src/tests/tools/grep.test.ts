@@ -58,7 +58,7 @@ describe("Grep tool", () => {
   });
 
   test("throws error when pattern is missing", async () => {
-    await expect(grep({} as any)).rejects.toThrow(
+    await expect(grep({} as Parameters<typeof grep>[0])).rejects.toThrow(
       /missing required parameter.*pattern/,
     );
   });

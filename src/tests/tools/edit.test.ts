@@ -71,7 +71,7 @@ describe("Edit tool", () => {
       edit({
         old_string: "foo",
         new_string: "bar",
-      } as any),
+      } as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*file_path/);
   });
 
@@ -83,7 +83,7 @@ describe("Edit tool", () => {
       edit({
         file_path: file,
         new_string: "bar",
-      } as any),
+      } as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*old_string/);
   });
 
@@ -95,7 +95,7 @@ describe("Edit tool", () => {
       edit({
         file_path: file,
         old_string: "foo",
-      } as any),
+      } as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*new_string/);
   });
 
@@ -108,7 +108,7 @@ describe("Edit tool", () => {
         file_path: file,
         old_string: "World",
         new_str: "Bun",
-      } as any),
+      } as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*new_string/);
   });
 });

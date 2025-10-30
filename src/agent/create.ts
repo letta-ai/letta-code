@@ -7,6 +7,7 @@ import type {
   Block,
   CreateBlock,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { formatAvailableModels, resolveModel } from "../model";
 import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
@@ -15,9 +16,25 @@ import { SYSTEM_PROMPT } from "./promptAssets";
 
 export async function createAgent(
   name = "letta-cli-agent",
-  model = "anthropic/claude-sonnet-4-5-20250929",
+  model?: string,
   embeddingModel = "openai/text-embedding-3-small",
 ) {
+  // Resolve model identifier to handle
+  let modelHandle: string;
+  if (model) {
+    const resolved = resolveModel(model);
+    if (!resolved) {
+      console.error(`Error: Unknown model "${model}"`);
+      console.error("Available models:");
+      console.error(formatAvailableModels());
+      process.exit(1);
+    }
+    modelHandle = resolved;
+  } else {
+    // Use default model
+    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+  }
+
   const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
@@ -141,10 +158,11 @@ export async function createAgent(
     system: SYSTEM_PROMPT,
     name,
     embedding: embeddingModel,
-    model,
+    model: modelHandle,
     context_window_limit: 200_000,
     tools: toolNames,
     block_ids: blockIds,
+    tags: ["origin:letta-code"],
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,
