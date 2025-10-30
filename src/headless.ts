@@ -161,25 +161,12 @@ export async function handleHeadlessCommand(argv: string[]) {
         let lastStopReason: Letta.StopReasonType | null = null;
 
         for await (const chunk of stream) {
-          // Output chunk as message event
-          console.log(
-            JSON.stringify({
-              type: "message",
-              ...chunk,
-            }),
-          );
-
-          // Still accumulate for approval tracking
-          const { onChunk } = await import("./cli/helpers/accumulator");
-          onChunk(buffers, chunk);
-
-          // Track stop reason and approval
-          if (chunk.messageType === "stop_reason") {
-            lastStopReason = chunk.stopReason;
-          }
+          // Check if we should skip outputting approval requests in bypass mode
+          const isApprovalRequest = chunk.messageType === "approval_request_message";
+          let shouldOutputChunk = true;
 
           // Track approval requests
-          if (chunk.messageType === "approval_request_message") {
+          if (isApprovalRequest) {
             const chunkWithToolCall = chunk as typeof chunk & {
               toolCall?: {
                 toolCallId?: string;
@@ -194,7 +181,47 @@ export async function handleHeadlessCommand(argv: string[]) {
                 toolName: toolCall.name,
                 toolArgs: toolCall.arguments || "{}",
               };
+
+              // Check if this approval will be auto-approved
+              // If so, don't output the approval_request in stream-json mode
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                toolCall.arguments || "{}",
+                {},
+              );
+              const permission = await checkToolPermission(toolCall.name, parsedArgs);
+              if (permission.decision === "allow") {
+                shouldOutputChunk = false;
+                // Output an auto-approval event instead
+                console.log(
+                  JSON.stringify({
+                    type: "auto_approval",
+                    tool_name: toolCall.name,
+                    tool_call_id: toolCall.toolCallId,
+                    reason: permission.reason,
+                    matched_rule: permission.matchedRule,
+                  }),
+                );
+              }
             }
+          }
+
+          // Output chunk as message event (unless filtered)
+          if (shouldOutputChunk) {
+            console.log(
+              JSON.stringify({
+                type: "message",
+                ...chunk,
+              }),
+            );
+          }
+
+          // Still accumulate for approval tracking
+          const { onChunk } = await import("./cli/helpers/accumulator");
+          onChunk(buffers, chunk);
+
+          // Track stop reason
+          if (chunk.messageType === "stop_reason") {
+            lastStopReason = chunk.stopReason;
           }
         }
 
