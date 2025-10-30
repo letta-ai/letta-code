@@ -164,9 +164,11 @@ export async function handleHeadlessCommand(argv: string[]) {
         // Verify required args present; if missing, deny so the model retries with args
         const { getToolSchema } = await import("./tools/manager");
         const schema = getToolSchema(toolName);
-        const required = (schema?.input_schema?.required as string[] | undefined) || [];
+        const required =
+          (schema?.input_schema?.required as string[] | undefined) || [];
         const missing = required.filter(
-          (key) => !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
+          (key) =>
+            !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
         );
         if (missing.length > 0) {
           approvalInput = {
@@ -326,10 +328,10 @@ export async function handleHeadlessCommand(argv: string[]) {
 
                 // Check if this approval will be auto-approved. Dedup per tool_call_id
                 if (!autoApprovalEmitted.has(id)) {
-                  const parsedArgs = safeJsonParseOr<Record<string, unknown> | null>(
-                    incomingArgs || "{}",
-                    null,
-                  );
+                  const parsedArgs = safeJsonParseOr<Record<
+                    string,
+                    unknown
+                  > | null>(incomingArgs || "{}", null);
                   const permission = await checkToolPermission(
                     toolCall.name,
                     parsedArgs || {},
@@ -339,11 +341,15 @@ export async function handleHeadlessCommand(argv: string[]) {
                     const { getToolSchema } = await import("./tools/manager");
                     const schema = getToolSchema(toolCall.name);
                     const required =
-                      (schema?.input_schema?.required as string[] | undefined) || [];
+                      (schema?.input_schema?.required as
+                        | string[]
+                        | undefined) || [];
                     const missing = required.filter(
                       (key) =>
                         !(key in parsedArgs) ||
-                        String((parsedArgs as Record<string, unknown>)[key] ?? "").length === 0,
+                        String(
+                          (parsedArgs as Record<string, unknown>)[key] ?? "",
+                        ).length === 0,
                     );
                     if (missing.length === 0) {
                       shouldOutputChunk = false;
@@ -363,7 +369,6 @@ export async function handleHeadlessCommand(argv: string[]) {
               }
             }
           }
-
 
           // Output chunk as message event (unless filtered)
           if (shouldOutputChunk) {
@@ -459,9 +464,11 @@ export async function handleHeadlessCommand(argv: string[]) {
         // Permission is "allow" - verify we have required arguments before executing
         const { getToolSchema } = await import("./tools/manager");
         const schema = getToolSchema(toolName);
-        const required = (schema?.input_schema?.required as string[] | undefined) || [];
+        const required =
+          (schema?.input_schema?.required as string[] | undefined) || [];
         const missing = required.filter(
-          (key) => !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
+          (key) =>
+            !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
         );
         if (missing.length > 0) {
           // Auto-deny with a clear reason so the model can retry with arguments
