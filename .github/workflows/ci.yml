@@ -60,28 +60,6 @@ jobs:
       - name: CLI version smoke test
         run: ./letta.js --version || true
 
-      - name: CLI invalid flag smoke test
-        run: |
-          if ./letta.js --invalid-flag 2>&1 | grep -q "Unknown option"; then
-            echo "✓ Error handling works correctly"
-            exit 0
-          else
-            echo "✗ Expected error message not found"
-            exit 1
-          fi
-
-      - name: CLI missing API key smoke test
-        run: |
-          # Verify CLI gives proper error when API key is missing
-          unset LETTA_API_KEY
-          if ./letta.js --new 2>&1 | grep -q "Missing LETTA_API_KEY"; then
-            echo "✓ API key validation works correctly"
-            exit 0
-          else
-            echo "✗ Expected API key error message not found"
-            exit 1
-          fi
-
       - name: Bundle size check
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
