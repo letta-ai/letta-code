@@ -47,7 +47,7 @@ describe("LS tool", () => {
   });
 
   test("throws error when path is missing", async () => {
-    await expect(ls({} as any)).rejects.toThrow(
+    await expect(ls({} as Parameters<typeof ls>[0])).rejects.toThrow(
       /missing required parameter.*path/,
     );
   });
