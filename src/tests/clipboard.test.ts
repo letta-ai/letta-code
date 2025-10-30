@@ -56,7 +56,7 @@ test("buildMessageContentFromDisplay handles image placeholders", () => {
     type: "image",
     source: {
       type: "base64",
-      mediaType: "image/png",
+      media_type: "image/png",
       data: "abc123",
     },
   });
