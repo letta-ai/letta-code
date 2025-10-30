@@ -33,7 +33,6 @@ export async function getClient() {
     needsUpdate = true;
   }
 
-
   if (needsUpdate) {
     settingsManager.updateSettings({ env: updatedEnv });
   }
