@@ -4,6 +4,7 @@ import type {
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
@@ -148,7 +149,7 @@ export async function handleHeadlessCommand(argv: string[]) {
       const stream = await sendMessageStream(agent.id, currentInput);
 
       // For stream-json, output each chunk as it arrives
-      let stopReason: Letta.StopReasonType;
+      let stopReason: StopReasonType;
       let approval: {
         toolCallId: string;
         toolName: string;
@@ -158,26 +159,26 @@ export async function handleHeadlessCommand(argv: string[]) {
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
-        let lastStopReason: Letta.StopReasonType | null = null;
+        let lastStopReason: StopReasonType | null = null;
 
         for await (const chunk of stream) {
           // Check if we should skip outputting approval requests in bypass mode
-          const isApprovalRequest = chunk.messageType === "approval_request_message";
+          const isApprovalRequest = chunk.message_type === "approval_request_message";
           let shouldOutputChunk = true;
 
           // Track approval requests
           if (isApprovalRequest) {
             const chunkWithToolCall = chunk as typeof chunk & {
-              toolCall?: {
-                toolCallId?: string;
+              tool_call?: {
+                tool_call_id?: string;
                 name?: string;
                 arguments?: string;
               };
             };
-            const toolCall = chunkWithToolCall.toolCall;
-            if (toolCall?.toolCallId && toolCall?.name) {
+            const toolCall = chunkWithToolCall.tool_call;
+            if (toolCall?.tool_call_id && toolCall?.name) {
               approval = {
-                toolCallId: toolCall.toolCallId,
+                toolCallId: toolCall.tool_call_id,
                 toolName: toolCall.name,
                 toolArgs: toolCall.arguments || "{}",
               };
@@ -196,7 +197,7 @@ export async function handleHeadlessCommand(argv: string[]) {
                   JSON.stringify({
                     type: "auto_approval",
                     tool_name: toolCall.name,
-                    tool_call_id: toolCall.toolCallId,
+                    tool_call_id: toolCall.tool_call_id,
                     reason: permission.reason,
                     matched_rule: permission.matchedRule,
                   }),
@@ -220,12 +221,12 @@ export async function handleHeadlessCommand(argv: string[]) {
           onChunk(buffers, chunk);
 
           // Track stop reason
-          if (chunk.messageType === "stop_reason") {
-            lastStopReason = chunk.stopReason;
+          if (chunk.message_type === "stop_reason") {
+            lastStopReason = chunk.stop_reason;
           }
         }
 
-        stopReason = lastStopReason || Letta.StopReasonType.Error;
+        stopReason = lastStopReason || "error";
         apiDurationMs = performance.now() - startTime;
 
         // Mark final line as finished
