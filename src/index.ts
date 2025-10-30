@@ -238,10 +238,13 @@ async function main() {
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
         if (!agent) {
           await settingsManager.loadLocalProjectSettings();
-          const localProjectSettings = settingsManager.getLocalProjectSettings();
+          const localProjectSettings =
+            settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
             try {
-              agent = await client.agents.retrieve(localProjectSettings.lastAgent);
+              agent = await client.agents.retrieve(
+                localProjectSettings.lastAgent,
+              );
               // console.log(`Resuming project agent ${localProjectSettings.lastAgent}...`);
             } catch (error) {
               console.error(

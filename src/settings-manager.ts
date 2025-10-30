@@ -157,7 +157,9 @@ class SettingsManager {
   /**
    * Get project settings (synchronous, from memory)
    */
-  getProjectSettings(workingDirectory: string = process.cwd()): ProjectSettings {
+  getProjectSettings(
+    workingDirectory: string = process.cwd(),
+  ): ProjectSettings {
     const cached = this.projectSettings.get(workingDirectory);
     if (!cached) {
       throw new Error(
@@ -287,7 +289,10 @@ class SettingsManager {
       this.localProjectSettings.set(workingDirectory, localSettings);
       return { ...localSettings };
     } catch (error) {
-      console.error("Error loading local project settings, using defaults:", error);
+      console.error(
+        "Error loading local project settings, using defaults:",
+        error,
+      );
       const defaults = { ...DEFAULT_LOCAL_PROJECT_SETTINGS };
       this.localProjectSettings.set(workingDirectory, defaults);
       return defaults;
