@@ -121,7 +121,7 @@ async function main() {
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Validate API key early before any UI rendering
-  const apiKey = settings.env?.LETTA_API_KEY;
+  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   if (!apiKey) {
     console.error("Missing LETTA_API_KEY");
     console.error(

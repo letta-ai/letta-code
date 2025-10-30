@@ -7,10 +7,6 @@ import type {
   Block,
   CreateBlock,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import {
-  loadProjectSettings,
-  updateProjectSettings,
-} from "../project-settings";
 import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
@@ -41,7 +37,8 @@ export async function createAgent(
   const globalSharedBlockIds = settings.globalSharedBlockIds;
 
   // Load project-local shared blocks from project settings
-  const projectSettings = await loadProjectSettings();
+  await settingsManager.loadProjectSettings();
+  const projectSettings = settingsManager.getProjectSettings();
   const localSharedBlockIds = projectSettings.localSharedBlockIds;
 
   // Retrieve existing blocks (both global and local) and match them with defaults
@@ -127,12 +124,15 @@ export async function createAgent(
 
   // Save newly created local block IDs to project settings
   if (Object.keys(newLocalBlockIds).length > 0) {
-    await updateProjectSettings(process.cwd(), {
-      localSharedBlockIds: {
-        ...localSharedBlockIds,
-        ...newLocalBlockIds,
+    settingsManager.updateProjectSettings(
+      {
+        localSharedBlockIds: {
+          ...localSharedBlockIds,
+          ...newLocalBlockIds,
+        },
       },
-    });
+      process.cwd(),
+    );
   }
 
   // Create agent with all block IDs (existing + newly created)
