@@ -11,7 +11,7 @@ import {
   loadProjectSettings,
   updateProjectSettings,
 } from "../project-settings";
-import { settingsManager } from "../settings-manager";
+import { loadSettings, updateSettings } from "../settings";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
@@ -37,7 +37,7 @@ export async function createAgent(
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
   // Load global shared memory blocks from user settings
-  const settings = settingsManager.getSettings();
+  const settings = await loadSettings();
   const globalSharedBlockIds = settings.globalSharedBlockIds;
 
   // Load project-local shared blocks from project settings
@@ -117,7 +117,7 @@ export async function createAgent(
 
   // Save newly created global block IDs to user settings
   if (Object.keys(newGlobalBlockIds).length > 0) {
-    settingsManager.updateSettings({
+    await updateSettings({
       globalSharedBlockIds: {
         ...globalSharedBlockIds,
         ...newGlobalBlockIds,

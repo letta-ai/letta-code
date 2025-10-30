@@ -12,11 +12,11 @@ import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStream } from "./cli/helpers/stream";
-import { settingsManager } from "./settings-manager";
+import { loadSettings, updateSettings } from "./settings";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
 export async function handleHeadlessCommand(argv: string[]) {
-  const settings = settingsManager.getSettings();
+  const settings = await loadSettings();
 
   // Parse CLI args
   const { values, positionals } = parseArgs({
@@ -105,9 +105,9 @@ export async function handleHeadlessCommand(argv: string[]) {
   }
 
   // Save agent ID to both project and global settings
-  await settingsManager.loadLocalProjectSettings();
-  settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-  settingsManager.updateSettings({ lastAgent: agent.id });
+  const { updateProjectSettings } = await import("./settings");
+  await updateProjectSettings({ lastAgent: agent.id });
+  await updateSettings({ lastAgent: agent.id });
 
   // Validate output format
   const outputFormat =
