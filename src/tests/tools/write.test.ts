@@ -53,7 +53,7 @@ describe("Write tool", () => {
     await expect(
       write({
         content: "Hello",
-      } as any),
+      } as Parameters<typeof write>[0]),
     ).rejects.toThrow(/missing required parameter.*file_path/);
   });
 
@@ -64,7 +64,7 @@ describe("Write tool", () => {
     await expect(
       write({
         file_path: filePath,
-      } as any),
+      } as Parameters<typeof write>[0]),
     ).rejects.toThrow(/missing required parameter.*content/);
   });
 });
