@@ -163,7 +163,8 @@ export async function handleHeadlessCommand(argv: string[]) {
 
         for await (const chunk of stream) {
           // Check if we should skip outputting approval requests in bypass mode
-          const isApprovalRequest = chunk.message_type === "approval_request_message";
+          const isApprovalRequest =
+            chunk.message_type === "approval_request_message";
           let shouldOutputChunk = true;
 
           // Track approval requests
@@ -189,7 +190,10 @@ export async function handleHeadlessCommand(argv: string[]) {
                 toolCall.arguments || "{}",
                 {},
               );
-              const permission = await checkToolPermission(toolCall.name, parsedArgs);
+              const permission = await checkToolPermission(
+                toolCall.name,
+                parsedArgs,
+              );
               if (permission.decision === "allow") {
                 shouldOutputChunk = false;
                 // Output an auto-approval event instead
