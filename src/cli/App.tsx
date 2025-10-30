@@ -842,6 +842,7 @@ export default function App({
       // Start the conversation loop
       await processConversation([
         {
+          type: "message",
           role: "user",
           content: messageContent as unknown as MessageCreate["content"],
         },

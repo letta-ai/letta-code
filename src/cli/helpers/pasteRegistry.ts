@@ -106,7 +106,7 @@ export function clearPlaceholdersInText(text: string): void {
 
 // Convert display text (with placeholders) into Letta content parts
 // Text placeholders are resolved; image placeholders become image content
-type Base64ImageSource = { type: "base64"; mediaType: string; data: string };
+type Base64ImageSource = { type: "base64"; media_type: string; data: string };
 type ContentPart =
   | { type: "text"; text: string }
   | { type: "image"; source: Base64ImageSource };
@@ -144,7 +144,7 @@ export function buildMessageContentFromDisplay(text: string): ContentPart[] {
         type: "image",
         source: {
           type: "base64",
-          mediaType: img.mediaType || "image/jpeg",
+          media_type: img.mediaType || "image/jpeg",
           data: img.data,
         },
       });
