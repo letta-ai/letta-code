@@ -136,7 +136,75 @@ export async function handleHeadlessCommand(argv: string[]) {
     console.log(JSON.stringify(initEvent));
   }
 
-  // Send message and process stream loop
+  // Helper to resolve any pending approvals before sending user input
+  const resolveAllPendingApprovals = async () => {
+    const { getResumeData } = await import("./agent/check-approval");
+    while (true) {
+      const resume = await getResumeData(client, agent.id);
+      if (!resume.pendingApproval) break;
+      const { toolCallId, toolName, toolArgs } = resume.pendingApproval;
+      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+        toolArgs || "{}",
+        {},
+      );
+      const permission = await checkToolPermission(toolName, parsedArgs);
+      let approvalInput: ApprovalCreate;
+      if (permission.decision === "deny" || permission.decision === "ask") {
+        const denyReason =
+          permission.decision === "ask"
+            ? "Tool requires approval (headless mode)"
+            : `Permission denied: ${permission.matchedRule || permission.reason}`;
+        approvalInput = {
+          type: "approval",
+          approval_request_id: toolCallId,
+          approve: false,
+          reason: denyReason,
+        };
+      } else {
+        const toolResult = await executeTool(toolName, parsedArgs);
+        // Emit auto_approval event for stream-json for visibility
+        if (outputFormat === "stream-json") {
+          console.log(
+            JSON.stringify({
+              type: "auto_approval",
+              tool_name: toolName,
+              tool_call_id: toolCallId,
+              reason: permission.reason,
+              matched_rule: permission.matchedRule,
+            }),
+          );
+        }
+        approvalInput = {
+          type: "approval",
+          approvals: [
+            {
+              type: "tool",
+              tool_call_id: toolCallId,
+              tool_return: toolResult.toolReturn,
+              status: toolResult.status,
+              stdout: toolResult.stdout,
+              stderr: toolResult.stderr,
+            },
+          ],
+        };
+      }
+      // Send the approval to clear the pending state; drain the stream without output
+      const approvalStream = await sendMessageStream(agent.id, [approvalInput]);
+      if (outputFormat === "stream-json") {
+        // Consume quickly but don't emit message frames to stdout
+        for await (const _ of approvalStream) {
+          // no-op
+        }
+      } else {
+        await drainStream(approvalStream, createBuffers(), () => {});
+      }
+    }
+  };
+
+  // Clear any pending approvals before starting a new turn
+  await resolveAllPendingApprovals();
+
+  // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
@@ -161,7 +229,25 @@ export async function handleHeadlessCommand(argv: string[]) {
         const startTime = performance.now();
         let lastStopReason: StopReasonType | null = null;
 
+        // Track approval requests across streamed chunks
+        const approvalRequests = new Map<
+          string,
+          { toolName: string; args: string }
+        >();
+        const autoApprovalEmitted = new Set<string>();
+        let _lastApprovalId: string | null = null;
+
         for await (const chunk of stream) {
+          // Detect server conflict due to pending approval; handle it and retry
+          const errObj = (chunk as unknown as { error?: { detail?: string } })
+            .error;
+          if (errObj?.detail?.includes("Cannot send a new message")) {
+            // Don't emit this error; clear approvals and retry outer loop
+            await resolveAllPendingApprovals();
+            // Reset state and restart turn
+            lastStopReason = "error" as StopReasonType;
+            break;
+          }
           // Check if we should skip outputting approval requests in bypass mode
           const isApprovalRequest =
             chunk.message_type === "approval_request_message";
@@ -169,43 +255,73 @@ export async function handleHeadlessCommand(argv: string[]) {
 
           // Track approval requests
           if (isApprovalRequest) {
-            const chunkWithToolCall = chunk as typeof chunk & {
+            const chunkWithTools = chunk as typeof chunk & {
               tool_call?: {
                 tool_call_id?: string;
                 name?: string;
                 arguments?: string;
               };
+              tool_calls?: Array<{
+                tool_call_id?: string;
+                name?: string;
+                arguments?: string;
+              }>;
             };
-            const toolCall = chunkWithToolCall.tool_call;
-            if (toolCall?.tool_call_id && toolCall?.name) {
-              approval = {
-                toolCallId: toolCall.tool_call_id,
-                toolName: toolCall.name,
-                toolArgs: toolCall.arguments || "{}",
-              };
 
-              // Check if this approval will be auto-approved
-              // If so, don't output the approval_request in stream-json mode
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                toolCall.arguments || "{}",
-                {},
-              );
-              const permission = await checkToolPermission(
-                toolCall.name,
-                parsedArgs,
-              );
-              if (permission.decision === "allow") {
-                shouldOutputChunk = false;
-                // Output an auto-approval event instead
-                console.log(
-                  JSON.stringify({
-                    type: "auto_approval",
-                    tool_name: toolCall.name,
-                    tool_call_id: toolCall.tool_call_id,
-                    reason: permission.reason,
-                    matched_rule: permission.matchedRule,
-                  }),
-                );
+            const toolCalls = Array.isArray(chunkWithTools.tool_calls)
+              ? chunkWithTools.tool_calls
+              : chunkWithTools.tool_call
+                ? [chunkWithTools.tool_call]
+                : [];
+
+            for (const toolCall of toolCalls) {
+              if (toolCall?.tool_call_id && toolCall?.name) {
+                const id = toolCall.tool_call_id;
+                lastApprovalId = id;
+
+                // Prefer the most complete args we have seen so far
+                const prev = approvalRequests.get(id);
+                const incomingArgs =
+                  toolCall.arguments && toolCall.arguments.trim().length > 0
+                    ? toolCall.arguments
+                    : prev?.args || "{}";
+
+                approvalRequests.set(id, {
+                  toolName: toolCall.name,
+                  args: incomingArgs,
+                });
+
+                // Keep an up-to-date approval object for downstream handling
+                approval = {
+                  toolCallId: id,
+                  toolName: toolCall.name,
+                  toolArgs: incomingArgs,
+                };
+
+                // Check if this approval will be auto-approved. Dedup per tool_call_id
+                if (!autoApprovalEmitted.has(id)) {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    incomingArgs || "{}",
+                    {},
+                  );
+                  const permission = await checkToolPermission(
+                    toolCall.name,
+                    parsedArgs,
+                  );
+                  if (permission.decision === "allow") {
+                    shouldOutputChunk = false;
+                    console.log(
+                      JSON.stringify({
+                        type: "auto_approval",
+                        tool_name: toolCall.name,
+                        tool_call_id: id,
+                        reason: permission.reason,
+                        matched_rule: permission.matchedRule,
+                      }),
+                    );
+                    autoApprovalEmitted.add(id);
+                  }
+                }
               }
             }
           }
