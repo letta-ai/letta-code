@@ -38,7 +38,7 @@
     "label": "GLM-4.6",
     "description": "The best open weights coding model",
     "updateArgs": {
-      "contextWindow": 200000
+      "context_window": 200000
     }
   },
   {
