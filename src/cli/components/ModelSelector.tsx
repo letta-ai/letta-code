@@ -1,7 +1,7 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
-import { models } from "../../model";
+import { models } from "../../agent/model";
 import { colors } from "./colors";
 
 interface ModelSelectorProps {
