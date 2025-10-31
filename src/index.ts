@@ -218,6 +218,7 @@ async function main() {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
+        const { getModelUpdateArgs } = await import("./model");
         const { updateSettings, loadProjectSettings, updateProjectSettings } =
           await import("./settings");
 
@@ -238,7 +239,8 @@ async function main() {
         // Priority 2: Check if --new flag was passed (skip all resume logic)
         if (!agent && forceNew) {
           // Create new agent, don't check any lastAgent fields
-          agent = await createAgent(undefined, model);
+          const updateArgs = getModelUpdateArgs(model);
+          agent = await createAgent(undefined, model, undefined, updateArgs);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -270,7 +272,8 @@ async function main() {
 
         // Priority 5: Create a new agent
         if (!agent) {
-          agent = await createAgent(undefined, model);
+          const updateArgs = getModelUpdateArgs(model);
+          agent = await createAgent(undefined, model, undefined, updateArgs);
         }
 
         // Save agent ID to both project and global settings
