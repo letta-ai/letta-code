@@ -58,7 +58,8 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "grep") displayName = "Grep";
   else if (displayName === "glob") displayName = "Glob";
   else if (displayName === "ls") displayName = "LS";
-  else if (displayName === "todo_write") displayName = "Update Todos";
+  else if (displayName === "todo_write") displayName = "TODO";
+  else if (displayName === "TodoWrite") displayName = "TODO";
   else if (displayName === "ExitPlanMode") displayName = "Planning";
 
   // Format arguments for display using the old formatting logic
@@ -128,11 +129,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     const displayResultText = clipToolReturn(line.resultText);
 
     // Check if this is a todo_write tool with successful result
-    // Check both the raw name and the display name since it might be "TodoWrite"
+    // Check both the raw name and the display name
     const isTodoTool =
       rawName === "todo_write" ||
       rawName === "TodoWrite" ||
-      displayName === "Update Todos";
+      displayName === "TODO";
     if (isTodoTool && line.resultOk !== false && line.argsText) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
