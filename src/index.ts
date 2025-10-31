@@ -287,6 +287,14 @@ async function main() {
           agent = await createAgent(undefined, model, undefined, updateArgs);
         }
 
+        // Ensure local project settings are loaded before updating
+        // (they may not have been loaded if we didn't try to resume from project settings)
+        try {
+          settingsManager.getLocalProjectSettings();
+        } catch {
+          await settingsManager.loadLocalProjectSettings();
+        }
+
         // Save agent ID to both project and global settings
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
