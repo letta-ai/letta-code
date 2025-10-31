@@ -8,11 +8,11 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
+import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStream } from "./cli/helpers/stream";
-import { getModelUpdateArgs } from "./model";
 import { loadSettings, updateSettings } from "./settings";
 import { checkToolPermission, executeTool } from "./tools/manager";
 

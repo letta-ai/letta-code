@@ -7,7 +7,6 @@ import type {
   Block,
   CreateBlock,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import { formatAvailableModels, resolveModel } from "../model";
 import {
   loadProjectSettings,
   updateProjectSettings,
@@ -16,6 +15,7 @@ import { loadSettings, updateSettings } from "../settings";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
+import { formatAvailableModels, resolveModel } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
 

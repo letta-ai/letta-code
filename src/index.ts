@@ -218,7 +218,7 @@ async function main() {
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
-        const { getModelUpdateArgs } = await import("./model");
+        const { getModelUpdateArgs } = await import("./agent/model");
         const { updateSettings, loadProjectSettings, updateProjectSettings } =
           await import("./settings");
 

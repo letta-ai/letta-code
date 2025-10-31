@@ -1,7 +1,7 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "./models.json";
+import modelsData from "../models.json";
 
 export const models = modelsData;
 
