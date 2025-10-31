@@ -4,7 +4,7 @@
 // - Tool calls update in-place (same toolCallId for call+return).
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
-import type { Letta } from "@letta-ai/letta-client";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -150,6 +150,26 @@ export function markCurrentLineAsFinished(b: Buffers) {
   }
 }
 
+/**
+ * Mark any incomplete tool calls as cancelled when stream is interrupted.
+ * This prevents blinking tool calls from staying in progress state.
+ */
+export function markIncompleteToolsAsCancelled(b: Buffers) {
+  for (const [id, line] of b.byId.entries()) {
+    if (line.kind === "tool_call" && line.phase !== "finished") {
+      const updatedLine = {
+        ...line,
+        phase: "finished" as const,
+        resultOk: false,
+        resultText: "Interrupted by user",
+      };
+      b.byId.set(id, updatedLine);
+    }
+  }
+  // Also mark any streaming assistant/reasoning lines as finished
+  markCurrentLineAsFinished(b);
+}
+
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;
 
 // Flatten common SDK "parts" → text
@@ -174,11 +194,31 @@ function extractTextPart(v: unknown): string {
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(
-  b: Buffers,
-  chunk: Letta.agents.LettaStreamingResponse,
-) {
-  switch (chunk.messageType) {
+export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+  // TODO remove once SDK v1 has proper typing for in-stream errors
+  // Check for streaming error objects (not typed in SDK but emitted by backend)
+  // These are emitted when LLM errors occur during streaming (rate limits, timeouts, etc.)
+  const chunkWithError = chunk as typeof chunk & {
+    error?: { message?: string; detail?: string };
+  };
+  if (chunkWithError.error && !chunk.message_type) {
+    const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const errorMsg = chunkWithError.error.message || "An error occurred";
+    const errorDetail = chunkWithError.error.detail || "";
+    const fullErrorText = errorDetail
+      ? `${errorMsg}: ${errorDetail}`
+      : errorMsg;
+
+    b.byId.set(errorId, {
+      kind: "error",
+      id: errorId,
+      text: `⚠ ${fullErrorText}`,
+    });
+    b.order.push(errorId);
+    return;
+  }
+
+  switch (chunk.message_type) {
     case "reasoning_message": {
       const id = chunk.otid;
       // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);
@@ -240,20 +280,28 @@ export function onChunk(
 
       if (!id) break;
 
-      const toolCallId = chunk.toolCall?.toolCallId;
-      const name = chunk.toolCall?.name;
-      const argsText = chunk.toolCall?.arguments;
+      const toolCall = chunk.tool_call || (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0 ? chunk.tool_calls[0] : null);
+      const toolCallId = toolCall?.tool_call_id;
+      const name = toolCall?.name;
+      const argsText = toolCall?.arguments;
 
       // Record correlation: toolCallId → line id (otid)
       if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
       */
 
       let id = chunk.otid;
-      // console.log(`[TOOL_CALL] Received ${chunk.messageType} with otid=${id}, toolCallId=${chunk.toolCall?.toolCallId}, name=${chunk.toolCall?.name}`);
+      // console.log(`[TOOL_CALL] Received ${chunk.message_type} with otid=${id}, toolCallId=${chunk.tool_call?.tool_call_id}, name=${chunk.tool_call?.name}`);
 
-      const toolCallId = chunk.toolCall?.toolCallId;
-      const name = chunk.toolCall?.name;
-      const argsText = chunk.toolCall?.arguments;
+      // Use deprecated tool_call or new tool_calls array
+      const toolCall =
+        chunk.tool_call ||
+        (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
+          ? chunk.tool_calls[0]
+          : null);
+
+      const toolCallId = toolCall?.tool_call_id;
+      const name = toolCall?.name;
+      const argsText = toolCall?.arguments;
 
       // ========== START BACKEND BUG WORKAROUND (Remove after OTID fix) ==========
       // Bug: Backend sends same otid for reasoning and tool_call, and multiple otids for same tool_call
@@ -267,7 +315,7 @@ export function onChunk(
         }
 
         // Handle otid transition for tracking purposes
-        handleOtidTransition(b, chunk.otid);
+        handleOtidTransition(b, chunk.otid ?? undefined);
       } else {
         // Check if this otid is already used by a reasoning line
         if (id && b.byId.has(id)) {
@@ -284,7 +332,7 @@ export function onChunk(
         // This part stays after fix:
         // Handle otid transition (mark previous line as finished)
         // This must happen BEFORE the break, so reasoning gets finished even when tool has no otid
-        handleOtidTransition(b, id);
+        handleOtidTransition(b, id ?? undefined);
 
         if (!id) {
           // console.log(`[TOOL_CALL] No otid, breaking`);
@@ -295,21 +343,24 @@ export function onChunk(
         if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
       }
 
+      // Early exit if no valid id
+      if (!id) break;
+
       const desiredPhase =
-        chunk.messageType === "approval_request_message"
+        chunk.message_type === "approval_request_message"
           ? "ready"
           : "streaming";
       const line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
-        toolCallId: toolCallId,
-        name: name,
+        toolCallId: toolCallId ?? undefined,
+        name: name ?? undefined,
         phase: desiredPhase,
       }));
 
       // If this is an approval request and the line already exists, bump phase to ready
       if (
-        chunk.messageType === "approval_request_message" &&
+        chunk.message_type === "approval_request_message" &&
         line.phase !== "finished"
       ) {
         b.byId.set(id, { ...line, phase: "ready" });
@@ -329,8 +380,8 @@ export function onChunk(
     case "tool_return_message": {
       // Tool return is a special case
       // It will have a different otid than the tool call, but we want to merge into the tool call
-      const toolCallId = chunk.toolCallId;
-      const resultText = chunk.toolReturn;
+      const toolCallId = chunk.tool_call_id;
+      const resultText = chunk.tool_return;
       const status = chunk.status;
 
       // Look up the line by toolCallId
@@ -358,17 +409,17 @@ export function onChunk(
     case "usage_statistics": {
       // Accumulate usage statistics from the stream
       // These messages arrive after stop_reason in the stream
-      if (chunk.promptTokens !== undefined) {
-        b.usage.promptTokens += chunk.promptTokens;
+      if (chunk.prompt_tokens !== undefined) {
+        b.usage.promptTokens += chunk.prompt_tokens;
       }
-      if (chunk.completionTokens !== undefined) {
-        b.usage.completionTokens += chunk.completionTokens;
+      if (chunk.completion_tokens !== undefined) {
+        b.usage.completionTokens += chunk.completion_tokens;
       }
-      if (chunk.totalTokens !== undefined) {
-        b.usage.totalTokens += chunk.totalTokens;
+      if (chunk.total_tokens !== undefined) {
+        b.usage.totalTokens += chunk.total_tokens;
       }
-      if (chunk.stepCount !== undefined) {
-        b.usage.stepCount += chunk.stepCount;
+      if (chunk.step_count !== undefined) {
+        b.usage.stepCount += chunk.step_count;
       }
       break;
     }

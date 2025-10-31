@@ -1,4 +1,5 @@
 import { backgroundProcesses } from "./process_manager.js";
+import { validateRequiredParams } from "./validation.js";
 
 interface BashOutputArgs {
   bash_id: string;
@@ -11,6 +12,7 @@ interface BashOutputResult {
 export async function bash_output(
   args: BashOutputArgs,
 ): Promise<BashOutputResult> {
+  validateRequiredParams(args, ["bash_id"], "BashOutput");
   const { bash_id, filter } = args;
   const proc = backgroundProcesses.get(bash_id);
   if (!proc)

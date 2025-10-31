@@ -44,6 +44,47 @@ test("Glob within working directory is auto-allowed", () => {
   expect(result.decision).toBe("allow");
 });
 
+// ============================================================================
+// Long Command Caching Tests
+// ============================================================================
+
+test("Long bash commands should use wildcard patterns, not exact match", () => {
+  // This is the bug: when you approve a long command like
+  // "cd /path && git diff file.ts | head -100"
+  // it should also match
+  // "cd /path && git diff file.ts | tail -30"
+  // But currently it saves an exact match instead of a wildcard
+
+  const longCommand1 =
+    "cd /Users/test/project && git diff src/file.ts | head -100";
+  const longCommand2 =
+    "cd /Users/test/project && git diff src/file.ts | tail -30";
+
+  // After approving the first command with a wildcard pattern
+  const permissions: PermissionRules = {
+    allow: ["Bash(cd /Users/test/project && git diff:*)"],
+    deny: [],
+    ask: [],
+  };
+
+  // Both should match
+  const result1 = checkPermission(
+    "Bash",
+    { command: longCommand1 },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(result1.decision).toBe("allow");
+
+  const result2 = checkPermission(
+    "Bash",
+    { command: longCommand2 },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(result2.decision).toBe("allow");
+});
+
 test("Grep within working directory is auto-allowed", () => {
   const result = checkPermission(
     "Grep",

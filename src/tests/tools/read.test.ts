@@ -102,4 +102,10 @@ export default box;
     expect(result.content).toContain("│ Header  │");
     expect(result.content).toContain("TypeScript file");
   });
+
+  test("throws error when file_path is missing", async () => {
+    await expect(read({} as Parameters<typeof read>[0])).rejects.toThrow(
+      /missing required parameter.*file_path/,
+    );
+  });
 });

@@ -48,4 +48,23 @@ describe("Write tool", () => {
 
     expect(readFileSync(filePath, "utf-8")).toBe(content);
   });
+
+  test("throws error when file_path is missing", async () => {
+    await expect(
+      write({
+        content: "Hello",
+      } as Parameters<typeof write>[0]),
+    ).rejects.toThrow(/missing required parameter.*file_path/);
+  });
+
+  test("throws error when content is missing", async () => {
+    testDir = new TestDirectory();
+    const filePath = testDir.resolve("test.txt");
+
+    await expect(
+      write({
+        file_path: filePath,
+      } as Parameters<typeof write>[0]),
+    ).rejects.toThrow(/missing required parameter.*content/);
+  });
 });

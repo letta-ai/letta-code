@@ -186,6 +186,13 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       // Not JSON, use raw text
     }
 
+    // Format tool denial errors more user-friendly
+    if (isError && displayText.includes("request to call tool denied")) {
+      const match = displayText.match(/User reason: (.+)$/);
+      const reason = match ? match[1] : "(empty)";
+      displayText = `User rejected the tool call with reason: ${reason}`;
+    }
+
     return (
       <Box flexDirection="row">
         <Box width={prefixWidth} flexShrink={0}>

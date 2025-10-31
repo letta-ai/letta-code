@@ -86,25 +86,25 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       if (level === 1) {
         headerElement = (
           <Text bold color={colors.heading.primary}>
-            <InlineMarkdown text={content} />
+            <InlineMarkdown text={content} dimColor={dimColor} />
           </Text>
         );
       } else if (level === 2) {
         headerElement = (
           <Text bold color={colors.heading.secondary}>
-            <InlineMarkdown text={content} />
+            <InlineMarkdown text={content} dimColor={dimColor} />
           </Text>
         );
       } else if (level === 3) {
         headerElement = (
           <Text bold>
-            <InlineMarkdown text={content} />
+            <InlineMarkdown text={content} dimColor={dimColor} />
           </Text>
         );
       } else {
         headerElement = (
           <Text italic>
-            <InlineMarkdown text={content} />
+            <InlineMarkdown text={content} dimColor={dimColor} />
           </Text>
         );
       }
@@ -136,7 +136,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
           </Box>
           <Box flexGrow={1}>
             <Text wrap="wrap" dimColor={dimColor}>
-              <InlineMarkdown text={content} />
+              <InlineMarkdown text={content} dimColor={dimColor} />
             </Text>
           </Box>
         </Box>,
@@ -151,7 +151,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         <Box key={key} paddingLeft={2}>
           <Text dimColor>│ </Text>
           <Text wrap="wrap" dimColor={dimColor}>
-            <InlineMarkdown text={blockquoteMatch[1]} />
+            <InlineMarkdown text={blockquoteMatch[1]} dimColor={dimColor} />
           </Text>
         </Box>,
       );
@@ -184,12 +184,12 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
             }
           >
             <Text wrap="wrap" dimColor={dimColor}>
-              <InlineMarkdown text={line} />
+              <InlineMarkdown text={line} dimColor={dimColor} />
             </Text>
           </Transform>
         ) : (
           <Text wrap="wrap" dimColor={dimColor}>
-            <InlineMarkdown text={line} />
+            <InlineMarkdown text={line} dimColor={dimColor} />
           </Text>
         )}
       </Box>,

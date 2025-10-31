@@ -2,7 +2,12 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import { Letta } from "@letta-ai/letta-client";
+import type {
+  AgentType,
+  Block,
+  CreateBlock,
+} from "@letta-ai/letta-client/resources/agents/agents";
+import { formatAvailableModels, resolveModel } from "../model";
 import {
   loadProjectSettings,
   updateProjectSettings,
@@ -15,9 +20,26 @@ import { SYSTEM_PROMPT } from "./promptAssets";
 
 export async function createAgent(
   name = "letta-cli-agent",
-  model = "anthropic/claude-sonnet-4-5-20250929",
+  model?: string,
+  embeddingModel = "openai/text-embedding-3-small",
 ) {
-  const client = getClient();
+  // Resolve model identifier to handle
+  let modelHandle: string;
+  if (model) {
+    const resolved = resolveModel(model);
+    if (!resolved) {
+      console.error(`Error: Unknown model "${model}"`);
+      console.error("Available models:");
+      console.error(formatAvailableModels());
+      process.exit(1);
+    }
+    modelHandle = resolved;
+  } else {
+    // Use default model
+    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+  }
+
+  const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
   const toolNames = [
@@ -25,6 +47,7 @@ export async function createAgent(
     "memory",
     "web_search",
     "conversation_search",
+    "fetch_webpage",
   ];
 
   // Load memory blocks from .mdx files
@@ -39,7 +62,7 @@ export async function createAgent(
   const localSharedBlockIds = projectSettings.localSharedBlockIds;
 
   // Retrieve existing blocks (both global and local) and match them with defaults
-  const existingBlocks = new Map<string, Letta.Block>();
+  const existingBlocks = new Map<string, Block>();
 
   // Load global blocks (persona, human)
   for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
@@ -69,7 +92,7 @@ export async function createAgent(
 
   // Separate blocks into existing (reuse) and new (create)
   const blockIds: string[] = [];
-  const blocksToCreate: Array<{ block: Letta.CreateBlock; label: string }> = [];
+  const blocksToCreate: Array<{ block: CreateBlock; label: string }> = [];
 
   for (const defaultBlock of defaultMemoryBlocks) {
     const existingBlock = existingBlocks.get(defaultBlock.label);
@@ -131,17 +154,19 @@ export async function createAgent(
 
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
-    agentType: Letta.AgentType.LettaV1Agent,
+    agent_type: "letta_v1_agent" as AgentType,
     system: SYSTEM_PROMPT,
     name,
-    model,
-    contextWindowLimit: 200_000,
+    embedding: embeddingModel,
+    model: modelHandle,
+    context_window_limit: 200_000,
     tools: toolNames,
-    blockIds,
+    block_ids: blockIds,
+    tags: ["origin:letta-code"],
     // should be default off, but just in case
-    includeBaseTools: false,
-    includeBaseToolRules: false,
-    initialMessageSequence: [],
+    include_base_tools: false,
+    include_base_tool_rules: false,
+    initial_message_sequence: [],
   });
   return agent; // { id, ... }
 }

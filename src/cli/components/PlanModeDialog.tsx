@@ -1,8 +1,9 @@
 import { Box, Text, useInput } from "ink";
-import RawTextInput from "ink-text-input";
-import { type ComponentType, memo, useState } from "react";
+import { memo, useState } from "react";
+import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 type Props = {
   plan: string;
@@ -55,7 +56,9 @@ export const PlanModeDialog = memo(
       if (isEnteringReason) {
         // When entering reason, only handle enter/escape
         if (key.return) {
-          onKeepPlanning(denyReason);
+          // Resolve placeholders before sending reason
+          const resolvedReason = resolvePlaceholders(denyReason);
+          onKeepPlanning(resolvedReason);
           setIsEnteringReason(false);
           setDenyReason("");
         } else if (key.escape) {
@@ -98,15 +101,10 @@ export const PlanModeDialog = memo(
             <Box height={1} />
             <Box>
               <Text dimColor>{"> "}</Text>
-              {(() => {
-                const TextInputAny = RawTextInput as unknown as ComponentType<{
-                  value: string;
-                  onChange: (s: string) => void;
-                }>;
-                return (
-                  <TextInputAny value={denyReason} onChange={setDenyReason} />
-                );
-              })()}
+              <PasteAwareTextInput
+                value={denyReason}
+                onChange={setDenyReason}
+              />
             </Box>
           </Box>
           <Box height={1} />

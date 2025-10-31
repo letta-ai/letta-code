@@ -1,12 +1,13 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import RawTextInput from "ink-text-input";
-import { type ComponentType, memo, useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
+import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import type { ApprovalRequest } from "../helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 type Props = {
   approvalRequest: ApprovalRequest;
@@ -77,6 +78,23 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       <Box flexDirection="column" paddingLeft={2}>
         <Text>{cmd}</Text>
         {desc ? <Text dimColor>{desc}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (t === "ls") {
+    const pathVal = parsedArgs?.path;
+    const path = typeof pathVal === "string" ? pathVal : "(current directory)";
+    const ignoreVal = parsedArgs?.ignore;
+    const ignore =
+      Array.isArray(ignoreVal) && ignoreVal.length > 0
+        ? ` (ignoring: ${ignoreVal.join(", ")})`
+        : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>List files in: {path}</Text>
+        {ignore ? <Text dimColor>{ignore}</Text> : null}
       </Box>
     );
   }
@@ -204,7 +222,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   );
 };
 
-export function ApprovalDialog({
+export const ApprovalDialog = memo(function ApprovalDialog({
   approvalRequest,
   approvalContext,
   onApprove,
@@ -247,7 +265,9 @@ export function ApprovalDialog({
     if (isEnteringReason) {
       // When entering reason, only handle enter/escape
       if (key.return) {
-        onDeny(denyReason);
+        // Resolve placeholders before sending denial reason
+        const resolvedReason = resolvePlaceholders(denyReason);
+        onDeny(resolvedReason);
       } else if (key.escape) {
         setIsEnteringReason(false);
         setDenyReason("");
@@ -354,19 +374,11 @@ export function ApprovalDialog({
           flexDirection="column"
           paddingX={1}
         >
-          <Text bold>Enter reason for denial (ESC to cancel):</Text>
+          <Text bold>What should Letta do differently? (esc to cancel):</Text>
           <Box height={1} />
           <Box>
             <Text dimColor>{"> "}</Text>
-            {(() => {
-              const TextInputAny = RawTextInput as unknown as ComponentType<{
-                value: string;
-                onChange: (s: string) => void;
-              }>;
-              return (
-                <TextInputAny value={denyReason} onChange={setDenyReason} />
-              );
-            })()}
+            <PasteAwareTextInput value={denyReason} onChange={setDenyReason} />
           </Box>
         </Box>
         <Box height={1} />
@@ -408,7 +420,9 @@ export function ApprovalDialog({
       <Box height={1} />
     </Box>
   );
-}
+});
+
+ApprovalDialog.displayName = "ApprovalDialog";
 
 // Helper functions for tool name mapping
 function getHeaderLabel(toolName: string): string {

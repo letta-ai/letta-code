@@ -3,7 +3,7 @@
  * Loads memory blocks from .mdx files in src/agent/prompts
  */
 
-import type { Letta } from "@letta-ai/letta-client";
+import type { CreateBlock } from "@letta-ai/letta-client/resources/agents/agents";
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
@@ -40,8 +40,8 @@ function parseMdxFrontmatter(content: string): {
 /**
  * Load memory blocks from .mdx files in src/agent/prompts
  */
-async function loadMemoryBlocksFromMdx(): Promise<Letta.CreateBlock[]> {
-  const memoryBlocks: Letta.CreateBlock[] = [];
+async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
+  const memoryBlocks: CreateBlock[] = [];
 
   const mdxFiles = ["persona.mdx", "human.mdx", "project.mdx"];
   // const mdxFiles = ["persona.mdx", "human.mdx", "style.mdx"];
@@ -56,7 +56,7 @@ async function loadMemoryBlocksFromMdx(): Promise<Letta.CreateBlock[]> {
       }
       const { frontmatter, body } = parseMdxFrontmatter(content);
 
-      const block: Letta.CreateBlock = {
+      const block: CreateBlock = {
         label: frontmatter.label || filename.replace(".mdx", ""),
         value: body,
       };
@@ -75,12 +75,12 @@ async function loadMemoryBlocksFromMdx(): Promise<Letta.CreateBlock[]> {
 }
 
 // Cache for loaded memory blocks
-let cachedMemoryBlocks: Letta.CreateBlock[] | null = null;
+let cachedMemoryBlocks: CreateBlock[] | null = null;
 
 /**
  * Get default starter memory blocks for new agents
  */
-export async function getDefaultMemoryBlocks(): Promise<Letta.CreateBlock[]> {
+export async function getDefaultMemoryBlocks(): Promise<CreateBlock[]> {
   if (!cachedMemoryBlocks) {
     cachedMemoryBlocks = await loadMemoryBlocksFromMdx();
   }

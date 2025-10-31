@@ -7,12 +7,39 @@ export type PermissionMode =
   | "plan"
   | "bypassPermissions";
 
+// Use globalThis to ensure singleton across bundle
+// This prevents Bun's bundler from creating duplicate instances of the mode manager
+const MODE_KEY = Symbol.for("@letta/permissionMode");
+
+type GlobalWithMode = typeof globalThis & {
+  [key: symbol]: PermissionMode;
+};
+
+function getGlobalMode(): PermissionMode {
+  const global = globalThis as GlobalWithMode;
+  if (!global[MODE_KEY]) {
+    global[MODE_KEY] = "default";
+  }
+  return global[MODE_KEY];
+}
+
+function setGlobalMode(value: PermissionMode): void {
+  const global = globalThis as GlobalWithMode;
+  global[MODE_KEY] = value;
+}
+
 /**
  * Permission mode state for the current session.
  * Set via CLI --permission-mode flag or settings.json defaultMode.
  */
 class PermissionModeManager {
-  private currentMode: PermissionMode = "default";
+  private get currentMode(): PermissionMode {
+    return getGlobalMode();
+  }
+
+  private set currentMode(value: PermissionMode) {
+    setGlobalMode(value);
+  }
 
   /**
    * Set the permission mode for this session
@@ -39,8 +66,8 @@ class PermissionModeManager {
         return "allow";
 
       case "acceptEdits":
-        // Auto-allow edit tools: Write, Edit, NotebookEdit
-        if (["Write", "Edit", "NotebookEdit"].includes(toolName)) {
+        // Auto-allow edit tools: Write, Edit, MultiEdit, NotebookEdit
+        if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) {
           return "allow";
         }
         return null;

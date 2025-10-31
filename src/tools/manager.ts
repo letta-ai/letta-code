@@ -1,4 +1,4 @@
-import type { LettaClient } from "@letta-ai/letta-client";
+import type Letta from "@letta-ai/letta-client";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -98,7 +98,7 @@ function generatePythonStub(
  * @returns Tool permissions object with requiresApproval flag
  */
 export function getToolPermissions(toolName: string) {
-  return TOOL_PERMISSIONS[toolName] || { requiresApproval: false };
+  return TOOL_PERMISSIONS[toolName as ToolName] || { requiresApproval: false };
 }
 
 /**
@@ -108,7 +108,7 @@ export function getToolPermissions(toolName: string) {
  * @deprecated Use checkToolPermission instead for full permission system support
  */
 export function requiresApproval(toolName: string): boolean {
-  return TOOL_PERMISSIONS[toolName]?.requiresApproval ?? false;
+  return TOOL_PERMISSIONS[toolName as ToolName]?.requiresApproval ?? false;
 }
 
 /**
@@ -228,7 +228,7 @@ export async function loadTools(): Promise<void> {
  * @param client - Letta client instance
  * @returns Promise that resolves when all tools are registered
  */
-export async function upsertToolsToServer(client: LettaClient): Promise<void> {
+export async function upsertToolsToServer(client: Letta): Promise<void> {
   const upsertPromises = Array.from(toolRegistry.entries()).map(
     async ([name, tool]) => {
       const pythonStub = generatePythonStub(
@@ -245,9 +245,9 @@ export async function upsertToolsToServer(client: LettaClient): Promise<void> {
       };
 
       await client.tools.upsert({
-        defaultRequiresApproval: true,
-        sourceCode: pythonStub,
-        jsonSchema: fullJsonSchema,
+        default_requires_approval: true,
+        source_code: pythonStub,
+        json_schema: fullJsonSchema,
         // description: tool.schema.description,
         // tags: ['client-side', 'typescript'],
       });

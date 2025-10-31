@@ -1,8 +1,15 @@
 // src/cli/App.tsx
 
-import { Letta } from "@letta-ai/letta-client";
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  ApprovalCreate,
+  LettaMessageUnion,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getResumeData } from "../agent/check-approval";
+import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
@@ -50,6 +57,11 @@ import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 
+// Feature flag: Check for pending approvals before sending messages
+// This prevents infinite thinking state when there's an orphaned approval
+// Can be disabled if the latency check adds too much overhead
+const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -71,12 +83,17 @@ type StaticItem =
   | {
       kind: "welcome";
       id: string;
-      snapshot: { continueSession: boolean; agentId?: string };
+      snapshot: {
+        continueSession: boolean;
+        agentState?: Letta.AgentState | null;
+        terminalWidth: number;
+      };
     }
   | Line;
 
 export default function App({
   agentId,
+  agentState,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -84,6 +101,7 @@ export default function App({
   tokenStreaming = true,
 }: {
   agentId: string;
+  agentState?: Letta.AgentState | null;
   loadingState?:
     | "assembling"
     | "upserting"
@@ -92,11 +110,14 @@ export default function App({
     | "ready";
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null;
-  messageHistory?: Letta.LettaMessageUnion[];
+  messageHistory?: LettaMessageUnion[];
   tokenStreaming?: boolean;
 }) {
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
+
+  // Whether an interrupt has been requested for the current stream
+  const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
   const [commandRunning, setCommandRunning] = useState(false);
@@ -116,7 +137,7 @@ export default function App({
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [llmConfig, setLlmConfig] = useState<Letta.LlmConfig | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -144,6 +165,9 @@ export default function App({
 
   // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
+
+  // AbortController for stream cancellation
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -297,7 +321,8 @@ export default function App({
             id: `welcome-${Date.now().toString(36)}`,
             snapshot: {
               continueSession,
-              agentId: agentId !== "loading" ? agentId : undefined,
+              agentState,
+              terminalWidth: columns,
             },
           },
         ]);
@@ -312,8 +337,9 @@ export default function App({
     messageHistory,
     refreshDerived,
     commitEligibleLines,
-    agentId,
     continueSession,
+    columns,
+    agentState,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -322,11 +348,11 @@ export default function App({
       const fetchConfig = async () => {
         try {
           const { getClient } = await import("../agent/client");
-          const client = getClient();
+          const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
-          setLlmConfig(agent.llmConfig);
+          setLlmConfig(agent.llm_config);
         } catch (error) {
-          console.error("Error fetching llmConfig:", error);
+          console.error("Error fetching llm_config:", error);
         }
       };
       fetchConfig();
@@ -351,12 +377,13 @@ export default function App({
   // Core streaming function - iterative loop that processes conversation turns
   const processConversation = useCallback(
     async (
-      initialInput: Array<Letta.MessageCreate | Letta.ApprovalCreate>,
+      initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       let currentInput = initialInput;
 
       try {
         setStreaming(true);
+        abortControllerRef.current = new AbortController();
 
         while (true) {
           // Stream one turn
@@ -365,6 +392,7 @@ export default function App({
             stream,
             buffersRef.current,
             refreshDerivedThrottled,
+            abortControllerRef.current.signal,
           );
 
           // Track API duration
@@ -375,13 +403,20 @@ export default function App({
           refreshDerived();
 
           // Case 1: Turn ended normally
-          if (stopReason === Letta.StopReasonType.EndTurn) {
+          if (stopReason === "end_turn") {
+            setStreaming(false);
+            return;
+          }
+
+          // Case 1.5: Stream was cancelled by user
+          if (stopReason === "cancelled") {
+            appendError("Stream interrupted by user");
             setStreaming(false);
             return;
           }
 
           // Case 2: Requires approval
-          if (stopReason === Letta.StopReasonType.RequiresApproval) {
+          if (stopReason === "requires_approval") {
             if (!approval) {
               appendError(
                 `Unexpected null approval with stop reason: ${stopReason}`,
@@ -423,7 +458,7 @@ export default function App({
               await processConversation([
                 {
                   type: "approval",
-                  approvalRequestId: toolCallId,
+                  approval_request_id: toolCallId,
                   approve: false,
                   reason: denyReason,
                 },
@@ -449,11 +484,11 @@ export default function App({
 
             // Update buffers with tool return
             onChunk(buffersRef.current, {
-              messageType: "tool_return_message",
+              message_type: "tool_return_message",
               id: "dummy",
-              date: new Date(),
-              toolCallId,
-              toolReturn: toolResult.toolReturn,
+              date: new Date().toISOString(),
+              tool_call_id: toolCallId,
+              tool_return: toolResult.toolReturn,
               status: toolResult.status,
               stdout: toolResult.stdout,
               stderr: toolResult.stderr,
@@ -467,8 +502,8 @@ export default function App({
                 approvals: [
                   {
                     type: "tool",
-                    toolCallId,
-                    toolReturn: toolResult.toolReturn,
+                    tool_call_id: toolCallId,
+                    tool_return: toolResult.toolReturn,
                     status: toolResult.status,
                     stdout: toolResult.stdout,
                     stderr: toolResult.stderr,
@@ -480,6 +515,10 @@ export default function App({
           }
 
           // Unexpected stop reason
+          // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
+          // using lastRunId to get full error message from step.errorData
+          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
+          // Then display step.errorData.message or full error details instead of generic message
           appendError(`Unexpected stop reason: ${stopReason}`);
           setStreaming(false);
           return;
@@ -487,6 +526,8 @@ export default function App({
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
+      } finally {
+        abortControllerRef.current = null;
       }
     },
     [agentId, appendError, refreshDerived, refreshDerivedThrottled],
@@ -500,17 +541,55 @@ export default function App({
     }, 100);
   }, []);
 
+  const handleInterrupt = useCallback(async () => {
+    if (!streaming || interruptRequested) return;
+
+    setInterruptRequested(true);
+    try {
+      const client = await getClient();
+
+      // Send cancel request to backend
+      await client.agents.messages.cancel(agentId);
+
+      // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
+      // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
+      // This gives the backend 5 seconds to gracefully close the stream before forcing abort
+      // const abortTimeout = setTimeout(() => {
+      //   if (abortControllerRef.current) {
+      //     abortControllerRef.current.abort();
+      //   }
+      // }, 5000);
+      //
+      // // The timeout will be cleared in processConversation's finally block when stream ends
+    } catch (e) {
+      appendError(`Failed to interrupt stream: ${String(e)}`);
+      setInterruptRequested(false);
+    }
+  }, [agentId, streaming, interruptRequested, appendError]);
+
+  // Reset interrupt flag when streaming ends
+  useEffect(() => {
+    if (!streaming) {
+      setInterruptRequested(false);
+    }
+  }, [streaming]);
+
   const onSubmit = useCallback(
-    async (message?: string) => {
+    async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      if (!msg || streaming || commandRunning) return;
+      if (!msg || streaming || commandRunning) return { submitted: false };
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
         // Special handling for /model command - opens selector
         if (msg.trim() === "/model") {
           setModelSelectorOpen(true);
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /agent command - show agent link
@@ -527,13 +606,13 @@ export default function App({
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /exit command - show stats and exit
         if (msg.trim() === "/exit") {
           handleExit();
-          return;
+          return { submitted: true };
         }
 
         // Special handling for /stream command - toggle and save
@@ -587,7 +666,62 @@ export default function App({
             // Unlock input
             setCommandRunning(false);
           }
-          return;
+          return { submitted: true };
+        }
+
+        // Special handling for /clear command - reset conversation
+        if (msg.trim() === "/clear") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Clearing conversation...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = getClient();
+            await client.agents.messages.reset(agentId, {
+              add_default_initial_messages: false,
+            });
+
+            // Clear local buffers and static items
+            // buffersRef.current.byId.clear();
+            // buffersRef.current.order = [];
+            // buffersRef.current.tokenCount = 0;
+            // emittedIdsRef.current.clear();
+            // setStaticItems([]);
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Conversation cleared",
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
         }
 
         // Immediately add command to transcript with "running" phase
@@ -634,7 +768,7 @@ export default function App({
           // Unlock input
           setCommandRunning(false);
         }
-        return; // Don't send commands to Letta agent
+        return { submitted: true }; // Don't send commands to Letta agent
       }
 
       // Build message content from display value (handles placeholders for text/images)
@@ -652,7 +786,7 @@ export default function App({
               ]
             : contentParts;
 
-      // Append the user message to transcript (keep placeholders as-is for display)
+      // Append the user message to transcript IMMEDIATELY (optimistic update)
       const userId = uid("user");
       buffersRef.current.byId.set(userId, {
         kind: "user",
@@ -665,18 +799,59 @@ export default function App({
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
       setThinkingMessage(getRandomThinkingMessage());
+      // Show streaming state immediately for responsiveness
+      setStreaming(true);
       refreshDerived();
+
+      // Check for pending approvals before sending message
+      if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+        try {
+          const client = await getClient();
+          const { pendingApproval: existingApproval } = await getResumeData(
+            client,
+            agentId,
+          );
+
+          if (existingApproval) {
+            // There's a pending approval - show it and DON'T send the message yet
+            // The message will be restored to the input field for the user to decide
+            // Note: The user message is already in the transcript (optimistic update)
+            setStreaming(false); // Stop streaming indicator
+            setPendingApproval(existingApproval);
+
+            // Analyze approval context
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              existingApproval.toolArgs,
+              {},
+            );
+            const context = await analyzeToolApproval(
+              existingApproval.toolName,
+              parsedArgs,
+            );
+            setApprovalContext(context);
+
+            // Return false = message NOT submitted, will be restored to input
+            return { submitted: false };
+          }
+        } catch (error) {
+          // If check fails, proceed anyway (don't block user)
+          console.error("Failed to check pending approvals:", error);
+        }
+      }
 
       // Start the conversation loop
       await processConversation([
         {
-          role: Letta.MessageCreateRole.User,
-          content: messageContent as unknown as Letta.MessageCreate["content"],
+          type: "message",
+          role: "user",
+          content: messageContent as unknown as MessageCreate["content"],
         },
       ]);
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
+
+      return { submitted: true };
     },
     [
       streaming,
@@ -703,11 +878,11 @@ export default function App({
 
       // Update buffers with tool return
       onChunk(buffersRef.current, {
-        messageType: "tool_return_message",
+        message_type: "tool_return_message",
         id: "dummy",
-        date: new Date(),
-        toolCallId,
-        toolReturn: toolResult.toolReturn,
+        date: new Date().toISOString(),
+        tool_call_id: toolCallId,
+        tool_return: toolResult.toolReturn,
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
@@ -723,8 +898,8 @@ export default function App({
           approvals: [
             {
               type: "tool",
-              toolCallId,
-              toolReturn: toolResult.toolReturn,
+              tool_call_id: toolCallId,
+              tool_return: toolResult.toolReturn,
               status: toolResult.status,
               stdout: toolResult.stdout,
               stderr: toolResult.stderr,
@@ -783,7 +958,7 @@ export default function App({
         await processConversation([
           {
             type: "approval",
-            approvalRequestId: toolCallId,
+            approval_request_id: toolCallId,
             approve: false,
             reason: reason || "User denied the tool execution",
             // TODO the above is legacy?
@@ -814,8 +989,7 @@ export default function App({
 
       try {
         // Find the selected model from models.json first (for loading message)
-        const modelsModule = await import("../models.json");
-        const models = modelsModule.default;
+        const { models } = await import("../model");
         const selectedModel = models.find((m) => m.id === modelId);
 
         if (!selectedModel) {
@@ -917,11 +1091,11 @@ export default function App({
 
         // Update buffers with tool return
         onChunk(buffersRef.current, {
-          messageType: "tool_return_message",
+          message_type: "tool_return_message",
           id: "dummy",
-          date: new Date(),
-          toolCallId,
-          toolReturn: toolResult.toolReturn,
+          date: new Date().toISOString(),
+          tool_call_id: toolCallId,
+          tool_return: toolResult.toolReturn,
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
@@ -938,8 +1112,8 @@ export default function App({
             approvals: [
               {
                 type: "tool",
-                toolCallId,
-                toolReturn: toolResult.toolReturn,
+                tool_call_id: toolCallId,
+                tool_return: toolResult.toolReturn,
                 status: toolResult.status,
                 stdout: toolResult.stdout,
                 stderr: toolResult.stderr,
@@ -971,7 +1145,7 @@ export default function App({
         await processConversation([
           {
             type: "approval",
-            approvalRequestId: toolCallId,
+            approval_request_id: toolCallId,
             approve: false,
             reason:
               reason ||
@@ -1017,12 +1191,19 @@ export default function App({
           id: `welcome-${Date.now().toString(36)}`,
           snapshot: {
             continueSession,
-            agentId: agentId !== "loading" ? agentId : undefined,
+            agentState,
+            terminalWidth: columns,
           },
         },
       ]);
     }
-  }, [loadingState, continueSession, agentId, messageHistory.length]);
+  }, [
+    loadingState,
+    continueSession,
+    messageHistory.length,
+    columns,
+    agentState,
+  ]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -1058,34 +1239,36 @@ export default function App({
           <WelcomeScreen
             loadingState={loadingState}
             continueSession={continueSession}
-            agentId={agentId !== "loading" ? agentId : undefined}
+            agentState={agentState}
           />
         )}
 
         {loadingState === "ready" && (
           <>
             {/* Transcript */}
-            {liveItems.length > 0 && (
-              <Box flexDirection="column">
-                {liveItems.map((ln) => (
-                  <Box key={ln.id} marginTop={1}>
-                    {ln.kind === "user" ? (
-                      <UserMessage line={ln} />
-                    ) : ln.kind === "reasoning" ? (
-                      <ReasoningMessage line={ln} />
-                    ) : ln.kind === "assistant" ? (
-                      <AssistantMessage line={ln} />
-                    ) : ln.kind === "tool_call" ? (
-                      <ToolCallMessage line={ln} />
-                    ) : ln.kind === "error" ? (
-                      <ErrorMessage line={ln} />
-                    ) : (
-                      <CommandMessage line={ln} />
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            )}
+            {liveItems.length > 0 &&
+              !pendingApproval &&
+              !planApprovalPending && (
+                <Box flexDirection="column">
+                  {liveItems.map((ln) => (
+                    <Box key={ln.id} marginTop={1}>
+                      {ln.kind === "user" ? (
+                        <UserMessage line={ln} />
+                      ) : ln.kind === "reasoning" ? (
+                        <ReasoningMessage line={ln} />
+                      ) : ln.kind === "assistant" ? (
+                        <AssistantMessage line={ln} />
+                      ) : ln.kind === "tool_call" ? (
+                        <ToolCallMessage line={ln} />
+                      ) : ln.kind === "error" ? (
+                        <ErrorMessage line={ln} />
+                      ) : (
+                        <CommandMessage line={ln} />
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              )}
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
@@ -1094,6 +1277,7 @@ export default function App({
             {showExitStats && (
               <SessionStatsComponent
                 stats={sessionStatsRef.current.getSnapshot()}
+                agentId={agentId}
               />
             )}
 
@@ -1113,6 +1297,8 @@ export default function App({
               permissionMode={uiPermissionMode}
               onPermissionModeChange={setUiPermissionMode}
               onExit={handleExit}
+              onInterrupt={handleInterrupt}
+              interruptRequested={interruptRequested}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}

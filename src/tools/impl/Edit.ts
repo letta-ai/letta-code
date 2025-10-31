@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { validateRequiredParams } from "./validation.js";
 
 interface EditArgs {
   file_path: string;
@@ -13,6 +14,11 @@ interface EditResult {
 }
 
 export async function edit(args: EditArgs): Promise<EditResult> {
+  validateRequiredParams(
+    args,
+    ["file_path", "old_string", "new_string"],
+    "Edit",
+  );
   const { file_path, old_string, new_string, replace_all = false } = args;
   if (!path.isAbsolute(file_path))
     throw new Error(`File path must be absolute, got: ${file_path}`);

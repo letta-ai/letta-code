@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import picomatch from "picomatch";
+import { validateRequiredParams } from "./validation.js";
 
 interface LSArgs {
   path: string;
@@ -15,6 +16,7 @@ interface FileInfo {
 export async function ls(
   args: LSArgs,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
+  validateRequiredParams(args, ["path"], "LS");
   const { path: inputPath, ignore = [] } = args;
   const dirPath = resolve(inputPath);
   try {

@@ -1,14 +1,12 @@
-name: Release
+name: Bump version and release
 
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Optional tag (e.g. v0.1.2). Leave blank when running from a tag push."
+      version_type:
+        description: "Version bump type (patch, minor, major)"
         required: false
-  push:
-    tags:
-      - "v*"
+        default: "patch"
 
 jobs:
   publish:
@@ -19,21 +17,61 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Configure Git
         run: |
-          PKG_VERSION=$(jq -r '.version' package.json)
-          TAG_VERSION=${GITHUB_REF#refs/tags/}
-          if [ "v${PKG_VERSION}" != "${TAG_VERSION}" ]; then
-            echo "Tag (${TAG_VERSION}) does not match package.json version (v${PKG_VERSION})."
-            exit 1
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: 1.3.0
+
+      - name: Bump version
+        id: version
+        run: |
+          VERSION_TYPE="${{ github.event.inputs.version_type || 'patch' }}"
+          OLD_VERSION=$(jq -r '.version' package.json)
+          
+          # Split version into parts
+          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+          
+          # Bump based on type
+          if [ "$VERSION_TYPE" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$VERSION_TYPE" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          
+          # Update package.json
+          jq --arg version "$NEW_VERSION" '.version = $version' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          
+          echo "old_version=$OLD_VERSION" >> $GITHUB_OUTPUT
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit and push version bump
+        run: |
+          git add package.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }} [skip ci]"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin main
+          git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Install dependencies
         env:
@@ -57,7 +95,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body: |
+            Release ${{ steps.version.outputs.tag }}
+            
+            Changes from ${{ steps.version.outputs.old_version }} to ${{ steps.version.outputs.new_version }}
           files: letta.js
           fail_on_unmatched_files: true
 
