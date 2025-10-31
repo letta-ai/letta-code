@@ -49,3 +49,16 @@ export function getModelInfo(modelIdentifier: string) {
 
   return null;
 }
+
+/**
+ * Get updateArgs for a model by ID or handle
+ * @param modelIdentifier - Can be either a model ID (e.g., "opus") or a full handle (e.g., "anthropic/claude-opus-4-1-20250805")
+ * @returns The updateArgs if found, undefined otherwise
+ */
+export function getModelUpdateArgs(
+  modelIdentifier?: string,
+): Record<string, unknown> | undefined {
+  if (!modelIdentifier) return undefined;
+  const modelInfo = getModelInfo(modelIdentifier);
+  return modelInfo?.updateArgs;
+}

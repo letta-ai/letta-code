@@ -12,19 +12,12 @@ import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStream } from "./cli/helpers/stream";
-import { getModelInfo } from "./model";
+import { getModelUpdateArgs } from "./model";
 import { loadSettings, updateSettings } from "./settings";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
 export async function handleHeadlessCommand(argv: string[], model?: string) {
   const settings = await loadSettings();
-
-  // Helper to get updateArgs for a model
-  const getModelUpdateArgs = (modelId?: string): Record<string, unknown> | undefined => {
-    if (!modelId) return undefined;
-    const modelInfo = getModelInfo(modelId);
-    return modelInfo?.updateArgs;
-  };
 
   // Parse CLI args
   const { values, positionals } = parseArgs({
