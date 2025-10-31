@@ -615,6 +615,63 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /logout command - clear credentials and exit
+        if (msg.trim() === "/logout") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Clearing credentials...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { settingsManager } = await import("../settings-manager");
+            const currentSettings = settingsManager.getSettings();
+            const newEnv = { ...currentSettings.env };
+            delete newEnv.LETTA_API_KEY;
+            delete newEnv.LETTA_BASE_URL;
+            
+            settingsManager.updateSettings({
+              env: newEnv,
+              refreshToken: undefined,
+              tokenExpiresAt: undefined,
+            });
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Exit after a brief delay to show the message
+            setTimeout(() => process.exit(0), 500);
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /stream command - toggle and save
         if (msg.trim() === "/stream") {
           const newValue = !tokenStreamingEnabled;

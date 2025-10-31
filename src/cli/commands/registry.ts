@@ -43,6 +43,13 @@ export const commands: Record<string, Command> = {
       return "Clearing messages...";
     },
   },
+  "/logout": {
+    desc: "Clear credentials and exit",
+    handler: () => {
+      // Handled specially in App.tsx to access settings manager
+      return "Clearing credentials...";
+    },
+  },
 };
 
 /**

@@ -22,9 +22,6 @@ USAGE
   # headless
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
-  # authentication
-  letta logout          Clear saved credentials and re-authenticate on next run
-
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
@@ -49,8 +46,8 @@ EXAMPLES
   letta --new           # Force new agent
   letta --agent agent_123
   
-  # authentication
-  letta logout          # Clear credentials and re-authenticate on next run
+  # inside the interactive session
+  /logout               # Clear credentials and exit
   
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -118,23 +115,6 @@ async function main() {
   // Check for subcommands
   const command = positionals[2]; // First positional after node and script
 
-  // Handle 'letta logout' command
-  if (command === "logout") {
-    // Clear API key, base URL, and OAuth tokens
-    settingsManager.updateSettings({
-      env: {
-        ...settings.env,
-        LETTA_API_KEY: '',
-        LETTA_BASE_URL: '',
-      },
-      refreshToken: undefined,
-      tokenExpiresAt: undefined,
-    });
-    console.log("✓ Logged out successfully");
-    console.log("Run 'letta' to re-authenticate");
-    process.exit(0);
-  }
-
   // Handle help flag first
   if (values.help) {
     printHelp();
@@ -189,7 +169,9 @@ async function main() {
       console.error(
         "Your credentials may be invalid or the server may be unreachable.",
       );
-      console.error("Run 'letta logout' then 'letta' to re-authenticate");
+      console.error(
+        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+      );
       process.exit(1);
     }
 
