@@ -7,17 +7,19 @@ import type {
   Block,
   CreateBlock,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import { formatAvailableModels, resolveModel } from "../model";
 import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
+import { formatAvailableModels, resolveModel } from "./model";
+import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
 
 export async function createAgent(
   name = "letta-cli-agent",
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
+  updateArgs?: Record<string, unknown>,
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -168,5 +170,13 @@ export async function createAgent(
     include_base_tool_rules: false,
     initial_message_sequence: [],
   });
+
+  // Apply updateArgs if provided (e.g., reasoningEffort, contextWindow, etc.)
+  if (updateArgs && Object.keys(updateArgs).length > 0) {
+    await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+    // Refresh agent state to get updated config
+    return await client.agents.retrieve(agent.id);
+  }
+
   return agent; // { id, ... }
 }

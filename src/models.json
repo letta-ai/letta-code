@@ -2,24 +2,24 @@
   {
     "id": "default",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
-    "label": "Default (recommended)",
-    "description": "Use the default model (currently Sonnet 4.5)",
+    "label": "Claude Sonnet 4.5 (default)",
+    "description": "The recommended default model (currently Sonnet 4.5)",
     "isDefault": true,
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "opus",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
     "description": "Anthropic's smartest (and slowest) model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "haiku",
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Claude Haiku 4.5",
     "description": "Anthropic's fastest model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "gpt-5-codex",
@@ -27,9 +27,18 @@
     "label": "GPT-5-Codex",
     "description": "A variant of GPT-5 optimized for agentic coding",
     "updateArgs": {
-      "reasoningEffort": "medium",
+      "reasoning_effort": "medium",
       "verbosity": "medium",
-      "contextWindow": 272000
+      "context_window": 272000
+    }
+  },
+  {
+    "id": "glm-4.6",
+    "handle": "openrouter/z-ai/glm-4.6:exacto",
+    "label": "GLM-4.6",
+    "description": "The best open weights coding model",
+    "updateArgs": {
+      "context_window": 200000
     }
   },
   {
@@ -38,9 +47,9 @@
     "label": "GPT-5 (minimal)",
     "description": "OpenAI's latest model (limited reasoning, fastest GPT-5 option)",
     "updateArgs": {
-      "reasoningEffort": "minimal",
+      "reasoning_effort": "minimal",
       "verbosity": "medium",
-      "contextWindow": 272000
+      "context_window": 272000
     }
   },
   {
@@ -49,9 +58,9 @@
     "label": "GPT-5 (low)",
     "description": "OpenAI's latest model (some reasoning enabled)",
     "updateArgs": {
-      "reasoningEffort": "low",
+      "reasoning_effort": "low",
       "verbosity": "medium",
-      "contextWindow": 272000
+      "context_window": 272000
     }
   },
   {
@@ -60,9 +69,9 @@
     "label": "GPT-5 (medium)",
     "description": "OpenAI's latest model (using their recommended reasoning level)",
     "updateArgs": {
-      "reasoningEffort": "medium",
+      "reasoning_effort": "medium",
       "verbosity": "medium",
-      "contextWindow": 272000
+      "context_window": 272000
     }
   },
   {
@@ -71,9 +80,9 @@
     "label": "GPT-5 (high)",
     "description": "OpenAI's latest model (maximum reasoning depth)",
     "updateArgs": {
-      "reasoningEffort": "high",
+      "reasoning_effort": "high",
       "verbosity": "medium",
-      "contextWindow": 272000
+      "context_window": 272000
     }
   },
   {
@@ -81,27 +90,27 @@
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
     "description": "Google's fastest model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "gemini-pro",
     "handle": "google_ai/gemini-2.5-pro",
     "label": "Gemini 2.5 Pro",
     "description": "Google's smartest model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "gpt-4.1",
     "handle": "openai/gpt-4.1",
     "label": "GPT-4.1",
     "description": "OpenAI's most recent non-reasoner model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   },
   {
     "id": "o4-mini",
     "handle": "openai/o4-mini",
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
-    "updateArgs": { "contextWindow": 180000 }
+    "updateArgs": { "context_window": 180000 }
   }
 ]
