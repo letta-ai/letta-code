@@ -135,6 +135,8 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       rawName === "TodoWrite" ||
       displayName === "TODO";
     if (isTodoTool && line.resultOk !== false && line.argsText) {
+      // Debug: log the raw argsText to see what format it's in
+      console.error(`[TODO] Raw argsText: ${line.argsText.substring(0, 200)}`);
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
