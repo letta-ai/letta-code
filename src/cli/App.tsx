@@ -635,7 +635,8 @@ export default function App({
             const currentSettings = settingsManager.getSettings();
             const newEnv = { ...currentSettings.env };
             delete newEnv.LETTA_API_KEY;
-            delete newEnv.LETTA_BASE_URL;
+            // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
+            // because it should not be stored there in the first place
 
             settingsManager.updateSettings({
               env: newEnv,

@@ -70,12 +70,13 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       )
         .then((tokens) => {
           // Save tokens
+          // Note: LETTA_BASE_URL is intentionally NOT saved to settings
+          // It should only come from environment variables
           const now = Date.now();
           settingsManager.updateSettings({
             env: {
               ...settingsManager.getSettings().env,
               LETTA_API_KEY: tokens.access_token,
-              LETTA_BASE_URL: OAUTH_CONFIG.apiBaseUrl,
             },
             refreshToken: tokens.refresh_token,
             tokenExpiresAt: now + tokens.expires_in * 1000,
