@@ -42,6 +42,7 @@ import {
   type Buffers,
   createBuffers,
   type Line,
+  markIncompleteToolsAsCancelled,
   onChunk,
   toLines,
 } from "./helpers/accumulator";
@@ -514,13 +515,15 @@ export default function App({
             continue; // Loop continues naturally
           }
 
-          // Unexpected stop reason
-          // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
-          // using lastRunId to get full error message from step.errorData
-          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-          // Then display step.errorData.message or full error details instead of generic message
+          // Unexpected stop reason (error, llm_api_error, etc.)
+          // Mark incomplete tool calls as finished to prevent stuck blinking UI
+          markIncompleteToolsAsCancelled(buffersRef.current);
+
+          // Show stop reason (mid-stream errors should already be in buffers)
           appendError(`Unexpected stop reason: ${stopReason}`);
+
           setStreaming(false);
+          refreshDerived();
           return;
         }
       } catch (e) {
