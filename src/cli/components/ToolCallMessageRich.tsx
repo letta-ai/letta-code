@@ -134,6 +134,23 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       rawName === "todo_write" ||
       rawName === "TodoWrite" ||
       displayName === "TODO";
+
+    // Debug logging to diagnose rendering issue
+    if (isTodoTool) {
+      console.error(
+        `[TODO DEBUG] isTodoTool: true, rawName: ${rawName}, displayName: ${displayName}`,
+      );
+      console.error(
+        `[TODO DEBUG] resultOk: ${line.resultOk}, hasArgsText: ${!!line.argsText}`,
+      );
+      if (line.argsText) {
+        console.error(`[TODO DEBUG] argsText length: ${line.argsText.length}`);
+        console.error(
+          `[TODO DEBUG] argsText preview: ${line.argsText.substring(0, 100)}`,
+        );
+      }
+    }
+
     if (isTodoTool && line.resultOk !== false && line.argsText) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
