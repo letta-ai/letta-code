@@ -742,7 +742,7 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = getClient();
+            const client = await getClient();
             await client.agents.messages.reset(agentId, {
               add_default_initial_messages: false,
             });
