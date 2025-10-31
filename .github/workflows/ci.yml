@@ -60,8 +60,25 @@ jobs:
       - name: CLI version smoke test
         run: ./letta.js --version || true
 
+      - name: Bundle size check
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            SIZE=$(powershell -command "(Get-Item letta.js).length")
+          else
+            SIZE=$(stat -f%z ./letta.js 2>/dev/null || stat -c%s ./letta.js 2>/dev/null)
+          fi
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          echo "Bundle size: $SIZE bytes (~${SIZE_MB}MB)"
+          # Warn if bundle is larger than 50MB
+          if [ $SIZE -gt 52428800 ]; then
+            echo "⚠️  Warning: Bundle size is larger than 50MB"
+          else
+            echo "✓ Bundle size is acceptable"
+          fi
+
       - name: Headless smoke test (API)
-        if: ${{ github.event_name == 'push' }}
+        # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
