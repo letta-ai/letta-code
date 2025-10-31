@@ -15,6 +15,9 @@ export interface Settings {
   globalSharedBlockIds: Record<string, string>;
   permissions?: PermissionRules;
   env?: Record<string, string>;
+  // OAuth token management
+  refreshToken?: string;
+  tokenExpiresAt?: number; // Unix timestamp in milliseconds
 }
 
 export interface ProjectSettings {
