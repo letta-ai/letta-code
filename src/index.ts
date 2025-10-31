@@ -141,7 +141,8 @@ async function main() {
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
 
-  if (!apiKey) {
+
+  if (!apiKey && baseURL === "https://api.letta.com") {
     // For headless mode, error out (assume automation context)
     if (isHeadless) {
       console.error("Missing LETTA_API_KEY");

@@ -42,16 +42,18 @@ export async function getClient() {
     }
   }
 
-  if (!apiKey) {
-    console.error("Missing LETTA_API_KEY");
-    console.error("Run 'letta setup' to configure authentication");
-    process.exit(1);
-  }
 
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
+
+
+  if (!apiKey && baseURL === "https://api.letta.com") {
+    console.error("Missing LETTA_API_KEY");
+    console.error("Run 'letta setup' to configure authentication");
+    process.exit(1);
+  }
 
   // Auto-cache: if env vars are set but not in settings, write them to settings
   let needsUpdate = false;
