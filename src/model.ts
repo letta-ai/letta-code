@@ -34,3 +34,18 @@ export function getDefaultModel(): string {
 export function formatAvailableModels(): string {
   return models.map((m) => `  ${m.id.padEnd(20)} ${m.handle}`).join("\n");
 }
+
+/**
+ * Get model info by ID or handle
+ * @param modelIdentifier - Can be either a model ID (e.g., "opus") or a full handle (e.g., "anthropic/claude-opus-4-1-20250805")
+ * @returns The model info if found, null otherwise
+ */
+export function getModelInfo(modelIdentifier: string) {
+  const byId = models.find((m) => m.id === modelIdentifier);
+  if (byId) return byId;
+
+  const byHandle = models.find((m) => m.handle === modelIdentifier);
+  if (byHandle) return byHandle;
+
+  return null;
+}
