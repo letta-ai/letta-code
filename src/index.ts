@@ -23,8 +23,7 @@ USAGE
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
   # authentication
-  letta setup           Configure Letta Cloud or self-hosting
-  letta login           Authenticate with Letta Cloud
+  letta logout          Clear saved credentials and re-authenticate on next run
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -41,8 +40,8 @@ BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
   (stored in .letta/settings.local.json). Use --new to force a new agent.
   
-  If no credentials are configured, you'll be prompted to set up authentication
-  via Letta Cloud OAuth or self-hosting.
+  If no credentials are configured, you'll be prompted to authenticate via
+  Letta Cloud OAuth on first run.
 
 EXAMPLES
   # when installed as an executable
@@ -51,8 +50,7 @@ EXAMPLES
   letta --agent agent_123
   
   # authentication
-  letta setup           # Configure authentication
-  letta login           # Login to Letta Cloud
+  letta logout          # Clear credentials and re-authenticate on next run
   
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -117,21 +115,23 @@ async function main() {
     process.exit(1);
   }
 
-  // Check for subcommands (letta setup, letta login)
+  // Check for subcommands
   const command = positionals[2]; // First positional after node and script
 
-  // Handle 'letta setup' command
-  if (command === "setup") {
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
-  }
-
-  // Handle 'letta login' command
-  if (command === "login") {
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
+  // Handle 'letta logout' command
+  if (command === "logout") {
+    // Clear API key, base URL, and OAuth tokens
+    settingsManager.updateSettings({
+      env: {
+        ...settings.env,
+        LETTA_API_KEY: '',
+        LETTA_BASE_URL: '',
+      },
+      refreshToken: undefined,
+      tokenExpiresAt: undefined,
+    });
+    console.log("✓ Logged out successfully");
+    console.log("Run 'letta' to re-authenticate");
     process.exit(0);
   }
 
@@ -165,7 +165,7 @@ async function main() {
     // For headless mode, error out (assume automation context)
     if (isHeadless) {
       console.error("Missing LETTA_API_KEY");
-      console.error("Run 'letta setup' to configure authentication");
+      console.error("Run 'letta' in interactive mode to authenticate");
       process.exit(1);
     }
 
@@ -189,7 +189,7 @@ async function main() {
       console.error(
         "Your credentials may be invalid or the server may be unreachable.",
       );
-      console.error("Run 'letta setup' to reconfigure authentication");
+      console.error("Run 'letta logout' then 'letta' to re-authenticate");
       process.exit(1);
     }
 

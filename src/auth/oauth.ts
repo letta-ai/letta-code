@@ -1,16 +1,13 @@
 /**
  * OAuth 2.0 utilities for Letta Cloud authentication
- * Supports both Device Code Flow and Authorization Code Flow with PKCE
+ * Uses Device Code Flow for CLI authentication
  */
-
-import crypto from "node:crypto";
 
 export const OAUTH_CONFIG = {
   clientId: "ci-let-724dea7e98f4af6f8f370f4b1466200c",
   clientSecret: "", // Not needed for device code flow
   authBaseUrl: "https://app.letta.com",
   apiBaseUrl: "https://api.letta.com",
-  redirectUri: "http://localhost:4853/callback",
 } as const;
 
 export interface DeviceCodeResponse {
@@ -129,70 +126,6 @@ export async function pollForToken(
 }
 
 /**
- * Authorization Code Flow - Step 1: Generate PKCE challenge
- */
-export function generatePKCEChallenge(): {
-  codeVerifier: string;
-  codeChallenge: string;
-} {
-  const codeVerifier = crypto.randomBytes(32).toString("base64url");
-  const codeChallenge = crypto
-    .createHash("sha256")
-    .update(codeVerifier)
-    .digest("base64url");
-
-  return { codeVerifier, codeChallenge };
-}
-
-/**
- * Authorization Code Flow - Step 2: Build authorization URL
- */
-export function buildAuthorizationUrl(
-  codeChallenge: string,
-  state: string,
-): string {
-  const params = new URLSearchParams({
-    client_id: OAUTH_CONFIG.clientId,
-    redirect_uri: OAUTH_CONFIG.redirectUri,
-    response_type: "code",
-    state,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
-  });
-
-  return `${OAUTH_CONFIG.authBaseUrl}/oauth/authorize?${params}`;
-}
-
-/**
- * Authorization Code Flow - Step 3: Exchange code for tokens
- */
-export async function exchangeCodeForTokens(
-  code: string,
-  codeVerifier: string,
-): Promise<TokenResponse> {
-  const response = await fetch(`${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "authorization_code",
-      client_id: OAUTH_CONFIG.clientId,
-      code,
-      redirect_uri: OAUTH_CONFIG.redirectUri,
-      code_verifier: codeVerifier,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = (await response.json()) as OAuthError;
-    throw new Error(
-      `Failed to exchange code for tokens: ${error.error_description || error.error}`,
-    );
-  }
-
-  return (await response.json()) as TokenResponse;
-}
-
-/**
  * Refresh an access token using a refresh token
  */
 export async function refreshAccessToken(
@@ -226,7 +159,7 @@ export async function validateCredentials(
   apiKey: string,
 ): Promise<boolean> {
   try {
-    const response = await fetch(`${baseUrl}/v1/tools`, {
+    const response = await fetch(`${baseUrl}/v1/health`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
