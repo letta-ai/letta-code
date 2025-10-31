@@ -12,11 +12,19 @@ import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStream } from "./cli/helpers/stream";
+import { getModelInfo } from "./model";
 import { loadSettings, updateSettings } from "./settings";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
 export async function handleHeadlessCommand(argv: string[], model?: string) {
   const settings = await loadSettings();
+
+  // Helper to get updateArgs for a model
+  const getModelUpdateArgs = (modelId?: string): Record<string, unknown> | undefined => {
+    if (!modelId) return undefined;
+    const modelInfo = getModelInfo(modelId);
+    return modelInfo?.updateArgs;
+  };
 
   // Parse CLI args
   const { values, positionals } = parseArgs({
@@ -25,6 +33,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
       continue: { type: "boolean", short: "c" },
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
+      model: { type: "string", short: "m" },
+      prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
     },
     strict: false,
@@ -70,7 +80,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
-    agent = await createAgent(undefined, model);
+    const updateArgs = getModelUpdateArgs(model);
+    agent = await createAgent(undefined, model, undefined, updateArgs);
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -101,7 +112,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
   // Priority 5: Create a new agent
   if (!agent) {
-    agent = await createAgent(undefined, model);
+    const updateArgs = getModelUpdateArgs(model);
+    agent = await createAgent(undefined, model, undefined, updateArgs);
   }
 
   // Save agent ID to both project and global settings
