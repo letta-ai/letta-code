@@ -2,9 +2,8 @@
  * Ink UI components for OAuth setup flow
  */
 
-import crypto from "crypto";
 import { Box, Text, useApp, useInput } from "ink";
-import React, { useState } from "react";
+import { useState } from "react";
 import { asciiLogo } from "../cli/components/AsciiArt.ts";
 import { settingsManager } from "../settings-manager";
 import { OAUTH_CONFIG, pollForToken, requestDeviceCode } from "./oauth";

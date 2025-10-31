@@ -636,7 +636,7 @@ export default function App({
             const newEnv = { ...currentSettings.env };
             delete newEnv.LETTA_API_KEY;
             delete newEnv.LETTA_BASE_URL;
-            
+
             settingsManager.updateSettings({
               env: newEnv,
               refreshToken: undefined,

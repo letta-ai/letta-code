@@ -42,12 +42,10 @@ export async function getClient() {
     }
   }
 
-
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
-
 
   if (!apiKey && baseURL === "https://api.letta.com") {
     console.error("Missing LETTA_API_KEY");

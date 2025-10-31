@@ -113,7 +113,7 @@ async function main() {
   }
 
   // Check for subcommands
-  const command = positionals[2]; // First positional after node and script
+  const _command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
   if (values.help) {
@@ -140,7 +140,6 @@ async function main() {
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
-
 
   if (!apiKey && baseURL === "https://api.letta.com") {
     // For headless mode, error out (assume automation context)
