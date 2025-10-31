@@ -13,11 +13,11 @@ import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStream } from "./cli/helpers/stream";
-import { loadSettings, updateSettings } from "./settings";
+import { settingsManager } from "./settings-manager";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
 export async function handleHeadlessCommand(argv: string[], model?: string) {
-  const settings = await loadSettings();
+  const settings = settingsManager.getSettings();
 
   // Parse CLI args
   const { values, positionals } = parseArgs({
@@ -79,14 +79,14 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
-    const { loadProjectSettings } = await import("./settings");
-    const projectSettings = await loadProjectSettings();
-    if (projectSettings?.lastAgent) {
+    await settingsManager.loadLocalProjectSettings();
+    const localProjectSettings = settingsManager.getLocalProjectSettings();
+    if (localProjectSettings?.lastAgent) {
       try {
-        agent = await client.agents.retrieve(projectSettings.lastAgent);
+        agent = await client.agents.retrieve(localProjectSettings.lastAgent);
       } catch (_error) {
         console.error(
-          `Project agent ${projectSettings.lastAgent} not found, creating new one...`,
+          `Project agent ${localProjectSettings.lastAgent} not found, creating new one...`,
         );
       }
     }
@@ -110,9 +110,9 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   }
 
   // Save agent ID to both project and global settings
-  const { updateProjectSettings } = await import("./settings");
-  await updateProjectSettings({ lastAgent: agent.id });
-  await updateSettings({ lastAgent: agent.id });
+  await settingsManager.loadLocalProjectSettings();
+  settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
+  settingsManager.updateSettings({ lastAgent: agent.id });
 
   // Validate output format
   const outputFormat =
