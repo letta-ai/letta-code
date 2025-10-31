@@ -258,7 +258,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
           { toolName: string; args: string }
         >();
         const autoApprovalEmitted = new Set<string>();
-        let lastApprovalId: string | null = null;
+        let _lastApprovalId: string | null = null;
 
         for await (const chunk of stream) {
           // Detect server conflict due to pending approval; handle it and retry
@@ -309,7 +309,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
             for (const toolCall of toolCalls) {
               if (toolCall?.tool_call_id && toolCall?.name) {
                 const id = toolCall.tool_call_id;
-                lastApprovalId = id;
+                _lastApprovalId = id;
 
                 // Prefer the most complete args we have seen so far; concatenate deltas
                 const prev = approvalRequests.get(id);
