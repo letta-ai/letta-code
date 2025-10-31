@@ -367,7 +367,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       }
 
       // if argsText is not empty, add it to the line (immutable update)
-      if (argsText !== undefined) {
+      // Skip if argsText is undefined or null (backend sometimes sends null)
+      if (argsText !== undefined && argsText !== null) {
         const updatedLine = {
           ...line,
           argsText: (line.argsText || "") + argsText,
