@@ -52,6 +52,7 @@ class SettingsManager {
    * Should be called once at app startup
    */
   async initialize(): Promise<void> {
+    console.error(`[SETTINGS-MANAGER] initialize() called, current initialized state: ${this.initialized}`);
     if (this.initialized) return;
 
     const settingsPath = this.getSettingsPath();
@@ -82,6 +83,7 @@ class SettingsManager {
    * Get all settings (synchronous, from memory)
    */
   getSettings(): Settings {
+    console.error(`[SETTINGS-MANAGER] getSettings() called, initialized: ${this.initialized}, settings exists: ${!!this.settings}`);
     if (!this.initialized || !this.settings) {
       throw new Error(
         "Settings not initialized. Call settingsManager.initialize() first.",
@@ -373,5 +375,13 @@ class SettingsManager {
   }
 }
 
-// Singleton instance
-export const settingsManager = new SettingsManager();
+// Singleton instance - use globalThis to ensure only one instance across the entire bundle
+declare global {
+  var __lettaSettingsManager: SettingsManager | undefined;
+}
+
+if (!globalThis.__lettaSettingsManager) {
+  globalThis.__lettaSettingsManager = new SettingsManager();
+}
+
+export const settingsManager = globalThis.__lettaSettingsManager;
