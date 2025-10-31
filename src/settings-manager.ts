@@ -52,7 +52,6 @@ class SettingsManager {
    * Should be called once at app startup
    */
   async initialize(): Promise<void> {
-    console.error(`[SETTINGS-MANAGER] initialize() called, current initialized state: ${this.initialized}`);
     if (this.initialized) return;
 
     const settingsPath = this.getSettingsPath();
@@ -83,7 +82,6 @@ class SettingsManager {
    * Get all settings (synchronous, from memory)
    */
   getSettings(): Settings {
-    console.error(`[SETTINGS-MANAGER] getSettings() called, initialized: ${this.initialized}, settings exists: ${!!this.settings}`);
     if (!this.initialized || !this.settings) {
       throw new Error(
         "Settings not initialized. Call settingsManager.initialize() first.",

@@ -53,9 +53,7 @@ EXAMPLES
 
 async function main() {
   // Initialize settings manager (loads settings once into memory)
-  console.error("[DEBUG] Initializing settings manager...");
   await settingsManager.initialize();
-  console.error("[DEBUG] Settings manager initialized");
   const settings = settingsManager.getSettings();
 
   // set LETTA_API_KEY from environment if available
@@ -183,11 +181,8 @@ async function main() {
 
   if (isHeadless) {
     // For headless mode, load tools synchronously
-    console.error("[DEBUG] Loading tools...");
     await loadTools();
-    console.error("[DEBUG] Tools loaded, getting client...");
     const client = await getClient();
-    console.error("[DEBUG] Client retrieved");
     await upsertToolsToServer(client);
 
     const { handleHeadlessCommand } = await import("./headless");
