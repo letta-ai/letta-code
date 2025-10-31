@@ -51,4 +51,58 @@ describe("LS tool", () => {
       /missing required parameter.*path/,
     );
   });
+
+  test("filters files using ignore parameter (array)", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("file1.txt", "");
+    testDir.createFile("file2.log", "");
+    testDir.createFile("important.txt", "");
+    testDir.createDir("node_modules");
+
+    const result = await ls({
+      path: testDir.path,
+      ignore: ["*.log", "node_modules"],
+    });
+
+    expect(result.content[0].text).toContain("file1.txt");
+    expect(result.content[0].text).toContain("important.txt");
+    expect(result.content[0].text).not.toContain("file2.log");
+    expect(result.content[0].text).not.toContain("node_modules");
+  });
+
+  test("throws error when ignore is a string instead of array", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("file.txt", "");
+
+    await expect(
+      ls({
+        path: testDir.path,
+        ignore: '["*.log", "node_modules"]' as unknown as string[],
+      }),
+    ).rejects.toThrow(/must be an array/);
+  });
+
+  test("throws error when ignore is a number", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("file.txt", "");
+
+    await expect(
+      ls({
+        path: testDir.path,
+        ignore: 123 as unknown as string[],
+      }),
+    ).rejects.toThrow(/must be an array/);
+  });
+
+  test("throws error when ignore is an object", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("file.txt", "");
+
+    await expect(
+      ls({
+        path: testDir.path,
+        ignore: { pattern: "*.log" } as unknown as string[],
+      }),
+    ).rejects.toThrow(/must be an array/);
+  });
 });
