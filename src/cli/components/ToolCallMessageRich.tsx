@@ -167,10 +167,21 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
           // Return TodoRenderer directly - it has its own prefix
           return <TodoRenderer todos={safeTodos} />;
+        } else {
+          // Debug: args parsed but no todos array found
+          console.error(
+            `[TODO] Parsed args but missing todos array. Keys: ${Object.keys(parsedArgs).join(", ")}`,
+          );
         }
-      } catch {
-        // If parsing fails, fall through to regular handling
+      } catch (err) {
+        // Debug: JSON parsing failed
+        console.error(`[TODO] Failed to parse argsText: ${err}`);
       }
+    } else if (isTodoTool) {
+      // Debug: condition check failed
+      console.error(
+        `[TODO] Condition failed. resultOk: ${line.resultOk}, hasArgsText: ${!!line.argsText}`,
+      );
     }
 
     // Regular result handling
