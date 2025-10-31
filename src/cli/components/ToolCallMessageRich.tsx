@@ -135,8 +135,6 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       rawName === "TodoWrite" ||
       displayName === "TODO";
     if (isTodoTool && line.resultOk !== false && line.argsText) {
-      // Debug: log the raw argsText to see what format it's in
-      console.error(`[TODO] Raw argsText: ${line.argsText.substring(0, 200)}`);
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
@@ -169,21 +167,10 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
           // Return TodoRenderer directly - it has its own prefix
           return <TodoRenderer todos={safeTodos} />;
-        } else {
-          // Debug: args parsed but no todos array found
-          console.error(
-            `[TODO] Parsed args but missing todos array. Keys: ${Object.keys(parsedArgs).join(", ")}`,
-          );
         }
-      } catch (err) {
-        // Debug: JSON parsing failed
-        console.error(`[TODO] Failed to parse argsText: ${err}`);
+      } catch {
+        // If parsing fails, fall through to regular handling
       }
-    } else if (isTodoTool) {
-      // Debug: condition check failed
-      console.error(
-        `[TODO] Condition failed. resultOk: ${line.resultOk}, hasArgsText: ${!!line.argsText}`,
-      );
     }
 
     // Regular result handling

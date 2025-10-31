@@ -370,7 +370,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       if (argsText !== undefined) {
         const updatedLine = {
           ...line,
-          argsText: (line.argsText ?? "") + argsText,
+          argsText: (line.argsText || "") + argsText,
         };
         b.byId.set(id, updatedLine);
       }
