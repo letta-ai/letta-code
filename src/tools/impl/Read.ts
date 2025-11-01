@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ReadArgs {
@@ -61,22 +62,58 @@ function formatWithLineNumbers(
   limit?: number,
 ): string {
   const lines = content.split("\n");
+  const originalLineCount = lines.length;
   const startLine = offset || 0;
-  const endLine = limit
-    ? Math.min(startLine + limit, lines.length)
-    : lines.length;
+
+  // Apply default limit if not specified (Claude Code: 2000 lines)
+  const effectiveLimit = limit ?? LIMITS.READ_MAX_LINES;
+  const endLine = Math.min(startLine + effectiveLimit, lines.length);
   const actualStartLine = Math.min(startLine, lines.length);
   const actualEndLine = Math.min(endLine, lines.length);
   const selectedLines = lines.slice(actualStartLine, actualEndLine);
-  const maxLineNumber = actualStartLine + selectedLines.length;
-  const padding = Math.max(1, maxLineNumber.toString().length);
-  return selectedLines
-    .map((line, index) => {
-      const lineNumber = actualStartLine + index + 1;
-      const paddedNumber = lineNumber.toString().padStart(padding);
-      return `${paddedNumber}→${line}`;
-    })
-    .join("\n");
+
+  // Apply per-line character limit (Claude Code: 2000 chars/line)
+  let linesWereTruncatedInLength = false;
+  const formattedLines = selectedLines.map((line, index) => {
+    const lineNumber = actualStartLine + index + 1;
+    const maxLineNumber = actualStartLine + selectedLines.length;
+    const padding = Math.max(1, maxLineNumber.toString().length);
+    const paddedNumber = lineNumber.toString().padStart(padding);
+
+    // Truncate long lines
+    if (line.length > LIMITS.READ_MAX_CHARS_PER_LINE) {
+      linesWereTruncatedInLength = true;
+      const truncated = line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE);
+      return `${paddedNumber}→${truncated}... [line truncated]`;
+    }
+
+    return `${paddedNumber}→${line}`;
+  });
+
+  let result = formattedLines.join("\n");
+
+  // Add truncation notices if applicable
+  const notices: string[] = [];
+  const wasTruncatedByLineCount = actualEndLine < originalLineCount;
+
+  if (wasTruncatedByLineCount && !limit) {
+    // Only show this notice if user didn't explicitly set a limit
+    notices.push(
+      `\n\n[File truncated: showing lines ${actualStartLine + 1}-${actualEndLine} of ${originalLineCount} total lines. Use offset and limit parameters to read other sections.]`,
+    );
+  }
+
+  if (linesWereTruncatedInLength) {
+    notices.push(
+      `\n\n[Some lines exceeded ${LIMITS.READ_MAX_CHARS_PER_LINE.toLocaleString()} characters and were truncated.]`,
+    );
+  }
+
+  if (notices.length > 0) {
+    result += notices.join("");
+  }
+
+  return result;
 }
 
 export async function read(args: ReadArgs): Promise<ReadResult> {

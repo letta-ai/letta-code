@@ -2,6 +2,7 @@ import type { ExecOptions } from "node:child_process";
 import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 const execAsync = promisify(exec);
@@ -115,10 +116,16 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const stderrStr = typeof stderr === "string" ? stderr : stderr.toString();
     let output = stdoutStr;
     if (stderrStr) output = output ? `${output}\n${stderrStr}` : stderrStr;
+
+    // Apply character limit to prevent excessive token usage
+    const { content: truncatedOutput } = truncateByChars(
+      output || "(Command completed with no output)",
+      LIMITS.BASH_OUTPUT_CHARS,
+      "Bash",
+    );
+
     return {
-      content: [
-        { type: "text", text: output || "(Command completed with no output)" },
-      ],
+      content: [{ type: "text", text: truncatedOutput }],
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException & {
@@ -134,13 +141,16 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     if (err.stderr) errorMessage += err.stderr;
     else if (err.message) errorMessage += err.message;
     if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
+
+    // Apply character limit even to error messages
+    const { content: truncatedError } = truncateByChars(
+      errorMessage.trim() || "Command failed with unknown error",
+      LIMITS.BASH_OUTPUT_CHARS,
+      "Bash",
+    );
+
     return {
-      content: [
-        {
-          type: "text",
-          text: errorMessage.trim() || "Command failed with unknown error",
-        },
-      ],
+      content: [{ type: "text", text: truncatedError }],
       isError: true,
     };
   }

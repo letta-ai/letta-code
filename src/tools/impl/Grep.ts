@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 const execFileAsync = promisify(execFile);
@@ -90,8 +91,19 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       const files = stdout.trim().split("\n").filter(Boolean);
       const fileCount = files.length;
       if (fileCount === 0) return { output: "No files found", files: 0 };
+
+      const fileList = files.join("\n");
+      const fullOutput = `Found ${fileCount} file${fileCount !== 1 ? "s" : ""}\n${fileList}`;
+
+      // Apply character limit to prevent large file lists
+      const { content: truncatedOutput } = truncateByChars(
+        fullOutput,
+        LIMITS.GREP_OUTPUT_CHARS,
+        "Grep",
+      );
+
       return {
-        output: `Found ${fileCount} file${fileCount !== 1 ? "s" : ""}\n${files.join("\n")}`,
+        output: truncatedOutput,
         files: fileCount,
       };
     } else if (output_mode === "count") {
@@ -123,8 +135,16 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     } else {
       if (!stdout || stdout.trim() === "")
         return { output: "No matches found", matches: 0 };
+
+      // Apply character limit to content output
+      const { content: truncatedOutput } = truncateByChars(
+        stdout,
+        LIMITS.GREP_OUTPUT_CHARS,
+        "Grep",
+      );
+
       return {
-        output: stdout,
+        output: truncatedOutput,
         matches: stdout.split("\n").filter(Boolean).length,
       };
     }
