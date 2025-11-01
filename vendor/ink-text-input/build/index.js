@@ -46,7 +46,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             return;
         }
         // Treat Escape as a control key (don't insert into value)
-        if (key.escape || key.upArrow || key.downArrow || (key.ctrl && input === 'c') || key.tab || (key.shift && key.tab)) {
+        if (key.escape || (key.ctrl && input === 'c') || key.tab || (key.shift && key.tab)) {
             return;
         }
         if (key.return) {
@@ -67,6 +67,11 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             if (showCursor) {
                 nextCursorOffset++;
             }
+        }
+        else if (key.upArrow || key.downArrow) {
+            // Handle wrapped line navigation - don't handle here, let parent decide
+            // Parent will check cursor position to determine if at boundary
+            return;
         }
         else if (key.backspace || key.delete) {
             if (cursorOffset > 0) {

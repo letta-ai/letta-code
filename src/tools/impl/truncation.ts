@@ -25,7 +25,7 @@ export const LIMITS = {
 export function truncateByChars(
   text: string,
   maxChars: number,
-  toolName: string = "output",
+  _toolName: string = "output",
 ): { content: string; wasTruncated: boolean } {
   if (text.length <= maxChars) {
     return { content: text, wasTruncated: false };
@@ -48,7 +48,7 @@ export function truncateByLines(
   text: string,
   maxLines: number,
   maxCharsPerLine?: number,
-  toolName: string = "output",
+  _toolName: string = "output",
 ): {
   content: string;
   wasTruncated: boolean;
@@ -66,7 +66,7 @@ export function truncateByLines(
     selectedLines = selectedLines.map((line) => {
       if (line.length > maxCharsPerLine) {
         linesWereTruncatedInLength = true;
-        return line.slice(0, maxCharsPerLine) + "... [line truncated]";
+        return `${line.slice(0, maxCharsPerLine)}... [line truncated]`;
       }
       return line;
     });
@@ -90,7 +90,7 @@ export function truncateByLines(
       );
     }
 
-    content += "\n\n" + notices.join(" ");
+    content += `\n\n${notices.join(" ")}`;
   }
 
   return {
