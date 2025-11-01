@@ -10,3 +10,4 @@ A powerful search tool built on ripgrep
   - Use Task tool for open-ended searches requiring multiple rounds
   - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\{\}` to find `interface{}` in Go code)
   - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \{[\s\S]*?field`, use `multiline: true`
+  - If the output exceeds 10,000 characters, it will be truncated before being returned to you

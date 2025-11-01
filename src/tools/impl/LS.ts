@@ -2,6 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import picomatch from "picomatch";
 import LSSchema from "../schemas/LS.json";
+import { LIMITS } from "./truncation.js";
 import { validateParamTypes, validateRequiredParams } from "./validation.js";
 
 interface LSArgs {
@@ -48,7 +49,16 @@ export async function ls(
           : 1
         : a.name.localeCompare(b.name),
     );
-    const tree = formatTree(dirPath, fileInfos);
+
+    // Apply entry limit to prevent massive directories
+    const totalEntries = fileInfos.length;
+    let truncated = false;
+    if (totalEntries > LIMITS.LS_MAX_ENTRIES) {
+      fileInfos.splice(LIMITS.LS_MAX_ENTRIES);
+      truncated = true;
+    }
+
+    const tree = formatTree(dirPath, fileInfos, truncated, totalEntries);
     return { content: [{ type: "text", text: tree }] };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
@@ -60,7 +70,12 @@ export async function ls(
   }
 }
 
-function formatTree(basePath: string, items: FileInfo[]): string {
+function formatTree(
+  basePath: string,
+  items: FileInfo[],
+  truncated: boolean,
+  totalEntries: number,
+): string {
   if (items.length === 0) return `${basePath}/ (empty directory)`;
   const lines: string[] = [];
   const pathParts = basePath.split("/");
@@ -74,6 +89,15 @@ function formatTree(basePath: string, items: FileInfo[]): string {
       `${prefix}- ${item.name}${item.type === "directory" ? "/" : ""}`,
     );
   });
+
+  // Add truncation notice if applicable
+  if (truncated) {
+    lines.push("");
+    lines.push(
+      `[Output truncated: showing ${LIMITS.LS_MAX_ENTRIES.toLocaleString()} of ${totalEntries.toLocaleString()} entries.]`,
+    );
+  }
+
   const hasHiddenFiles = items.some((item) => item.name.startsWith("."));
   if (hasHiddenFiles) {
     lines.push("");
