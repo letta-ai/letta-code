@@ -70,7 +70,7 @@ describe("truncation utilities", () => {
     });
 
     test("truncates long lines when maxCharsPerLine specified", () => {
-      const text = "short\n" + "a".repeat(1000) + "\nshort";
+      const text = `short\n${"a".repeat(1000)}\nshort`;
       const result = truncateByLines(text, 10, 500, "Test");
 
       expect(result.wasTruncated).toBe(true);

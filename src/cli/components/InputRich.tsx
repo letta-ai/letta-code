@@ -60,6 +60,28 @@ export function Input({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [temporaryInput, setTemporaryInput] = useState("");
 
+  // Track if we just moved to a boundary (for two-step history navigation)
+  const [atStartBoundary, setAtStartBoundary] = useState(false);
+  const [atEndBoundary, setAtEndBoundary] = useState(false);
+
+  // Reset cursor position after it's been applied
+  useEffect(() => {
+    if (cursorPos !== undefined) {
+      const timer = setTimeout(() => setCursorPos(undefined), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [cursorPos]);
+
+  // Reset boundary flags when cursor moves (via left/right arrows)
+  useEffect(() => {
+    if (currentCursorPosition !== 0) {
+      setAtStartBoundary(false);
+    }
+    if (currentCursorPosition !== value.length) {
+      setAtEndBoundary(false);
+    }
+  }, [currentCursorPosition, value.length]);
+
   // Sync with external mode changes (from plan approval dialog)
   useEffect(() => {
     if (externalMode !== undefined) {
@@ -145,40 +167,112 @@ export function Input({
     }
   });
 
-  // Handle up/down arrow keys for command history
+  // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     // Don't interfere with autocomplete navigation
     if (isAutocompleteActive) {
       return;
     }
 
-    if (key.upArrow) {
-      // Navigate backwards in history
-      if (history.length === 0) return;
+    if (key.upArrow || key.downArrow) {
+      // Calculate which wrapped line the cursor is on
+      const lineWidth = contentWidth; // Available width for text
 
-      if (historyIndex === -1) {
-        // Starting to navigate history - save current input
-        setTemporaryInput(value);
-        // Go to most recent command
-        setHistoryIndex(history.length - 1);
-        setValue(history[history.length - 1] ?? "");
-      } else if (historyIndex > 0) {
-        // Go to older command
-        setHistoryIndex(historyIndex - 1);
-        setValue(history[historyIndex - 1] ?? "");
-      }
-    } else if (key.downArrow) {
-      // Navigate forwards in history
-      if (historyIndex === -1) return; // Not in history mode
+      // Calculate current wrapped line number and position within that line
+      const currentWrappedLine = Math.floor(currentCursorPosition / lineWidth);
+      const columnInCurrentLine = currentCursorPosition % lineWidth;
 
-      if (historyIndex < history.length - 1) {
-        // Go to newer command
-        setHistoryIndex(historyIndex + 1);
-        setValue(history[historyIndex + 1] ?? "");
-      } else {
-        // At the end of history - restore temporary input
-        setHistoryIndex(-1);
-        setValue(temporaryInput);
+      // Calculate total number of wrapped lines
+      const totalWrappedLines = Math.ceil(value.length / lineWidth) || 1;
+
+      if (key.upArrow) {
+        if (currentWrappedLine > 0) {
+          // Not on first wrapped line - move cursor up one wrapped line
+          // Try to maintain the same column position
+          const targetLine = currentWrappedLine - 1;
+          const targetLineStart = targetLine * lineWidth;
+          const targetLineEnd = Math.min(
+            targetLineStart + lineWidth,
+            value.length,
+          );
+          const targetLineLength = targetLineEnd - targetLineStart;
+
+          // Move to same column in previous line, or end of line if shorter
+          const newPosition =
+            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
+          setCursorPos(newPosition);
+          setAtStartBoundary(false); // Reset boundary flag
+          return; // Don't trigger history
+        }
+
+        // On first wrapped line
+        // First press: move to start, second press: navigate history
+        if (currentCursorPosition > 0 && !atStartBoundary) {
+          // First press - move cursor to start
+          setCursorPos(0);
+          setAtStartBoundary(true);
+          return;
+        }
+
+        // Second press or already at start - trigger history navigation
+        if (history.length === 0) return;
+
+        setAtStartBoundary(false); // Reset for next time
+
+        if (historyIndex === -1) {
+          // Starting to navigate history - save current input
+          setTemporaryInput(value);
+          // Go to most recent command
+          setHistoryIndex(history.length - 1);
+          setValue(history[history.length - 1] ?? "");
+        } else if (historyIndex > 0) {
+          // Go to older command
+          setHistoryIndex(historyIndex - 1);
+          setValue(history[historyIndex - 1] ?? "");
+        }
+      } else if (key.downArrow) {
+        if (currentWrappedLine < totalWrappedLines - 1) {
+          // Not on last wrapped line - move cursor down one wrapped line
+          // Try to maintain the same column position
+          const targetLine = currentWrappedLine + 1;
+          const targetLineStart = targetLine * lineWidth;
+          const targetLineEnd = Math.min(
+            targetLineStart + lineWidth,
+            value.length,
+          );
+          const targetLineLength = targetLineEnd - targetLineStart;
+
+          // Move to same column in next line, or end of line if shorter
+          const newPosition =
+            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
+          setCursorPos(newPosition);
+          setAtEndBoundary(false); // Reset boundary flag
+          return; // Don't trigger history
+        }
+
+        // On last wrapped line
+        // First press: move to end, second press: navigate history
+        if (currentCursorPosition < value.length && !atEndBoundary) {
+          // First press - move cursor to end
+          setCursorPos(value.length);
+          setAtEndBoundary(true);
+          return;
+        }
+
+        // Second press or already at end - trigger history navigation
+        setAtEndBoundary(false); // Reset for next time
+
+        if (historyIndex === -1) return; // Not in history mode
+
+        if (historyIndex < history.length - 1) {
+          // Go to newer command
+          setHistoryIndex(historyIndex + 1);
+          setValue(history[historyIndex + 1] ?? "");
+        } else {
+          // At the end of history - restore temporary input
+          setHistoryIndex(-1);
+          setValue(temporaryInput);
+        }
       }
     }
   });
@@ -190,6 +284,11 @@ export function Input({
       if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
       setCtrlCPressed(false);
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+    }
+    // Reset boundary flags when value changes (user is typing)
+    if (value !== previousValueRef.current) {
+      setAtStartBoundary(false);
+      setAtEndBoundary(false);
     }
     previousValueRef.current = value;
   }, [value]);
@@ -282,9 +381,6 @@ export function Input({
 
     setValue(newValue);
     setCursorPos(newCursorPos);
-
-    // Reset cursor position after a short delay so it only applies once
-    setTimeout(() => setCursorPos(undefined), 50);
   };
 
   // Get display name and color for permission mode

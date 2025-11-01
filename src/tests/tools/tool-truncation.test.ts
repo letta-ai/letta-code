@@ -266,7 +266,7 @@ describe("tool truncation integration tests", () => {
         const message = startResult.content[0]?.text || "";
         const bashIdMatch = message.match(/with ID: (.+)/);
         expect(bashIdMatch).toBeTruthy();
-        const bashId = bashIdMatch![1];
+        const bashId = bashIdMatch?.[1];
 
         // Wait a bit for output to accumulate
         await new Promise((resolve) => setTimeout(resolve, 100));
