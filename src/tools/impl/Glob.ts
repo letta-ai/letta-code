@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import picomatch from "picomatch";
+import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface GlobArgs {
@@ -9,6 +10,27 @@ interface GlobArgs {
 }
 interface GlobResult {
   files: string[];
+  truncated?: boolean;
+  totalFiles?: number;
+}
+
+function applyFileLimit(files: string[]): GlobResult {
+  const totalFiles = files.length;
+  if (totalFiles <= LIMITS.GLOB_MAX_FILES) {
+    return { files };
+  }
+
+  const truncatedFiles = files.slice(0, LIMITS.GLOB_MAX_FILES);
+  // Add truncation notice as last entry
+  truncatedFiles.push(
+    `\n[Output truncated: showing ${LIMITS.GLOB_MAX_FILES.toLocaleString()} of ${totalFiles.toLocaleString()} files.]`,
+  );
+
+  return {
+    files: truncatedFiles,
+    truncated: true,
+    totalFiles,
+  };
 }
 
 async function walkDirectory(dir: string): Promise<string[]> {
@@ -60,17 +82,17 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
     const matchedFiles = allFiles.filter((file) =>
       matcher(path.basename(file)),
     );
-    return { files: matchedFiles.sort() };
+    return applyFileLimit(matchedFiles.sort());
   } else if (pattern.includes("**")) {
     const fullPattern = path.join(baseDir, pattern);
     matcher = picomatch(fullPattern, { dot: true });
     const matchedFiles = allFiles.filter((file) => matcher(file));
-    return { files: matchedFiles.sort() };
+    return applyFileLimit(matchedFiles.sort());
   } else {
     matcher = picomatch(pattern, { dot: true });
     const matchedFiles = allFiles.filter((file) =>
       matcher(path.relative(baseDir, file)),
     );
-    return { files: matchedFiles.sort() };
+    return applyFileLimit(matchedFiles.sort());
   }
 }
