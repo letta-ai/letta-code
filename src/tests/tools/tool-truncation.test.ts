@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bash } from "./Bash";
-import { bash_output } from "./BashOutput";
-import { glob } from "./Glob";
-import { grep } from "./Grep";
-import { ls } from "./LS";
-import { read } from "./Read";
-import { LIMITS } from "./truncation";
+import { bash } from "../../tools/impl/Bash";
+import { bash_output } from "../../tools/impl/BashOutput";
+import { glob } from "../../tools/impl/Glob";
+import { grep } from "../../tools/impl/Grep";
+import { ls } from "../../tools/impl/LS";
+import { read } from "../../tools/impl/Read";
+import { LIMITS } from "../../tools/impl/truncation";
 
 describe("tool truncation integration tests", () => {
   let testDir: string;
