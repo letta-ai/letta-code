@@ -25,16 +25,19 @@ describe("tool truncation integration tests", () => {
   });
 
   describe("Bash tool truncation", () => {
-    test("truncates output exceeding 30K characters", async () => {
-      // Generate output larger than 30K chars
-      const result = await bash({
-        command: `echo "${Array.from({ length: 1000 }, () => "x".repeat(50)).join("\\n")}"`,
-      });
+    test.skipIf(process.platform === "win32")(
+      "truncates output exceeding 30K characters",
+      async () => {
+        // Generate output larger than 30K chars
+        const result = await bash({
+          command: `echo "${Array.from({ length: 1000 }, () => "x".repeat(50)).join("\\n")}"`,
+        });
 
-      const output = result.content[0]?.text || "";
-      expect(output).toContain("[Output truncated after 30,000 characters");
-      expect(output.length).toBeLessThan(35000); // Truncated + notice
-    });
+        const output = result.content[0]?.text || "";
+        expect(output).toContain("[Output truncated after 30,000 characters");
+        expect(output.length).toBeLessThan(35000); // Truncated + notice
+      },
+    );
 
     test("does not truncate small output", async () => {
       const result = await bash({ command: "echo 'Hello, world!'" });
@@ -44,17 +47,20 @@ describe("tool truncation integration tests", () => {
       expect(output).not.toContain("truncated");
     });
 
-    test("truncates error output", async () => {
-      // Generate large error output
-      const largeString = "e".repeat(40000);
-      const result = await bash({
-        command: `>&2 echo "${largeString}" && exit 1`,
-      });
+    test.skipIf(process.platform === "win32")(
+      "truncates error output",
+      async () => {
+        // Generate large error output
+        const largeString = "e".repeat(40000);
+        const result = await bash({
+          command: `>&2 echo "${largeString}" && exit 1`,
+        });
 
-      const output = result.content[0]?.text || "";
-      expect(output).toContain("[Output truncated after 30,000 characters");
-      expect(result.isError).toBe(true);
-    });
+        const output = result.content[0]?.text || "";
+        expect(output).toContain("[Output truncated after 30,000 characters");
+        expect(result.isError).toBe(true);
+      },
+    );
   });
 
   describe("Read tool truncation", () => {
@@ -241,29 +247,32 @@ describe("tool truncation integration tests", () => {
   });
 
   describe("BashOutput tool truncation", () => {
-    test("truncates accumulated output exceeding 30K characters", async () => {
-      // Start a background process that generates lots of output
-      const startResult = await bash({
-        command: `for i in {1..1000}; do echo "$(printf 'x%.0s' {1..100})"; done`,
-        run_in_background: true,
-      });
+    test.skipIf(process.platform === "win32")(
+      "truncates accumulated output exceeding 30K characters",
+      async () => {
+        // Start a background process that generates lots of output
+        const startResult = await bash({
+          command: `for i in {1..1000}; do echo "$(printf 'x%.0s' {1..100})"; done`,
+          run_in_background: true,
+        });
 
-      const message = startResult.content[0]?.text || "";
-      const bashIdMatch = message.match(/with ID: (.+)/);
-      expect(bashIdMatch).toBeTruthy();
-      const bashId = bashIdMatch![1];
+        const message = startResult.content[0]?.text || "";
+        const bashIdMatch = message.match(/with ID: (.+)/);
+        expect(bashIdMatch).toBeTruthy();
+        const bashId = bashIdMatch![1];
 
-      // Wait a bit for output to accumulate
-      await new Promise((resolve) => setTimeout(resolve, 100));
+        // Wait a bit for output to accumulate
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const outputResult = await bash_output({ bash_id: bashId });
+        const outputResult = await bash_output({ bash_id: bashId });
 
-      expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
-      if (outputResult.message.length > 30000) {
-        expect(outputResult.message).toContain(
-          "[Output truncated after 30,000 characters",
-        );
-      }
-    });
+        expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
+        if (outputResult.message.length > 30000) {
+          expect(outputResult.message).toContain(
+            "[Output truncated after 30,000 characters",
+          );
+        }
+      },
+    );
   });
 });
