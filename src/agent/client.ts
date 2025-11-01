@@ -53,21 +53,11 @@ export async function getClient() {
     process.exit(1);
   }
 
-  // Auto-cache: if env vars are set but not in settings, write them to settings
-  let needsUpdate = false;
-  const updatedEnv = { ...settings.env };
-
+  // Auto-cache: if LETTA_API_KEY is set in env but not in settings, write it to settings
+  // Note: LETTA_BASE_URL is intentionally NOT cached - it should only come from env vars
   if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
+    const updatedEnv = { ...settings.env };
     updatedEnv.LETTA_API_KEY = process.env.LETTA_API_KEY;
-    needsUpdate = true;
-  }
-
-  if (process.env.LETTA_BASE_URL && !settings.env?.LETTA_BASE_URL) {
-    updatedEnv.LETTA_BASE_URL = process.env.LETTA_BASE_URL;
-    needsUpdate = true;
-  }
-
-  if (needsUpdate) {
     settingsManager.updateSettings({ env: updatedEnv });
   }
 
