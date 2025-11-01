@@ -120,6 +120,108 @@ export default function App({
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
+  // Track message history with pagination
+  const [messages, setMessages] = useState<LettaMessageUnion[]>(messageHistory);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [historyInitialized, setHistoryInitialized] = useState(false);
+  const [isLoadingInitialHistory, setIsLoadingInitialHistory] = useState(false);
+
+  // Fetch full message history on mount
+  useEffect(() => {
+    async function fetchInitialHistory() {
+      if (historyInitialized || agentId === "loading") {
+        return;
+      }
+
+      setHistoryInitialized(true);
+      setIsLoadingInitialHistory(true);
+
+      try {
+        const client = await getClient();
+
+        // Fetch more messages initially to have a good buffer for fast scrolling
+        const INITIAL_LIMIT = 200;
+        const messagesPage = await client.agents.messages.list(agentId, {
+          limit: INITIAL_LIMIT,
+        });
+
+        setMessages(messagesPage.items);
+
+        // If we got fewer than requested, we have all the history
+        setHasMoreHistory(messagesPage.items.length >= INITIAL_LIMIT);
+      } catch (error) {
+        console.error("[History Init] Error fetching initial history:", error);
+        // Fall back to the passed-in messageHistory
+        setMessages(messageHistory);
+        setHasMoreHistory(messageHistory.length > 0);
+      } finally {
+        setIsLoadingInitialHistory(false);
+      }
+    }
+
+    fetchInitialHistory();
+  }, [agentId, historyInitialized, messageHistory]);
+
+  // Sync messageHistory updates (from new messages being sent)
+  useEffect(() => {
+    // Only update if we're not in the middle of initial load
+    if (historyInitialized && messageHistory.length > messages.length) {
+      setMessages(messageHistory);
+    }
+  }, [messageHistory, messages.length, historyInitialized]);
+
+  // Fetch earlier messages for history pagination
+  const fetchEarlierMessages = useCallback(async () => {
+    if (isLoadingHistory || !hasMoreHistory || agentId === "loading") {
+      return;
+    }
+
+    try {
+      setIsLoadingHistory(true);
+      const client = await getClient();
+
+      // Get the ID of the earliest message we have
+      const earliestMessage = messages[0];
+      if (!earliestMessage) {
+        setHasMoreHistory(false);
+        return;
+      }
+
+      // Fetch PAGE_SIZE + 1 to determine if there are more messages beyond this batch
+      const PAGE_SIZE = 50;
+      const messagesPage = await client.agents.messages.list(agentId, {
+        before: earliestMessage.id,
+        limit: PAGE_SIZE + 1,
+      });
+
+      const olderMessages = messagesPage.items;
+
+      if (olderMessages.length === 0) {
+        setHasMoreHistory(false);
+      } else {
+        // Check if there are more messages beyond this batch
+        const hasMore = olderMessages.length > PAGE_SIZE;
+
+        // Only take PAGE_SIZE messages (drop the +1 indicator)
+        const messagesToAdd = hasMore
+          ? olderMessages.slice(0, PAGE_SIZE)
+          : olderMessages;
+
+        // Prepend older messages to the list
+        setMessages((prev) => [...messagesToAdd, ...prev]);
+
+        // Update hasMore flag
+        setHasMoreHistory(hasMore);
+      }
+    } catch (error) {
+      console.error("Error fetching earlier messages:", error);
+      setHasMoreHistory(false);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [isLoadingHistory, hasMoreHistory, agentId, messages]);
+
   // Whether a command is running (disables input but no streaming UI)
   const [commandRunning, setCommandRunning] = useState(false);
 
@@ -1364,6 +1466,11 @@ export default function App({
               onPermissionModeChange={setUiPermissionMode}
               onExit={handleExit}
               onInterrupt={handleInterrupt}
+              messageHistory={messages}
+              onFetchEarlierMessages={fetchEarlierMessages}
+              isLoadingHistory={isLoadingHistory}
+              hasMoreHistory={hasMoreHistory}
+              isLoadingInitialHistory={isLoadingInitialHistory}
               interruptRequested={interruptRequested}
             />
 

@@ -1,4 +1,5 @@
 // Import useInput from vendored Ink for bracketed paste support
+import type { LettaMessageUnion } from "@letta-ai/letta-client/resources/agents/messages";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import type { ComponentType } from "react";
@@ -17,6 +18,34 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
 
+// Helper function to extract user message text from message history
+function extractUserMessages(messages: LettaMessageUnion[]): string[] {
+  return messages
+    .filter((msg) => msg.message_type === "user_message")
+    .map((msg) => {
+      if (msg.message_type === "user_message") {
+        // Handle both string and array content
+        if (typeof msg.content === "string") {
+          return msg.content;
+        }
+        // If it's an array, concatenate text parts
+        return msg.content
+          .map((part) => {
+            if (part.type === "text") {
+              return part.text || "";
+            }
+            if (part.type === "image") {
+              return "[Image]";
+            }
+            return "";
+          })
+          .join("");
+      }
+      return "";
+    })
+    .filter((text) => text.trim().length > 0);
+}
+
 export function Input({
   visible = true,
   streaming,
@@ -29,6 +58,11 @@ export function Input({
   onExit,
   onInterrupt,
   interruptRequested = false,
+  messageHistory = [],
+  onFetchEarlierMessages,
+  isLoadingHistory = false,
+  hasMoreHistory = true,
+  isLoadingInitialHistory = false,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -41,6 +75,11 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   interruptRequested?: boolean;
+  messageHistory?: LettaMessageUnion[];
+  onFetchEarlierMessages?: () => void;
+  isLoadingHistory?: boolean;
+  hasMoreHistory?: boolean;
+  isLoadingInitialHistory?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -55,10 +94,36 @@ export function Input({
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
 
-  // Command history
-  const [history, setHistory] = useState<string[]>([]);
+  // Command history - initialize from messageHistory
+  const [history, setHistory] = useState<string[]>(() =>
+    extractUserMessages(messageHistory),
+  );
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [temporaryInput, setTemporaryInput] = useState("");
+  const prevHistoryLengthRef = useRef(history.length);
+
+  // Update history when messageHistory changes (e.g., after submitting a message or pagination)
+  useEffect(() => {
+    const userMessages = extractUserMessages(messageHistory);
+    const oldLength = prevHistoryLengthRef.current;
+    const newLength = userMessages.length;
+
+    setHistory(userMessages);
+
+    // If history grew (new messages were prepended), adjust historyIndex
+    // We use a function to get the current value without adding it to dependencies
+    if (newLength > oldLength) {
+      setHistoryIndex((currentIndex) => {
+        if (currentIndex !== -1) {
+          const lengthDiff = newLength - oldLength;
+          return currentIndex + lengthDiff;
+        }
+        return currentIndex;
+      });
+    }
+
+    prevHistoryLengthRef.current = newLength;
+  }, [messageHistory]);
 
   // Track if we just moved to a boundary (for two-step history navigation)
   const [atStartBoundary, setAtStartBoundary] = useState(false);
@@ -215,7 +280,9 @@ export function Input({
         }
 
         // Second press or already at start - trigger history navigation
-        if (history.length === 0) return;
+        if (history.length === 0) {
+          return;
+        }
 
         setAtStartBoundary(false); // Reset for next time
 
@@ -227,8 +294,19 @@ export function Input({
           setValue(history[history.length - 1] ?? "");
         } else if (historyIndex > 0) {
           // Go to older command
-          setHistoryIndex(historyIndex - 1);
-          setValue(history[historyIndex - 1] ?? "");
+          const newIndex = historyIndex - 1;
+          setHistoryIndex(newIndex);
+          setValue(history[newIndex] ?? "");
+
+          // Fetch earlier messages when we're near the beginning (within last 20 user messages)
+          if (
+            newIndex <= 20 &&
+            hasMoreHistory &&
+            !isLoadingHistory &&
+            onFetchEarlierMessages
+          ) {
+            onFetchEarlierMessages();
+          }
         }
       } else if (key.downArrow) {
         if (currentWrappedLine < totalWrappedLines - 1) {
@@ -337,12 +415,8 @@ export function Input({
     }
     const previousValue = value;
 
-    // Add to history if not empty and not a duplicate of the last entry
-    if (previousValue.trim() && previousValue !== history[history.length - 1]) {
-      setHistory([...history, previousValue]);
-    }
-
     // Reset history navigation
+    // Note: history will be updated automatically via messageHistory prop
     setHistoryIndex(-1);
     setTemporaryInput("");
 
@@ -474,6 +548,16 @@ export function Input({
             <Text dimColor>Press CTRL-C again to exit</Text>
           ) : escapePressed ? (
             <Text dimColor>Press Esc again to clear</Text>
+          ) : isLoadingInitialHistory ? (
+            <Text color={colors.status.processing}>
+              ⏳ Loading message history...
+            </Text>
+          ) : isLoadingHistory ? (
+            <Text color={colors.status.processing}>
+              ⏳ Loading earlier history...
+            </Text>
+          ) : historyIndex === 0 && history.length > 0 ? (
+            <Text dimColor>↑ Reached oldest user message</Text>
           ) : modeInfo ? (
             <Text>
               <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
@@ -485,7 +569,11 @@ export function Input({
           ) : (
             <Text dimColor>Press / for commands or @ for files</Text>
           )}
-          <Text dimColor>https://discord.gg/letta</Text>
+          <Text dimColor>
+            {isLoadingInitialHistory || isLoadingHistory
+              ? "Fetching messages..."
+              : "https://discord.gg/letta"}
+          </Text>
         </Box>
       </Box>
     </Box>
