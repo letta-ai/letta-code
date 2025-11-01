@@ -260,7 +260,44 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         const autoApprovalEmitted = new Set<string>();
         let _lastApprovalId: string | null = null;
 
+        // Track all run_ids seen during this turn
+        const runIds = new Set<string>();
+
         for await (const chunk of stream) {
+          // Track run_id if present
+          if ("run_id" in chunk && chunk.run_id) {
+            runIds.add(chunk.run_id);
+          }
+
+          // Detect mid-stream errors (errors without message_type)
+          const chunkWithError = chunk as typeof chunk & {
+            error?: { message?: string; detail?: string };
+          };
+          if (chunkWithError.error && !chunk.message_type) {
+            // Emit as error event
+            const errorMsg =
+              chunkWithError.error.message || "An error occurred";
+            const errorDetail = chunkWithError.error.detail || "";
+            const fullErrorText = errorDetail
+              ? `${errorMsg}: ${errorDetail}`
+              : errorMsg;
+
+            console.log(
+              JSON.stringify({
+                type: "error",
+                message: fullErrorText,
+                detail: errorDetail,
+              }),
+            );
+
+            // Still accumulate for tracking
+            const { onChunk: accumulatorOnChunk } = await import(
+              "./cli/helpers/accumulator"
+            );
+            accumulatorOnChunk(buffers, chunk);
+            continue;
+          }
+
           // Detect server conflict due to pending approval; handle it and retry
           const errObj = (chunk as unknown as { error?: { detail?: string } })
             .error;
@@ -509,12 +546,32 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         continue;
       }
 
-      // Unexpected stop reason
-      // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
-      // using lastRunId to get full error message from step.errorData
-      // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-      // Then display step.errorData.message or full error details instead of generic message
-      console.error(`Unexpected stop reason: ${stopReason}`);
+      // Unexpected stop reason (error, llm_api_error, etc.)
+      // Extract error details from buffers if available
+      const errorLines = toLines(buffers).filter(
+        (line) => line.kind === "error",
+      );
+      const errorMessages = errorLines
+        .map((line) => ("text" in line ? line.text : ""))
+        .filter(Boolean);
+
+      const errorMessage =
+        errorMessages.length > 0
+          ? errorMessages.join("; ")
+          : `Unexpected stop reason: ${stopReason}`;
+
+      if (outputFormat === "stream-json") {
+        // Emit error event
+        console.log(
+          JSON.stringify({
+            type: "error",
+            message: errorMessage,
+            stop_reason: stopReason,
+          }),
+        );
+      } else {
+        console.error(errorMessage);
+      }
       process.exit(1);
     }
   } catch (error) {
@@ -558,6 +615,17 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   } else if (outputFormat === "stream-json") {
     // Output final result event
     const stats = sessionStats.getSnapshot();
+
+    // Collect all run_ids from buffers
+    const allRunIds = new Set<string>();
+    for (const line of toLines(buffers)) {
+      // Extract run_id from any line that might have it
+      // This is a fallback in case we missed any during streaming
+      if ("run_id" in line && typeof line.run_id === "string") {
+        allRunIds.add(line.run_id);
+      }
+    }
+
     const resultEvent = {
       type: "result",
       subtype: "success",
@@ -567,6 +635,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      run_ids: Array.from(allRunIds),
       usage: {
         prompt_tokens: stats.usage.promptTokens,
         completion_tokens: stats.usage.completionTokens,
