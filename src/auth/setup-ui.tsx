@@ -6,7 +6,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import { useState } from "react";
 import { asciiLogo } from "../cli/components/AsciiArt.ts";
 import { settingsManager } from "../settings-manager";
-import { OAUTH_CONFIG, pollForToken, requestDeviceCode } from "./oauth";
+import { pollForToken, requestDeviceCode } from "./oauth";
 
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
