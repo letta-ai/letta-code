@@ -11,7 +11,7 @@ let testProjectDir: string;
 
 beforeEach(async () => {
   // Reset settings manager FIRST before changing HOME
-  settingsManager.reset();
+  await settingsManager.reset();
 
   // Create temporary directories for testing
   testHomeDir = await mkdtemp(join(tmpdir(), "letta-test-home-"));
@@ -22,15 +22,16 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Wait for all pending writes to complete BEFORE restoring HOME
+  // This prevents test writes from leaking into real settings after HOME is restored
+  await settingsManager.reset();
+
   // Clean up test directories
   await rm(testHomeDir, { recursive: true, force: true });
   await rm(testProjectDir, { recursive: true, force: true });
 
-  // Restore original HOME
+  // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
-
-  // Reset settings manager after each test
-  settingsManager.reset();
 });
 
 // ============================================================================
@@ -63,7 +64,7 @@ describe("Settings Manager - Initialization", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Reset and re-initialize
-    settingsManager.reset();
+    await settingsManager.reset();
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();
@@ -180,7 +181,7 @@ describe("Settings Manager - Global Settings", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Reset and reload
-    settingsManager.reset();
+    await settingsManager.reset();
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();
@@ -251,7 +252,7 @@ describe("Settings Manager - Project Settings", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Clear cache and reload
-    settingsManager.reset();
+    await settingsManager.reset();
     await settingsManager.initialize();
     const reloaded = await settingsManager.loadProjectSettings(testProjectDir);
 
@@ -342,7 +343,7 @@ describe("Settings Manager - Local Project Settings", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Clear cache and reload
-    settingsManager.reset();
+    await settingsManager.reset();
     await settingsManager.initialize();
     const reloaded =
       await settingsManager.loadLocalProjectSettings(testProjectDir);
@@ -429,7 +430,7 @@ describe("Settings Manager - Reset", () => {
     await settingsManager.initialize();
     settingsManager.updateSettings({ lastAgent: "agent-reset-test" });
 
-    settingsManager.reset();
+    await settingsManager.reset();
 
     // Should throw error after reset
     expect(() => settingsManager.getSettings()).toThrow();
@@ -442,7 +443,7 @@ describe("Settings Manager - Reset", () => {
     // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    settingsManager.reset();
+    await settingsManager.reset();
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();

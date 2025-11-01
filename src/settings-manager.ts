@@ -49,6 +49,7 @@ class SettingsManager {
   private projectSettings: Map<string, ProjectSettings> = new Map();
   private localProjectSettings: Map<string, LocalProjectSettings> = new Map();
   private initialized = false;
+  private pendingWrites = new Set<Promise<void>>();
 
   /**
    * Initialize the settings manager (loads from disk)
@@ -112,10 +113,15 @@ class SettingsManager {
 
     this.settings = { ...this.settings, ...updates };
 
-    // Persist asynchronously (fire and forget, errors logged)
-    this.persistSettings().catch((error) => {
-      console.error("Failed to persist settings:", error);
-    });
+    // Persist asynchronously (track promise for testing)
+    const writePromise = this.persistSettings()
+      .catch((error) => {
+        console.error("Failed to persist settings:", error);
+      })
+      .finally(() => {
+        this.pendingWrites.delete(writePromise);
+      });
+    this.pendingWrites.add(writePromise);
   }
 
   /**
@@ -189,10 +195,15 @@ class SettingsManager {
     const updated = { ...current, ...updates };
     this.projectSettings.set(workingDirectory, updated);
 
-    // Persist asynchronously
-    this.persistProjectSettings(workingDirectory).catch((error) => {
-      console.error("Failed to persist project settings:", error);
-    });
+    // Persist asynchronously (track promise for testing)
+    const writePromise = this.persistProjectSettings(workingDirectory)
+      .catch((error) => {
+        console.error("Failed to persist project settings:", error);
+      })
+      .finally(() => {
+        this.pendingWrites.delete(writePromise);
+      });
+    this.pendingWrites.add(writePromise);
   }
 
   /**
@@ -202,7 +213,8 @@ class SettingsManager {
     if (!this.settings) return;
 
     const settingsPath = this.getSettingsPath();
-    const dirPath = join(homedir(), ".letta");
+    const home = process.env.HOME || homedir();
+    const dirPath = join(home, ".letta");
 
     try {
       if (!exists(dirPath)) {
@@ -254,7 +266,9 @@ class SettingsManager {
   }
 
   private getSettingsPath(): string {
-    return join(homedir(), ".letta", "settings.json");
+    // Respect process.env.HOME for testing (homedir() ignores it)
+    const home = process.env.HOME || homedir();
+    return join(home, ".letta", "settings.json");
   }
 
   private getProjectSettingsPath(workingDirectory: string): string {
@@ -334,10 +348,15 @@ class SettingsManager {
     const updated = { ...current, ...updates };
     this.localProjectSettings.set(workingDirectory, updated);
 
-    // Persist asynchronously
-    this.persistLocalProjectSettings(workingDirectory).catch((error) => {
-      console.error("Failed to persist local project settings:", error);
-    });
+    // Persist asynchronously (track promise for testing)
+    const writePromise = this.persistLocalProjectSettings(workingDirectory)
+      .catch((error) => {
+        console.error("Failed to persist local project settings:", error);
+      })
+      .finally(() => {
+        this.pendingWrites.delete(writePromise);
+      });
+    this.pendingWrites.add(writePromise);
   }
 
   /**
@@ -366,13 +385,26 @@ class SettingsManager {
   }
 
   /**
-   * Reset the manager (mainly for testing)
+   * Wait for all pending writes to complete.
+   * Useful in tests to ensure writes finish before cleanup.
    */
-  reset(): void {
+  async flush(): Promise<void> {
+    await Promise.all(Array.from(this.pendingWrites));
+  }
+
+  /**
+   * Reset the manager (mainly for testing).
+   * Waits for pending writes to complete before resetting.
+   */
+  async reset(): Promise<void> {
+    // Wait for pending writes BEFORE clearing state
+    await this.flush();
+
     this.settings = null;
     this.projectSettings.clear();
     this.localProjectSettings.clear();
     this.initialized = false;
+    this.pendingWrites.clear();
   }
 }
 
