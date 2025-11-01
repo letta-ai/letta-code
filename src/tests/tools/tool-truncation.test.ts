@@ -12,15 +12,22 @@ import { LIMITS } from "../../tools/impl/truncation";
 
 describe("tool truncation integration tests", () => {
   let testDir: string;
+  let originalUserCwd: string | undefined;
 
   beforeEach(async () => {
     // Create a temporary directory for tests
     testDir = await mkdtemp(join(tmpdir(), "letta-test-"));
+    // Save and set USER_CWD so tools operate within the temp dir
+    originalUserCwd = process.env.USER_CWD;
     process.env.USER_CWD = testDir;
   });
 
   afterEach(async () => {
-    // Clean up
+    // Restore USER_CWD before removing the temp dir to avoid leaving
+    // an invalid cwd for other tests that may run afterwards.
+    if (originalUserCwd === undefined) delete process.env.USER_CWD;
+    else process.env.USER_CWD = originalUserCwd;
+    // Clean up the temp directory
     await rm(testDir, { recursive: true, force: true });
   });
 
