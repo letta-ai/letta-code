@@ -249,6 +249,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         toolArgs: string;
       } | null = null;
       let apiDurationMs: number;
+      let lastRunId: string | null = null;
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
@@ -436,6 +437,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
         stopReason = lastStopReason || "error";
         apiDurationMs = performance.now() - startTime;
+        // Use the last run_id we saw (if any)
+        lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -452,6 +455,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         stopReason = result.stopReason;
         approval = result.approval || null;
         apiDurationMs = result.apiDurationMs;
+        lastRunId = result.lastRunId || null;
       }
 
       // Track API duration for this stream
@@ -557,10 +561,27 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         .map((line) => ("text" in line ? line.text : ""))
         .filter(Boolean);
 
-      const errorMessage =
+      let errorMessage =
         errorMessages.length > 0
           ? errorMessages.join("; ")
           : `Unexpected stop reason: ${stopReason}`;
+
+      // Fetch detailed error from run if available
+      if (lastRunId && errorMessages.length === 0) {
+        try {
+          const stepsPage = await client.runs.steps.list(lastRunId, {
+            limit: 1,
+            order: "desc",
+          });
+          const lastStep = stepsPage.items[0];
+          if (lastStep?.error_data?.message) {
+            errorMessage = `${stopReason}: ${lastStep.error_data.message}`;
+          }
+        } catch (e) {
+          // If we can't fetch error details, use what we have
+          console.error("Failed to fetch error details:", e);
+        }
+      }
 
       if (outputFormat === "stream-json") {
         // Emit error event

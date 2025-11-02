@@ -392,12 +392,13 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          const { stopReason, approval, apiDurationMs } = await drainStream(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            abortControllerRef.current.signal,
-          );
+          const { stopReason, approval, apiDurationMs, lastRunId } =
+            await drainStream(
+              stream,
+              buffersRef.current,
+              refreshDerivedThrottled,
+              abortControllerRef.current.signal,
+            );
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -518,17 +519,45 @@ export default function App({
             continue; // Loop continues naturally
           }
 
-          // TODO: for error stop reasons, fetch step details
-          // using lastRunId to get full error message from step.errorData
-          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-          // Then display step.errorData.message or full error details instead of generic message
-
           // Unexpected stop reason (error, llm_api_error, etc.)
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Show stop reason (mid-stream errors should already be in buffers)
-          appendError(`Unexpected stop reason: ${stopReason}`);
+          // Fetch error details from the run if available
+          const errorDetails = `Unexpected stop reason: ${stopReason}`;
+          if (lastRunId) {
+            try {
+              const client = await getClient();
+
+              // Try to get the run itself first
+              const run = await client.runs.retrieve(lastRunId);
+              console.warn("[error-details] Run object:", run);
+
+              // Check if run has error information
+              // if (run.error_data?.message) {
+              //   errorDetails = `${stopReason}: ${run.error_data.message}`;
+              // } else if (run.status === "failed" || run.status === "error") {
+              //   // Try to get step error details
+              //   const stepsPage = await client.runs.steps.list(lastRunId, {
+              //     limit: 1,
+              //     order: "desc",
+              //   });
+              //   const lastStep = stepsPage.items[0];
+              //   if (lastStep?.error_data?.message) {
+              //     errorDetails = `${stopReason}: ${lastStep.error_data.message}`;
+              //   }
+              // }
+            } catch (e) {
+              // If we can't fetch error details, just show the stop reason
+              console.error("Failed to fetch error details:", e);
+            }
+          } else {
+            console.warn(
+              "[error-details] No lastRunId available, cannot fetch error details",
+            );
+          }
+
+          appendError(errorDetails);
 
           setStreaming(false);
           refreshDerived();
