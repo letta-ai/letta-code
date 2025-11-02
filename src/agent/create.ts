@@ -2,11 +2,11 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
+import type { AgentType } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
-  AgentType,
-  Block,
+  BlockResponse,
   CreateBlock,
-} from "@letta-ai/letta-client/resources/agents/agents";
+} from "@letta-ai/letta-client/resources/blocks/blocks";
 import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
@@ -61,7 +61,7 @@ export async function createAgent(
   const localSharedBlockIds = projectSettings.localSharedBlockIds;
 
   // Retrieve existing blocks (both global and local) and match them with defaults
-  const existingBlocks = new Map<string, Block>();
+  const existingBlocks = new Map<string, BlockResponse>();
 
   // Load global blocks (persona, human)
   for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {

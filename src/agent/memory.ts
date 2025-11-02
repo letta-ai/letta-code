@@ -3,7 +3,7 @@
  * Loads memory blocks from .mdx files in src/agent/prompts
  */
 
-import type { CreateBlock } from "@letta-ai/letta-client/resources/agents/agents";
+import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
