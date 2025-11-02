@@ -23,25 +23,22 @@ function extractUserMessages(messages: LettaMessageUnion[]): string[] {
   return messages
     .filter((msg) => msg.message_type === "user_message")
     .map((msg) => {
-      if (msg.message_type === "user_message") {
-        // Handle both string and array content
-        if (typeof msg.content === "string") {
-          return msg.content;
-        }
-        // If it's an array, concatenate text parts
-        return msg.content
-          .map((part) => {
-            if (part.type === "text") {
-              return part.text || "";
-            }
-            if (part.type === "image") {
-              return "[Image]";
-            }
-            return "";
-          })
-          .join("");
+      // Handle both string and array content
+      if (typeof msg.content === "string") {
+        return msg.content;
       }
-      return "";
+      // If it's an array, concatenate text parts
+      return msg.content
+        .map((part) => {
+          if (part.type === "text") {
+            return part.text || "";
+          }
+          if (part.type === "image") {
+            return "[Image]";
+          }
+          return "";
+        })
+        .join("");
     })
     .filter((text) => text.trim().length > 0);
 }
