@@ -145,7 +145,9 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   const resolveAllPendingApprovals = async () => {
     const { getResumeData } = await import("./agent/check-approval");
     while (true) {
-      const resume = await getResumeData(client, agent.id);
+      // Re-fetch agent to get latest in-context messages (source of truth for backend)
+      const freshAgent = await client.agents.retrieve(agent.id);
+      const resume = await getResumeData(client, freshAgent);
       if (!resume.pendingApproval) break;
       const { toolCallId, toolName, toolArgs } = resume.pendingApproval;
       const parsedArgs = safeJsonParseOr<Record<string, unknown>>(

@@ -876,9 +876,11 @@ export default function App({
       if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
         try {
           const client = await getClient();
+          // Fetch fresh agent state to check for pending approvals with accurate in-context messages
+          const agent = await client.agents.retrieve(agentId);
           const { pendingApproval: existingApproval } = await getResumeData(
             client,
-            agentId,
+            agent,
           );
 
           if (existingApproval) {
