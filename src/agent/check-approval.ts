@@ -14,19 +14,6 @@ export interface ResumeData {
   messageHistory: LettaMessageUnion[];
 }
 
-// Type guard to check if a message has approval-related fields
-interface MessageWithApprovalFields {
-  role?: string;
-  tool_calls?: unknown;
-  tool_call?: unknown;
-}
-
-function hasApprovalFields(
-  msg: LettaMessageUnion,
-): msg is LettaMessageUnion & MessageWithApprovalFields {
-  return "role" in msg || "tool_calls" in msg || "tool_call" in msg;
-}
-
 /**
  * Gets data needed to resume an agent session.
  * Checks for pending approvals and retrieves recent message history for backfill.
@@ -78,9 +65,9 @@ export async function getResumeData(
       );
 
       if (matchingMessages.length > 0) {
-        // Prefer the message with role "approval" if it exists
+        // Prefer the approval request message if it exists (duplicates can have different types)
         const approvalMessage = matchingMessages.find(
-          (msg) => hasApprovalFields(msg) && msg.role === "approval",
+          (msg) => msg.message_type === "approval_request_message",
         );
         const inContextMessage =
           approvalMessage || matchingMessages[matchingMessages.length - 1]!;
@@ -96,31 +83,34 @@ export async function getResumeData(
       }
     }
 
-    // Check for pending approval (use the determined message)
-    // A message is an approval request if:
-    // 1. message_type === "approval_request_message", OR
-    // 2. role === "approval" with tool_calls but no tool_returns (pending approval)
+    // Check for pending approval using SDK types
     let pendingApproval: ApprovalRequest | null = null;
 
-    const isApprovalRequest =
-      messageToCheck.message_type === "approval_request_message" ||
-      (hasApprovalFields(messageToCheck) &&
-        messageToCheck.role === "approval" &&
-        messageToCheck.tool_calls &&
-        Array.isArray(messageToCheck.tool_calls) &&
-        messageToCheck.tool_calls.length > 0);
+    if (messageToCheck.message_type === "approval_request_message") {
+      // Cast to access tool_calls with proper typing
+      const approvalMsg = messageToCheck as LettaMessageUnion & {
+        tool_calls?: Array<{
+          tool_call_id?: string;
+          name?: string;
+          arguments?: string;
+        }>;
+        tool_call?: {
+          tool_call_id?: string;
+          name?: string;
+          arguments?: string;
+        };
+      };
 
-    if (isApprovalRequest && hasApprovalFields(messageToCheck)) {
       // Use tool_calls array (new) or fallback to tool_call (deprecated)
-      const toolCalls = Array.isArray(messageToCheck.tool_calls)
-        ? messageToCheck.tool_calls
-        : messageToCheck.tool_call
-          ? [messageToCheck.tool_call]
+      const toolCalls = Array.isArray(approvalMsg.tool_calls)
+        ? approvalMsg.tool_calls
+        : approvalMsg.tool_call
+          ? [approvalMsg.tool_call]
           : [];
 
       if (toolCalls.length > 0) {
         const toolCall = toolCalls[0];
-        // Ensure all required fields are present (type guard for ToolCall vs ToolCallDelta)
+        // Ensure all required fields are present
         if (toolCall?.tool_call_id && toolCall.name && toolCall.arguments) {
           pendingApproval = {
             toolCallId: toolCall.tool_call_id,
