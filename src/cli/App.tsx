@@ -1,6 +1,9 @@
 // src/cli/App.tsx
 
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaMessageUnion,
@@ -86,7 +89,7 @@ type StaticItem =
       id: string;
       snapshot: {
         continueSession: boolean;
-        agentState?: Letta.AgentState | null;
+        agentState?: AgentState | null;
         terminalWidth: number;
       };
     }
@@ -102,7 +105,7 @@ export default function App({
   tokenStreaming = true,
 }: {
   agentId: string;
-  agentState?: Letta.AgentState | null;
+  agentState?: AgentState | null;
   loadingState?:
     | "assembling"
     | "upserting"
@@ -1055,7 +1058,7 @@ export default function App({
 
       try {
         // Find the selected model from models.json first (for loading message)
-        const { models } = await import("../model");
+        const { models } = await import("../agent/model");
         const selectedModel = models.find((m) => m.id === modelId);
 
         if (!selectedModel) {
