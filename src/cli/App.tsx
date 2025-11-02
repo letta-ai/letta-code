@@ -165,11 +165,18 @@ export default function App({
 
   // Sync messageHistory updates (from new messages being sent)
   useEffect(() => {
-    // Only update if we're not in the middle of initial load
-    if (historyInitialized && messageHistory.length > messages.length) {
+    // Only update if the latest message in messageHistory is newer than in messages
+    if (
+      historyInitialized &&
+      messageHistory.length > 0 &&
+      (
+        messages.length === 0 ||
+        (messageHistory[messageHistory.length - 1]?.id !== messages[messages.length - 1]?.id)
+      )
+    ) {
       setMessages(messageHistory);
     }
-  }, [messageHistory, messages.length, historyInitialized]);
+  }, [messageHistory, messages, historyInitialized]);
 
   // Fetch earlier messages for history pagination
   const fetchEarlierMessages = useCallback(async () => {
