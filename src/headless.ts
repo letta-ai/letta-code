@@ -146,7 +146,9 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   const resolveAllPendingApprovals = async () => {
     const { getResumeData } = await import("./agent/check-approval");
     while (true) {
-      const resume = await getResumeData(client, agent.id);
+      // Re-fetch agent to get latest in-context messages (source of truth for backend)
+      const freshAgent = await client.agents.retrieve(agent.id);
+      const resume = await getResumeData(client, freshAgent);
       if (!resume.pendingApproval) break;
       const { toolCallId, toolName, toolArgs } = resume.pendingApproval;
       const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -248,6 +250,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         toolArgs: string;
       } | null = null;
       let apiDurationMs: number;
+      let lastRunId: string | null = null;
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
@@ -435,6 +438,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
         stopReason = lastStopReason || "error";
         apiDurationMs = performance.now() - startTime;
+        // Use the last run_id we saw (if any)
+        lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -451,6 +456,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         stopReason = result.stopReason;
         approval = result.approval || null;
         apiDurationMs = result.apiDurationMs;
+        lastRunId = result.lastRunId || null;
       }
 
       // Track API duration for this stream
@@ -556,10 +562,31 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         .map((line) => ("text" in line ? line.text : ""))
         .filter(Boolean);
 
-      const errorMessage =
+      let errorMessage =
         errorMessages.length > 0
           ? errorMessages.join("; ")
           : `Unexpected stop reason: ${stopReason}`;
+
+      // Fetch detailed error from run metadata if available
+      if (lastRunId && errorMessages.length === 0) {
+        try {
+          const run = await client.runs.retrieve(lastRunId);
+          if (run.metadata?.error) {
+            const error = run.metadata.error as {
+              type?: string;
+              message?: string;
+              detail?: string;
+            };
+            const errorType = error.type ? `[${error.type}] ` : "";
+            const errorMsg = error.message || "An error occurred";
+            const errorDetail = error.detail ? `: ${error.detail}` : "";
+            errorMessage = `${errorType}${errorMsg}${errorDetail}`;
+          }
+        } catch (e) {
+          // If we can't fetch error details, append note to error message
+          errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
+        }
+      }
 
       if (outputFormat === "stream-json") {
         // Emit error event
