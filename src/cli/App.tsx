@@ -29,7 +29,8 @@ import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
-import { ErrorMessage } from "./components/ErrorMessage";
+// import { ErrorMessage } from "./components/ErrorMessage";
+import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
 import { ModelSelector } from "./components/ModelSelector";
@@ -371,7 +372,7 @@ export default function App({
       buffersRef.current.byId.set(id, {
         kind: "error",
         id,
-        text: `⚠ ${message}`,
+        text: message,
       });
       buffersRef.current.order.push(id);
       refreshDerived();
