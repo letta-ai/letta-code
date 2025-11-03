@@ -526,37 +526,28 @@ export default function App({
           markIncompleteToolsAsCancelled(buffersRef.current);
 
           // Fetch error details from the run if available
-          const errorDetails = `Unexpected stop reason: ${stopReason}`;
+          let errorDetails = `Unexpected stop reason: ${stopReason}`;
           if (lastRunId) {
             try {
               const client = await getClient();
-
-              // Try to get the run itself first
               const run = await client.runs.retrieve(lastRunId);
-              console.warn("[error-details] Run object:", run);
 
-              // Check if run has error information
-              // if (run.error_data?.message) {
-              //   errorDetails = `${stopReason}: ${run.error_data.message}`;
-              // } else if (run.status === "failed" || run.status === "error") {
-              //   // Try to get step error details
-              //   const stepsPage = await client.runs.steps.list(lastRunId, {
-              //     limit: 1,
-              //     order: "desc",
-              //   });
-              //   const lastStep = stepsPage.items[0];
-              //   if (lastStep?.error_data?.message) {
-              //     errorDetails = `${stopReason}: ${lastStep.error_data.message}`;
-              //   }
-              // }
+              // Check if run has error information in metadata
+              if (run.metadata?.error) {
+                const error = run.metadata.error as {
+                  type?: string;
+                  message?: string;
+                  detail?: string;
+                };
+                const errorType = error.type ? `[${error.type}] ` : "";
+                const errorMessage = error.message || "An error occurred";
+                const errorDetail = error.detail ? `\n${error.detail}` : "";
+                errorDetails = `${errorType}${errorMessage}${errorDetail}`;
+              }
             } catch (e) {
               // If we can't fetch error details, just show the stop reason
               console.error("Failed to fetch error details:", e);
             }
-          } else {
-            console.warn(
-              "[error-details] No lastRunId available, cannot fetch error details",
-            );
           }
 
           appendError(errorDetails);

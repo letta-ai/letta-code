@@ -567,16 +567,20 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
           ? errorMessages.join("; ")
           : `Unexpected stop reason: ${stopReason}`;
 
-      // Fetch detailed error from run if available
+      // Fetch detailed error from run metadata if available
       if (lastRunId && errorMessages.length === 0) {
         try {
-          const stepsPage = await client.runs.steps.list(lastRunId, {
-            limit: 1,
-            order: "desc",
-          });
-          const lastStep = stepsPage.items[0];
-          if (lastStep?.error_data?.message) {
-            errorMessage = `${stopReason}: ${lastStep.error_data.message}`;
+          const run = await client.runs.retrieve(lastRunId);
+          if (run.metadata?.error) {
+            const error = run.metadata.error as {
+              type?: string;
+              message?: string;
+              detail?: string;
+            };
+            const errorType = error.type ? `[${error.type}] ` : "";
+            const errorMsg = error.message || "An error occurred";
+            const errorDetail = error.detail ? `: ${error.detail}` : "";
+            errorMessage = `${errorType}${errorMsg}${errorDetail}`;
           }
         } catch (e) {
           // If we can't fetch error details, use what we have
