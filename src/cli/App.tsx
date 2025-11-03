@@ -571,13 +571,14 @@ export default function App({
       const client = await getClient();
 
       // Send cancel request to backend
-      await client.agents.messages.cancel(agentId);
+      const cancelResult = await client.agents.messages.cancel(agentId);
+      // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
       // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
       // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      // if (abortControllerRef.current) {
+      //   abortControllerRef.current.abort();
+      // }
 
       // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
       // This gives the backend 5 seconds to gracefully close the stream before forcing abort
