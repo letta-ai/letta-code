@@ -1,5 +1,6 @@
 // src/cli/App.tsx
 
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -535,7 +536,17 @@ export default function App({
           return;
         }
       } catch (e) {
-        appendError(String(e));
+        // Handle APIError from streaming (event: error)
+        if (e instanceof APIError && e.error?.error) {
+          const { type, message, detail } = e.error.error;
+          const errorType = type ? `[${type}] ` : "";
+          const errorMessage = message || "An error occurred";
+          const errorDetail = detail ? `:\n${detail}` : "";
+          appendError(`${errorType}${errorMessage}${errorDetail}`);
+        } else {
+          // Fallback for non-API errors
+          appendError(e instanceof Error ? e.message : String(e));
+        }
         setStreaming(false);
       } finally {
         abortControllerRef.current = null;
@@ -560,13 +571,14 @@ export default function App({
       const client = await getClient();
 
       // Send cancel request to backend
-      await client.agents.messages.cancel(agentId);
+      const cancelResult = await client.agents.messages.cancel(agentId);
+      // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
       // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
       // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      // if (abortControllerRef.current) {
+      //   abortControllerRef.current.abort();
+      // }
 
       // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
       // This gives the backend 5 seconds to gracefully close the stream before forcing abort
