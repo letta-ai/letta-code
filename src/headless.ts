@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -598,7 +599,17 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
       process.exit(1);
     }
   } catch (error) {
-    console.error(`Error: ${error}`);
+    // Handle APIError from streaming (event: error)
+    if (error instanceof APIError && error.error?.error) {
+      const { type, message, detail } = error.error.error;
+      const errorType = type ? `[${type}] ` : "";
+      const errorMessage = message || "An error occurred";
+      const errorDetail = detail ? `: ${detail}` : "";
+      console.error(`Error: ${errorType}${errorMessage}${errorDetail}`);
+    } else {
+      // Fallback for non-API errors
+      console.error(`Error: ${error}`);
+    }
     process.exit(1);
   }
 

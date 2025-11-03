@@ -117,6 +117,11 @@ export async function drainStream(
     stopReason = "error";
   }
 
+  // Mark incomplete tool calls as cancelled if stream was cancelled
+  if (stopReason === "cancelled") {
+    markIncompleteToolsAsCancelled(buffers);
+  }
+
   // Mark the final line as finished now that stream has ended
   markCurrentLineAsFinished(buffers);
   queueMicrotask(refresh);
