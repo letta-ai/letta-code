@@ -394,12 +394,13 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          const { stopReason, approval, apiDurationMs } = await drainStream(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            abortControllerRef.current.signal,
-          );
+          const { stopReason, approval, apiDurationMs, lastRunId } =
+            await drainStream(
+              stream,
+              buffersRef.current,
+              refreshDerivedThrottled,
+              abortControllerRef.current.signal,
+            );
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -520,17 +521,39 @@ export default function App({
             continue; // Loop continues naturally
           }
 
-          // TODO: for error stop reasons, fetch step details
-          // using lastRunId to get full error message from step.errorData
-          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-          // Then display step.errorData.message or full error details instead of generic message
-
           // Unexpected stop reason (error, llm_api_error, etc.)
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Show stop reason (mid-stream errors should already be in buffers)
-          appendError(`Unexpected stop reason: ${stopReason}`);
+          // Fetch error details from the run if available
+          let errorDetails = `Unexpected stop reason: ${stopReason}`;
+          if (lastRunId) {
+            try {
+              const client = await getClient();
+              const run = await client.runs.retrieve(lastRunId);
+
+              // Check if run has error information in metadata
+              if (run.metadata?.error) {
+                const error = run.metadata.error as {
+                  type?: string;
+                  message?: string;
+                  detail?: string;
+                };
+                const errorType = error.type ? `[${error.type}] ` : "";
+                const errorMessage = error.message || "An error occurred";
+                const errorDetail = error.detail ? `\n${error.detail}` : "";
+                errorDetails = `${errorType}${errorMessage}${errorDetail}`;
+              }
+            } catch (e) {
+              // If we can't fetch error details, let user know
+              appendError(
+                `${errorDetails}\n(Unable to fetch additional error details from server)`,
+              );
+              return;
+            }
+          }
+
+          appendError(errorDetails);
 
           setStreaming(false);
           refreshDerived();
@@ -889,9 +912,11 @@ export default function App({
       if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
         try {
           const client = await getClient();
+          // Fetch fresh agent state to check for pending approvals with accurate in-context messages
+          const agent = await client.agents.retrieve(agentId);
           const { pendingApproval: existingApproval } = await getResumeData(
             client,
-            agentId,
+            agent,
           );
 
           if (existingApproval) {

@@ -365,7 +365,7 @@ async function main() {
         // Get resume data (pending approval + message history) if resuming
         if (resuming) {
           setLoadingState("checking");
-          const data = await getResumeData(client, agent.id);
+          const data = await getResumeData(client, agent);
           setResumeData(data);
         }
 
