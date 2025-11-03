@@ -545,8 +545,11 @@ export default function App({
                 errorDetails = `${errorType}${errorMessage}${errorDetail}`;
               }
             } catch (e) {
-              // If we can't fetch error details, just show the stop reason
-              console.error("Failed to fetch error details:", e);
+              // If we can't fetch error details, let user know
+              appendError(
+                `${errorDetails}\n(Unable to fetch additional error details from server)`,
+              );
+              return;
             }
           }
 

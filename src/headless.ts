@@ -583,8 +583,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
             errorMessage = `${errorType}${errorMsg}${errorDetail}`;
           }
         } catch (e) {
-          // If we can't fetch error details, use what we have
-          console.error("Failed to fetch error details:", e);
+          // If we can't fetch error details, append note to error message
+          errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
         }
       }
 
