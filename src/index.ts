@@ -32,6 +32,7 @@ OPTIONS
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
+  --skills <path>       Custom path to skills directory (default: .skills in current directory)
 
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
@@ -91,6 +92,7 @@ async function main() {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        skills: { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -132,6 +134,7 @@ async function main() {
   const forceNew = (values.new as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
+  const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Check if API key is configured
@@ -240,7 +243,7 @@ async function main() {
     await upsertToolsToServer(client);
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(process.argv, specifiedModel);
+    await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
     return;
   }
 
@@ -256,11 +259,13 @@ async function main() {
     forceNew,
     agentIdArg,
     model,
+    skillsDir,
   }: {
     continueSession: boolean;
     forceNew: boolean;
     agentIdArg: string | null;
     model?: string;
+    skillsDir?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
@@ -301,7 +306,7 @@ async function main() {
         if (!agent && forceNew) {
           // Create new agent, don't check any lastAgent fields
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(undefined, model, undefined, updateArgs);
+          agent = await createAgent(undefined, model, undefined, updateArgs, skillsDir);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -338,7 +343,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(undefined, model, undefined, updateArgs);
+          agent = await createAgent(undefined, model, undefined, updateArgs, skillsDir);
         }
 
         // Ensure local project settings are loaded before updating
@@ -405,6 +410,7 @@ async function main() {
       forceNew: forceNew,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
+      skillsDir: skillsDirectory,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard

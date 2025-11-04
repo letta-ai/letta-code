@@ -76,6 +76,73 @@ Letta Code uses a hierarchical memory system:
 Memory blocks are highly configurable — see our [docs](https://docs.letta.com/guides/agents/memory-blocks) for advanced configuration options.
 Join our [Discord](https://discord.gg/letta) to share feedback on persistence patterns for coding agents.
 
+## Skills
+
+**Skills are automatically discovered from a `.skills` directory in your project.**
+
+Skills allow you to define custom capabilities that the agent can reference and use. When you start a new session, Letta Code recursively scans for `SKILL.MD` files and loads any skill definitions found.
+
+### Creating Skills
+
+Create a `.skills` directory in your project root and organize skills in subdirectories:
+
+```bash
+mkdir -p .skills/data-analysis
+```
+
+Each skill is defined in a file named `SKILL.MD`. The directory structure determines the skill ID:
+
+```
+.skills/
+├── data-analysis/
+│   └── SKILL.MD          # skill id: "data-analysis"
+└── web/
+    └── scraper/
+        └── SKILL.MD      # skill id: "web/scraper"
+```
+
+Create a skill file (`.skills/data-analysis/SKILL.MD`):
+
+```markdown
+---
+name: Data Analysis Skill
+description: Analyzes CSV files and generates statistical reports
+tags:
+  - analytics
+  - statistics
+  - csv
+---
+
+# Data Analysis Skill
+
+This skill analyzes data files and generates comprehensive reports.
+
+## Usage
+
+Use this skill to analyze CSV files and generate statistical summaries...
+```
+
+**Skill File Format:**
+
+- **File name:** Must be named `SKILL.MD` (case-insensitive)
+- **Required frontmatter:**
+  - `name` - Display name for the skill
+  - `description` - Brief description of what the skill does
+- **Optional frontmatter:**
+  - `tags` - Array of tags for filtering/searching
+- **Body:** Additional details and documentation about the skill
+
+Skills are automatically loaded into the agent's memory on startup, making them available for reference throughout your session.
+
+### Custom Skills Directory
+
+You can specify a custom skills directory using the `--skills` flag:
+
+```bash
+letta --skills /path/to/custom/skills
+letta -p "Use the custom skills" --skills ~/my-skills
+```
+
 ## Usage
 
 ### Interactive Mode

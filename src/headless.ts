@@ -17,7 +17,11 @@ import { drainStream } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
-export async function handleHeadlessCommand(argv: string[], model?: string) {
+export async function handleHeadlessCommand(
+  argv: string[],
+  model?: string,
+  skillsDirectory?: string,
+) {
   const settings = settingsManager.getSettings();
 
   // Parse CLI args
@@ -75,7 +79,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(undefined, model, undefined, updateArgs);
+    agent = await createAgent(undefined, model, undefined, updateArgs, skillsDirectory);
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -107,7 +111,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(undefined, model, undefined, updateArgs);
+    agent = await createAgent(undefined, model, undefined, updateArgs, skillsDirectory);
   }
 
   // Save agent ID to both project and global settings
