@@ -6,6 +6,8 @@ interface InputAssistProps {
   cursorPosition: number;
   onFileSelect: (path: string) => void;
   onAutocompleteActiveChange: (isActive: boolean) => void;
+  agentId?: string;
+  serverUrl?: string;
 }
 
 /**
@@ -19,6 +21,8 @@ export function InputAssist({
   cursorPosition,
   onFileSelect,
   onAutocompleteActiveChange,
+  agentId,
+  serverUrl,
 }: InputAssistProps) {
   // Show file autocomplete when @ is present
   if (currentInput.includes("@")) {
@@ -34,7 +38,13 @@ export function InputAssist({
 
   // Show command preview when input starts with /
   if (currentInput.startsWith("/")) {
-    return <CommandPreview currentInput={currentInput} />;
+    return (
+      <CommandPreview
+        currentInput={currentInput}
+        agentId={agentId}
+        serverUrl={serverUrl}
+      />
+    );
   }
 
   // No assistance needed

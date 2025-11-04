@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import Link from "ink-link";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
@@ -8,10 +9,22 @@ const commandList = Object.entries(commands).map(([cmd, { desc }]) => ({
   desc,
 }));
 
-export function CommandPreview({ currentInput }: { currentInput: string }) {
+export function CommandPreview({
+  currentInput,
+  agentId,
+  serverUrl,
+}: {
+  currentInput: string;
+  agentId?: string;
+  serverUrl?: string;
+}) {
   if (!currentInput.startsWith("/")) {
     return null;
   }
+
+  // Show agent URL only for cloud users
+  const showAgentUrl =
+    agentId && agentId !== "loading" && serverUrl?.includes("api.letta.com");
 
   return (
     <Box
@@ -26,6 +39,13 @@ export function CommandPreview({ currentInput }: { currentInput: string }) {
           <Text dimColor>{item.desc}</Text>
         </Box>
       ))}
+      {showAgentUrl && (
+        <Box marginTop={1} paddingTop={1} borderTop borderColor="gray">
+          <Link url={`https://app.letta.com/agents/${agentId}`}>
+            <Text dimColor>View agent:</Text>
+          </Link>
+        </Box>
+      )}
     </Box>
   );
 }
