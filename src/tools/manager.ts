@@ -1,4 +1,8 @@
 import type Letta from "@letta-ai/letta-client";
+import {
+  AuthenticationError,
+  PermissionDeniedError,
+} from "@letta-ai/letta-client";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -288,6 +292,18 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       const elapsed = Date.now() - attemptStartTime;
       const totalElapsed = Date.now() - startTime;
 
+      // Check if this is an auth error - fail immediately without retrying
+      if (
+        error instanceof AuthenticationError ||
+        error instanceof PermissionDeniedError
+      ) {
+        throw new Error(
+          `Authentication failed. Please check your LETTA_API_KEY.\n` +
+            `Run 'rm ~/.letta/settings.json' and restart to re-authenticate.\n` +
+            `Original error: ${error.message}`,
+        );
+      }
+
       // If we still have time, retry with exponential backoff
       if (totalElapsed < MAX_TOTAL_TIME) {
         const backoffDelay = Math.min(1000 * 2 ** retryCount, 5000); // Max 5s backoff
@@ -295,6 +311,9 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
 
         console.error(
           `Tool upsert attempt ${retryCount + 1} failed after ${elapsed}ms. Retrying in ${backoffDelay}ms... (${Math.round(remainingTime / 1000)}s remaining)`,
+        );
+        console.error(
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
         );
 
         await new Promise((resolve) => setTimeout(resolve, backoffDelay));
