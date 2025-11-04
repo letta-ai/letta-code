@@ -221,41 +221,92 @@ export async function loadTools(): Promise<void> {
 }
 
 /**
- * Upserts all loaded tools to the Letta server.
+ * Upserts all loaded tools to the Letta server with retry logic.
  * This registers Python stubs so the agent knows about the tools,
  * while actual execution happens client-side via the approval flow.
+ *
+ * Implements resilient retry logic:
+ * - Retries if operation takes more than 5 seconds
+ * - Keeps retrying up to 30 seconds total
+ * - Uses exponential backoff between retries
  *
  * @param client - Letta client instance
  * @returns Promise that resolves when all tools are registered
  */
 export async function upsertToolsToServer(client: Letta): Promise<void> {
-  const upsertPromises = Array.from(toolRegistry.entries()).map(
-    async ([name, tool]) => {
-      const pythonStub = generatePythonStub(
-        name,
-        tool.schema.description,
-        tool.schema.input_schema,
+  const OPERATION_TIMEOUT = 5000; // 5 seconds
+  const MAX_TOTAL_TIME = 30000; // 30 seconds
+  const startTime = Date.now();
+
+  async function attemptUpsert(retryCount: number = 0): Promise<void> {
+    const attemptStartTime = Date.now();
+
+    // Check if we've exceeded total time budget
+    if (Date.now() - startTime > MAX_TOTAL_TIME) {
+      throw new Error(
+        "Tool upserting exceeded maximum time limit (30s). Please check your network connection and try again.",
+      );
+    }
+
+    try {
+      // Create a timeout promise
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Tool upsert operation timed out (5s)"));
+        }, OPERATION_TIMEOUT);
+      });
+
+      // Race the upsert against the timeout
+      const upsertPromise = Promise.all(
+        Array.from(toolRegistry.entries()).map(async ([name, tool]) => {
+          const pythonStub = generatePythonStub(
+            name,
+            tool.schema.description,
+            tool.schema.input_schema,
+          );
+
+          // Construct the full JSON schema in Letta's expected format
+          const fullJsonSchema = {
+            name,
+            description: tool.schema.description,
+            parameters: tool.schema.input_schema,
+          };
+
+          await client.tools.upsert({
+            default_requires_approval: true,
+            source_code: pythonStub,
+            json_schema: fullJsonSchema,
+          });
+        }),
       );
 
-      // Construct the full JSON schema in Letta's expected format
-      const fullJsonSchema = {
-        name,
-        description: tool.schema.description,
-        parameters: tool.schema.input_schema,
-      };
+      await Promise.race([upsertPromise, timeoutPromise]);
 
-      await client.tools.upsert({
-        default_requires_approval: true,
-        source_code: pythonStub,
-        json_schema: fullJsonSchema,
-        // description: tool.schema.description,
-        // tags: ['client-side', 'typescript'],
-      });
-      // console.log(`✓ Registered tool with Letta: ${name}`);
-    },
-  );
+      // Success! Operation completed within timeout
+      return;
+    } catch (error) {
+      const elapsed = Date.now() - attemptStartTime;
+      const totalElapsed = Date.now() - startTime;
 
-  await Promise.all(upsertPromises);
+      // If we still have time, retry with exponential backoff
+      if (totalElapsed < MAX_TOTAL_TIME) {
+        const backoffDelay = Math.min(1000 * 2 ** retryCount, 5000); // Max 5s backoff
+        const remainingTime = MAX_TOTAL_TIME - totalElapsed;
+
+        console.error(
+          `Tool upsert attempt ${retryCount + 1} failed after ${elapsed}ms. Retrying in ${backoffDelay}ms... (${Math.round(remainingTime / 1000)}s remaining)`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+        return attemptUpsert(retryCount + 1);
+      }
+
+      // Out of time, throw the error
+      throw error;
+    }
+  }
+
+  await attemptUpsert();
 }
 
 /**

@@ -21,6 +21,7 @@ export async function createAgent(
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
+  forceNewBlocks = false,
   skillsDirectory?: string,
 ) {
   // Resolve model identifier to handle
@@ -95,29 +96,32 @@ export async function createAgent(
   // Retrieve existing blocks (both global and local) and match them with defaults
   const existingBlocks = new Map<string, BlockResponse>();
 
-  // Load global blocks (persona, human)
-  for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
-    try {
-      const block = await client.blocks.retrieve(blockId);
-      existingBlocks.set(label, block);
-    } catch {
-      // Block no longer exists, will create new one
-      console.warn(
-        `Global block ${label} (${blockId}) not found, will create new one`,
-      );
+  // Only load existing blocks if we're not forcing new blocks
+  if (!forceNewBlocks) {
+    // Load global blocks (persona, human)
+    for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
+      try {
+        const block = await client.blocks.retrieve(blockId);
+        existingBlocks.set(label, block);
+      } catch {
+        // Block no longer exists, will create new one
+        console.warn(
+          `Global block ${label} (${blockId}) not found, will create new one`,
+        );
+      }
     }
-  }
 
-  // Load local blocks (project, skills)
-  for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
-    try {
-      const block = await client.blocks.retrieve(blockId);
-      existingBlocks.set(label, block);
-    } catch {
-      // Block no longer exists, will create new one
-      console.warn(
-        `Local block ${label} (${blockId}) not found, will create new one`,
-      );
+    // Load local blocks (style)
+    for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
+      try {
+        const block = await client.blocks.retrieve(blockId);
+        existingBlocks.set(label, block);
+      } catch {
+        // Block no longer exists, will create new one
+        console.warn(
+          `Local block ${label} (${blockId}) not found, will create new one`,
+        );
+      }
     }
   }
 

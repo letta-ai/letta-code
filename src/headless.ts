@@ -79,7 +79,14 @@ export async function handleHeadlessCommand(
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(undefined, model, undefined, updateArgs, skillsDirectory);
+    agent = await createAgent(
+      undefined,
+      model,
+      undefined,
+      updateArgs,
+      forceNew,
+      skillsDirectory,
+    );
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -586,7 +593,7 @@ export async function handleHeadlessCommand(
             const errorDetail = error.detail ? `: ${error.detail}` : "";
             errorMessage = `${errorType}${errorMsg}${errorDetail}`;
           }
-        } catch (e) {
+        } catch (_e) {
           // If we can't fetch error details, append note to error message
           errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
         }
