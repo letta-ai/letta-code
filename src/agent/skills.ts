@@ -233,6 +233,13 @@ async function parseSkillFile(
     description = firstParagraph || "No description available";
   }
 
+  // Strip surrounding quotes from description if present
+  description = description.trim();
+  if ((description.startsWith('"') && description.endsWith('"')) ||
+      (description.startsWith("'") && description.endsWith("'"))) {
+    description = description.slice(1, -1);
+  }
+
   // Extract tags (handle both string and array)
   let tags: string[] | undefined;
   if (Array.isArray(frontmatter.tags)) {
@@ -310,11 +317,11 @@ export function formatSkillsForMemory(skills: Skill[], skillsDirectory: string):
  */
 function formatSkill(skill: Skill): string {
   let output = `### ${skill.name}\n`;
-  output += `**ID:** \`${skill.id}\`\n`;
-  output += `**Description:** ${skill.description}\n`;
+  output += `ID: \`${skill.id}\`\n`;
+  output += `Description: ${skill.description}\n`;
 
   if (skill.tags && skill.tags.length > 0) {
-    output += `**Tags:** ${skill.tags.map((t) => `\`${t}\``).join(", ")}\n`;
+    output += `Tags: ${skill.tags.map((t) => `\`${t}\``).join(", ")}\n`;
   }
 
   output += "\n";

@@ -76,12 +76,6 @@ export async function createAgent(
       skillsBlock.value = formatSkillsForMemory(skills, resolvedSkillsDirectory);
     }
 
-    // Log skill discovery results
-    if (skills.length > 0) {
-      console.log(
-        `Discovered ${skills.length} skill(s) from ${resolvedSkillsDirectory}`,
-      );
-    }
   } catch (error) {
     console.warn(
       `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,
