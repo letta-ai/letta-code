@@ -281,7 +281,9 @@ export function AdvancedDiffRenderer(
     let newNo = h.newStart;
     let lastRemovalNo: number | null = null;
     for (let i = 0; i < h.lines.length; i++) {
-      const raw = h.lines[i].raw || "";
+      const line = h.lines[i];
+      if (!line) continue;
+      const raw = line.raw || "";
       const ch = raw.charAt(0);
       const body = raw.slice(1);
       // Skip meta lines (e.g., "\ No newline at end of file"): do not display, do not advance counters,
@@ -291,7 +293,9 @@ export function AdvancedDiffRenderer(
       // Helper to find next non-meta '+' index
       const findNextPlus = (start: number): string | undefined => {
         for (let j = start + 1; j < h.lines.length; j++) {
-          const r = h.lines[j].raw || "";
+          const nextLine = h.lines[j];
+          if (!nextLine) continue;
+          const r = nextLine.raw || "";
           if (r.charAt(0) === "\\") continue; // skip meta
           if (r.startsWith("+")) return r.slice(1);
           break; // stop at first non-meta non-plus
@@ -301,7 +305,9 @@ export function AdvancedDiffRenderer(
       // Helper to find previous non-meta '-' index
       const findPrevMinus = (start: number): string | undefined => {
         for (let k = start - 1; k >= 0; k--) {
-          const r = h.lines[k].raw || "";
+          const prevLine = h.lines[k];
+          if (!prevLine) continue;
+          const r = prevLine.raw || "";
           if (r.charAt(0) === "\\") continue; // skip meta
           if (r.startsWith("-")) return r.slice(1);
           break; // stop at first non-meta non-minus

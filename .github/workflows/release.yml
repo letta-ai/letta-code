@@ -78,6 +78,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install
 
+      - name: Lint & Type Check
+        run: bun run check
+
       - name: Build bundle
         run: bun run build
 

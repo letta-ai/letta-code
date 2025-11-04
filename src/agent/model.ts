@@ -25,7 +25,13 @@ export function resolveModel(modelIdentifier: string): string | null {
  */
 export function getDefaultModel(): string {
   const defaultModel = models.find((m) => m.isDefault);
-  return defaultModel?.handle || models[0].handle;
+  if (defaultModel) return defaultModel.handle;
+
+  const firstModel = models[0];
+  if (!firstModel) {
+    throw new Error("No models available in models.json");
+  }
+  return firstModel.handle;
 }
 
 /**

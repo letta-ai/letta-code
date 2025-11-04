@@ -113,7 +113,9 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       for (const line of lines) {
         const parts = line.split(":");
         if (parts.length >= 2) {
-          const count = parseInt(parts[parts.length - 1], 10);
+          const lastPart = parts[parts.length - 1];
+          if (!lastPart) continue;
+          const count = parseInt(lastPart, 10);
           if (!Number.isNaN(count) && count > 0) {
             totalMatches += count;
             filesWithMatches++;

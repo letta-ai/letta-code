@@ -77,7 +77,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
     // Check for headers
     const headerMatch = line.match(headerRegex);
-    if (headerMatch) {
+    if (headerMatch?.[1] && headerMatch[2] !== undefined) {
       const level = headerMatch[1].length;
       const content = headerMatch[2];
 
@@ -119,7 +119,12 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
     // Check for list items
     const listMatch = line.match(listItemRegex);
-    if (listMatch) {
+    if (
+      listMatch &&
+      listMatch[1] !== undefined &&
+      listMatch[2] &&
+      listMatch[3] !== undefined
+    ) {
       const indent = listMatch[1].length;
       const marker = listMatch[2];
       const content = listMatch[3];
@@ -146,7 +151,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
     // Check for blockquotes
     const blockquoteMatch = line.match(blockquoteRegex);
-    if (blockquoteMatch) {
+    if (blockquoteMatch && blockquoteMatch[1] !== undefined) {
       contentBlocks.push(
         <Box key={key} paddingLeft={2}>
           <Text dimColor>│ </Text>
