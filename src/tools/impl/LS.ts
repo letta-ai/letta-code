@@ -19,7 +19,11 @@ export async function ls(
   args: LSArgs,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   validateRequiredParams(args, ["path"], "LS");
-  validateParamTypes(args, LSSchema, "LS");
+  validateParamTypes(
+    args as unknown as Record<string, unknown>,
+    LSSchema,
+    "LS",
+  );
   const { path: inputPath, ignore = [] } = args;
   const dirPath = resolve(inputPath);
   try {

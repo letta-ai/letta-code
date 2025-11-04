@@ -35,7 +35,7 @@ import ReadSchema from "./schemas/Read.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import WriteSchema from "./schemas/Write.json";
 
-type ToolImplementation = (args: Record<string, any>) => Promise<any>;
+type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
 
 interface ToolAssets {
   schema: Record<string, unknown>;
@@ -47,62 +47,62 @@ const toolDefinitions = {
   Bash: {
     schema: BashSchema,
     description: BashDescription.trim(),
-    impl: bash as ToolImplementation,
+    impl: bash as unknown as ToolImplementation,
   },
   BashOutput: {
     schema: BashOutputSchema,
     description: BashOutputDescription.trim(),
-    impl: bash_output as ToolImplementation,
+    impl: bash_output as unknown as ToolImplementation,
   },
   Edit: {
     schema: EditSchema,
     description: EditDescription.trim(),
-    impl: edit as ToolImplementation,
+    impl: edit as unknown as ToolImplementation,
   },
   ExitPlanMode: {
     schema: ExitPlanModeSchema,
     description: ExitPlanModeDescription.trim(),
-    impl: exit_plan_mode as ToolImplementation,
+    impl: exit_plan_mode as unknown as ToolImplementation,
   },
   Glob: {
     schema: GlobSchema,
     description: GlobDescription.trim(),
-    impl: glob as ToolImplementation,
+    impl: glob as unknown as ToolImplementation,
   },
   Grep: {
     schema: GrepSchema,
     description: GrepDescription.trim(),
-    impl: grep as ToolImplementation,
+    impl: grep as unknown as ToolImplementation,
   },
   KillBash: {
     schema: KillBashSchema,
     description: KillBashDescription.trim(),
-    impl: kill_bash as ToolImplementation,
+    impl: kill_bash as unknown as ToolImplementation,
   },
   LS: {
     schema: LSSchema,
     description: LSDescription.trim(),
-    impl: ls as ToolImplementation,
+    impl: ls as unknown as ToolImplementation,
   },
   MultiEdit: {
     schema: MultiEditSchema,
     description: MultiEditDescription.trim(),
-    impl: multi_edit as ToolImplementation,
+    impl: multi_edit as unknown as ToolImplementation,
   },
   Read: {
     schema: ReadSchema,
     description: ReadDescription.trim(),
-    impl: read as ToolImplementation,
+    impl: read as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,
     description: TodoWriteDescription.trim(),
-    impl: todo_write as ToolImplementation,
+    impl: todo_write as unknown as ToolImplementation,
   },
   Write: {
     schema: WriteSchema,
     description: WriteDescription.trim(),
-    impl: write as ToolImplementation,
+    impl: write as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 
