@@ -104,12 +104,9 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
 
     await client.agents.modify(agentId, { tool_ids: newToolIds });
 
-    // Set approval requirements for newly added tools
-    for (const toolName of toolsToAdd) {
-      await client.agents.tools.modifyApproval(agentId, toolName, {
-        requiresApproval: true,
-      });
-    }
+    // Note: Tools are already upserted with default_requires_approval: true
+    // so they will automatically require approval when attached to an agent.
+    // No need to call updateApproval separately.
 
     return {
       success: true,
