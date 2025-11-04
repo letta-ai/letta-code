@@ -107,6 +107,7 @@ Create a skill file (`.skills/data-analysis/SKILL.MD`):
 ---
 name: Data Analysis Skill
 description: Analyzes CSV files and generates statistical reports
+category: Data Processing
 tags:
   - analytics
   - statistics
@@ -129,6 +130,7 @@ Use this skill to analyze CSV files and generate statistical summaries...
   - `name` - Display name for the skill
   - `description` - Brief description of what the skill does
 - **Optional frontmatter:**
+  - `category` - Category for organizing skills (skills are grouped by category in the agent's memory)
   - `tags` - Array of tags for filtering/searching
 - **Body:** Additional details and documentation about the skill
 

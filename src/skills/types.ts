@@ -8,6 +8,8 @@ export interface Skill {
   name: string;
   /** Description of what the skill does */
   description: string;
+  /** Optional category for organizing skills */
+  category?: string;
   /** Optional tags for filtering/searching skills */
   tags?: string[];
   /** Path to the skill file */

@@ -205,6 +205,10 @@ async function parseSkillFile(
     id,
     name,
     description,
+    category:
+      typeof frontmatter.category === "string"
+        ? frontmatter.category
+        : undefined,
     tags,
     path: filePath,
   };
@@ -222,9 +226,37 @@ export function formatSkillsForMemory(skills: Skill[]): string {
 
   let output = "Available Skills:\n\n";
 
-  // Output all skills without categorization
+  // Group skills by category if categories exist
+  const categorized = new Map<string, Skill[]>();
+  const uncategorized: Skill[] = [];
+
   for (const skill of skills) {
-    output += formatSkill(skill);
+    if (skill.category) {
+      const existing = categorized.get(skill.category) || [];
+      existing.push(skill);
+      categorized.set(skill.category, existing);
+    } else {
+      uncategorized.push(skill);
+    }
+  }
+
+  // Output categorized skills
+  for (const [category, categorySkills] of categorized) {
+    output += `## ${category}\n\n`;
+    for (const skill of categorySkills) {
+      output += formatSkill(skill);
+    }
+    output += "\n";
+  }
+
+  // Output uncategorized skills
+  if (uncategorized.length > 0) {
+    if (categorized.size > 0) {
+      output += "## Other\n\n";
+    }
+    for (const skill of uncategorized) {
+      output += formatSkill(skill);
+    }
   }
 
   return output.trim();
