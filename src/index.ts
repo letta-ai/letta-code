@@ -91,6 +91,8 @@ async function main() {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        link: { type: "boolean" },
+        unlink: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -231,6 +233,32 @@ async function main() {
         process.exit(1);
       }
     }
+  }
+
+  // Handle --link and --unlink flags (utility commands)
+  const shouldLink = values.link as boolean | undefined;
+  const shouldUnlink = values.unlink as boolean | undefined;
+
+  if (shouldLink || shouldUnlink) {
+    if (!specifiedAgentId) {
+      console.error(
+        `Error: --${shouldLink ? "link" : "unlink"} requires --agent <id>`,
+      );
+      process.exit(1);
+    }
+
+    // Load tools first
+    await loadTools();
+    const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
+      "./agent/modify"
+    );
+
+    const result = shouldLink
+      ? await linkToolsToAgent(specifiedAgentId)
+      : await unlinkToolsFromAgent(specifiedAgentId);
+
+    console.log(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+    process.exit(result.success ? 0 : 1);
   }
 
   if (isHeadless) {

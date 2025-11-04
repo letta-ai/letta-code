@@ -2,6 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
 /**
@@ -43,4 +44,88 @@ export async function updateAgentLLMConfig(
   }
 
   return finalConfig;
+}
+
+export interface LinkResult {
+  success: boolean;
+  message: string;
+  addedCount?: number;
+}
+
+export interface UnlinkResult {
+  success: boolean;
+  message: string;
+  removedCount?: number;
+}
+
+/**
+ * Attach all Letta Code tools to an agent.
+ *
+ * @param agentId - The agent ID
+ * @returns Result with success status and message
+ */
+export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+
+    // Get current tools and Letta Code tools (excluding built-ins)
+    const currentTools = agent.tools?.map((t) => t.name) || [];
+    const lettaCodeTools = getToolNames();
+
+    // Add Letta Code tools that aren't already present
+    const newTools = Array.from(
+      new Set([...currentTools, ...lettaCodeTools]),
+    );
+    const addedCount = newTools.length - currentTools.length;
+
+    await client.agents.modify(agentId, { tools: newTools });
+
+    return {
+      success: true,
+      message: `Attached ${addedCount} Letta Code tool(s) to agent`,
+      addedCount,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Remove all Letta Code tools from an agent.
+ *
+ * @param agentId - The agent ID
+ * @returns Result with success status and message
+ */
+export async function unlinkToolsFromAgent(
+  agentId: string,
+): Promise<UnlinkResult> {
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+
+    // Get current tools and Letta Code tools (excluding built-ins)
+    const currentTools = agent.tools?.map((t) => t.name) || [];
+    const lettaCodeTools = new Set(getToolNames());
+
+    // Remove Letta Code tools
+    const remainingTools = currentTools.filter((t) => !lettaCodeTools.has(t));
+    const removedCount = currentTools.length - remainingTools.length;
+
+    await client.agents.modify(agentId, { tools: remainingTools });
+
+    return {
+      success: true,
+      message: `Removed ${removedCount} Letta Code tool(s) from agent`,
+      removedCount,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
