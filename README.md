@@ -52,7 +52,7 @@ When you run `letta` in a project, it resumes where you left off with the same a
 
 ```bash
 letta                    # Auto-resumes project agent (or creates new if first time)
-letta --new              # Force create new agent
+letta --new              # Create new agent with new memory blocks
 letta --agent <id>       # Use specific agent ID
 ```
 
@@ -81,7 +81,7 @@ Join our [Discord](https://discord.gg/letta) to share feedback on persistence pa
 ### Interactive Mode
 ```bash
 letta                    # Auto-resume project agent (or create new if first time)
-letta --new              # Force create new agent
+letta --new              # Create new agent with new memory blocks
 letta --agent <id>       # Use specific agent ID
 letta --model <model>    # Specify model (e.g., claude-sonnet-4.5, gpt-4o)
 letta -m <model>         # Short form of --model
@@ -94,7 +94,7 @@ letta --continue         # Resume global last agent (deprecated, use project-bas
 ```bash
 letta -p "Run bun lint and correct errors"              # Auto-resumes project agent
 letta -p "Pick up where you left off"                   # Same - auto-resumes by default
-letta -p "Start fresh" --new                            # Force new agent
+letta -p "Start fresh" --new                            # Create new agent with new memory blocks
 letta -p "Run all the test" --allowedTools "Bash"       # Control tool permissions
 letta -p "Just read the code" --disallowedTools "Bash"  # Control tool permissions
 letta -p "Explain this code" -m gpt-4o                  # Use specific model
