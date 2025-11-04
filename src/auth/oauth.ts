@@ -138,6 +138,7 @@ export async function refreshAccessToken(
       grant_type: "refresh_token",
       client_id: OAUTH_CONFIG.clientId,
       refresh_token: refreshToken,
+      refresh_token_mode: "new",
     }),
   });
 
@@ -149,6 +150,38 @@ export async function refreshAccessToken(
   }
 
   return (await response.json()) as TokenResponse;
+}
+
+/**
+ * Revoke a refresh token (logout)
+ */
+export async function revokeToken(refreshToken: string): Promise<void> {
+  try {
+    const response = await fetch(
+      `${OAUTH_CONFIG.authBaseUrl}/api/oauth/revoke`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: OAUTH_CONFIG.clientId,
+          token: refreshToken,
+          token_type_hint: "refresh_token",
+        }),
+      },
+    );
+
+    // OAuth 2.0 revoke endpoint should return 200 even if token is already invalid
+    if (!response.ok) {
+      const error = (await response.json()) as OAuthError;
+      console.error(
+        `Warning: Failed to revoke token: ${error.error_description || error.error}`,
+      );
+      // Don't throw - we still want to clear local credentials
+    }
+  } catch (error) {
+    console.error("Warning: Failed to revoke token:", error);
+    // Don't throw - we still want to clear local credentials
+  }
 }
 
 /**
