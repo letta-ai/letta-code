@@ -161,7 +161,7 @@ function analyzeBashApproval(
   _workingDir: string,
 ): ApprovalContext {
   const parts = command.trim().split(/\s+/);
-  const baseCommand = parts[0];
+  const baseCommand = parts[0] || "";
   const firstArg = parts[1] || "";
 
   // Dangerous commands - no persistence
@@ -178,7 +178,7 @@ function analyzeBashApproval(
     "killall",
   ];
 
-  if (dangerousCommands.includes(baseCommand)) {
+  if (baseCommand && dangerousCommands.includes(baseCommand)) {
     return {
       recommendedRule: "",
       ruleDescription: "",
@@ -248,7 +248,7 @@ function analyzeBashApproval(
   }
 
   // Package manager commands
-  if (["npm", "bun", "yarn", "pnpm"].includes(baseCommand)) {
+  if (baseCommand && ["npm", "bun", "yarn", "pnpm"].includes(baseCommand)) {
     const subcommand = firstArg;
     const thirdPart = parts[2];
 
@@ -295,7 +295,7 @@ function analyzeBashApproval(
     "tail",
   ];
 
-  if (safeCommands.includes(baseCommand)) {
+  if (baseCommand && safeCommands.includes(baseCommand)) {
     return {
       recommendedRule: `Bash(${baseCommand}:*)`,
       ruleDescription: `'${baseCommand}' commands`,
@@ -318,7 +318,7 @@ function analyzeBashApproval(
 
     for (const segment of segments) {
       const segmentParts = segment.trim().split(/\s+/);
-      const segmentBase = segmentParts[0];
+      const segmentBase = segmentParts[0] || "";
       const segmentArg = segmentParts[1] || "";
 
       // Check if this segment is git command
@@ -350,7 +350,7 @@ function analyzeBashApproval(
       }
 
       // Check if this segment is npm/bun/yarn/pnpm
-      if (["npm", "bun", "yarn", "pnpm"].includes(segmentBase)) {
+      if (segmentBase && ["npm", "bun", "yarn", "pnpm"].includes(segmentBase)) {
         const subcommand = segmentArg;
         const thirdPart = segmentParts[2];
 

@@ -60,6 +60,8 @@ export function PasteAwareTextInput({
     onSubmit?: (value: string) => void;
     placeholder?: string;
     focus?: boolean;
+    externalCursorOffset?: number;
+    onCursorOffsetChange?: (n: number) => void;
   }>;
 
   // Sync external value changes (treat incoming value as DISPLAY value)

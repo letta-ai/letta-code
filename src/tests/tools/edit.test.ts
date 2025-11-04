@@ -108,7 +108,7 @@ describe("Edit tool", () => {
         file_path: file,
         old_string: "World",
         new_str: "Bun",
-      } as Parameters<typeof edit>[0]),
+      } as unknown as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*new_string/);
   });
 });
