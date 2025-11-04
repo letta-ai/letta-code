@@ -217,14 +217,17 @@ async function parseSkillFile(
 /**
  * Formats discovered skills as a string for the skills memory block
  * @param skills - Array of discovered skills
+ * @param skillsDirectory - Absolute path to the skills directory
  * @returns Formatted string representation of skills
  */
-export function formatSkillsForMemory(skills: Skill[]): string {
+export function formatSkillsForMemory(skills: Skill[], skillsDirectory: string): string {
+  let output = `Skills Directory: ${skillsDirectory}\n\n`;
+
   if (skills.length === 0) {
-    return "[NO SKILLS AVAILABLE]";
+    return output + "[NO SKILLS AVAILABLE]";
   }
 
-  let output = "Available Skills:\n\n";
+  output += "Available Skills:\n\n";
 
   // Group skills by category if categories exist
   const categorized = new Map<string, Skill[]>();

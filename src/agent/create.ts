@@ -14,7 +14,8 @@ import { getDefaultMemoryBlocks } from "./memory";
 import { formatAvailableModels, resolveModel } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
-import { discoverSkills, formatSkillsForMemory } from "../skills/discovery";
+import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "../skills/discovery";
+import { join } from "node:path";
 
 export async function createAgent(
   name = "letta-cli-agent",
@@ -54,9 +55,12 @@ export async function createAgent(
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
+  // Resolve absolute path for skills directory
+  const resolvedSkillsDirectory = skillsDirectory || join(process.cwd(), SKILLS_DIR);
+
   // Discover skills from .skills directory and populate skills memory block
   try {
-    const { skills, errors } = await discoverSkills(skillsDirectory);
+    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
 
     // Log any errors encountered during skill discovery
     if (errors.length > 0) {
@@ -69,13 +73,13 @@ export async function createAgent(
     // Find and update the skills memory block with discovered skills
     const skillsBlock = defaultMemoryBlocks.find((b) => b.label === "skills");
     if (skillsBlock) {
-      skillsBlock.value = formatSkillsForMemory(skills);
+      skillsBlock.value = formatSkillsForMemory(skills, resolvedSkillsDirectory);
     }
 
     // Log skill discovery results
     if (skills.length > 0) {
       console.log(
-        `Discovered ${skills.length} skill(s) from ${skillsDirectory || ".skills"}`,
+        `Discovered ${skills.length} skill(s) from ${resolvedSkillsDirectory}`,
       );
     }
   } catch (error) {
