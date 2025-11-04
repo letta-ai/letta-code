@@ -102,11 +102,21 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     // Combine current tools with new tools
     const newToolIds = [...currentToolIds, ...toolsToAddIds];
 
-    await client.agents.modify(agentId, { tool_ids: newToolIds });
+    // Get current tool_rules and add requires_approval rules for new tools
+    const currentToolRules = agent.tool_rules || [];
+    const newToolRules = [
+      ...currentToolRules,
+      ...toolsToAdd.map((toolName) => ({
+        tool_name: toolName,
+        type: "requires_approval" as const,
+        prompt_template: null,
+      })),
+    ];
 
-    // Note: Tools are already upserted with default_requires_approval: true
-    // so they will automatically require approval when attached to an agent.
-    // No need to call updateApproval separately.
+    await client.agents.modify(agentId, {
+      tool_ids: newToolIds,
+      tool_rules: newToolRules,
+    });
 
     return {
       success: true,
@@ -147,7 +157,18 @@ export async function unlinkToolsFromAgent(
     // Extract IDs from remaining tools
     const remainingToolIds = remainingTools.map((t) => t.id);
 
-    await client.agents.modify(agentId, { tool_ids: remainingToolIds });
+    // Remove approval rules for Letta Code tools being unlinked
+    const currentToolRules = agent.tool_rules || [];
+    const remainingToolRules = currentToolRules.filter(
+      (rule: any) =>
+        rule.type !== "requires_approval" ||
+        !lettaCodeToolNames.has(rule.tool_name),
+    );
+
+    await client.agents.modify(agentId, {
+      tool_ids: remainingToolIds,
+      tool_rules: remainingToolRules,
+    });
 
     return {
       success: true,
