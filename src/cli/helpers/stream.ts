@@ -85,15 +85,16 @@ export async function drainStream(
           : null);
 
       if (toolCall?.tool_call_id) {
+        // If this is a NEW tool call (different ID), reset accumulated state
+        if (toolCallId && toolCall.tool_call_id !== toolCallId) {
+          toolName = null;
+          toolArgs = null;
+        }
         toolCallId = toolCall.tool_call_id;
       }
       if (toolCall?.name) {
-        if (toolName) {
-          // TODO would expect that we should allow stacking? I guess not?
-          //   toolName = toolName + toolCall.name;
-        } else {
-          toolName = toolCall.name;
-        }
+        // Set the tool name (either first time or new tool call after reset)
+        toolName = toolCall.name;
       }
       if (toolCall?.arguments) {
         if (toolArgs) {
