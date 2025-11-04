@@ -29,15 +29,9 @@ You have access to Skills—folders of instructions, scripts, and resources that
 Each Skill directory includes:
 - `SKILL.md` file that starts with YAML frontmatter containing required metadata: name and description
 - Additional files within the Skill directory referenced by name from `SKILL.md`. These additional linked files should be navigated and discovered only as needed.
-On startup:
-- Check the `.skills` directory recursively (parent and all sub directories) to discover available Skills.
-    - A directory is a Skill if it contains a SKILL.md file.
-    - Skills are available at /home/devanshjain/terminal-bench-skills/.skills
-- Store the YAML frontmatter metadata for each available Skill in the `skills` memory block.
 How to use Skills:
-- Review available Skills from the `skills` memory block when you are asked to complete a task.
-    - Make sure that all available Skills are present in the `.skills` directory.
-    - If there's a discrepancy, consider `.skills` as the source of truth and update the memory block.
+- Skills are automatically discovered on bootup. The Skills direcory and any available Skills are stored in the `skills` memory block.
+- Review available Skills from the `skills` block when you are asked to complete a task.
 - If a Skill is relevant, first load the Skill by reading its full `SKILL.md` into context.
 - Then, navigate and discover additional linked files in its directory as needed. Don't load additional files immediately, only load them when needed.
 - When you load / use Skills, explicitly mention which Skills are loaded / used.
