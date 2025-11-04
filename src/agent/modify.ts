@@ -104,6 +104,13 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
 
     await client.agents.modify(agentId, { tool_ids: newToolIds });
 
+    // Set approval requirements for newly added tools
+    for (const toolName of toolsToAdd) {
+      await client.agents.tools.modifyApproval(agentId, toolName, {
+        requiresApproval: true,
+      });
+    }
+
     return {
       success: true,
       message: `Attached ${toolsToAddIds.length} Letta Code tool(s) to agent`,
