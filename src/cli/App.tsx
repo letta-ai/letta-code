@@ -544,7 +544,7 @@ export default function App({
                 const errorDetail = error.detail ? `\n${error.detail}` : "";
                 errorDetails = `${errorType}${errorMessage}${errorDetail}`;
               }
-            } catch (e) {
+            } catch (_e) {
               // If we can't fetch error details, let user know
               appendError(
                 `${errorDetails}\n(Unable to fetch additional error details from server)`,
@@ -595,7 +595,7 @@ export default function App({
       const client = await getClient();
 
       // Send cancel request to backend
-      const cancelResult = await client.agents.messages.cancel(agentId);
+      const _cancelResult = await client.agents.messages.cancel(agentId);
       // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
       // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
