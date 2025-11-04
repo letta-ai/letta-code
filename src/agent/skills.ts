@@ -3,7 +3,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -197,8 +197,7 @@ async function parseSkillFile(
   filePath: string,
   rootPath: string
 ): Promise<Skill | null> {
-  const file = Bun.file(filePath);
-  const content = await file.text();
+  const content = await readFile(filePath, "utf-8");
 
   // Parse frontmatter
   const { frontmatter, body } = parseFrontmatter(content);
