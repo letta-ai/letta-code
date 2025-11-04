@@ -170,6 +170,20 @@ describe("Settings Manager - Global Settings", () => {
     });
   });
 
+  test("LETTA_BASE_URL should not be cached in settings", () => {
+    // This test verifies that LETTA_BASE_URL is NOT persisted to settings
+    // It should only come from environment variables
+    settingsManager.updateSettings({
+      env: {
+        LETTA_API_KEY: "sk-test-123",
+        // LETTA_BASE_URL should not be included here
+      },
+    });
+
+    const settings = settingsManager.getSettings();
+    expect(settings.env?.LETTA_BASE_URL).toBeUndefined();
+  });
+
   test("Settings persist to disk", async () => {
     settingsManager.updateSettings({
       uiMode: "rich",

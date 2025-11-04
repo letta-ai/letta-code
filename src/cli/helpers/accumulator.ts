@@ -197,26 +197,8 @@ function extractTextPart(v: unknown): string {
 export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
   // TODO remove once SDK v1 has proper typing for in-stream errors
   // Check for streaming error objects (not typed in SDK but emitted by backend)
-  // These are emitted when LLM errors occur during streaming (rate limits, timeouts, etc.)
-  const chunkWithError = chunk as typeof chunk & {
-    error?: { message?: string; detail?: string };
-  };
-  if (chunkWithError.error && !chunk.message_type) {
-    const errorId = `err-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const errorMsg = chunkWithError.error.message || "An error occurred";
-    const errorDetail = chunkWithError.error.detail || "";
-    const fullErrorText = errorDetail
-      ? `${errorMsg}: ${errorDetail}`
-      : errorMsg;
-
-    b.byId.set(errorId, {
-      kind: "error",
-      id: errorId,
-      text: `⚠ ${fullErrorText}`,
-    });
-    b.order.push(errorId);
-    return;
-  }
+  // Note: Error handling moved to catch blocks in App.tsx and headless.ts
+  // The SDK now throws APIError when it sees event: error, so chunks never have error property
 
   switch (chunk.message_type) {
     case "reasoning_message": {
@@ -367,10 +349,11 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       }
 
       // if argsText is not empty, add it to the line (immutable update)
-      if (argsText !== undefined) {
+      // Skip if argsText is undefined or null (backend sometimes sends null)
+      if (argsText !== undefined && argsText !== null) {
         const updatedLine = {
           ...line,
-          argsText: (line.argsText ?? "") + argsText,
+          argsText: (line.argsText || "") + argsText,
         };
         b.byId.set(id, updatedLine);
       }

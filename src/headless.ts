@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -145,7 +146,9 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   const resolveAllPendingApprovals = async () => {
     const { getResumeData } = await import("./agent/check-approval");
     while (true) {
-      const resume = await getResumeData(client, agent.id);
+      // Re-fetch agent to get latest in-context messages (source of truth for backend)
+      const freshAgent = await client.agents.retrieve(agent.id);
+      const resume = await getResumeData(client, freshAgent);
       if (!resume.pendingApproval) break;
       const { toolCallId, toolName, toolArgs } = resume.pendingApproval;
       const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -247,6 +250,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         toolArgs: string;
       } | null = null;
       let apiDurationMs: number;
+      let lastRunId: string | null = null;
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
@@ -258,9 +262,46 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
           { toolName: string; args: string }
         >();
         const autoApprovalEmitted = new Set<string>();
-        let lastApprovalId: string | null = null;
+        let _lastApprovalId: string | null = null;
+
+        // Track all run_ids seen during this turn
+        const runIds = new Set<string>();
 
         for await (const chunk of stream) {
+          // Track run_id if present
+          if ("run_id" in chunk && chunk.run_id) {
+            runIds.add(chunk.run_id);
+          }
+
+          // Detect mid-stream errors (errors without message_type)
+          const chunkWithError = chunk as typeof chunk & {
+            error?: { message?: string; detail?: string };
+          };
+          if (chunkWithError.error && !chunk.message_type) {
+            // Emit as error event
+            const errorMsg =
+              chunkWithError.error.message || "An error occurred";
+            const errorDetail = chunkWithError.error.detail || "";
+            const fullErrorText = errorDetail
+              ? `${errorMsg}: ${errorDetail}`
+              : errorMsg;
+
+            console.log(
+              JSON.stringify({
+                type: "error",
+                message: fullErrorText,
+                detail: errorDetail,
+              }),
+            );
+
+            // Still accumulate for tracking
+            const { onChunk: accumulatorOnChunk } = await import(
+              "./cli/helpers/accumulator"
+            );
+            accumulatorOnChunk(buffers, chunk);
+            continue;
+          }
+
           // Detect server conflict due to pending approval; handle it and retry
           const errObj = (chunk as unknown as { error?: { detail?: string } })
             .error;
@@ -309,7 +350,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
             for (const toolCall of toolCalls) {
               if (toolCall?.tool_call_id && toolCall?.name) {
                 const id = toolCall.tool_call_id;
-                lastApprovalId = id;
+                _lastApprovalId = id;
 
                 // Prefer the most complete args we have seen so far; concatenate deltas
                 const prev = approvalRequests.get(id);
@@ -397,6 +438,8 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
 
         stopReason = lastStopReason || "error";
         apiDurationMs = performance.now() - startTime;
+        // Use the last run_id we saw (if any)
+        lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -413,6 +456,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         stopReason = result.stopReason;
         approval = result.approval || null;
         apiDurationMs = result.apiDurationMs;
+        lastRunId = result.lastRunId || null;
       }
 
       // Track API duration for this stream
@@ -509,16 +553,67 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
         continue;
       }
 
-      // Unexpected stop reason
-      // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
-      // using lastRunId to get full error message from step.errorData
-      // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-      // Then display step.errorData.message or full error details instead of generic message
-      console.error(`Unexpected stop reason: ${stopReason}`);
+      // Unexpected stop reason (error, llm_api_error, etc.)
+      // Extract error details from buffers if available
+      const errorLines = toLines(buffers).filter(
+        (line) => line.kind === "error",
+      );
+      const errorMessages = errorLines
+        .map((line) => ("text" in line ? line.text : ""))
+        .filter(Boolean);
+
+      let errorMessage =
+        errorMessages.length > 0
+          ? errorMessages.join("; ")
+          : `Unexpected stop reason: ${stopReason}`;
+
+      // Fetch detailed error from run metadata if available
+      if (lastRunId && errorMessages.length === 0) {
+        try {
+          const run = await client.runs.retrieve(lastRunId);
+          if (run.metadata?.error) {
+            const error = run.metadata.error as {
+              type?: string;
+              message?: string;
+              detail?: string;
+            };
+            const errorType = error.type ? `[${error.type}] ` : "";
+            const errorMsg = error.message || "An error occurred";
+            const errorDetail = error.detail ? `: ${error.detail}` : "";
+            errorMessage = `${errorType}${errorMsg}${errorDetail}`;
+          }
+        } catch (e) {
+          // If we can't fetch error details, append note to error message
+          errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
+        }
+      }
+
+      if (outputFormat === "stream-json") {
+        // Emit error event
+        console.log(
+          JSON.stringify({
+            type: "error",
+            message: errorMessage,
+            stop_reason: stopReason,
+          }),
+        );
+      } else {
+        console.error(errorMessage);
+      }
       process.exit(1);
     }
   } catch (error) {
-    console.error(`Error: ${error}`);
+    // Handle APIError from streaming (event: error)
+    if (error instanceof APIError && error.error?.error) {
+      const { type, message, detail } = error.error.error;
+      const errorType = type ? `[${type}] ` : "";
+      const errorMessage = message || "An error occurred";
+      const errorDetail = detail ? `: ${detail}` : "";
+      console.error(`Error: ${errorType}${errorMessage}${errorDetail}`);
+    } else {
+      // Fallback for non-API errors
+      console.error(`Error: ${error}`);
+    }
     process.exit(1);
   }
 
@@ -558,6 +653,17 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   } else if (outputFormat === "stream-json") {
     // Output final result event
     const stats = sessionStats.getSnapshot();
+
+    // Collect all run_ids from buffers
+    const allRunIds = new Set<string>();
+    for (const line of toLines(buffers)) {
+      // Extract run_id from any line that might have it
+      // This is a fallback in case we missed any during streaming
+      if ("run_id" in line && typeof line.run_id === "string") {
+        allRunIds.add(line.run_id);
+      }
+    }
+
     const resultEvent = {
       type: "result",
       subtype: "success",
@@ -567,6 +673,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      run_ids: Array.from(allRunIds),
       usage: {
         prompt_tokens: stats.usage.promptTokens,
         completion_tokens: stats.usage.completionTokens,

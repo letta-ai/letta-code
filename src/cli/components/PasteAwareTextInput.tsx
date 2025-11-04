@@ -54,11 +54,6 @@ export function PasteAwareTextInput({
     }
   }, [cursorPosition]);
 
-  // Notify parent of cursor position changes
-  // Default assumption: cursor is at the end when typing
-  useEffect(() => {
-    onCursorMove?.(displayValue.length);
-  }, [displayValue, onCursorMove]);
   const TextInputAny = RawTextInput as unknown as React.ComponentType<{
     value: string;
     onChange: (value: string) => void;
@@ -262,6 +257,7 @@ export function PasteAwareTextInput({
       externalCursorOffset={nudgeCursorOffset}
       onCursorOffsetChange={(n: number) => {
         caretOffsetRef.current = n;
+        onCursorMove?.(n);
       }}
       onChange={handleChange}
       onSubmit={handleSubmit}

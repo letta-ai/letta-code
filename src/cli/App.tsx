@@ -1,6 +1,10 @@
 // src/cli/App.tsx
 
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { APIError } from "@letta-ai/letta-client/core/error";
+import type {
+  AgentState,
+  MessageCreate,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
   LettaMessageUnion,
@@ -25,7 +29,8 @@ import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
-import { ErrorMessage } from "./components/ErrorMessage";
+// import { ErrorMessage } from "./components/ErrorMessage";
+import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
 import { ModelSelector } from "./components/ModelSelector";
@@ -42,6 +47,7 @@ import {
   type Buffers,
   createBuffers,
   type Line,
+  markIncompleteToolsAsCancelled,
   onChunk,
   toLines,
 } from "./helpers/accumulator";
@@ -85,7 +91,7 @@ type StaticItem =
       id: string;
       snapshot: {
         continueSession: boolean;
-        agentState?: Letta.AgentState | null;
+        agentState?: AgentState | null;
         terminalWidth: number;
       };
     }
@@ -101,7 +107,7 @@ export default function App({
   tokenStreaming = true,
 }: {
   agentId: string;
-  agentState?: Letta.AgentState | null;
+  agentState?: AgentState | null;
   loadingState?:
     | "assembling"
     | "upserting"
@@ -366,7 +372,7 @@ export default function App({
       buffersRef.current.byId.set(id, {
         kind: "error",
         id,
-        text: `⚠ ${message}`,
+        text: message,
       });
       buffersRef.current.order.push(id);
       refreshDerived();
@@ -388,12 +394,13 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          const { stopReason, approval, apiDurationMs } = await drainStream(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            abortControllerRef.current.signal,
-          );
+          const { stopReason, approval, apiDurationMs, lastRunId } =
+            await drainStream(
+              stream,
+              buffersRef.current,
+              refreshDerivedThrottled,
+              abortControllerRef.current.signal,
+            );
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -514,17 +521,56 @@ export default function App({
             continue; // Loop continues naturally
           }
 
-          // Unexpected stop reason
-          // TODO: For error stop reasons (error, llm_api_error, etc.), fetch step details
-          // using lastRunId to get full error message from step.errorData
-          // Example: client.runs.steps.list(lastRunId, { limit: 1, order: "desc" })
-          // Then display step.errorData.message or full error details instead of generic message
-          appendError(`Unexpected stop reason: ${stopReason}`);
+          // Unexpected stop reason (error, llm_api_error, etc.)
+          // Mark incomplete tool calls as finished to prevent stuck blinking UI
+          markIncompleteToolsAsCancelled(buffersRef.current);
+
+          // Fetch error details from the run if available
+          let errorDetails = `Unexpected stop reason: ${stopReason}`;
+          if (lastRunId) {
+            try {
+              const client = await getClient();
+              const run = await client.runs.retrieve(lastRunId);
+
+              // Check if run has error information in metadata
+              if (run.metadata?.error) {
+                const error = run.metadata.error as {
+                  type?: string;
+                  message?: string;
+                  detail?: string;
+                };
+                const errorType = error.type ? `[${error.type}] ` : "";
+                const errorMessage = error.message || "An error occurred";
+                const errorDetail = error.detail ? `\n${error.detail}` : "";
+                errorDetails = `${errorType}${errorMessage}${errorDetail}`;
+              }
+            } catch (e) {
+              // If we can't fetch error details, let user know
+              appendError(
+                `${errorDetails}\n(Unable to fetch additional error details from server)`,
+              );
+              return;
+            }
+          }
+
+          appendError(errorDetails);
+
           setStreaming(false);
+          refreshDerived();
           return;
         }
       } catch (e) {
-        appendError(String(e));
+        // Handle APIError from streaming (event: error)
+        if (e instanceof APIError && e.error?.error) {
+          const { type, message, detail } = e.error.error;
+          const errorType = type ? `[${type}] ` : "";
+          const errorMessage = message || "An error occurred";
+          const errorDetail = detail ? `:\n${detail}` : "";
+          appendError(`${errorType}${errorMessage}${errorDetail}`);
+        } else {
+          // Fallback for non-API errors
+          appendError(e instanceof Error ? e.message : String(e));
+        }
         setStreaming(false);
       } finally {
         abortControllerRef.current = null;
@@ -549,13 +595,14 @@ export default function App({
       const client = await getClient();
 
       // Send cancel request to backend
-      await client.agents.messages.cancel(agentId);
+      const cancelResult = await client.agents.messages.cancel(agentId);
+      // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
       // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
       // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      // if (abortControllerRef.current) {
+      //   abortControllerRef.current.abort();
+      // }
 
       // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
       // This gives the backend 5 seconds to gracefully close the stream before forcing abort
@@ -612,6 +659,64 @@ export default function App({
         // Special handling for /exit command - show stats and exit
         if (msg.trim() === "/exit") {
           handleExit();
+          return { submitted: true };
+        }
+
+        // Special handling for /logout command - clear credentials and exit
+        if (msg.trim() === "/logout") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Clearing credentials...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { settingsManager } = await import("../settings-manager");
+            const currentSettings = settingsManager.getSettings();
+            const newEnv = { ...currentSettings.env };
+            delete newEnv.LETTA_API_KEY;
+            // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
+            // because it should not be stored there in the first place
+
+            settingsManager.updateSettings({
+              env: newEnv,
+              refreshToken: undefined,
+              tokenExpiresAt: undefined,
+            });
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Exit after a brief delay to show the message
+            setTimeout(() => process.exit(0), 500);
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
           return { submitted: true };
         }
 
@@ -685,7 +790,7 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            const client = getClient();
+            const client = await getClient();
             await client.agents.messages.reset(agentId, {
               add_default_initial_messages: false,
             });
@@ -807,9 +912,11 @@ export default function App({
       if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
         try {
           const client = await getClient();
+          // Fetch fresh agent state to check for pending approvals with accurate in-context messages
+          const agent = await client.agents.retrieve(agentId);
           const { pendingApproval: existingApproval } = await getResumeData(
             client,
-            agentId,
+            agent,
           );
 
           if (existingApproval) {
@@ -989,7 +1096,7 @@ export default function App({
 
       try {
         // Find the selected model from models.json first (for loading message)
-        const { models } = await import("../model");
+        const { models } = await import("../agent/model");
         const selectedModel = models.find((m) => m.id === modelId);
 
         if (!selectedModel) {

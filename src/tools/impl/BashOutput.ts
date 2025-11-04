@@ -1,4 +1,5 @@
 import { backgroundProcesses } from "./process_manager.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface BashOutputArgs {
@@ -27,5 +28,13 @@ export async function bash_output(
       .filter((line) => line.includes(filter))
       .join("\n");
   }
-  return { message: text || "(no output yet)" };
+
+  // Apply character limit to prevent excessive token usage (same as Bash)
+  const { content: truncatedOutput } = truncateByChars(
+    text || "(no output yet)",
+    LIMITS.BASH_OUTPUT_CHARS,
+    "BashOutput",
+  );
+
+  return { message: truncatedOutput };
 }

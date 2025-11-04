@@ -36,12 +36,18 @@ OPTIONS
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
   (stored in .letta/settings.local.json). Use --new to force a new agent.
+  
+  If no credentials are configured, you'll be prompted to authenticate via
+  Letta Cloud OAuth on first run.
 
 EXAMPLES
   # when installed as an executable
   letta                 # Auto-resume project agent or create new
   letta --new           # Force new agent
   letta --agent agent_123
+  
+  # inside the interactive session
+  /logout               # Clear credentials and exit
   
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -66,6 +72,7 @@ async function main() {
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
+  let positionals: string[];
   try {
     const parsed = parseArgs({
       args: process.argv,
@@ -89,6 +96,7 @@ async function main() {
       allowPositionals: true,
     });
     values = parsed.values;
+    positionals = parsed.positionals;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     // Improve error message for common mistakes
@@ -103,6 +111,9 @@ async function main() {
     console.error("Run 'letta --help' for usage information.");
     process.exit(1);
   }
+
+  // Check for subcommands
+  const _command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
   if (values.help) {
@@ -123,15 +134,58 @@ async function main() {
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
-  // Validate API key early before any UI rendering
+  // Check if API key is configured
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-  if (!apiKey) {
-    console.error("Missing LETTA_API_KEY");
-    console.error(
-      "Set it via environment variable or add it to ~/.letta/settings.json:",
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    "https://api.letta.com";
+
+  if (!apiKey && baseURL === "https://api.letta.com") {
+    // For headless mode, error out (assume automation context)
+    if (isHeadless) {
+      console.error("Missing LETTA_API_KEY");
+      console.error("Run 'letta' in interactive mode to authenticate");
+      process.exit(1);
+    }
+
+    // For interactive mode, show setup flow
+    console.log("No credentials found. Let's get you set up!\n");
+    const { runSetup } = await import("./auth/setup");
+    await runSetup();
+    // After setup, restart main flow
+    return main();
+  }
+
+  // Validate credentials by checking health endpoint
+  const { validateCredentials } = await import("./auth/oauth");
+  const isValid = await validateCredentials(baseURL, apiKey);
+
+  if (!isValid) {
+    // For headless mode, error out with helpful message
+    if (isHeadless) {
+      console.error("Failed to connect to Letta server");
+      console.error(`Base URL: ${baseURL}`);
+      console.error(
+        "Your credentials may be invalid or the server may be unreachable.",
+      );
+      console.error(
+        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+      );
+      process.exit(1);
+    }
+
+    // For interactive mode, show setup flow
+    console.log("Failed to connect to Letta server.");
+    console.log(`Base URL: ${baseURL}\n`);
+    console.log(
+      "Your credentials may be invalid or the server may be unreachable.",
     );
-    console.error('  { "env": { "LETTA_API_KEY": "sk-let-..." } }');
-    process.exit(1);
+    console.log("Let's reconfigure your setup.\n");
+    const { runSetup } = await import("./auth/setup");
+    await runSetup();
+    // After setup, restart main flow
+    return main();
   }
 
   // Set tool filter if provided (controls which tools are loaded)
@@ -287,6 +341,14 @@ async function main() {
           agent = await createAgent(undefined, model, undefined, updateArgs);
         }
 
+        // Ensure local project settings are loaded before updating
+        // (they may not have been loaded if we didn't try to resume from project settings)
+        try {
+          settingsManager.getLocalProjectSettings();
+        } catch {
+          await settingsManager.loadLocalProjectSettings();
+        }
+
         // Save agent ID to both project and global settings
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
@@ -303,7 +365,7 @@ async function main() {
         // Get resume data (pending approval + message history) if resuming
         if (resuming) {
           setLoadingState("checking");
-          const data = await getResumeData(client, agent.id);
+          const data = await getResumeData(client, agent);
           setResumeData(data);
         }
 
