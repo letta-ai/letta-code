@@ -14,7 +14,7 @@ import { getDefaultMemoryBlocks } from "./memory";
 import { formatAvailableModels, resolveModel } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
-import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "../skills/discovery";
+import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 import { join } from "node:path";
 
 export async function createAgent(
