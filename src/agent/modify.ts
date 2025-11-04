@@ -67,24 +67,46 @@ export interface UnlinkResult {
 export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
   try {
     const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
 
-    // Get current tools and Letta Code tools (excluding built-ins)
-    const currentTools = agent.tools?.map((t) => t.name) || [];
-    const lettaCodeTools = getToolNames();
+    // Get current agent tools (with IDs)
+    const currentTools = await client.agents.tools.list(agentId);
+    const currentToolIds = currentTools.map((t) => t.id);
+    const currentToolNames = new Set(currentTools.map((t) => t.name));
 
-    // Add Letta Code tools that aren't already present
-    const newTools = Array.from(
-      new Set([...currentTools, ...lettaCodeTools]),
+    // Get Letta Code tool names
+    const lettaCodeToolNames = getToolNames();
+
+    // Find tools to add (tools that aren't already attached)
+    const toolsToAdd = lettaCodeToolNames.filter(
+      (name) => !currentToolNames.has(name),
     );
-    const addedCount = newTools.length - currentTools.length;
 
-    await client.agents.modify(agentId, { tools: newTools });
+    if (toolsToAdd.length === 0) {
+      return {
+        success: true,
+        message: "All Letta Code tools already attached",
+        addedCount: 0,
+      };
+    }
+
+    // Look up tool IDs from global tool list
+    const toolsToAddIds: string[] = [];
+    for (const toolName of toolsToAdd) {
+      const tools = await client.tools.list({ name: toolName });
+      if (tools.length > 0) {
+        toolsToAddIds.push(tools[0].id);
+      }
+    }
+
+    // Combine current tools with new tools
+    const newToolIds = [...currentToolIds, ...toolsToAddIds];
+
+    await client.agents.modify(agentId, { tool_ids: newToolIds });
 
     return {
       success: true,
-      message: `Attached ${addedCount} Letta Code tool(s) to agent`,
-      addedCount,
+      message: `Attached ${toolsToAddIds.length} Letta Code tool(s) to agent`,
+      addedCount: toolsToAddIds.length,
     };
   } catch (error) {
     return {
@@ -105,17 +127,21 @@ export async function unlinkToolsFromAgent(
 ): Promise<UnlinkResult> {
   try {
     const client = await getClient();
-    const agent = await client.agents.retrieve(agentId);
 
-    // Get current tools and Letta Code tools (excluding built-ins)
-    const currentTools = agent.tools?.map((t) => t.name) || [];
-    const lettaCodeTools = new Set(getToolNames());
+    // Get current agent tools (with IDs)
+    const currentTools = await client.agents.tools.list(agentId);
+    const lettaCodeToolNames = new Set(getToolNames());
 
-    // Remove Letta Code tools
-    const remainingTools = currentTools.filter((t) => !lettaCodeTools.has(t));
+    // Filter out Letta Code tools, keep everything else
+    const remainingTools = currentTools.filter(
+      (t) => !lettaCodeToolNames.has(t.name),
+    );
     const removedCount = currentTools.length - remainingTools.length;
 
-    await client.agents.modify(agentId, { tools: remainingTools });
+    // Extract IDs from remaining tools
+    const remainingToolIds = remainingTools.map((t) => t.id);
+
+    await client.agents.modify(agentId, { tool_ids: remainingToolIds });
 
     return {
       success: true,
