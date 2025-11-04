@@ -142,7 +142,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
     const initEvent = {
       type: "init",
       agent_id: agent.id,
-      model: agent.llmConfig?.model,
+      model: agent.llm_config?.model,
       tools: agent.tools?.map((t) => t.name) || [],
     };
     console.log(JSON.stringify(initEvent));

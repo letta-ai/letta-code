@@ -159,7 +159,7 @@ async function main() {
 
   // Validate credentials by checking health endpoint
   const { validateCredentials } = await import("./auth/oauth");
-  const isValid = await validateCredentials(baseURL, apiKey);
+  const isValid = await validateCredentials(baseURL, apiKey ?? "");
 
   if (!isValid) {
     // For headless mode, error out with helpful message
@@ -266,7 +266,7 @@ async function main() {
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
     >("assembling");
     const [agentId, setAgentId] = useState<string | null>(null);
-    const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
+    const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
 
@@ -365,7 +365,7 @@ async function main() {
           !forceNew &&
           localProjectSettings?.lastAgent &&
           agent.id === localProjectSettings.lastAgent;
-        const resuming = continueSession || !!agentIdArg || isResumingProject;
+        const resuming = !!(continueSession || agentIdArg || isResumingProject);
         setIsResumingSession(resuming);
 
         // Get resume data (pending approval + message history) if resuming
