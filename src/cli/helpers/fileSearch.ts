@@ -12,12 +12,10 @@ interface FileMatch {
 function searchDirectoryRecursive(
   dir: string,
   pattern: string,
-  maxDepth: number = 10,
-  currentDepth: number = 0,
   maxResults: number = 200,
   results: FileMatch[] = [],
 ): FileMatch[] {
-  if (currentDepth > maxDepth || results.length >= maxResults) {
+  if (results.length >= maxResults) {
     return results;
   }
 
@@ -61,14 +59,7 @@ function searchDirectoryRecursive(
 
         // Recursively search subdirectories
         if (stats.isDirectory()) {
-          searchDirectoryRecursive(
-            fullPath,
-            pattern,
-            maxDepth,
-            currentDepth + 1,
-            maxResults,
-            results,
-          );
+          searchDirectoryRecursive(fullPath, pattern, maxResults, results);
         }
       } catch {}
     }
@@ -116,9 +107,7 @@ export async function searchFiles(
       const deepResults = searchDirectoryRecursive(
         searchDir,
         searchPattern,
-        10, // Max depth of 10 levels (increased to find deeply nested files)
-        0,
-        200, // Max 200 results (increased to show more matches)
+        200, // Max 200 results (no depth limit - will search all nested directories)
       );
       results.push(...deepResults);
     } else {
