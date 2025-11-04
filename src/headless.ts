@@ -118,7 +118,7 @@ export async function handleHeadlessCommand(
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(undefined, model, undefined, updateArgs, skillsDirectory);
+    agent = await createAgent(undefined, model, undefined, updateArgs, false, skillsDirectory);
   }
 
   // Save agent ID to both project and global settings

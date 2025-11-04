@@ -259,13 +259,13 @@ async function main() {
     forceNew,
     agentIdArg,
     model,
-    skillsDir,
+    skillsDirectory,
   }: {
     continueSession: boolean;
     forceNew: boolean;
     agentIdArg: string | null;
     model?: string;
-    skillsDir?: string;
+    skillsDirectory?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
       "assembling" | "upserting" | "initializing" | "checking" | "ready"
@@ -312,7 +312,7 @@ async function main() {
             undefined,
             updateArgs,
             forceNew,
-            skillsDir,
+            skillsDirectory,
           );
         }
 
@@ -350,7 +350,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(undefined, model, undefined, updateArgs, skillsDir);
+          agent = await createAgent(undefined, model, undefined, updateArgs, false, skillsDirectory);
         }
 
         // Ensure local project settings are loaded before updating
@@ -417,7 +417,7 @@ async function main() {
       forceNew: forceNew,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
-      skillsDir: skillsDirectory,
+      skillsDirectory: skillsDirectory,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
