@@ -43,7 +43,7 @@ function parseMdxFrontmatter(content: string): {
 async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   const memoryBlocks: CreateBlock[] = [];
 
-  const mdxFiles = ["persona.mdx", "human.mdx", "project.mdx"];
+  const mdxFiles = ["persona.mdx", "human.mdx", "project.mdx", "skills.mdx"];
   // const mdxFiles = ["persona.mdx", "human.mdx", "style.mdx"];
   // const mdxFiles = ["persona_kawaii.mdx", "human.mdx", "style.mdx"];
 
