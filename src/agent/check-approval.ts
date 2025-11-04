@@ -70,7 +70,7 @@ export async function getResumeData(
           (msg) => msg.message_type === "approval_request_message",
         );
         const inContextMessage =
-          approvalMessage ?? matchingMessages[matchingMessages.length - 1];
+          approvalMessage ?? matchingMessages[matchingMessages.length - 1]!;
 
         messageToCheck = inContextMessage;
       } else {
