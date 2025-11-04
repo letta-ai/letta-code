@@ -299,9 +299,15 @@ async function main() {
 
         // Priority 2: Check if --new flag was passed (skip all resume logic)
         if (!agent && forceNew) {
-          // Create new agent, don't check any lastAgent fields
+          // Create new agent with new memory blocks
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(undefined, model, undefined, updateArgs);
+          agent = await createAgent(
+            undefined,
+            model,
+            undefined,
+            updateArgs,
+            forceNew,
+          );
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
