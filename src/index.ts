@@ -235,10 +235,11 @@ async function main() {
     }
   }
 
-  // Handle --link and --unlink flags (utility commands)
+  // Handle --link and --unlink flags (modify tools before starting session)
   const shouldLink = values.link as boolean | undefined;
   const shouldUnlink = values.unlink as boolean | undefined;
 
+  // Validate --link/--unlink flags require --agent
   if (shouldLink || shouldUnlink) {
     if (!specifiedAgentId) {
       console.error(
@@ -246,19 +247,7 @@ async function main() {
       );
       process.exit(1);
     }
-
-    // Load tools first
-    await loadTools();
-    const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
-      "./agent/modify"
-    );
-
-    const result = shouldLink
-      ? await linkToolsToAgent(specifiedAgentId)
-      : await unlinkToolsFromAgent(specifiedAgentId);
-
-    console.log(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
-    process.exit(result.success ? 0 : 1);
+    // Implementation is in InteractiveSession init()
   }
 
   if (isHeadless) {
@@ -291,7 +280,13 @@ async function main() {
     model?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
-      "assembling" | "upserting" | "initializing" | "checking" | "ready"
+      | "assembling"
+      | "upserting"
+      | "linking"
+      | "unlinking"
+      | "initializing"
+      | "checking"
+      | "ready"
     >("assembling");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
@@ -306,6 +301,23 @@ async function main() {
         setLoadingState("upserting");
         const client = await getClient();
         await upsertToolsToServer(client);
+
+        // Handle --link/--unlink after upserting tools
+        if (shouldLink || shouldUnlink) {
+          setLoadingState(shouldLink ? "linking" : "unlinking");
+          const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
+            "./agent/modify"
+          );
+          
+          const result = shouldLink
+            ? await linkToolsToAgent(agentIdArg!)
+            : await unlinkToolsFromAgent(agentIdArg!);
+          
+          if (!result.success) {
+            console.error(`✗ ${result.message}`);
+            process.exit(1);
+          }
+        }
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");

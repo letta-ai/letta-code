@@ -68,8 +68,9 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
   try {
     const client = await getClient();
 
-    // Get current agent tools (with IDs)
-    const currentTools = await client.agents.tools.list(agentId);
+    // Get ALL agent tools from agent state
+    const agent = await client.agents.retrieve(agentId);
+    const currentTools = agent.tools || [];
     const currentToolIds = currentTools.map((t) => t.id);
     const currentToolNames = new Set(currentTools.map((t) => t.name));
 
@@ -128,15 +129,16 @@ export async function unlinkToolsFromAgent(
   try {
     const client = await getClient();
 
-    // Get current agent tools (with IDs)
-    const currentTools = await client.agents.tools.list(agentId);
+    // Get ALL agent tools from agent state (not tools.list which may be incomplete)
+    const agent = await client.agents.retrieve(agentId);
+    const allTools = agent.tools || [];
     const lettaCodeToolNames = new Set(getToolNames());
 
     // Filter out Letta Code tools, keep everything else
-    const remainingTools = currentTools.filter(
+    const remainingTools = allTools.filter(
       (t) => !lettaCodeToolNames.has(t.name),
     );
-    const removedCount = currentTools.length - remainingTools.length;
+    const removedCount = allTools.length - remainingTools.length;
 
     // Extract IDs from remaining tools
     const remainingToolIds = remainingTools.map((t) => t.id);
