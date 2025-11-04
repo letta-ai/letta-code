@@ -17,9 +17,9 @@ describe("LS tool", () => {
 
     const result = await ls({ path: testDir.path });
 
-    expect(result.content[0].text).toContain("file1.txt");
-    expect(result.content[0].text).toContain("file2.txt");
-    expect(result.content[0].text).toContain("subdir/");
+    expect(result.content[0]?.text).toContain("file1.txt");
+    expect(result.content[0]?.text).toContain("file2.txt");
+    expect(result.content[0]?.text).toContain("subdir/");
   });
 
   test("shows directories with trailing slash", async () => {
@@ -29,8 +29,8 @@ describe("LS tool", () => {
 
     const result = await ls({ path: testDir.path });
 
-    expect(result.content[0].text).toContain("folder/");
-    expect(result.content[0].text).toContain("file.txt");
+    expect(result.content[0]?.text).toContain("folder/");
+    expect(result.content[0]?.text).toContain("file.txt");
   });
 
   test("throws error for non-existent directory", async () => {
@@ -64,10 +64,10 @@ describe("LS tool", () => {
       ignore: ["*.log", "node_modules"],
     });
 
-    expect(result.content[0].text).toContain("file1.txt");
-    expect(result.content[0].text).toContain("important.txt");
-    expect(result.content[0].text).not.toContain("file2.log");
-    expect(result.content[0].text).not.toContain("node_modules");
+    expect(result.content[0]?.text).toContain("file1.txt");
+    expect(result.content[0]?.text).toContain("important.txt");
+    expect(result.content[0]?.text).not.toContain("file2.log");
+    expect(result.content[0]?.text).not.toContain("node_modules");
   });
 
   test("throws error when ignore is a string instead of array", async () => {

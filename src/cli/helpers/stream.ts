@@ -191,7 +191,7 @@ export async function drainStreamWithResume(
 
       // Use the resume result (should have proper stop_reason now)
       result = resumeResult;
-    } catch (e) {
+    } catch (_e) {
       // Resume failed - stick with the error stop_reason
       // The original error result will be returned
     }
