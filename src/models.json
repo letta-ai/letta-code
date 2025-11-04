@@ -13,7 +13,8 @@
     "label": "Claude Sonnet 4.5 (no reasoning)",
     "description": "Sonnet 4.5 with extended thinking/reasoning explicitly disabled",
     "updateArgs": {
-      "enable_reasoner": false
+      "enable_reasoner": false,
+      "context_window": 180000
     }
   },
   {
