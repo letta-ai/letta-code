@@ -106,9 +106,8 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
 
     // Set approval requirements for newly added tools
     for (const toolName of toolsToAdd) {
-      await client.agents.tools.updateApproval(toolName, {
-        agent_id: agentId,
-        body_requires_approval: true,
+      await client.agents.tools.modifyApproval(agentId, toolName, {
+        requiresApproval: true,
       });
     }
 
