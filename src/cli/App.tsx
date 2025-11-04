@@ -1406,6 +1406,7 @@ export default function App({
               onExit={handleExit}
               onInterrupt={handleInterrupt}
               interruptRequested={interruptRequested}
+              agentId={agentId}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
