@@ -4,7 +4,11 @@ import { linkToolsToAgent, unlinkToolsFromAgent } from "../../agent/modify";
 import { settingsManager } from "../../settings-manager";
 import { getToolNames, loadTools } from "../../tools/manager";
 
-describe("Link/Unlink Tools", () => {
+// Skip these integration tests if LETTA_API_KEY is not set
+const shouldSkip = !process.env.LETTA_API_KEY;
+const describeOrSkip = shouldSkip ? describe.skip : describe;
+
+describeOrSkip("Link/Unlink Tools", () => {
   let client: Letta;
   let testAgentId: string;
 
