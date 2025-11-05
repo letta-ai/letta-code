@@ -47,62 +47,62 @@ const toolDefinitions = {
   Bash: {
     schema: BashSchema,
     description: BashDescription.trim(),
-    impl: bash,
+    impl: bash as unknown as ToolImplementation,
   },
   BashOutput: {
     schema: BashOutputSchema,
     description: BashOutputDescription.trim(),
-    impl: bash_output,
+    impl: bash_output as unknown as ToolImplementation,
   },
   Edit: {
     schema: EditSchema,
     description: EditDescription.trim(),
-    impl: edit,
+    impl: edit as unknown as ToolImplementation,
   },
   ExitPlanMode: {
     schema: ExitPlanModeSchema,
     description: ExitPlanModeDescription.trim(),
-    impl: exit_plan_mode,
+    impl: exit_plan_mode as unknown as ToolImplementation,
   },
   Glob: {
     schema: GlobSchema,
     description: GlobDescription.trim(),
-    impl: glob,
+    impl: glob as unknown as ToolImplementation,
   },
   Grep: {
     schema: GrepSchema,
     description: GrepDescription.trim(),
-    impl: grep,
+    impl: grep as unknown as ToolImplementation,
   },
   KillBash: {
     schema: KillBashSchema,
     description: KillBashDescription.trim(),
-    impl: kill_bash,
+    impl: kill_bash as unknown as ToolImplementation,
   },
   LS: {
     schema: LSSchema,
     description: LSDescription.trim(),
-    impl: ls,
+    impl: ls as unknown as ToolImplementation,
   },
   MultiEdit: {
     schema: MultiEditSchema,
     description: MultiEditDescription.trim(),
-    impl: multi_edit,
+    impl: multi_edit as unknown as ToolImplementation,
   },
   Read: {
     schema: ReadSchema,
     description: ReadDescription.trim(),
-    impl: read,
+    impl: read as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,
     description: TodoWriteDescription.trim(),
-    impl: todo_write,
+    impl: todo_write as unknown as ToolImplementation,
   },
   Write: {
     schema: WriteSchema,
     description: WriteDescription.trim(),
-    impl: write,
+    impl: write as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 

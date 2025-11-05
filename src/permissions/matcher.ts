@@ -26,7 +26,7 @@ export function matchesFilePattern(
   // Extract tool name and file path from query
   // Format: "ToolName(filePath)"
   const queryMatch = query.match(/^([^(]+)\((.+)\)$/);
-  if (!queryMatch) {
+  if (!queryMatch || !queryMatch[1] || !queryMatch[2]) {
     return false;
   }
   const queryTool = queryMatch[1];
@@ -35,7 +35,7 @@ export function matchesFilePattern(
   // Extract tool name and glob pattern from permission rule
   // Format: "ToolName(pattern)"
   const patternMatch = pattern.match(/^([^(]+)\((.+)\)$/);
-  if (!patternMatch) {
+  if (!patternMatch || !patternMatch[1] || !patternMatch[2]) {
     return false;
   }
   const patternTool = patternMatch[1];
@@ -98,7 +98,7 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
   // Extract the command from query
   // Format: "Bash(actual command)" or "Bash()"
   const queryMatch = query.match(/^Bash\((.*)\)$/);
-  if (!queryMatch) {
+  if (!queryMatch || queryMatch[1] === undefined) {
     return false;
   }
   const command = queryMatch[1];
@@ -106,7 +106,7 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
   // Extract the command pattern from permission rule
   // Format: "Bash(command pattern)" or "Bash()"
   const patternMatch = pattern.match(/^Bash\((.*)\)$/);
-  if (!patternMatch) {
+  if (!patternMatch || patternMatch[1] === undefined) {
     return false;
   }
   const commandPattern = patternMatch[1];

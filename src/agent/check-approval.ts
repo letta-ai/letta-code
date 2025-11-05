@@ -69,10 +69,12 @@ export async function getResumeData(
         const approvalMessage = matchingMessages.find(
           (msg) => msg.message_type === "approval_request_message",
         );
-        const inContextMessage =
-          approvalMessage ?? matchingMessages[matchingMessages.length - 1];
+        const lastMessage = matchingMessages[matchingMessages.length - 1];
+        const inContextMessage = approvalMessage ?? lastMessage;
 
-        messageToCheck = inContextMessage;
+        if (inContextMessage) {
+          messageToCheck = inContextMessage;
+        }
       } else {
         console.warn(
           `[check-approval] In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +

@@ -57,7 +57,7 @@ import {
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
-import { type ApprovalRequest, drainStream } from "./helpers/stream";
+import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -395,7 +395,7 @@ export default function App({
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
           const { stopReason, approval, apiDurationMs, lastRunId } =
-            await drainStream(
+            await drainStreamWithResume(
               stream,
               buffersRef.current,
               refreshDerivedThrottled,

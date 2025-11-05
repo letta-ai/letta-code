@@ -3,6 +3,8 @@
  * Uses Device Code Flow for CLI authentication
  */
 
+import Letta from "@letta-ai/letta-client";
+
 export const OAUTH_CONFIG = {
   clientId: "ci-let-724dea7e98f4af6f8f370f4b1466200c",
   clientSecret: "", // Not needed for device code flow
@@ -186,19 +188,21 @@ export async function revokeToken(refreshToken: string): Promise<void> {
 
 /**
  * Validate credentials by checking health endpoint
+ * Validate credentials by checking an authenticated endpoint
+ * Uses SDK's agents.list() which requires valid authentication
  */
 export async function validateCredentials(
   baseUrl: string,
   apiKey: string,
 ): Promise<boolean> {
   try {
-    const response = await fetch(`${baseUrl}/v1/health`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
+    // Create a temporary client to test authentication
+    const client = new Letta({ apiKey, baseURL: baseUrl });
 
-    return response.ok;
+    // Try to list agents - this requires valid authentication
+    await client.agents.list({ limit: 1 });
+
+    return true;
   } catch {
     return false;
   }

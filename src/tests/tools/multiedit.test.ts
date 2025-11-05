@@ -96,7 +96,7 @@ describe("MultiEdit tool", () => {
       multi_edit({
         file_path: file,
         edits: [
-          { old_string: "foo", new_str: "baz" } as Parameters<
+          { old_string: "foo", new_str: "baz" } as unknown as Parameters<
             typeof multi_edit
           >[0]["edits"][0],
         ],

@@ -8,6 +8,16 @@
     "updateArgs": { "context_window": 180000 }
   },
   {
+    "id": "sonnet-4.5-no-reasoning",
+    "handle": "anthropic/claude-sonnet-4-5-20250929",
+    "label": "Claude Sonnet 4.5 (no reasoning)",
+    "description": "Sonnet 4.5 with extended thinking/reasoning explicitly disabled",
+    "updateArgs": {
+      "enable_reasoner": false,
+      "context_window": 180000
+    }
+  },
+  {
     "id": "opus",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",

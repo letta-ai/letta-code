@@ -123,6 +123,9 @@ export function backfillBuffers(
         if (toolCalls.length > 0 && toolCalls[0]?.tool_call_id) {
           const toolCall = toolCalls[0];
           const toolCallId = toolCall.tool_call_id;
+          // Skip if any required fields are missing
+          if (!toolCallId || !toolCall.name || !toolCall.arguments) break;
+
           const exists = buffers.byId.has(lineId);
 
           buffers.byId.set(lineId, {
