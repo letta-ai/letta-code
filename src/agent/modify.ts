@@ -71,8 +71,14 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     // Get ALL agent tools from agent state
     const agent = await client.agents.retrieve(agentId);
     const currentTools = agent.tools || [];
-    const currentToolIds = currentTools.map((t) => t.id);
-    const currentToolNames = new Set(currentTools.map((t) => t.name));
+    const currentToolIds = currentTools
+      .map((t) => t.id)
+      .filter((id): id is string => typeof id === "string");
+    const currentToolNames = new Set(
+      currentTools
+        .map((t) => t.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
 
     // Get Letta Code tool names
     const lettaCodeToolNames = getToolNames();
