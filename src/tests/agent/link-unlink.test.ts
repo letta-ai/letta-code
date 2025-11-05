@@ -1,0 +1,200 @@
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { Letta } from "@letta-ai/letta-client";
+import { linkToolsToAgent, unlinkToolsFromAgent } from "../../agent/modify";
+import { loadTools, getToolNames } from "../../tools/manager";
+import { settingsManager } from "../../settings-manager";
+
+describe(
+  "Link/Unlink Tools",
+  () => {
+    let client: Letta;
+    let testAgentId: string;
+
+    beforeAll(async () => {
+    // Initialize settings and load tools
+    await settingsManager.initialize();
+    await loadTools();
+
+    // Create a test agent
+    const apiKey = process.env.LETTA_API_KEY;
+    if (!apiKey) {
+      throw new Error("LETTA_API_KEY required for tests");
+    }
+
+    client = new Letta({ token: apiKey });
+
+    const agent = await client.agents.create({
+      model: "openai/gpt-4o-mini",
+      embedding: "openai/text-embedding-3-small",
+      memoryBlocks: [
+        { label: "human", value: "Test user" },
+        { label: "persona", value: "Test agent" },
+      ],
+      tools: [],
+    });
+
+    testAgentId = agent.id;
+  });
+
+  afterAll(async () => {
+    // Cleanup: delete test agent
+    if (testAgentId) {
+      try {
+        await client.agents.delete(testAgentId);
+      } catch (error) {
+        // Ignore cleanup errors
+      }
+    }
+  });
+
+  test(
+    "linkToolsToAgent attaches all Letta Code tools",
+    async () => {
+      const result = await linkToolsToAgent(testAgentId);
+
+    expect(result.success).toBe(true);
+    expect(result.addedCount).toBeGreaterThan(0);
+
+    // Verify tools were attached
+    const agent = await client.agents.retrieve(testAgentId);
+    const toolNames = agent.tools?.map((t) => t.name) || [];
+    const lettaCodeTools = getToolNames();
+
+    for (const toolName of lettaCodeTools) {
+      expect(toolNames).toContain(toolName);
+    }
+  });
+
+  test("linkToolsToAgent adds approval rules for all tools", async () => {
+    // First unlink to reset
+    await unlinkToolsFromAgent(testAgentId);
+
+    // Link tools
+    await linkToolsToAgent(testAgentId);
+
+    // Verify approval rules were added
+    const agent = await client.agents.retrieve(testAgentId);
+    const approvalRules = agent.tool_rules?.filter(
+      (rule: any) => rule.type === "requires_approval"
+    );
+
+    const lettaCodeTools = getToolNames();
+    expect(approvalRules?.length).toBe(lettaCodeTools.length);
+
+    // Check all Letta Code tools have approval rules
+    const rulesToolNames = approvalRules?.map((r: any) => r.tool_name) || [];
+    for (const toolName of lettaCodeTools) {
+      expect(rulesToolNames).toContain(toolName);
+    }
+  });
+
+  test("linkToolsToAgent returns success when tools already attached", async () => {
+    // Link twice
+    await linkToolsToAgent(testAgentId);
+    const result = await linkToolsToAgent(testAgentId);
+
+    expect(result.success).toBe(true);
+    expect(result.addedCount).toBe(0);
+    expect(result.message).toContain("already attached");
+  });
+
+  test("unlinkToolsFromAgent removes all Letta Code tools", async () => {
+    // First link tools
+    await linkToolsToAgent(testAgentId);
+
+    // Then unlink
+    const result = await unlinkToolsFromAgent(testAgentId);
+
+    expect(result.success).toBe(true);
+    expect(result.removedCount).toBeGreaterThan(0);
+
+    // Verify tools were removed
+    const agent = await client.agents.retrieve(testAgentId);
+    const toolNames = agent.tools?.map((t) => t.name) || [];
+    const lettaCodeTools = getToolNames();
+
+    for (const toolName of lettaCodeTools) {
+      expect(toolNames).not.toContain(toolName);
+    }
+  });
+
+  test("unlinkToolsFromAgent removes approval rules", async () => {
+    // First link tools
+    await linkToolsToAgent(testAgentId);
+
+    // Then unlink
+    await unlinkToolsFromAgent(testAgentId);
+
+    // Verify approval rules were removed
+    const agent = await client.agents.retrieve(testAgentId);
+    const approvalRules = agent.tool_rules?.filter(
+      (rule: any) => rule.type === "requires_approval"
+    );
+
+    const lettaCodeTools = new Set(getToolNames());
+    const remainingApprovalRules = approvalRules?.filter((r: any) =>
+      lettaCodeTools.has(r.tool_name)
+    );
+
+    expect(remainingApprovalRules?.length || 0).toBe(0);
+  });
+
+  test("unlinkToolsFromAgent preserves non-Letta-Code tools", async () => {
+    // Link Letta Code tools
+    await linkToolsToAgent(testAgentId);
+
+    // Attach memory tool
+    const memoryTools = await client.tools.list({ name: "memory" });
+    if (memoryTools.length > 0) {
+      await client.agents.tools.attach(memoryTools[0].id, {
+        agent_id: testAgentId,
+      });
+    }
+
+    // Unlink Letta Code tools
+    await unlinkToolsFromAgent(testAgentId);
+
+    // Verify memory tool is still there
+    const agent = await client.agents.retrieve(testAgentId);
+    const toolNames = agent.tools?.map((t) => t.name) || [];
+
+    expect(toolNames).toContain("memory");
+
+    // Verify Letta Code tools are gone
+    const lettaCodeTools = getToolNames();
+    for (const toolName of lettaCodeTools) {
+      expect(toolNames).not.toContain(toolName);
+    }
+  });
+
+  test("unlinkToolsFromAgent preserves non-approval tool_rules", async () => {
+    // Link tools
+    await linkToolsToAgent(testAgentId);
+
+    // Add a continue_loop rule manually
+    const agent = await client.agents.retrieve(testAgentId);
+    const newToolRules = [
+      ...(agent.tool_rules || []),
+      {
+        tool_name: "memory",
+        type: "continue_loop" as const,
+        prompt_template: "Test rule",
+      },
+    ];
+
+    await client.agents.modify(testAgentId, { tool_rules: newToolRules });
+
+    // Unlink Letta Code tools
+    await unlinkToolsFromAgent(testAgentId);
+
+    // Verify continue_loop rule is still there
+    const updatedAgent = await client.agents.retrieve(testAgentId);
+    const continueLoopRules = updatedAgent.tool_rules?.filter(
+      (r: any) => r.type === "continue_loop" && r.tool_name === "memory"
+    );
+
+    expect(continueLoopRules?.length).toBe(1);
+  });
+  },
+  { timeout: 120000 } // 2 minute timeout for API calls
+);
