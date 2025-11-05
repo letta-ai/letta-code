@@ -94,8 +94,9 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const toolsToAddIds: string[] = [];
     for (const toolName of toolsToAdd) {
       const tools = await client.tools.list({ name: toolName });
-      if (tools.length > 0 && tools[0].id) {
-        toolsToAddIds.push(tools[0].id);
+      const tool = tools[0];
+      if (tool?.id) {
+        toolsToAddIds.push(tool.id);
       }
     }
 
@@ -157,7 +158,7 @@ export async function unlinkToolsFromAgent(
     // Extract IDs from remaining tools (filter out any undefined IDs)
     const remainingToolIds = remainingTools
       .map((t) => t.id)
-      .filter((id): id is string => id !== undefined);
+      .filter((id): id is string => typeof id === "string");
 
     // Remove approval rules for Letta Code tools being unlinked
     const currentToolRules = agent.tool_rules || [];

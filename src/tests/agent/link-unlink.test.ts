@@ -147,8 +147,9 @@ describe("Link/Unlink Tools", () => {
 
     // Attach memory tool
     const memoryTools = await client.tools.list({ name: "memory" });
-    if (memoryTools.length > 0 && memoryTools[0].id) {
-      await client.agents.tools.attach(memoryTools[0].id, {
+    const memoryTool = memoryTools[0];
+    if (memoryTool?.id) {
+      await client.agents.tools.attach(memoryTool.id, {
         agent_id: testAgentId,
       });
     }
@@ -197,4 +198,4 @@ describe("Link/Unlink Tools", () => {
 
     expect(continueLoopRules?.length).toBe(1);
   }, 30000);
-}, 120000); // 2 minute timeout for API calls
+});
