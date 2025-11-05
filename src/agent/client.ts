@@ -19,7 +19,6 @@ export async function getClient() {
     // Refresh if token expires within 5 minutes
     if (expiresAt - now < 5 * 60 * 1000) {
       try {
-        console.error("Refreshing expired access token...");
         const tokens = await refreshAccessToken(settings.refreshToken);
 
         // Update settings with new token
@@ -33,7 +32,6 @@ export async function getClient() {
         });
 
         apiKey = tokens.access_token;
-        console.error("Access token refreshed successfully");
       } catch (error) {
         console.error("Failed to refresh access token:", error);
         console.error("Please run 'letta login' to re-authenticate");
