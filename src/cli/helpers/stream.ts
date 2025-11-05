@@ -41,6 +41,14 @@ export async function drainStream(
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
 
+  // Helper to reset tool accumulation state at segment boundaries
+  // Note: approvalRequestId is NOT reset here - it persists until approval is sent
+  const resetToolState = () => {
+    toolCallId = null;
+    toolName = null;
+    toolArgs = null;
+  };
+
   for await (const chunk of stream) {
     // console.log("chunk", chunk);
 
@@ -65,11 +73,19 @@ export async function drainStream(
 
     if (chunk.message_type === "ping") continue;
 
+    // Reset tool state when a tool completes (server-side execution finished)
+    // This ensures the next tool call starts with clean state
+    if (chunk.message_type === "tool_return_message") {
+      resetToolState();
+      // Continue processing this chunk (for UI display)
+    }
+
     // Need to store the approval request ID to send an approval in a new run
     if (chunk.message_type === "approval_request_message") {
       approvalRequestId = chunk.id;
     }
 
+    // Accumulate tool call state across streaming chunks
     // NOTE: this this a little ugly - we're basically processing tool name and chunk deltas
     // in both the onChunk handler and here, we could refactor to instead pull the tool name
     // and JSON args from the mutated lines (eg last mutated line)
@@ -84,18 +100,22 @@ export async function drainStream(
           ? chunk.tool_calls[0]
           : null);
 
+      // Process tool_call_id FIRST, then name, then arguments
+      // This ordering prevents races where name arrives before ID in separate chunks
       if (toolCall?.tool_call_id) {
         // If this is a NEW tool call (different ID), reset accumulated state
         if (toolCallId && toolCall.tool_call_id !== toolCallId) {
-          toolName = null;
-          toolArgs = null;
+          resetToolState();
         }
         toolCallId = toolCall.tool_call_id;
       }
+
+      // Set name after potential reset
       if (toolCall?.name) {
-        // Set the tool name (either first time or new tool call after reset)
         toolName = toolCall.name;
       }
+
+      // Accumulate arguments (may arrive across multiple chunks)
       if (toolCall?.arguments) {
         if (toolArgs) {
           toolArgs = toolArgs + toolCall.arguments;
@@ -128,15 +148,31 @@ export async function drainStream(
   markCurrentLineAsFinished(buffers);
   queueMicrotask(refresh);
 
-  // Package the approval request at the end
-  const approval =
-    toolCallId && toolName && toolArgs && approvalRequestId
-      ? {
-          toolCallId: toolCallId,
-          toolName: toolName,
-          toolArgs: toolArgs,
-        }
-      : null;
+  // Package the approval request at the end, with validation
+  let approval: ApprovalRequest | null = null;
+
+  if (stopReason === "requires_approval") {
+    // Validate we have complete approval state
+    if (!toolCallId || !toolName || !toolArgs || !approvalRequestId) {
+      console.error("[drainStream] Incomplete approval state at end of turn:", {
+        hasToolCallId: !!toolCallId,
+        hasToolName: !!toolName,
+        hasToolArgs: !!toolArgs,
+        hasApprovalRequestId: !!approvalRequestId,
+      });
+      // Don't construct approval - will return null
+    } else {
+      approval = {
+        toolCallId: toolCallId,
+        toolName: toolName,
+        toolArgs: toolArgs,
+      };
+    }
+
+    // Reset all state after processing approval (clean slate for next turn)
+    resetToolState();
+    approvalRequestId = null;
+  }
 
   const apiDurationMs = performance.now() - startTime;
 
