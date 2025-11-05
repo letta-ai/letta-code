@@ -15,10 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
-import {
-  linkToolsToAgent,
-  unlinkToolsFromAgent,
-} from "../agent/modify";
+import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -115,6 +112,8 @@ export default function App({
   loadingState?:
     | "assembling"
     | "upserting"
+    | "linking"
+    | "unlinking"
     | "initializing"
     | "checking"
     | "ready";
@@ -548,7 +547,7 @@ export default function App({
                 const errorDetail = error.detail ? `\n${error.detail}` : "";
                 errorDetails = `${errorType}${errorMessage}${errorDetail}`;
               }
-            } catch (e) {
+            } catch (_e) {
               // If we can't fetch error details, let user know
               appendError(
                 `${errorDetails}\n(Unable to fetch additional error details from server)`,
@@ -599,7 +598,7 @@ export default function App({
       const client = await getClient();
 
       // Send cancel request to backend
-      const cancelResult = await client.agents.messages.cancel(agentId);
+      const _cancelResult = await client.agents.messages.cancel(agentId);
       // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
       // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy

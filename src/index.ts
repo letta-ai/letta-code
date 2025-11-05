@@ -304,15 +304,20 @@ async function main() {
 
         // Handle --link/--unlink after upserting tools
         if (shouldLink || shouldUnlink) {
+          if (!agentIdArg) {
+            console.error("Error: --link/--unlink requires --agent <id>");
+            process.exit(1);
+          }
+
           setLoadingState(shouldLink ? "linking" : "unlinking");
           const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
             "./agent/modify"
           );
-          
+
           const result = shouldLink
-            ? await linkToolsToAgent(agentIdArg!)
-            : await unlinkToolsFromAgent(agentIdArg!);
-          
+            ? await linkToolsToAgent(agentIdArg)
+            : await unlinkToolsFromAgent(agentIdArg);
+
           if (!result.success) {
             console.error(`✗ ${result.message}`);
             process.exit(1);
