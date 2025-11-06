@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
+import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -57,7 +58,7 @@ import {
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
-import { type ApprovalRequest, drainStream } from "./helpers/stream";
+import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -111,6 +112,8 @@ export default function App({
   loadingState?:
     | "assembling"
     | "upserting"
+    | "linking"
+    | "unlinking"
     | "initializing"
     | "checking"
     | "ready";
@@ -395,7 +398,7 @@ export default function App({
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
           const { stopReason, approval, apiDurationMs, lastRunId } =
-            await drainStream(
+            await drainStreamWithResume(
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
@@ -669,7 +672,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Clearing credentials...",
+            output: "Logging out...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -680,6 +683,14 @@ export default function App({
           try {
             const { settingsManager } = await import("../settings-manager");
             const currentSettings = settingsManager.getSettings();
+
+            // Revoke refresh token on server if we have one
+            if (currentSettings.refreshToken) {
+              const { revokeToken } = await import("../auth/oauth");
+              await revokeToken(currentSettings.refreshToken);
+            }
+
+            // Clear local credentials
             const newEnv = { ...currentSettings.env };
             delete newEnv.LETTA_API_KEY;
             // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
@@ -812,6 +823,92 @@ export default function App({
               success: true,
             });
             buffersRef.current.order.push(cmdId);
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /link command - attach Letta Code tools
+        if (msg.trim() === "/link") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Attaching Letta Code tools to agent...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const result = await linkToolsToAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /unlink command - remove Letta Code tools
+        if (msg.trim() === "/unlink") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Removing Letta Code tools from agent...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const result = await unlinkToolsFromAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
             refreshDerived();
           } catch (error) {
             buffersRef.current.byId.set(cmdId, {
@@ -1406,6 +1503,7 @@ export default function App({
               onExit={handleExit}
               onInterrupt={handleInterrupt}
               interruptRequested={interruptRequested}
+              agentId={agentId}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}

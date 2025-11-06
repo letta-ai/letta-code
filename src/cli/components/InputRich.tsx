@@ -1,10 +1,12 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
+import Link from "ink-link";
 import SpinnerLib from "ink-spinner";
 import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -29,6 +31,7 @@ export function Input({
   onExit,
   onInterrupt,
   interruptRequested = false,
+  agentId,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -41,6 +44,7 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   interruptRequested?: boolean;
+  agentId?: string;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -95,6 +99,13 @@ export function Input({
   // Terminal width (reactive to window resizing)
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
+
+  // Get server URL (same logic as client.ts)
+  const settings = settingsManager.getSettings();
+  const serverUrl =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    "https://api.letta.com";
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
@@ -467,6 +478,8 @@ export function Input({
           cursorPosition={currentCursorPosition}
           onFileSelect={handleFileSelect}
           onAutocompleteActiveChange={setIsAutocompleteActive}
+          agentId={agentId}
+          serverUrl={serverUrl}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>

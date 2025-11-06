@@ -23,11 +23,13 @@ export function formatArgsDisplay(argsJson: string): {
         if ("request_heartbeat" in clone) delete clone.request_heartbeat;
         parsed = clone;
         const keys = Object.keys(parsed);
+        const firstKey = keys[0];
         if (
           keys.length === 1 &&
-          ["query", "path", "file_path", "command", "label"].includes(keys[0])
+          firstKey &&
+          ["query", "path", "file_path", "command", "label"].includes(firstKey)
         ) {
-          const v = parsed[keys[0]];
+          const v = parsed[firstKey];
           display = typeof v === "string" ? v : String(v);
         } else {
           display = Object.entries(parsed)

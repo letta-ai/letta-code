@@ -155,9 +155,43 @@ letta --agent <id>       # Use specific agent ID
 letta --model <model>    # Specify model (e.g., claude-sonnet-4.5, gpt-4o)
 letta -m <model>         # Short form of --model
 letta --continue         # Resume global last agent (deprecated, use project-based)
+
+# Managing tools (requires --agent flag)
+letta --agent <id> --link      # Attach Letta Code tools to agent, then start session
+letta --agent <id> --unlink    # Remove Letta Code tools from agent, then start session
 ```
 
 > **Note:** The `--model` flag is inconsistent when resuming sessions. We recommend using the `/model` command instead to change models in interactive mode.
+
+#### Interactive Commands
+
+While in a session, you can use these commands:
+- `/agent` - Show current agent link
+- `/model` - Switch models
+- `/stream` - Toggle token streaming on/off
+- `/link` - Attach Letta Code tools to current agent (enables Read, Write, Edit, Bash, etc.)
+- `/unlink` - Remove Letta Code tools from current agent
+- `/clear` - Clear conversation history
+- `/exit` - Exit and show session stats
+- `/logout` - Clear credentials and exit
+
+#### Managing Letta Code Tools
+
+Letta Code provides tools like `Bash`, `Read`, `Write`, `Edit`, `Grep`, `Glob`, and more. You can attach or remove these tools from any agent:
+
+**Via CLI flags** (before starting session):
+```bash
+letta --agent <id> --link     # Attach Letta Code tools
+letta --agent <id> --unlink   # Remove Letta Code tools
+```
+
+**Via interactive commands** (during session):
+```bash
+/link      # Attach Letta Code tools to current agent
+/unlink    # Remove Letta Code tools from current agent
+```
+
+When you attach tools with `/link` or `--link`, they are added to the agent with approval rules enabled (human-in-the-loop). This means the agent can use these tools, but you'll be prompted to approve each tool call. Use permission modes to control approval behavior (see Permissions section below).
 
 ### Headless Mode
 ```bash

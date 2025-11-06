@@ -207,6 +207,10 @@ export async function createAgent(
     include_base_tools: false,
     include_base_tool_rules: false,
     initial_message_sequence: [],
+    // TODO: enable as default
+    // parallel_tool_calls: true,
+    // TODO: enable via flag --sleeptime
+    // enable_sleeptime: true,
   });
 
   // Apply updateArgs if provided (e.g., reasoningEffort, contextWindow, etc.)

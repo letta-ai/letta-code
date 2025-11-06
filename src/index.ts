@@ -93,6 +93,8 @@ async function main() {
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
         skills: { type: "string" },
+        link: { type: "boolean" },
+        unlink: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -162,7 +164,7 @@ async function main() {
 
   // Validate credentials by checking health endpoint
   const { validateCredentials } = await import("./auth/oauth");
-  const isValid = await validateCredentials(baseURL, apiKey);
+  const isValid = await validateCredentials(baseURL, apiKey ?? "");
 
   if (!isValid) {
     // For headless mode, error out with helpful message
@@ -236,6 +238,21 @@ async function main() {
     }
   }
 
+  // Handle --link and --unlink flags (modify tools before starting session)
+  const shouldLink = values.link as boolean | undefined;
+  const shouldUnlink = values.unlink as boolean | undefined;
+
+  // Validate --link/--unlink flags require --agent
+  if (shouldLink || shouldUnlink) {
+    if (!specifiedAgentId) {
+      console.error(
+        `Error: --${shouldLink ? "link" : "unlink"} requires --agent <id>`,
+      );
+      process.exit(1);
+    }
+    // Implementation is in InteractiveSession init()
+  }
+
   if (isHeadless) {
     // For headless mode, load tools synchronously
     await loadTools();
@@ -268,10 +285,16 @@ async function main() {
     skillsDirectory?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
-      "assembling" | "upserting" | "initializing" | "checking" | "ready"
+      | "assembling"
+      | "upserting"
+      | "linking"
+      | "unlinking"
+      | "initializing"
+      | "checking"
+      | "ready"
     >("assembling");
     const [agentId, setAgentId] = useState<string | null>(null);
-    const [agentState, setAgentState] = useState<Letta.AgentState | null>(null);
+    const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
 
@@ -283,6 +306,28 @@ async function main() {
         setLoadingState("upserting");
         const client = await getClient();
         await upsertToolsToServer(client);
+
+        // Handle --link/--unlink after upserting tools
+        if (shouldLink || shouldUnlink) {
+          if (!agentIdArg) {
+            console.error("Error: --link/--unlink requires --agent <id>");
+            process.exit(1);
+          }
+
+          setLoadingState(shouldLink ? "linking" : "unlinking");
+          const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
+            "./agent/modify"
+          );
+
+          const result = shouldLink
+            ? await linkToolsToAgent(agentIdArg)
+            : await unlinkToolsFromAgent(agentIdArg);
+
+          if (!result.success) {
+            console.error(`✗ ${result.message}`);
+            process.exit(1);
+          }
+        }
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
@@ -297,8 +342,13 @@ async function main() {
             // console.log(`Using agent ${agentIdArg}...`);
           } catch (error) {
             console.error(
-              `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)}), creating new one...`,
+              `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
             );
+            console.error(
+              "When using --agent, the specified agent ID must exist.",
+            );
+            console.error("Run 'letta' without --agent to create a new agent.");
+            process.exit(1);
           }
         }
 
@@ -371,7 +421,7 @@ async function main() {
           !forceNew &&
           localProjectSettings?.lastAgent &&
           agent.id === localProjectSettings.lastAgent;
-        const resuming = continueSession || !!agentIdArg || isResumingProject;
+        const resuming = !!(continueSession || agentIdArg || isResumingProject);
         setIsResumingSession(resuming);
 
         // Get resume data (pending approval + message history) if resuming

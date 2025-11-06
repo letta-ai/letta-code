@@ -185,24 +185,28 @@ describe("tool truncation integration tests", () => {
   });
 
   describe("Glob tool truncation", () => {
-    test("truncates file list exceeding 2000 files", async () => {
-      // Create 2500 files
-      for (let i = 1; i <= 2500; i++) {
-        await writeFile(join(testDir, `file${i}.txt`), "content");
-      }
+    test(
+      "truncates file list exceeding 2000 files",
+      async () => {
+        // Create 2500 files
+        for (let i = 1; i <= 2500; i++) {
+          await writeFile(join(testDir, `file${i}.txt`), "content");
+        }
 
-      const result = await glob({ pattern: "**/*.txt", path: testDir });
+        const result = await glob({ pattern: "**/*.txt", path: testDir });
 
-      expect(result.files.length).toBeLessThanOrEqual(
-        LIMITS.GLOB_MAX_FILES + 1,
-      ); // +1 for notice
-      expect(result.truncated).toBe(true);
-      expect(result.totalFiles).toBe(2500);
-      // Last entry should be the truncation notice
-      expect(result.files[result.files.length - 1]).toContain(
-        "showing 2,000 of 2,500 files",
-      );
-    });
+        expect(result.files.length).toBeLessThanOrEqual(
+          LIMITS.GLOB_MAX_FILES + 1,
+        ); // +1 for notice
+        expect(result.truncated).toBe(true);
+        expect(result.totalFiles).toBe(2500);
+        // Last entry should be the truncation notice
+        expect(result.files[result.files.length - 1]).toContain(
+          "showing 2,000 of 2,500 files",
+        );
+      },
+      { timeout: 15000 },
+    ); // Increased timeout for Windows CI where file creation is slower
 
     test("does not truncate when under limit", async () => {
       // Create 10 files
@@ -219,24 +223,28 @@ describe("tool truncation integration tests", () => {
   });
 
   describe("LS tool truncation", () => {
-    test("truncates directory exceeding 1000 entries", async () => {
-      // Create 1500 files
-      for (let i = 1; i <= 1500; i++) {
-        await writeFile(join(testDir, `file${i}.txt`), "content");
-      }
+    test(
+      "truncates directory exceeding 1000 entries",
+      async () => {
+        // Create 1500 files
+        for (let i = 1; i <= 1500; i++) {
+          await writeFile(join(testDir, `file${i}.txt`), "content");
+        }
 
-      const result = await ls({ path: testDir });
+        const result = await ls({ path: testDir });
 
-      const output = result.content[0]?.text || "";
-      expect(output).toContain("[Output truncated");
-      expect(output).toContain("showing 1,000 of 1,500 entries");
-      expect(output).toContain("file1.txt");
-      // Should not contain files beyond 1000
-      const lines = output.split("\n");
-      // Count actual file entries (excluding headers and notices)
-      const fileEntries = lines.filter((line) => line.match(/^\s+- file/));
-      expect(fileEntries.length).toBeLessThanOrEqual(LIMITS.LS_MAX_ENTRIES);
-    });
+        const output = result.content[0]?.text || "";
+        expect(output).toContain("[Output truncated");
+        expect(output).toContain("showing 1,000 of 1,500 entries");
+        expect(output).toContain("file1.txt");
+        // Should not contain files beyond 1000
+        const lines = output.split("\n");
+        // Count actual file entries (excluding headers and notices)
+        const fileEntries = lines.filter((line) => line.match(/^\s+- file/));
+        expect(fileEntries.length).toBeLessThanOrEqual(LIMITS.LS_MAX_ENTRIES);
+      },
+      { timeout: 15000 },
+    ); // Increased timeout for Windows CI where file creation is slower
 
     test("does not truncate small directories", async () => {
       // Create 5 files
@@ -267,6 +275,7 @@ describe("tool truncation integration tests", () => {
         const bashIdMatch = message.match(/with ID: (.+)/);
         expect(bashIdMatch).toBeTruthy();
         const bashId = bashIdMatch?.[1];
+        if (!bashId) throw new Error("bashId not found");
 
         // Wait a bit for output to accumulate
         await new Promise((resolve) => setTimeout(resolve, 100));

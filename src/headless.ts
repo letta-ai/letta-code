@@ -13,7 +13,7 @@ import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
 import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
-import { drainStream } from "./cli/helpers/stream";
+import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
@@ -147,7 +147,7 @@ export async function handleHeadlessCommand(
     const initEvent = {
       type: "init",
       agent_id: agent.id,
-      model: agent.llmConfig?.model,
+      model: agent.llm_config?.model,
       tools: agent.tools?.map((t) => t.name) || [],
     };
     console.log(JSON.stringify(initEvent));
@@ -233,7 +233,7 @@ export async function handleHeadlessCommand(
           // no-op
         }
       } else {
-        await drainStream(approvalStream, createBuffers(), () => {});
+        await drainStreamWithResume(approvalStream, createBuffers(), () => {});
       }
     }
   };
@@ -458,8 +458,8 @@ export async function handleHeadlessCommand(
         );
         markCurrentLineAsFinished(buffers);
       } else {
-        // Normal mode: use drainStream
-        const result = await drainStream(
+        // Normal mode: use drainStreamWithResume
+        const result = await drainStreamWithResume(
           stream,
           buffers,
           () => {}, // No UI refresh needed in headless mode

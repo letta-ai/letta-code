@@ -25,12 +25,16 @@ export async function multi_edit(
     throw new Error(`File path must be absolute, got: ${file_path}`);
   if (!edits || edits.length === 0) throw new Error("No edits provided");
   for (let i = 0; i < edits.length; i++) {
+    const edit = edits[i];
+    if (!edit) {
+      throw new Error(`Edit ${i + 1} is undefined`);
+    }
     validateRequiredParams(
-      edits[i] as Record<string, unknown>,
+      edit as unknown as Record<string, unknown>,
       ["old_string", "new_string"],
       `MultiEdit (edit ${i + 1})`,
     );
-    if (edits[i].old_string === edits[i].new_string)
+    if (edit.old_string === edit.new_string)
       throw new Error(
         `Edit ${i + 1}: No changes to make: old_string and new_string are exactly the same.`,
       );
@@ -39,7 +43,9 @@ export async function multi_edit(
     let content = await fs.readFile(file_path, "utf-8");
     const appliedEdits: string[] = [];
     for (let i = 0; i < edits.length; i++) {
-      const { old_string, new_string, replace_all = false } = edits[i];
+      const edit = edits[i];
+      if (!edit) continue;
+      const { old_string, new_string, replace_all = false } = edit;
       const occurrences = content.split(old_string).length - 1;
       if (occurrences === 0) {
         throw new Error(

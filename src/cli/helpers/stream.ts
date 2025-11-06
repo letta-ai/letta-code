@@ -1,6 +1,7 @@
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { getClient } from "../../agent/client";
 
 import {
   type createBuffers,
@@ -40,6 +41,14 @@ export async function drainStream(
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
 
+  // Helper to reset tool accumulation state at segment boundaries
+  // Note: approvalRequestId is NOT reset here - it persists until approval is sent
+  const resetToolState = () => {
+    toolCallId = null;
+    toolName = null;
+    toolArgs = null;
+  };
+
   for await (const chunk of stream) {
     // console.log("chunk", chunk);
 
@@ -64,11 +73,19 @@ export async function drainStream(
 
     if (chunk.message_type === "ping") continue;
 
+    // Reset tool state when a tool completes (server-side execution finished)
+    // This ensures the next tool call starts with clean state
+    if (chunk.message_type === "tool_return_message") {
+      resetToolState();
+      // Continue processing this chunk (for UI display)
+    }
+
     // Need to store the approval request ID to send an approval in a new run
     if (chunk.message_type === "approval_request_message") {
       approvalRequestId = chunk.id;
     }
 
+    // Accumulate tool call state across streaming chunks
     // NOTE: this this a little ugly - we're basically processing tool name and chunk deltas
     // in both the onChunk handler and here, we could refactor to instead pull the tool name
     // and JSON args from the mutated lines (eg last mutated line)
@@ -83,17 +100,22 @@ export async function drainStream(
           ? chunk.tool_calls[0]
           : null);
 
+      // Process tool_call_id FIRST, then name, then arguments
+      // This ordering prevents races where name arrives before ID in separate chunks
       if (toolCall?.tool_call_id) {
+        // If this is a NEW tool call (different ID), reset accumulated state
+        if (toolCallId && toolCall.tool_call_id !== toolCallId) {
+          resetToolState();
+        }
         toolCallId = toolCall.tool_call_id;
       }
+
+      // Set name after potential reset
       if (toolCall?.name) {
-        if (toolName) {
-          // TODO would expect that we should allow stacking? I guess not?
-          //   toolName = toolName + toolCall.name;
-        } else {
-          toolName = toolCall.name;
-        }
+        toolName = toolCall.name;
       }
+
+      // Accumulate arguments (may arrive across multiple chunks)
       if (toolCall?.arguments) {
         if (toolArgs) {
           toolArgs = toolArgs + toolCall.arguments;
@@ -126,17 +148,94 @@ export async function drainStream(
   markCurrentLineAsFinished(buffers);
   queueMicrotask(refresh);
 
-  // Package the approval request at the end
-  const approval =
-    toolCallId && toolName && toolArgs && approvalRequestId
-      ? {
-          toolCallId: toolCallId,
-          toolName: toolName,
-          toolArgs: toolArgs,
-        }
-      : null;
+  // Package the approval request at the end, with validation
+  let approval: ApprovalRequest | null = null;
+
+  if (stopReason === "requires_approval") {
+    // Validate we have complete approval state
+    if (!toolCallId || !toolName || !toolArgs || !approvalRequestId) {
+      console.error("[drainStream] Incomplete approval state at end of turn:", {
+        hasToolCallId: !!toolCallId,
+        hasToolName: !!toolName,
+        hasToolArgs: !!toolArgs,
+        hasApprovalRequestId: !!approvalRequestId,
+      });
+      // Don't construct approval - will return null
+    } else {
+      approval = {
+        toolCallId: toolCallId,
+        toolName: toolName,
+        toolArgs: toolArgs,
+      };
+    }
+
+    // Reset all state after processing approval (clean slate for next turn)
+    resetToolState();
+    approvalRequestId = null;
+  }
 
   const apiDurationMs = performance.now() - startTime;
 
   return { stopReason, approval, lastRunId, lastSeqId, apiDurationMs };
+}
+
+/**
+ * Drain a stream with automatic resume on disconnect.
+ *
+ * If the stream ends without receiving a proper stop_reason chunk (indicating
+ * an unexpected disconnect), this will automatically attempt to resume from
+ * Redis using the last received run_id and seq_id.
+ *
+ * @param stream - Initial stream from agent.messages.stream()
+ * @param buffers - Buffer to accumulate chunks
+ * @param refresh - Callback to refresh UI
+ * @param abortSignal - Optional abort signal for cancellation
+ * @returns Result with stop_reason, approval info, and timing
+ */
+export async function drainStreamWithResume(
+  stream: Stream<LettaStreamingResponse>,
+  buffers: ReturnType<typeof createBuffers>,
+  refresh: () => void,
+  abortSignal?: AbortSignal,
+): Promise<DrainResult> {
+  const overallStartTime = performance.now();
+
+  // Attempt initial drain
+  let result = await drainStream(stream, buffers, refresh, abortSignal);
+
+  // If stream ended without proper stop_reason and we have resume info, try once to reconnect
+  if (
+    result.stopReason === "error" &&
+    result.lastRunId &&
+    result.lastSeqId !== null &&
+    !abortSignal?.aborted
+  ) {
+    try {
+      const client = await getClient();
+      // Resume from Redis where we left off
+      const resumeStream = await client.runs.messages.stream(result.lastRunId, {
+        starting_after: result.lastSeqId,
+        batch_size: 1000, // Fetch buffered chunks quickly
+      });
+
+      // Continue draining from where we left off
+      const resumeResult = await drainStream(
+        resumeStream,
+        buffers,
+        refresh,
+        abortSignal,
+      );
+
+      // Use the resume result (should have proper stop_reason now)
+      result = resumeResult;
+    } catch (_e) {
+      // Resume failed - stick with the error stop_reason
+      // The original error result will be returned
+    }
+  }
+
+  // Update duration to reflect total time (including resume attempt)
+  result.apiDurationMs = performance.now() - overallStartTime;
+
+  return result;
 }

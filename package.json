@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.1.15",
+  "version": "0.1.19",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
@@ -22,7 +22,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@letta-ai/letta-client": "1.0.0-alpha.10",
+    "@letta-ai/letta-client": "1.0.0-alpha.15",
     "ink-link": "^5.0.0",
     "open": "^10.2.0"
   },
@@ -32,6 +32,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/diff": "^8.0.0",
+    "@types/picomatch": "^4.0.2",
     "diff": "^8.0.2",
     "husky": "9.1.7",
     "ink": "^5.0.0",
@@ -39,12 +40,15 @@
     "ink-text-input": "^5.0.0",
     "lint-staged": "16.2.4",
     "minimatch": "^10.0.3",
+    "picomatch": "^2.3.1",
     "react": "18.2.0",
     "typescript": "^5.0.0"
   },
   "scripts": {
     "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run scripts/check.js",
     "dev": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "bun run build.js",
     "prepare": "bun run build",

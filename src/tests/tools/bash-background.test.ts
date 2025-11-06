@@ -11,8 +11,8 @@ describe("Bash background tools", () => {
       run_in_background: true,
     });
 
-    expect(result.content[0].text).toContain("background with ID:");
-    expect(result.content[0].text).toMatch(/bash_\d+/);
+    expect(result.content[0]?.text).toContain("background with ID:");
+    expect(result.content[0]?.text).toMatch(/bash_\d+/);
   });
 
   test("BashOutput retrieves output from background shell", async () => {
@@ -24,7 +24,7 @@ describe("Bash background tools", () => {
     });
 
     // Extract bash_id from the response text
-    const match = startResult.content[0].text.match(/bash_(\d+)/);
+    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     expect(match).toBeDefined();
     const bashId = `bash_${match?.[1]}`;
 
@@ -51,7 +51,7 @@ describe("Bash background tools", () => {
       run_in_background: true,
     });
 
-    const match = startResult.content[0].text.match(/bash_(\d+)/);
+    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     const bashId = `bash_${match?.[1]}`;
 
     // Kill it (KillBash uses shell_id parameter)

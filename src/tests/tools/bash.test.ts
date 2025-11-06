@@ -9,7 +9,7 @@ describe("Bash tool", () => {
     });
 
     expect(result.content).toBeDefined();
-    expect(result.content[0].text).toContain("Hello, World!");
+    expect(result.content[0]?.text).toContain("Hello, World!");
     expect(result.isError).toBeUndefined();
   });
 
@@ -19,7 +19,7 @@ describe("Bash tool", () => {
       description: "Test stderr",
     });
 
-    expect(result.content[0].text).toContain("error message");
+    expect(result.content[0]?.text).toContain("error message");
   });
 
   test("returns error for failed command", async () => {
@@ -29,7 +29,7 @@ describe("Bash tool", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Exit code");
+    expect(result.content[0]?.text).toContain("Exit code");
   });
 
   test("times out long-running command", async () => {
@@ -40,7 +40,7 @@ describe("Bash tool", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("timed out");
+    expect(result.content[0]?.text).toContain("timed out");
   }, 2000);
 
   test("runs command in background mode", async () => {
@@ -50,8 +50,8 @@ describe("Bash tool", () => {
       run_in_background: true,
     });
 
-    expect(result.content[0].text).toContain("background with ID:");
-    expect(result.content[0].text).toMatch(/bash_\d+/);
+    expect(result.content[0]?.text).toContain("background with ID:");
+    expect(result.content[0]?.text).toMatch(/bash_\d+/);
   });
 
   test("handles complex commands with pipes", async () => {
@@ -65,8 +65,8 @@ describe("Bash tool", () => {
       description: "Test pipe",
     });
 
-    expect(result.content[0].text).toContain("bar");
-    expect(result.content[0].text).not.toContain("foo");
+    expect(result.content[0]?.text).toContain("bar");
+    expect(result.content[0]?.text).not.toContain("foo");
   });
 
   test("lists background processes with /bashes command", async () => {
@@ -76,7 +76,7 @@ describe("Bash tool", () => {
     });
 
     expect(result.content).toBeDefined();
-    expect(result.content[0].text).toBeDefined();
+    expect(result.content[0]?.text).toBeDefined();
   });
 
   test("throws error when command is missing", async () => {

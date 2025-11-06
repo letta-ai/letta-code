@@ -76,7 +76,7 @@ test("buildMessageContentFromDisplay handles mixed content", () => {
     type: "text",
     text: "Start Pasted content middle ",
   });
-  expect(content[1].type).toBe("image");
+  expect(content[1]?.type).toBe("image");
   expect(content[2]).toEqual({ type: "text", text: " end" });
 });
 

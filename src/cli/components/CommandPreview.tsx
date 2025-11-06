@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import Link from "ink-link";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
@@ -8,10 +9,21 @@ const commandList = Object.entries(commands).map(([cmd, { desc }]) => ({
   desc,
 }));
 
-export function CommandPreview({ currentInput }: { currentInput: string }) {
+export function CommandPreview({
+  currentInput,
+  agentId,
+  serverUrl,
+}: {
+  currentInput: string;
+  agentId?: string;
+  serverUrl?: string;
+}) {
   if (!currentInput.startsWith("/")) {
     return null;
   }
+
+  const isCloudUser = serverUrl?.includes("api.letta.com");
+  const showBottomBar = agentId && agentId !== "loading";
 
   return (
     <Box
@@ -21,11 +33,23 @@ export function CommandPreview({ currentInput }: { currentInput: string }) {
       paddingX={1}
     >
       {commandList.map((item) => (
-        <Box key={item.cmd} justifyContent="space-between" width={40}>
-          <Text>{item.cmd}</Text>
-          <Text dimColor>{item.desc}</Text>
+        <Box key={item.cmd}>
+          <Text>
+            {item.cmd.padEnd(15)} <Text dimColor>{item.desc}</Text>
+          </Text>
         </Box>
       ))}
+      {showBottomBar && (
+        <Box marginTop={1} paddingTop={1} borderTop borderColor="gray">
+          {isCloudUser ? (
+            <Link url={`https://app.letta.com/agents/${agentId}`}>
+              <Text dimColor>View agent in ADE</Text>
+            </Link>
+          ) : (
+            <Text dimColor>Connected to agent located at {serverUrl}</Text>
+          )}
+        </Box>
+      )}
     </Box>
   );
 }
