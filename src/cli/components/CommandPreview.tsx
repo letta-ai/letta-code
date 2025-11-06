@@ -34,9 +34,10 @@ export function CommandPreview({
       paddingX={1}
     >
       {commandList.map((item) => (
-        <Box key={item.cmd} justifyContent="space-between" width={40}>
-          <Text>{item.cmd}</Text>
-          <Text dimColor>{item.desc}</Text>
+        <Box key={item.cmd}>
+          <Text>
+            {item.cmd.padEnd(15)} <Text dimColor>{item.desc}</Text>
+          </Text>
         </Box>
       ))}
       {showAgentUrl && (

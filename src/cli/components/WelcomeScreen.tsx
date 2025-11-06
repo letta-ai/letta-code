@@ -9,6 +9,8 @@ import { colors } from "./colors";
 type LoadingState =
   | "assembling"
   | "upserting"
+  | "linking"
+  | "unlinking"
   | "initializing"
   | "checking"
   | "ready";
@@ -81,6 +83,12 @@ export function WelcomeScreen({
     }
     if (loadingState === "upserting") {
       return "Upserting tools...";
+    }
+    if (loadingState === "linking") {
+      return "Attaching Letta Code tools...";
+    }
+    if (loadingState === "unlinking") {
+      return "Removing Letta Code tools...";
     }
     if (loadingState === "checking") {
       return "Checking for pending approvals...";
