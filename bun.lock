@@ -4,7 +4,7 @@
     "": {
       "name": "@letta-ai/letta-code",
       "dependencies": {
-        "@letta-ai/letta-client": "1.0.0-alpha.14",
+        "@letta-ai/letta-client": "1.0.0-alpha.15",
         "ink-link": "^5.0.0",
         "open": "^10.2.0",
       },
@@ -35,7 +35,7 @@
 
     "@isaacs/brace-expansion": ["@isaacs/brace-expansion@5.0.0", "", { "dependencies": { "@isaacs/balanced-match": "^4.0.1" } }, "sha512-ZT55BDLV0yv0RBm2czMiZ+SqCGO7AvmOM3G/w2xhVPH+te0aKgFjmBvGlL1dH+ql2tgGO3MVrbb3jCKyvpgnxA=="],
 
-    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.0.0-alpha.14", "", {}, "sha512-p5k1j2UyQmVnSN5TtAvFi8LszYTwH6yUMpPRv9BfvrsCY7s+ifSH735vF5Yi9ecMfYnhVJZhAsnr5Bq6/crLUw=="],
+    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.0.0-alpha.15", "", {}, "sha512-5OpXmloDnboA0nYC9xJIJuIWzAaVS06uDr9YLO6hR29zblwgeHPpaopWJFyg+FR0Cg7SSyPgEb3xzjGdRd6Eqg=="],
 
     "@types/bun": ["@types/bun@1.3.1", "", { "dependencies": { "bun-types": "1.3.1" } }, "sha512-4jNMk2/K9YJtfqwoAa28c8wK+T7nvJFOjxI4h/7sORWcypRNxBpr+TPNaCfVWq70tLCJsqoFwcf0oI0JU/fvMQ=="],
 
