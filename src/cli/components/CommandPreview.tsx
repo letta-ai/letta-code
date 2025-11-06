@@ -22,9 +22,8 @@ export function CommandPreview({
     return null;
   }
 
-  // Show agent URL only for cloud users
-  const showAgentUrl =
-    agentId && agentId !== "loading" && serverUrl?.includes("api.letta.com");
+  const isCloudUser = serverUrl?.includes("api.letta.com");
+  const showBottomBar = agentId && agentId !== "loading";
 
   return (
     <Box
@@ -40,11 +39,15 @@ export function CommandPreview({
           </Text>
         </Box>
       ))}
-      {showAgentUrl && (
+      {showBottomBar && (
         <Box marginTop={1} paddingTop={1} borderTop borderColor="gray">
-          <Link url={`https://app.letta.com/agents/${agentId}`}>
-            <Text dimColor>View agent:</Text>
-          </Link>
+          {isCloudUser ? (
+            <Link url={`https://app.letta.com/agents/${agentId}`}>
+              <Text dimColor>View agent in ADE</Text>
+            </Link>
+          ) : (
+            <Text dimColor>Connected to agent located at {serverUrl}</Text>
+          )}
         </Box>
       )}
     </Box>
