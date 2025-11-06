@@ -669,7 +669,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Clearing credentials...",
+            output: "Logging out...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -680,6 +680,14 @@ export default function App({
           try {
             const { settingsManager } = await import("../settings-manager");
             const currentSettings = settingsManager.getSettings();
+
+            // Revoke refresh token on server if we have one
+            if (currentSettings.refreshToken) {
+              const { revokeToken } = await import("../auth/oauth");
+              await revokeToken(currentSettings.refreshToken);
+            }
+
+            // Clear local credentials
             const newEnv = { ...currentSettings.env };
             delete newEnv.LETTA_API_KEY;
             // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
