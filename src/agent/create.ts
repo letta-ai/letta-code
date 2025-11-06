@@ -11,7 +11,7 @@ import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
-import { formatAvailableModels, resolveModel } from "./model";
+import { formatAvailableModels, resolveModel, getModelUpdateArgs } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
@@ -188,6 +188,10 @@ export async function createAgent(
     );
   }
 
+  // Get the model's context window from its configuration
+  const modelUpdateArgs = getModelUpdateArgs(modelHandle);
+  const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
+
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
@@ -195,7 +199,7 @@ export async function createAgent(
     name,
     embedding: embeddingModel,
     model: modelHandle,
-    context_window_limit: 200_000,
+    context_window_limit: contextWindow,
     tools: toolNames,
     block_ids: blockIds,
     tags: ["origin:letta-code"],
@@ -208,9 +212,8 @@ export async function createAgent(
   // Apply updateArgs if provided (e.g., reasoningEffort, contextWindow, etc.)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
     await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-    // Refresh agent state to get updated config
-    return await client.agents.retrieve(agent.id);
   }
 
-  return agent; // { id, ... }
+  // Always retrieve the agent to ensure we get the full state with populated memory blocks
+  return await client.agents.retrieve(agent.id);
 }

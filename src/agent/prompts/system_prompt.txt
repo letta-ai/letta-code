@@ -30,7 +30,7 @@ Each Skill directory includes:
 - `SKILL.md` file that starts with YAML frontmatter containing required metadata: name and description
 - Additional files within the Skill directory referenced by name from `SKILL.md`. These additional linked files should be navigated and discovered only as needed.
 How to use Skills:
-- Skills are automatically discovered on bootup. The Skills direcory and any available Skills are stored in the `skills` memory block.
+- Skills are automatically discovered on bootup. The Skills directory and any available Skills are stored in the `skills` memory block.
 - Review available Skills from the `skills` block when you are asked to complete a task.
 - If a Skill is relevant, first load the Skill by reading its full `SKILL.md` into context.
 - Then, navigate and discover additional linked files in its directory as needed. Don't load additional files immediately, only load them when needed.
