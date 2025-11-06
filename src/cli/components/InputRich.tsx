@@ -498,9 +498,7 @@ export function Input({
           ) : (
             <Text dimColor>Press / for commands or @ for files</Text>
           )}
-          <Link url="https://discord.gg/letta">
-            <Text dimColor>Discord</Text>
-          </Link>
+          <Text dimColor>https://discord.gg/letta</Text>
         </Box>
       </Box>
     </Box>
