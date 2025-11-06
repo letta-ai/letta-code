@@ -337,8 +337,13 @@ async function main() {
             // console.log(`Using agent ${agentIdArg}...`);
           } catch (error) {
             console.error(
-              `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)}), creating new one...`,
+              `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
             );
+            console.error(
+              "When using --agent, the specified agent ID must exist.",
+            );
+            console.error("Run 'letta' without --agent to create a new agent.");
+            process.exit(1);
           }
         }
 
