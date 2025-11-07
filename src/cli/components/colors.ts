@@ -68,19 +68,19 @@ export const colors = {
     header: brandColors.primaryAccent,
   },
 
-  // Code and markdown elements
+  // Code and markdown elements (use terminal theme colors)
   code: {
-    inline: brandColors.statusSuccess,
+    inline: "green",
   },
 
   link: {
-    text: brandColors.primaryAccent,
-    url: brandColors.primaryAccent,
+    text: "cyan",
+    url: "blue",
   },
 
   heading: {
-    primary: brandColors.primaryAccent,
-    secondary: brandColors.blue,
+    primary: "cyan",
+    secondary: "blue",
   },
 
   // Status indicators
