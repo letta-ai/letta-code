@@ -2,6 +2,9 @@
 .letta/settings.local.json
 .letta
 
+# User-defined skills
+.skills
+
 .idea
 node_modules
 bun.lockb
