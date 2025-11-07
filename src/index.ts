@@ -452,6 +452,7 @@ async function main() {
         loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
+        startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
         tokenStreaming: settings.tokenStreaming,
       });
@@ -463,6 +464,7 @@ async function main() {
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
+      startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
       tokenStreaming: settings.tokenStreaming,
     });

@@ -20,7 +20,8 @@ type DrainResult = {
   stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
-  approval?: ApprovalRequest | null; // present only if we ended due to approval
+  approval?: ApprovalRequest | null; // DEPRECATED: kept for backward compat
+  approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
 };
 
@@ -32,22 +33,19 @@ export async function drainStream(
 ): Promise<DrainResult> {
   const startTime = performance.now();
 
-  let approvalRequestId: string | null = null;
-  let toolCallId: string | null = null;
-  let toolName: string | null = null;
-  let toolArgs: string | null = null;
+  let _approvalRequestId: string | null = null;
+  const pendingApprovals = new Map<
+    string,
+    {
+      toolCallId: string;
+      toolName: string;
+      toolArgs: string;
+    }
+  >();
 
   let stopReason: StopReasonType | null = null;
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
-
-  // Helper to reset tool accumulation state at segment boundaries
-  // Note: approvalRequestId is NOT reset here - it persists until approval is sent
-  const resetToolState = () => {
-    toolCallId = null;
-    toolName = null;
-    toolArgs = null;
-  };
 
   for await (const chunk of stream) {
     // console.log("chunk", chunk);
@@ -73,26 +71,26 @@ export async function drainStream(
 
     if (chunk.message_type === "ping") continue;
 
-    // Reset tool state when a tool completes (server-side execution finished)
-    // This ensures the next tool call starts with clean state
+    // Remove tool from pending approvals when it completes (server-side execution finished)
+    // This means the tool was executed server-side and doesn't need approval
     if (chunk.message_type === "tool_return_message") {
-      resetToolState();
+      if (chunk.tool_call_id) {
+        pendingApprovals.delete(chunk.tool_call_id);
+      }
       // Continue processing this chunk (for UI display)
     }
 
     // Need to store the approval request ID to send an approval in a new run
     if (chunk.message_type === "approval_request_message") {
-      approvalRequestId = chunk.id;
+      _approvalRequestId = chunk.id;
     }
 
-    // Accumulate tool call state across streaming chunks
-    // NOTE: this this a little ugly - we're basically processing tool name and chunk deltas
-    // in both the onChunk handler and here, we could refactor to instead pull the tool name
-    // and JSON args from the mutated lines (eg last mutated line)
-    if (
-      chunk.message_type === "tool_call_message" ||
-      chunk.message_type === "approval_request_message"
-    ) {
+    // Accumulate approval request state across streaming chunks
+    // Support parallel tool calls by tracking each tool_call_id separately
+    // NOTE: Only track approval_request_message, NOT tool_call_message
+    // tool_call_message = auto-executed server-side (e.g., web_search)
+    // approval_request_message = needs user approval (e.g., Bash)
+    if (chunk.message_type === "approval_request_message") {
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
         chunk.tool_call ||
@@ -100,28 +98,25 @@ export async function drainStream(
           ? chunk.tool_calls[0]
           : null);
 
-      // Process tool_call_id FIRST, then name, then arguments
-      // This ordering prevents races where name arrives before ID in separate chunks
       if (toolCall?.tool_call_id) {
-        // If this is a NEW tool call (different ID), reset accumulated state
-        if (toolCallId && toolCall.tool_call_id !== toolCallId) {
-          resetToolState();
-        }
-        toolCallId = toolCall.tool_call_id;
-      }
+        // Get or create entry for this tool_call_id
+        const existing = pendingApprovals.get(toolCall.tool_call_id) || {
+          toolCallId: toolCall.tool_call_id,
+          toolName: "",
+          toolArgs: "",
+        };
 
-      // Set name after potential reset
-      if (toolCall?.name) {
-        toolName = toolCall.name;
-      }
-
-      // Accumulate arguments (may arrive across multiple chunks)
-      if (toolCall?.arguments) {
-        if (toolArgs) {
-          toolArgs = toolArgs + toolCall.arguments;
-        } else {
-          toolArgs = toolCall.arguments;
+        // Update name if provided
+        if (toolCall.name) {
+          existing.toolName = toolCall.name;
         }
+
+        // Accumulate arguments (may arrive across multiple chunks)
+        if (toolCall.arguments) {
+          existing.toolArgs += toolCall.arguments;
+        }
+
+        pendingApprovals.set(toolCall.tool_call_id, existing);
       }
     }
 
@@ -148,35 +143,40 @@ export async function drainStream(
   markCurrentLineAsFinished(buffers);
   queueMicrotask(refresh);
 
-  // Package the approval request at the end, with validation
+  // Package the approval request(s) at the end, with validation
   let approval: ApprovalRequest | null = null;
+  let approvals: ApprovalRequest[] = [];
 
   if (stopReason === "requires_approval") {
-    // Validate we have complete approval state
-    if (!toolCallId || !toolName || !toolArgs || !approvalRequestId) {
-      console.error("[drainStream] Incomplete approval state at end of turn:", {
-        hasToolCallId: !!toolCallId,
-        hasToolName: !!toolName,
-        hasToolArgs: !!toolArgs,
-        hasApprovalRequestId: !!approvalRequestId,
-      });
-      // Don't construct approval - will return null
+    // Convert map to array, filtering out incomplete entries
+    approvals = Array.from(pendingApprovals.values()).filter(
+      (a) => a.toolCallId && a.toolName && a.toolArgs,
+    );
+
+    if (approvals.length === 0) {
+      console.error(
+        "[drainStream] No valid approvals collected despite requires_approval stop reason",
+      );
     } else {
-      approval = {
-        toolCallId: toolCallId,
-        toolName: toolName,
-        toolArgs: toolArgs,
-      };
+      // Set legacy singular field for backward compatibility
+      approval = approvals[0] || null;
     }
 
-    // Reset all state after processing approval (clean slate for next turn)
-    resetToolState();
-    approvalRequestId = null;
+    // Clear the map for next turn
+    pendingApprovals.clear();
+    _approvalRequestId = null;
   }
 
   const apiDurationMs = performance.now() - startTime;
 
-  return { stopReason, approval, lastRunId, lastSeqId, apiDurationMs };
+  return {
+    stopReason,
+    approval,
+    approvals,
+    lastRunId,
+    lastSeqId,
+    apiDurationMs,
+  };
 }
 
 /**

@@ -126,7 +126,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     }
 
     // Truncate the result text for display (UI only, API gets full response)
-    const displayResultText = clipToolReturn(line.resultText);
+    // Strip trailing newlines to avoid extra visual spacing (e.g., from bash echo)
+    const displayResultText = clipToolReturn(line.resultText).replace(
+      /\n+$/,
+      "",
+    );
 
     // Check if this is a todo_write tool with successful result
     // Check both the raw name and the display name

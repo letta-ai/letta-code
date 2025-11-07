@@ -299,7 +299,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Handle otid transition for tracking purposes
         handleOtidTransition(b, chunk.otid ?? undefined);
       } else {
-        // Check if this otid is already used by a reasoning line
+        // Check if this otid is already used by another line
         if (id && b.byId.has(id)) {
           const existing = b.byId.get(id);
           if (existing && existing.kind === "reasoning") {
@@ -307,6 +307,15 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             markAsFinished(b, id);
             // Use a different ID for the tool_call to avoid overwriting the reasoning
             id = `${id}-tool`;
+          } else if (existing && existing.kind === "tool_call") {
+            // Parallel tool calls: same otid, different tool_call_id
+            // Create unique ID for this parallel tool using its tool_call_id
+            if (toolCallId) {
+              id = `${id}-${toolCallId.slice(-8)}`;
+            } else {
+              // Fallback: append timestamp
+              id = `${id}-${Date.now().toString(36)}`;
+            }
           }
         }
         // ========== END BACKEND BUG WORKAROUND ==========
@@ -328,10 +337,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       // Early exit if no valid id
       if (!id) break;
 
-      const desiredPhase =
-        chunk.message_type === "approval_request_message"
-          ? "ready"
-          : "streaming";
+      // Tool calls should be "ready" (blinking) while pending execution
+      // Only approval requests explicitly set to "ready", but regular tool calls should also blink
+      const desiredPhase = "ready";
       const line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
@@ -363,29 +371,54 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
     case "tool_return_message": {
       // Tool return is a special case
       // It will have a different otid than the tool call, but we want to merge into the tool call
-      const toolCallId = chunk.tool_call_id;
-      const resultText = chunk.tool_return;
-      const status = chunk.status;
 
-      // Look up the line by toolCallId
-      // Keep a mapping of toolCallId to line id (otid)
-      const id = toolCallId ? b.toolCallIdToLineId.get(toolCallId) : undefined;
-      if (!id) break;
+      // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
+      const toolReturns =
+        Array.isArray(chunk.tool_returns) && chunk.tool_returns.length > 0
+          ? chunk.tool_returns
+          : chunk.tool_call_id
+            ? [
+                {
+                  tool_call_id: chunk.tool_call_id,
+                  status: chunk.status,
+                  func_response: chunk.tool_return,
+                },
+              ]
+            : [];
 
-      const line = ensure<ToolCallLine>(b, id, () => ({
-        kind: "tool_call",
-        id,
-        phase: "finished",
-      }));
+      for (const toolReturn of toolReturns) {
+        const toolCallId = toolReturn.tool_call_id;
+        // Handle both func_response (streaming) and tool_return (SDK) properties
+        const resultText =
+          ("func_response" in toolReturn
+            ? toolReturn.func_response
+            : undefined) ||
+          ("tool_return" in toolReturn ? toolReturn.tool_return : undefined) ||
+          "";
+        const status = toolReturn.status;
 
-      // Immutable update: create new object with result
-      const updatedLine = {
-        ...line,
-        resultText,
-        phase: "finished" as const,
-        resultOk: status === "success",
-      };
-      b.byId.set(id, updatedLine);
+        // Look up the line by toolCallId
+        // Keep a mapping of toolCallId to line id (otid)
+        const id = toolCallId
+          ? b.toolCallIdToLineId.get(toolCallId)
+          : undefined;
+        if (!id) continue;
+
+        const line = ensure<ToolCallLine>(b, id, () => ({
+          kind: "tool_call",
+          id,
+          phase: "finished",
+        }));
+
+        // Immutable update: create new object with result
+        const updatedLine = {
+          ...line,
+          resultText,
+          phase: "finished" as const,
+          resultOk: status === "success",
+        };
+        b.byId.set(id, updatedLine);
+      }
       break;
     }
 
