@@ -85,12 +85,12 @@ export async function drainStream(
       _approvalRequestId = chunk.id;
     }
 
-    // Accumulate tool call state across streaming chunks
+    // Accumulate approval request state across streaming chunks
     // Support parallel tool calls by tracking each tool_call_id separately
-    if (
-      chunk.message_type === "tool_call_message" ||
-      chunk.message_type === "approval_request_message"
-    ) {
+    // NOTE: Only track approval_request_message, NOT tool_call_message
+    // tool_call_message = auto-executed server-side (e.g., web_search)
+    // approval_request_message = needs user approval (e.g., Bash)
+    if (chunk.message_type === "approval_request_message") {
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
         chunk.tool_call ||

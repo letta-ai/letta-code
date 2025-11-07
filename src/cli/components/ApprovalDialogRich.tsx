@@ -12,6 +12,8 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 type Props = {
   approvals: ApprovalRequest[];
   approvalContexts: ApprovalContext[];
+  progress?: { current: number; total: number };
+  isExecuting?: boolean;
   onApproveAll: () => void;
   onApproveAlways: (scope?: "project" | "session") => void;
   onDenyAll: (reason: string) => void;
@@ -225,6 +227,8 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 export const ApprovalDialog = memo(function ApprovalDialog({
   approvals,
   approvalContexts,
+  progress,
+  isExecuting,
   onApproveAll,
   onApproveAlways,
   onDenyAll,
@@ -242,13 +246,13 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   // Build options based on approval context
   const options = useMemo(() => {
     const approvalLabel =
-      approvals.length > 1
-        ? `Yes, approve all ${approvals.length} tools`
+      progress && progress.total > 1
+        ? "Yes, approve this tool"
         : "Yes, just this once";
     const opts = [{ label: approvalLabel, action: onApproveAll }];
 
     // Add context-aware approval option if available (only for single approvals)
-    if (approvals.length === 1 && approvalContext?.allowPersistence) {
+    if (approvalContext?.allowPersistence) {
       opts.push({
         label: approvalContext.approveAlwaysText,
         action: () =>
@@ -262,8 +266,8 @@ export const ApprovalDialog = memo(function ApprovalDialog({
 
     // Add deny option
     const denyLabel =
-      approvals.length > 1
-        ? `No, deny all ${approvals.length} tools (esc)`
+      progress && progress.total > 1
+        ? "No, deny this tool (esc)"
         : "No, and tell Letta what to do differently (esc)";
     opts.push({
       label: denyLabel,
@@ -271,7 +275,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     });
 
     return opts;
-  }, [approvals.length, approvalContext, onApproveAll, onApproveAlways]);
+  }, [progress, approvalContext, onApproveAll, onApproveAlways]);
 
   useInput((_input, key) => {
     if (isEnteringReason) {
@@ -416,19 +420,17 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       >
         {/* Human-readable header (same color as border) */}
         <Text bold color={colors.approval.header}>
-          {approvals.length > 1
-            ? `${approvals.length} Tools Require Approval`
+          {progress
+            ? `Tool ${progress.current} of ${progress.total} Requires Approval`
             : headerLabel}
         </Text>
-        {approvals.length > 1 && (
-          <Box flexDirection="column" marginTop={1}>
-            {approvals.map((approval, index) => (
-              <Text key={approval.toolCallId} dimColor>
-                {index + 1}. {getHeaderLabel(approval.toolName)}
-              </Text>
-            ))}
-          </Box>
+        {progress && progress.total > 1 && (
+          <Text dimColor>
+            ({progress.current - 1} reviewed,{" "}
+            {progress.total - progress.current} remaining)
+          </Text>
         )}
+        {isExecuting && <Text dimColor>Executing tool...</Text>}
         <Box height={1} />
 
         {/* Dynamic per-tool renderer (indented) */}
