@@ -432,9 +432,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
         <Text bold color={colors.approval.header}>
           {progress && progress.total > 1
             ? `${progress.total} tools require approval${totalTools && totalTools > progress.total ? ` (${totalTools} total)` : ""}`
-            : progress
-              ? `Tool ${progress.current} of ${progress.total} Requires Approval`
-              : headerLabel}
+            : headerLabel}
         </Text>
         {progress && progress.total > 1 && (
           <Text dimColor>
