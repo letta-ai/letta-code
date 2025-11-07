@@ -1,6 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
@@ -244,6 +244,14 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   // Note: Parent ensures approvals.length > 0 before rendering this component
   const approvalRequest = approvals[0];
   const approvalContext = approvalContexts[0] || null;
+
+  // Reset state when approval changes (e.g., moving from tool 2 to tool 3)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: need to trigger on progress change
+  useEffect(() => {
+    setSelectedOption(0);
+    setIsEnteringReason(false);
+    setDenyReason("");
+  }, [progress?.current]);
 
   // Build options based on approval context
   const options = useMemo(() => {

@@ -1340,6 +1340,16 @@ export default function App({
           reason: reason || "User denied the tool execution",
         };
 
+        // Update buffers with denial for UI (so it shows in the right order)
+        onChunk(buffersRef.current, {
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: currentApproval.toolCallId,
+          tool_return: `Error: request to call tool denied. User reason: ${result.reason}`,
+          status: "error",
+        });
+
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals processed, send results to backend
