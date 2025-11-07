@@ -205,7 +205,9 @@ async function parseSkillFile(
   // Derive ID from directory structure relative to root
   // E.g., .skills/data-analysis/SKILL.MD -> "data-analysis"
   // E.g., .skills/web/scraper/SKILL.MD -> "web/scraper"
-  const relativePath = filePath.slice(rootPath.length + 1); // +1 to remove leading slash
+  // Normalize rootPath to not have trailing slash
+  const normalizedRoot = rootPath.endsWith("/") ? rootPath.slice(0, -1) : rootPath;
+  const relativePath = filePath.slice(normalizedRoot.length + 1); // +1 to remove leading slash
   const dirPath = relativePath.slice(0, -"/SKILL.MD".length);
   const defaultId = dirPath || "root";
 
