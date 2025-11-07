@@ -17,19 +17,37 @@ import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission, executeTool } from "./tools/manager";
 
-export async function handleHeadlessCommand(argv: string[], model?: string) {
+export async function handleHeadlessCommand(
+  argv: string[],
+  model?: string,
+  skillsDirectory?: string,
+) {
   const settings = settingsManager.getSettings();
 
   // Parse CLI args
+  // Include all flags from index.ts to prevent them from being treated as positionals
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
+      // Flags used in headless mode
       continue: { type: "boolean", short: "c" },
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
+      // Additional flags from index.ts that need to be filtered out
+      help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
+      run: { type: "boolean" },
+      tools: { type: "string" },
+      allowedTools: { type: "string" },
+      disallowedTools: { type: "string" },
+      "permission-mode": { type: "string" },
+      yolo: { type: "boolean" },
+      skills: { type: "string" },
+      link: { type: "boolean" },
+      unlink: { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -81,6 +99,7 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
       undefined,
       updateArgs,
       forceNew,
+      skillsDirectory,
     );
   }
 
@@ -113,7 +132,14 @@ export async function handleHeadlessCommand(argv: string[], model?: string) {
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(undefined, model, undefined, updateArgs);
+    agent = await createAgent(
+      undefined,
+      model,
+      undefined,
+      updateArgs,
+      false,
+      skillsDirectory,
+    );
   }
 
   // Save agent ID to both project and global settings

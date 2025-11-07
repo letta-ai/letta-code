@@ -2,6 +2,7 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
+import { join } from "node:path";
 import type { AgentType } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   BlockResponse,
@@ -11,9 +12,14 @@ import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
-import { formatAvailableModels, resolveModel } from "./model";
+import {
+  formatAvailableModels,
+  getModelUpdateArgs,
+  resolveModel,
+} from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
+import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 export async function createAgent(
   name = "letta-cli-agent",
@@ -21,6 +27,7 @@ export async function createAgent(
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
   forceNewBlocks = false,
+  skillsDirectory?: string,
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -51,6 +58,36 @@ export async function createAgent(
 
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+
+  // Resolve absolute path for skills directory
+  const resolvedSkillsDirectory =
+    skillsDirectory || join(process.cwd(), SKILLS_DIR);
+
+  // Discover skills from .skills directory and populate skills memory block
+  try {
+    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
+
+    // Log any errors encountered during skill discovery
+    if (errors.length > 0) {
+      console.warn("Errors encountered during skill discovery:");
+      for (const error of errors) {
+        console.warn(`  ${error.path}: ${error.message}`);
+      }
+    }
+
+    // Find and update the skills memory block with discovered skills
+    const skillsBlock = defaultMemoryBlocks.find((b) => b.label === "skills");
+    if (skillsBlock) {
+      skillsBlock.value = formatSkillsForMemory(
+        skills,
+        resolvedSkillsDirectory,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   // Load global shared memory blocks from user settings
   const settings = settingsManager.getSettings();
@@ -123,8 +160,8 @@ export async function createAgent(
       }
       blockIds.push(createdBlock.id);
 
-      // Categorize: style is local, persona/human are global
-      if (label === "project") {
+      // Categorize: project/skills are local, persona/human are global
+      if (label === "project" || label === "skills") {
         newLocalBlockIds[label] = createdBlock.id;
       } else {
         newGlobalBlockIds[label] = createdBlock.id;
@@ -158,6 +195,10 @@ export async function createAgent(
     );
   }
 
+  // Get the model's context window from its configuration
+  const modelUpdateArgs = getModelUpdateArgs(modelHandle);
+  const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
+
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
@@ -165,7 +206,7 @@ export async function createAgent(
     name,
     embedding: embeddingModel,
     model: modelHandle,
-    context_window_limit: 200_000,
+    context_window_limit: contextWindow,
     tools: toolNames,
     block_ids: blockIds,
     tags: ["origin:letta-code"],
@@ -182,9 +223,8 @@ export async function createAgent(
   // Apply updateArgs if provided (e.g., reasoningEffort, contextWindow, etc.)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
     await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-    // Refresh agent state to get updated config
-    return await client.agents.retrieve(agent.id);
   }
 
-  return agent; // { id, ... }
+  // Always retrieve the agent to ensure we get the full state with populated memory blocks
+  return await client.agents.retrieve(agent.id);
 }
