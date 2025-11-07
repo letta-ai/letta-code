@@ -120,49 +120,94 @@ export function backfillBuffers(
             ? [msg.tool_call]
             : [];
 
-        if (toolCalls.length > 0 && toolCalls[0]?.tool_call_id) {
-          const toolCall = toolCalls[0];
+        // Process ALL tool calls (supports parallel tool calling)
+        for (let i = 0; i < toolCalls.length; i++) {
+          const toolCall = toolCalls[i];
+          if (!toolCall?.tool_call_id) continue;
+
           const toolCallId = toolCall.tool_call_id;
           // Skip if any required fields are missing
-          if (!toolCallId || !toolCall.name || !toolCall.arguments) break;
+          if (!toolCallId || !toolCall.name || !toolCall.arguments) continue;
 
-          const exists = buffers.byId.has(lineId);
+          // For parallel tool calls, create unique line ID for each
+          // Must match the streaming logic: first tool uses base lineId,
+          // subsequent tools append part of tool_call_id (not index!)
+          let uniqueLineId = lineId;
 
-          buffers.byId.set(lineId, {
+          // Check if base lineId is already used by a tool_call
+          if (buffers.byId.has(lineId)) {
+            const existing = buffers.byId.get(lineId);
+            if (existing && existing.kind === "tool_call") {
+              // Another tool already used this line ID
+              // Create unique ID using tool_call_id suffix (match streaming logic)
+              uniqueLineId = `${lineId}-${toolCallId.slice(-8)}`;
+            }
+          }
+
+          const exists = buffers.byId.has(uniqueLineId);
+
+          buffers.byId.set(uniqueLineId, {
             kind: "tool_call",
-            id: lineId,
+            id: uniqueLineId,
             toolCallId: toolCallId,
             name: toolCall.name,
             argsText: toolCall.arguments,
             phase: "ready",
           });
-          if (!exists) buffers.order.push(lineId);
+          if (!exists) buffers.order.push(uniqueLineId);
 
           // Maintain mapping for tool return to find this line
-          buffers.toolCallIdToLineId.set(toolCallId, lineId);
+          buffers.toolCallIdToLineId.set(toolCallId, uniqueLineId);
         }
         break;
       }
 
-      // tool return message - merge into the existing tool call line
+      // tool return message - merge into the existing tool call line(s)
       case "tool_return_message": {
-        const toolCallId = msg.tool_call_id;
-        if (!toolCallId) break;
+        // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
+        const toolReturns =
+          Array.isArray(msg.tool_returns) && msg.tool_returns.length > 0
+            ? msg.tool_returns
+            : msg.tool_call_id
+              ? [
+                  {
+                    tool_call_id: msg.tool_call_id,
+                    status: msg.status,
+                    func_response: msg.tool_return,
+                    stdout: msg.stdout,
+                    stderr: msg.stderr,
+                  },
+                ]
+              : [];
 
-        // Look up the line using the mapping (like streaming does)
-        const toolCallLineId = buffers.toolCallIdToLineId.get(toolCallId);
-        if (!toolCallLineId) break;
+        for (const toolReturn of toolReturns) {
+          const toolCallId = toolReturn.tool_call_id;
+          if (!toolCallId) continue;
 
-        const existingLine = buffers.byId.get(toolCallLineId);
-        if (!existingLine || existingLine.kind !== "tool_call") break;
+          // Look up the line using the mapping (like streaming does)
+          const toolCallLineId = buffers.toolCallIdToLineId.get(toolCallId);
+          if (!toolCallLineId) continue;
 
-        // Update the existing line with the result
-        buffers.byId.set(toolCallLineId, {
-          ...existingLine,
-          resultText: msg.tool_return,
-          resultOk: msg.status === "success",
-          phase: "finished",
-        });
+          const existingLine = buffers.byId.get(toolCallLineId);
+          if (!existingLine || existingLine.kind !== "tool_call") continue;
+
+          // Update the existing line with the result
+          // Handle both func_response (streaming) and tool_return (SDK) properties
+          const resultText =
+            ("func_response" in toolReturn
+              ? toolReturn.func_response
+              : undefined) ||
+            ("tool_return" in toolReturn
+              ? toolReturn.tool_return
+              : undefined) ||
+            "";
+          buffers.byId.set(toolCallLineId, {
+            ...existingLine,
+            resultText,
+            resultOk: toolReturn.status === "success",
+            phase: "finished",
+          });
+        }
         break;
       }
 

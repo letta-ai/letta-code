@@ -10,11 +10,11 @@ import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 type Props = {
-  approvalRequest: ApprovalRequest;
-  approvalContext: ApprovalContext | null;
-  onApprove: () => void;
+  approvals: ApprovalRequest[];
+  approvalContexts: ApprovalContext[];
+  onApproveAll: () => void;
   onApproveAlways: (scope?: "project" | "session") => void;
-  onDeny: (reason: string) => void;
+  onDenyAll: (reason: string) => void;
 };
 
 type DynamicPreviewProps = {
@@ -223,24 +223,32 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 };
 
 export const ApprovalDialog = memo(function ApprovalDialog({
-  approvalRequest,
-  approvalContext,
-  onApprove,
+  approvals,
+  approvalContexts,
+  onApproveAll,
   onApproveAlways,
-  onDeny,
+  onDenyAll,
 }: Props) {
   const [selectedOption, setSelectedOption] = useState(0);
   const [isEnteringReason, setIsEnteringReason] = useState(false);
   const [denyReason, setDenyReason] = useState("");
 
+  // Use first approval/context for now (backward compat)
+  // TODO: Support individual approval decisions for multiple approvals
+  // Note: Parent ensures approvals.length > 0 before rendering this component
+  const approvalRequest = approvals[0];
+  const approvalContext = approvalContexts[0] || null;
+
   // Build options based on approval context
   const options = useMemo(() => {
-    const opts = [{ label: "Yes, just this once", action: onApprove }];
+    const approvalLabel =
+      approvals.length > 1
+        ? `Yes, approve all ${approvals.length} tools`
+        : "Yes, just this once";
+    const opts = [{ label: approvalLabel, action: onApproveAll }];
 
-    // Add context-aware approval option if available
-    // Claude Code style: max 3 options total (Yes once, Yes always, No)
-    // If context is missing, we just don't show "approve always" (2 options only)
-    if (approvalContext?.allowPersistence) {
+    // Add context-aware approval option if available (only for single approvals)
+    if (approvals.length === 1 && approvalContext?.allowPersistence) {
       opts.push({
         label: approvalContext.approveAlwaysText,
         action: () =>
@@ -253,13 +261,17 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     }
 
     // Add deny option
+    const denyLabel =
+      approvals.length > 1
+        ? `No, deny all ${approvals.length} tools (esc)`
+        : "No, and tell Letta what to do differently (esc)";
     opts.push({
-      label: "No, and tell Letta what to do differently (esc)",
+      label: denyLabel,
       action: () => {}, // Handled separately via setIsEnteringReason
     });
 
     return opts;
-  }, [approvalContext, onApprove, onApproveAlways]);
+  }, [approvals.length, approvalContext, onApproveAll, onApproveAlways]);
 
   useInput((_input, key) => {
     if (isEnteringReason) {
@@ -267,7 +279,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       if (key.return) {
         // Resolve placeholders before sending denial reason
         const resolvedReason = resolvePlaceholders(denyReason);
-        onDeny(resolvedReason);
+        onDenyAll(resolvedReason);
       } else if (key.escape) {
         setIsEnteringReason(false);
         setDenyReason("");
@@ -318,14 +330,16 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   // Parse JSON args
   let parsedArgs: Record<string, unknown> | null = null;
   try {
-    parsedArgs = JSON.parse(approvalRequest.toolArgs);
+    parsedArgs = approvalRequest?.toolArgs
+      ? JSON.parse(approvalRequest.toolArgs)
+      : null;
   } catch {
     // Keep as-is if not valid JSON
   }
 
   // Compute diff for file-editing tools
   const precomputedDiff = useMemo((): AdvancedDiffSuccess | null => {
-    if (!parsedArgs) return null;
+    if (!parsedArgs || !approvalRequest) return null;
 
     const toolName = approvalRequest.toolName.toLowerCase();
     if (toolName === "write") {
@@ -360,6 +374,11 @@ export const ApprovalDialog = memo(function ApprovalDialog({
 
     return null;
   }, [approvalRequest, parsedArgs]);
+
+  // Guard: should never happen as parent checks length, but satisfies TypeScript
+  if (!approvalRequest) {
+    return null;
+  }
 
   // Get the human-readable header label
   const headerLabel = getHeaderLabel(approvalRequest.toolName);
@@ -397,8 +416,19 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       >
         {/* Human-readable header (same color as border) */}
         <Text bold color={colors.approval.header}>
-          {headerLabel}
+          {approvals.length > 1
+            ? `${approvals.length} Tools Require Approval`
+            : headerLabel}
         </Text>
+        {approvals.length > 1 && (
+          <Box flexDirection="column" marginTop={1}>
+            {approvals.map((approval, index) => (
+              <Text key={approval.toolCallId} dimColor>
+                {index + 1}. {getHeaderLabel(approval.toolName)}
+              </Text>
+            ))}
+          </Box>
+        )}
         <Box height={1} />
 
         {/* Dynamic per-tool renderer (indented) */}

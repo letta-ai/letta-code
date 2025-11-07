@@ -1,6 +1,5 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import Link from "ink-link";
 import SpinnerLib from "ink-spinner";
 import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
