@@ -25,15 +25,29 @@ export async function handleHeadlessCommand(
   const settings = settingsManager.getSettings();
 
   // Parse CLI args
+  // Include all flags from index.ts to prevent them from being treated as positionals
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
+      // Flags used in headless mode
       continue: { type: "boolean", short: "c" },
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
+      // Additional flags from index.ts that need to be filtered out
+      help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
+      run: { type: "boolean" },
+      tools: { type: "string" },
+      allowedTools: { type: "string" },
+      disallowedTools: { type: "string" },
+      "permission-mode": { type: "string" },
+      yolo: { type: "boolean" },
+      skills: { type: "string" },
+      link: { type: "boolean" },
+      unlink: { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
