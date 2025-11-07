@@ -13,6 +13,7 @@ type Props = {
   approvals: ApprovalRequest[];
   approvalContexts: ApprovalContext[];
   progress?: { current: number; total: number };
+  totalTools?: number;
   isExecuting?: boolean;
   onApproveAll: () => void;
   onApproveAlways: (scope?: "project" | "session") => void;
@@ -228,6 +229,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   approvals,
   approvalContexts,
   progress,
+  totalTools,
   isExecuting,
   onApproveAll,
   onApproveAlways,
@@ -420,14 +422,16 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       >
         {/* Human-readable header (same color as border) */}
         <Text bold color={colors.approval.header}>
-          {progress
-            ? `Tool ${progress.current} of ${progress.total} Requires Approval`
-            : headerLabel}
+          {progress && progress.total > 1
+            ? `${progress.total} tools require approval${totalTools && totalTools > progress.total ? ` (${totalTools} total)` : ""}`
+            : progress
+              ? `Tool ${progress.current} of ${progress.total} Requires Approval`
+              : headerLabel}
         </Text>
         {progress && progress.total > 1 && (
           <Text dimColor>
             ({progress.current - 1} reviewed,{" "}
-            {progress.total - progress.current} remaining)
+            {progress.total - (progress.current - 1)} remaining)
           </Text>
         )}
         {isExecuting && <Text dimColor>Executing tool...</Text>}

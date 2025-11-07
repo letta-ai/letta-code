@@ -1722,6 +1722,9 @@ export default function App({
                     current: approvalResults.length + 1,
                     total: pendingApprovals.length,
                   }}
+                  totalTools={
+                    autoHandledResults.length + pendingApprovals.length
+                  }
                   isExecuting={isExecutingTool}
                   onApproveAll={handleApproveCurrent}
                   onApproveAlways={handleApproveAlways}
