@@ -80,7 +80,7 @@ export const colors = {
 
   heading: {
     primary: brandColors.primaryAccent,
-    secondary: brandColors.blue,
+    secondary: brandColors.primaryAccentLight,
   },
 
   // Status indicators
