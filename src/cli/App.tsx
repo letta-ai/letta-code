@@ -104,6 +104,7 @@ export default function App({
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
+  startupApprovals = [],
   messageHistory = [],
   tokenStreaming = true,
 }: {
@@ -118,7 +119,8 @@ export default function App({
     | "checking"
     | "ready";
   continueSession?: boolean;
-  startupApproval?: ApprovalRequest | null;
+  startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
+  startupApprovals?: ApprovalRequest[];
   messageHistory?: LettaMessageUnion[];
   tokenStreaming?: boolean;
 }) {
@@ -131,11 +133,42 @@ export default function App({
   // Whether a command is running (disables input but no streaming UI)
   const [commandRunning, setCommandRunning] = useState(false);
 
-  // If we have an approval request, we should show the approval dialog instead of the input area
-  const [pendingApproval, setPendingApproval] =
-    useState<ApprovalRequest | null>(null);
-  const [approvalContext, setApprovalContext] =
-    useState<ApprovalContext | null>(null);
+  // If we have approval requests, we should show the approval dialog instead of the input area
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
+    [],
+  );
+  const [approvalContexts, setApprovalContexts] = useState<ApprovalContext[]>(
+    [],
+  );
+
+  // Sequential approval: track results as user reviews each approval
+  const [approvalResults, setApprovalResults] = useState<
+    Array<{
+      type: "approval" | "tool";
+      tool_call_id: string;
+      approve?: boolean;
+      reason?: string;
+      tool_return?: string;
+      status?: "success" | "error";
+      stdout?: string[];
+      stderr?: string[];
+    }>
+  >([]);
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
+
+  // Track auto-handled results to combine with user decisions
+  const [autoHandledResults, setAutoHandledResults] = useState<
+    Array<{
+      toolCallId: string;
+      result: any;
+    }>
+  >([]);
+  const [autoDeniedApprovals, setAutoDeniedApprovals] = useState<
+    Array<{
+      approval: ApprovalRequest;
+      reason: string;
+    }>
+  >([]);
 
   // If we have a plan approval request, show the plan dialog
   const [planApprovalPending, setPlanApprovalPending] = useState<{
@@ -270,46 +303,56 @@ export default function App({
 
   // Restore pending approval from startup when ready
   useEffect(() => {
-    if (loadingState === "ready" && startupApproval) {
+    // Use new plural field if available, otherwise wrap singular in array for backward compat
+    const approvals =
+      startupApprovals?.length > 0
+        ? startupApprovals
+        : startupApproval
+          ? [startupApproval]
+          : [];
+
+    if (loadingState === "ready" && approvals.length > 0) {
       // Check if this is an ExitPlanMode approval - route to plan dialog
-      if (startupApproval.toolName === "ExitPlanMode") {
+      const planApproval = approvals.find((a) => a.toolName === "ExitPlanMode");
+      if (planApproval) {
         const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          startupApproval.toolArgs,
+          planApproval.toolArgs,
           {},
         );
         const plan = (parsedArgs.plan as string) || "No plan provided";
 
         setPlanApprovalPending({
           plan,
-          toolCallId: startupApproval.toolCallId,
-          toolArgs: startupApproval.toolArgs,
+          toolCallId: planApproval.toolCallId,
+          toolArgs: planApproval.toolArgs,
         });
       } else {
-        // Regular tool approval
-        setPendingApproval(startupApproval);
+        // Regular tool approvals (may be multiple for parallel tools)
+        setPendingApprovals(approvals);
 
-        // Analyze approval context for restored approval
-        const analyzeStartupApproval = async () => {
+        // Analyze approval contexts for all restored approvals
+        const analyzeStartupApprovals = async () => {
           try {
-            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-              startupApproval.toolArgs,
-              {},
+            const contexts = await Promise.all(
+              approvals.map(async (approval) => {
+                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                  approval.toolArgs,
+                  {},
+                );
+                return await analyzeToolApproval(approval.toolName, parsedArgs);
+              }),
             );
-            const context = await analyzeToolApproval(
-              startupApproval.toolName,
-              parsedArgs,
-            );
-            setApprovalContext(context);
+            setApprovalContexts(contexts);
           } catch (error) {
             // If analysis fails, leave context as null (will show basic options)
-            console.error("Failed to analyze startup approval:", error);
+            console.error("Failed to analyze startup approvals:", error);
           }
         };
 
-        analyzeStartupApproval();
+        analyzeStartupApprovals();
       }
     }
-  }, [loadingState, startupApproval]);
+  }, [loadingState, startupApproval, startupApprovals]);
 
   // Backfill message history when resuming (only once)
   useEffect(() => {
@@ -388,7 +431,7 @@ export default function App({
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
-      let currentInput = initialInput;
+      const currentInput = initialInput;
 
       try {
         setStreaming(true);
@@ -397,7 +440,7 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          const { stopReason, approval, apiDurationMs, lastRunId } =
+          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
               buffersRef.current,
@@ -427,101 +470,152 @@ export default function App({
 
           // Case 2: Requires approval
           if (stopReason === "requires_approval") {
-            if (!approval) {
+            // Use new approvals array, fallback to legacy approval for backward compat
+            const approvalsToProcess =
+              approvals && approvals.length > 0
+                ? approvals
+                : approval
+                  ? [approval]
+                  : [];
+
+            if (approvalsToProcess.length === 0) {
               appendError(
-                `Unexpected null approval with stop reason: ${stopReason}`,
+                `Unexpected empty approvals with stop reason: ${stopReason}`,
               );
               setStreaming(false);
               return;
             }
 
-            const { toolCallId, toolName, toolArgs } = approval;
-
-            // Special handling for ExitPlanMode - show plan dialog
-            if (toolName === "ExitPlanMode") {
+            // Check each approval for ExitPlanMode special case
+            const planApproval = approvalsToProcess.find(
+              (a) => a.toolName === "ExitPlanMode",
+            );
+            if (planApproval) {
               const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                toolArgs,
+                planApproval.toolArgs,
                 {},
               );
               const plan = (parsedArgs.plan as string) || "No plan provided";
 
-              setPlanApprovalPending({ plan, toolCallId, toolArgs });
+              setPlanApprovalPending({
+                plan,
+                toolCallId: planApproval.toolCallId,
+                toolArgs: planApproval.toolArgs,
+              });
               setStreaming(false);
               return;
             }
 
-            // Check permission using new permission system
-            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-              toolArgs,
-              {},
+            // Check permissions for all approvals
+            const approvalResults = await Promise.all(
+              approvalsToProcess.map(async (approvalItem) => {
+                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                  approvalItem.toolArgs,
+                  {},
+                );
+                const permission = await checkToolPermission(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                const context = await analyzeToolApproval(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                return { approval: approvalItem, permission, context };
+              }),
             );
-            const permission = await checkToolPermission(toolName, parsedArgs);
 
-            // Handle deny decision - use same flow as manual deny
-            if (permission.decision === "deny") {
-              const denyReason = `Permission denied by rule: ${permission.matchedRule || permission.reason}`;
+            // Categorize approvals by permission decision
+            const needsUserInput = approvalResults.filter(
+              (ac) => ac.permission.decision === "ask",
+            );
+            const autoDenied = approvalResults.filter(
+              (ac) => ac.permission.decision === "deny",
+            );
+            const autoAllowed = approvalResults.filter(
+              (ac) => ac.permission.decision === "allow",
+            );
 
+            // Execute auto-allowed tools
+            const autoAllowedResults = await Promise.all(
+              autoAllowed.map(async (ac) => {
+                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                  ac.approval.toolArgs,
+                  {},
+                );
+                const result = await executeTool(
+                  ac.approval.toolName,
+                  parsedArgs,
+                );
+
+                // Update buffers with tool return for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: result.toolReturn,
+                  status: result.status,
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                });
+
+                return {
+                  toolCallId: ac.approval.toolCallId,
+                  result,
+                };
+              }),
+            );
+
+            // Create denial results for auto-denied tools
+            const autoDeniedResults = autoDenied.map((ac) => ({
+              approval: ac.approval,
+              reason: `Permission denied by rule: ${ac.permission.matchedRule || ac.permission.reason}`,
+            }));
+
+            // If all are auto-handled, continue immediately without showing dialog
+            if (needsUserInput.length === 0) {
               // Rotate to a new thinking message
               setThinkingMessage(getRandomThinkingMessage());
+              refreshDerived();
 
-              // Send denial back to agent (same as manual deny)
+              // Combine auto-allowed results + auto-denied responses
+              const allResults = [
+                ...autoAllowedResults.map((ar) => ({
+                  type: "tool" as const,
+                  tool_call_id: ar.toolCallId,
+                  tool_return: ar.result.toolReturn,
+                  status: ar.result.status,
+                  stdout: ar.result.stdout,
+                  stderr: ar.result.stderr,
+                })),
+                ...autoDeniedResults.map((ad) => ({
+                  type: "tool" as const,
+                  tool_call_id: ad.approval.toolCallId,
+                  tool_return: JSON.stringify({
+                    status: "error",
+                    message: ad.reason,
+                  }),
+                  status: "error" as const,
+                })),
+              ];
+
               await processConversation([
                 {
                   type: "approval",
-                  approval_request_id: toolCallId,
-                  approve: false,
-                  reason: denyReason,
+                  approvals: allResults,
                 },
               ]);
               return;
             }
 
-            // Handle ask decision - show approval dialog
-            if (permission.decision === "ask") {
-              // Analyze approval context for smart button text
-              const context = await analyzeToolApproval(toolName, parsedArgs);
-
-              // Pause: show approval dialog and exit loop
-              // Handlers will restart the loop when user decides
-              setPendingApproval({ toolCallId, toolName, toolArgs });
-              setApprovalContext(context);
-              setStreaming(false);
-              return;
-            }
-
-            // Permission is "allow" - auto-execute tool and continue loop
-            const toolResult = await executeTool(toolName, parsedArgs);
-
-            // Update buffers with tool return
-            onChunk(buffersRef.current, {
-              message_type: "tool_return_message",
-              id: "dummy",
-              date: new Date().toISOString(),
-              tool_call_id: toolCallId,
-              tool_return: toolResult.toolReturn,
-              status: toolResult.status,
-              stdout: toolResult.stdout,
-              stderr: toolResult.stderr,
-            });
-            refreshDerived();
-
-            // Set up next input and continue loop
-            currentInput = [
-              {
-                type: "approval",
-                approvals: [
-                  {
-                    type: "tool",
-                    tool_call_id: toolCallId,
-                    tool_return: toolResult.toolReturn,
-                    status: toolResult.status,
-                    stdout: toolResult.stdout,
-                    stderr: toolResult.stderr,
-                  },
-                ],
-              },
-            ];
-            continue; // Loop continues naturally
+            // Show approval dialog for tools that need user input
+            setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+            setApprovalContexts(needsUserInput.map((ac) => ac.context));
+            setAutoHandledResults(autoAllowedResults);
+            setAutoDeniedApprovals(autoDeniedResults);
+            setStreaming(false);
+            return;
           }
 
           // Unexpected stop reason (error, llm_api_error, etc.)
@@ -1021,7 +1115,7 @@ export default function App({
             // The message will be restored to the input field for the user to decide
             // Note: The user message is already in the transcript (optimistic update)
             setStreaming(false); // Stop streaming indicator
-            setPendingApproval(existingApproval);
+            setPendingApprovals([existingApproval]);
 
             // Analyze approval context
             const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -1032,7 +1126,7 @@ export default function App({
               existingApproval.toolName,
               parsedArgs,
             );
-            setApprovalContext(context);
+            setApprovalContexts([context]);
 
             // Return false = message NOT submitted, will be restored to input
             return { submitted: false };
@@ -1068,58 +1162,136 @@ export default function App({
     ],
   );
 
-  // Handle approval callbacks
-  const handleApprove = useCallback(async () => {
-    if (!pendingApproval) return;
+  // Helper to send all approval results when done
+  const sendAllResults = useCallback(
+    async (additionalResult?: {
+      type: "approval" | "tool";
+      tool_call_id: string;
+      approve?: boolean;
+      reason?: string;
+      tool_return?: string;
+      status?: "success" | "error";
+      stdout?: string[];
+      stderr?: string[];
+    }) => {
+      const allResults = [
+        ...autoHandledResults.map((ar) => ({
+          type: "tool" as const,
+          tool_call_id: ar.toolCallId,
+          tool_return: ar.result.toolReturn,
+          status: ar.result.status,
+          stdout: ar.result.stdout,
+          stderr: ar.result.stderr,
+        })),
+        ...autoDeniedApprovals.map((ad) => ({
+          type: "approval" as const,
+          tool_call_id: ad.approval.toolCallId,
+          approve: false,
+          reason: ad.reason,
+        })),
+        ...approvalResults,
+        ...(additionalResult ? [additionalResult] : []),
+      ];
 
-    const { toolCallId, toolName, toolArgs } = pendingApproval;
-    setPendingApproval(null);
+      // Clear state
+      setPendingApprovals([]);
+      setApprovalContexts([]);
+      setApprovalResults([]);
+      setAutoHandledResults([]);
+      setAutoDeniedApprovals([]);
+
+      // Rotate to a new thinking message
+      setThinkingMessage(getRandomThinkingMessage());
+      refreshDerived();
+
+      // Continue conversation with all results
+      await processConversation([
+        {
+          type: "approval",
+          approvals: allResults as any, // Type assertion: union type with optional fields is compatible at runtime
+        },
+      ]);
+    },
+    [
+      approvalResults,
+      autoHandledResults,
+      autoDeniedApprovals,
+      processConversation,
+      refreshDerived,
+    ],
+  );
+
+  // Handle approval callbacks - sequential review
+  const handleApproveCurrent = useCallback(async () => {
+    const currentIndex = approvalResults.length;
+    const currentApproval = pendingApprovals[currentIndex];
+
+    if (!currentApproval) return;
 
     try {
-      // Execute the tool
-      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(toolArgs, {});
-      const toolResult = await executeTool(toolName, parsedArgs);
+      setIsExecutingTool(true);
 
-      // Update buffers with tool return
+      // Execute the approved tool
+      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+        currentApproval.toolArgs,
+        {},
+      );
+      const toolResult = await executeTool(
+        currentApproval.toolName,
+        parsedArgs,
+      );
+
+      // Update buffers with tool return for UI
       onChunk(buffersRef.current, {
         message_type: "tool_return_message",
         id: "dummy",
         date: new Date().toISOString(),
-        tool_call_id: toolCallId,
+        tool_call_id: currentApproval.toolCallId,
         tool_return: toolResult.toolReturn,
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
       });
-      // Rotate to a new thinking message for this continuation
-      setThinkingMessage(getRandomThinkingMessage());
-      refreshDerived();
 
-      // Restart conversation loop with approval response
-      await processConversation([
-        {
-          type: "approval",
-          approvals: [
-            {
-              type: "tool",
-              tool_call_id: toolCallId,
-              tool_return: toolResult.toolReturn,
-              status: toolResult.status,
-              stdout: toolResult.stdout,
-              stderr: toolResult.stderr,
-            },
-          ],
-        },
-      ]);
+      // Store result
+      const result = {
+        type: "tool" as const,
+        tool_call_id: currentApproval.toolCallId,
+        tool_return: toolResult.toolReturn,
+        status: toolResult.status,
+        stdout: toolResult.stdout,
+        stderr: toolResult.stderr,
+      };
+
+      setIsExecutingTool(false);
+
+      // Check if we're done with all approvals
+      if (currentIndex + 1 >= pendingApprovals.length) {
+        // All approvals processed, send results to backend
+        // Pass the new result directly to avoid async state update issue
+        await sendAllResults(result);
+      } else {
+        // Not done yet, store result and show next approval
+        setApprovalResults((prev) => [...prev, result]);
+      }
+      // Otherwise, next approval will be shown automatically via state update
     } catch (e) {
+      setIsExecutingTool(false);
       appendError(String(e));
       setStreaming(false);
     }
-  }, [pendingApproval, processConversation, appendError, refreshDerived]);
+  }, [pendingApprovals, approvalResults, sendAllResults, appendError]);
 
   const handleApproveAlways = useCallback(
     async (scope?: "project" | "session") => {
-      if (!pendingApproval || !approvalContext) return;
+      // For now, just handle the first approval with approve-always
+      // TODO: Support approve-always for multiple approvals
+      if (pendingApprovals.length === 0 || approvalContexts.length === 0)
+        return;
+
+      const currentIndex = approvalResults.length;
+      const approvalContext = approvalContexts[currentIndex];
+      if (!approvalContext) return;
 
       const rule = approvalContext.recommendedRule;
       const actualScope = scope || approvalContext.defaultScope;
@@ -1140,48 +1312,61 @@ export default function App({
       buffersRef.current.order.push(cmdId);
       refreshDerived();
 
-      // Clear approval context and approve
-      setApprovalContext(null);
-      await handleApprove();
+      // Approve current tool
+      await handleApproveCurrent();
     },
-    [pendingApproval, approvalContext, handleApprove, refreshDerived],
+    [
+      approvalResults,
+      approvalContexts,
+      pendingApprovals,
+      handleApproveCurrent,
+      refreshDerived,
+    ],
   );
 
-  const handleDeny = useCallback(
+  const handleDenyCurrent = useCallback(
     async (reason: string) => {
-      if (!pendingApproval) return;
+      const currentIndex = approvalResults.length;
+      const currentApproval = pendingApprovals[currentIndex];
 
-      const { toolCallId } = pendingApproval;
-      setPendingApproval(null);
+      if (!currentApproval) return;
 
       try {
-        // Rotate to a new thinking message for this continuation
-        setThinkingMessage(getRandomThinkingMessage());
+        // Store denial result
+        const result = {
+          type: "approval" as const,
+          tool_call_id: currentApproval.toolCallId,
+          approve: false,
+          reason: reason || "User denied the tool execution",
+        };
 
-        // Restart conversation loop with denial response
-        await processConversation([
-          {
-            type: "approval",
-            approval_request_id: toolCallId,
-            approve: false,
-            reason: reason || "User denied the tool execution",
-            // TODO the above is legacy?
-            // approvals: [
-            //   {
-            //     type: "approval",
-            //     toolCallId,
-            //     approve: false,
-            //     reason: reason || "User denied the tool execution",
-            //   },
-            // ],
-          },
-        ]);
+        // Update buffers with denial for UI (so it shows in the right order)
+        onChunk(buffersRef.current, {
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: currentApproval.toolCallId,
+          tool_return: `Error: request to call tool denied. User reason: ${result.reason}`,
+          status: "error",
+        });
+
+        // Check if we're done with all approvals
+        if (currentIndex + 1 >= pendingApprovals.length) {
+          // All approvals processed, send results to backend
+          // Pass the new result directly to avoid async state update issue
+          setThinkingMessage(getRandomThinkingMessage());
+          await sendAllResults(result);
+        } else {
+          // Not done yet, store result and show next approval
+          setApprovalResults((prev) => [...prev, result]);
+        }
+        // Otherwise, next approval will be shown automatically via state update
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
       }
     },
-    [pendingApproval, processConversation, appendError],
+    [pendingApprovals, approvalResults, sendAllResults, appendError],
   );
 
   const handleModelSelect = useCallback(
@@ -1372,7 +1557,7 @@ export default function App({
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
+        // Always show tool calls in progress, regardless of tokenStreaming setting
         return ln.phase !== "finished";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
@@ -1451,7 +1636,7 @@ export default function App({
           <>
             {/* Transcript */}
             {liveItems.length > 0 &&
-              !pendingApproval &&
+              pendingApprovals.length === 0 &&
               !planApprovalPending && (
                 <Box flexDirection="column">
                   {liveItems.map((ln) => (
@@ -1489,7 +1674,7 @@ export default function App({
             <Input
               visible={
                 !showExitStats &&
-                !pendingApproval &&
+                pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
                 !planApprovalPending
               }
@@ -1529,15 +1714,31 @@ export default function App({
             )}
 
             {/* Approval Dialog - below live items */}
-            {pendingApproval && (
+            {pendingApprovals.length > 0 && (
               <>
                 <Box height={1} />
                 <ApprovalDialog
-                  approvalRequest={pendingApproval}
-                  approvalContext={approvalContext}
-                  onApprove={handleApprove}
+                  approvals={
+                    pendingApprovals[approvalResults.length]
+                      ? [pendingApprovals[approvalResults.length]!]
+                      : []
+                  }
+                  approvalContexts={
+                    approvalContexts[approvalResults.length]
+                      ? [approvalContexts[approvalResults.length]!]
+                      : []
+                  }
+                  progress={{
+                    current: approvalResults.length + 1,
+                    total: pendingApprovals.length,
+                  }}
+                  totalTools={
+                    autoHandledResults.length + pendingApprovals.length
+                  }
+                  isExecuting={isExecutingTool}
+                  onApproveAll={handleApproveCurrent}
                   onApproveAlways={handleApproveAlways}
-                  onDeny={handleDeny}
+                  onDenyAll={handleDenyCurrent}
                 />
               </>
             )}

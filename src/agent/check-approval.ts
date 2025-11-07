@@ -10,7 +10,8 @@ import type { ApprovalRequest } from "../cli/helpers/stream";
 const MESSAGE_HISTORY_LIMIT = 15;
 
 export interface ResumeData {
-  pendingApproval: ApprovalRequest | null;
+  pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
+  pendingApprovals: ApprovalRequest[];
   messageHistory: LettaMessageUnion[];
 }
 
@@ -30,7 +31,11 @@ export async function getResumeData(
     const messagesPage = await client.agents.messages.list(agent.id);
     const messages = messagesPage.items;
     if (!messages || messages.length === 0) {
-      return { pendingApproval: null, messageHistory: [] };
+      return {
+        pendingApproval: null,
+        pendingApprovals: [],
+        messageHistory: [],
+      };
     }
 
     // Compare cursor last message with in-context last message ID
@@ -38,7 +43,11 @@ export async function getResumeData(
     // desynced, we need to check the in-context message for pending approvals
     const cursorLastMessage = messages[messages.length - 1];
     if (!cursorLastMessage) {
-      return { pendingApproval: null, messageHistory: [] };
+      return {
+        pendingApproval: null,
+        pendingApprovals: [],
+        messageHistory: [],
+      };
     }
 
     const inContextLastMessageId =
@@ -85,8 +94,9 @@ export async function getResumeData(
       }
     }
 
-    // Check for pending approval using SDK types
+    // Check for pending approval(s) using SDK types
     let pendingApproval: ApprovalRequest | null = null;
+    let pendingApprovals: ApprovalRequest[] = [];
 
     if (messageToCheck.message_type === "approval_request_message") {
       // Cast to access tool_calls with proper typing
@@ -110,16 +120,18 @@ export async function getResumeData(
           ? [approvalMsg.tool_call]
           : [];
 
-      if (toolCalls.length > 0) {
-        const toolCall = toolCalls[0];
-        // Ensure all required fields are present
-        if (toolCall?.tool_call_id && toolCall.name && toolCall.arguments) {
-          pendingApproval = {
-            toolCallId: toolCall.tool_call_id,
-            toolName: toolCall.name,
-            toolArgs: toolCall.arguments,
-          };
-        }
+      // Extract ALL tool calls for parallel approval support
+      pendingApprovals = toolCalls
+        .filter((tc) => tc?.tool_call_id && tc.name && tc.arguments)
+        .map((tc) => ({
+          toolCallId: tc.tool_call_id!,
+          toolName: tc.name!,
+          toolArgs: tc.arguments!,
+        }));
+
+      // Set legacy singular field for backward compatibility (first approval only)
+      if (pendingApprovals.length > 0) {
+        pendingApproval = pendingApprovals[0] || null;
       }
     }
 
@@ -132,9 +144,9 @@ export async function getResumeData(
       messageHistory = messageHistory.slice(1);
     }
 
-    return { pendingApproval, messageHistory };
+    return { pendingApproval, pendingApprovals, messageHistory };
   } catch (error) {
     console.error("Error getting resume data:", error);
-    return { pendingApproval: null, messageHistory: [] };
+    return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }
 }

@@ -1,6 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
@@ -10,11 +10,14 @@ import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 type Props = {
-  approvalRequest: ApprovalRequest;
-  approvalContext: ApprovalContext | null;
-  onApprove: () => void;
+  approvals: ApprovalRequest[];
+  approvalContexts: ApprovalContext[];
+  progress?: { current: number; total: number };
+  totalTools?: number;
+  isExecuting?: boolean;
+  onApproveAll: () => void;
   onApproveAlways: (scope?: "project" | "session") => void;
-  onDeny: (reason: string) => void;
+  onDenyAll: (reason: string) => void;
 };
 
 type DynamicPreviewProps = {
@@ -223,23 +226,42 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 };
 
 export const ApprovalDialog = memo(function ApprovalDialog({
-  approvalRequest,
-  approvalContext,
-  onApprove,
+  approvals,
+  approvalContexts,
+  progress,
+  totalTools,
+  isExecuting,
+  onApproveAll,
   onApproveAlways,
-  onDeny,
+  onDenyAll,
 }: Props) {
   const [selectedOption, setSelectedOption] = useState(0);
   const [isEnteringReason, setIsEnteringReason] = useState(false);
   const [denyReason, setDenyReason] = useState("");
 
+  // Use first approval/context for now (backward compat)
+  // TODO: Support individual approval decisions for multiple approvals
+  // Note: Parent ensures approvals.length > 0 before rendering this component
+  const approvalRequest = approvals[0];
+  const approvalContext = approvalContexts[0] || null;
+
+  // Reset state when approval changes (e.g., moving from tool 2 to tool 3)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: need to trigger on progress change
+  useEffect(() => {
+    setSelectedOption(0);
+    setIsEnteringReason(false);
+    setDenyReason("");
+  }, [progress?.current]);
+
   // Build options based on approval context
   const options = useMemo(() => {
-    const opts = [{ label: "Yes, just this once", action: onApprove }];
+    const approvalLabel =
+      progress && progress.total > 1
+        ? "Yes, approve this tool"
+        : "Yes, just this once";
+    const opts = [{ label: approvalLabel, action: onApproveAll }];
 
-    // Add context-aware approval option if available
-    // Claude Code style: max 3 options total (Yes once, Yes always, No)
-    // If context is missing, we just don't show "approve always" (2 options only)
+    // Add context-aware approval option if available (only for single approvals)
     if (approvalContext?.allowPersistence) {
       opts.push({
         label: approvalContext.approveAlwaysText,
@@ -253,13 +275,17 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     }
 
     // Add deny option
+    const denyLabel =
+      progress && progress.total > 1
+        ? "No, deny this tool (esc)"
+        : "No, and tell Letta what to do differently (esc)";
     opts.push({
-      label: "No, and tell Letta what to do differently (esc)",
+      label: denyLabel,
       action: () => {}, // Handled separately via setIsEnteringReason
     });
 
     return opts;
-  }, [approvalContext, onApprove, onApproveAlways]);
+  }, [progress, approvalContext, onApproveAll, onApproveAlways]);
 
   useInput((_input, key) => {
     if (isEnteringReason) {
@@ -267,7 +293,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       if (key.return) {
         // Resolve placeholders before sending denial reason
         const resolvedReason = resolvePlaceholders(denyReason);
-        onDeny(resolvedReason);
+        onDenyAll(resolvedReason);
       } else if (key.escape) {
         setIsEnteringReason(false);
         setDenyReason("");
@@ -318,14 +344,16 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   // Parse JSON args
   let parsedArgs: Record<string, unknown> | null = null;
   try {
-    parsedArgs = JSON.parse(approvalRequest.toolArgs);
+    parsedArgs = approvalRequest?.toolArgs
+      ? JSON.parse(approvalRequest.toolArgs)
+      : null;
   } catch {
     // Keep as-is if not valid JSON
   }
 
   // Compute diff for file-editing tools
   const precomputedDiff = useMemo((): AdvancedDiffSuccess | null => {
-    if (!parsedArgs) return null;
+    if (!parsedArgs || !approvalRequest) return null;
 
     const toolName = approvalRequest.toolName.toLowerCase();
     if (toolName === "write") {
@@ -360,6 +388,11 @@ export const ApprovalDialog = memo(function ApprovalDialog({
 
     return null;
   }, [approvalRequest, parsedArgs]);
+
+  // Guard: should never happen as parent checks length, but satisfies TypeScript
+  if (!approvalRequest) {
+    return null;
+  }
 
   // Get the human-readable header label
   const headerLabel = getHeaderLabel(approvalRequest.toolName);
@@ -397,8 +430,17 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       >
         {/* Human-readable header (same color as border) */}
         <Text bold color={colors.approval.header}>
-          {headerLabel}
+          {progress && progress.total > 1
+            ? `${progress.total} tools require approval${totalTools && totalTools > progress.total ? ` (${totalTools} total)` : ""}`
+            : headerLabel}
         </Text>
+        {progress && progress.total > 1 && (
+          <Text dimColor>
+            ({progress.current - 1} reviewed,{" "}
+            {progress.total - (progress.current - 1)} remaining)
+          </Text>
+        )}
+        {isExecuting && <Text dimColor>Executing tool...</Text>}
         <Box height={1} />
 
         {/* Dynamic per-tool renderer (indented) */}
