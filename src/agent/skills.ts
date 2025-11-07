@@ -118,7 +118,7 @@ function parseFrontmatter(content: string): {
  * @returns A result containing discovered skills and any errors
  */
 export async function discoverSkills(
-  skillsPath: string = join(process.cwd(), SKILLS_DIR)
+  skillsPath: string = join(process.cwd(), SKILLS_DIR),
 ): Promise<SkillDiscoveryResult> {
   const errors: SkillDiscoveryError[] = [];
 
@@ -153,7 +153,7 @@ async function findSkillFiles(
   currentPath: string,
   rootPath: string,
   skills: Skill[],
-  errors: SkillDiscoveryError[]
+  errors: SkillDiscoveryError[],
 ): Promise<void> {
   try {
     const entries = await readdir(currentPath, { withFileTypes: true });
@@ -195,7 +195,7 @@ async function findSkillFiles(
  */
 async function parseSkillFile(
   filePath: string,
-  rootPath: string
+  rootPath: string,
 ): Promise<Skill | null> {
   const content = await readFile(filePath, "utf-8");
 
@@ -216,9 +216,7 @@ async function parseSkillFile(
   const name =
     (typeof frontmatter.name === "string" ? frontmatter.name : null) ||
     (typeof frontmatter.title === "string" ? frontmatter.title : null) ||
-    id
-      .split("/")
-      .pop()!
+    (id.split("/").pop() ?? "")
       .replace(/-/g, " ")
       .replace(/\b\w/g, (l) => l.toUpperCase());
 
@@ -235,8 +233,10 @@ async function parseSkillFile(
 
   // Strip surrounding quotes from description if present
   description = description.trim();
-  if ((description.startsWith('"') && description.endsWith('"')) ||
-      (description.startsWith("'") && description.endsWith("'"))) {
+  if (
+    (description.startsWith('"') && description.endsWith('"')) ||
+    (description.startsWith("'") && description.endsWith("'"))
+  ) {
     description = description.slice(1, -1);
   }
 
@@ -267,11 +267,14 @@ async function parseSkillFile(
  * @param skillsDirectory - Absolute path to the skills directory
  * @returns Formatted string representation of skills
  */
-export function formatSkillsForMemory(skills: Skill[], skillsDirectory: string): string {
+export function formatSkillsForMemory(
+  skills: Skill[],
+  skillsDirectory: string,
+): string {
   let output = `Skills Directory: ${skillsDirectory}\n\n`;
 
   if (skills.length === 0) {
-    return output + "[NO SKILLS AVAILABLE]";
+    return `${output}[NO SKILLS AVAILABLE]`;
   }
 
   output += "Available Skills:\n\n";

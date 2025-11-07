@@ -2,6 +2,7 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
+import { join } from "node:path";
 import type { AgentType } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   BlockResponse,
@@ -11,11 +12,14 @@ import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
-import { formatAvailableModels, resolveModel, getModelUpdateArgs } from "./model";
+import {
+  formatAvailableModels,
+  getModelUpdateArgs,
+  resolveModel,
+} from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
-import { join } from "node:path";
 
 export async function createAgent(
   name = "letta-cli-agent",
@@ -56,7 +60,8 @@ export async function createAgent(
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
   // Resolve absolute path for skills directory
-  const resolvedSkillsDirectory = skillsDirectory || join(process.cwd(), SKILLS_DIR);
+  const resolvedSkillsDirectory =
+    skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
   // Discover skills from .skills directory and populate skills memory block
   try {
@@ -73,9 +78,11 @@ export async function createAgent(
     // Find and update the skills memory block with discovered skills
     const skillsBlock = defaultMemoryBlocks.find((b) => b.label === "skills");
     if (skillsBlock) {
-      skillsBlock.value = formatSkillsForMemory(skills, resolvedSkillsDirectory);
+      skillsBlock.value = formatSkillsForMemory(
+        skills,
+        resolvedSkillsDirectory,
+      );
     }
-
   } catch (error) {
     console.warn(
       `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,

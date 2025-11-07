@@ -400,7 +400,14 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(undefined, model, undefined, updateArgs, false, skillsDirectory);
+          agent = await createAgent(
+            undefined,
+            model,
+            undefined,
+            updateArgs,
+            false,
+            skillsDirectory,
+          );
         }
 
         // Ensure local project settings are loaded before updating
