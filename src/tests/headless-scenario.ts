@@ -47,7 +47,8 @@ function scenarioPrompt(): string {
     "Then, try calling two web_searches in parallel. " +
     "Then, try calling the bash tool to output an echo. " +
     "Then, try calling three copies of the bash tool in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
-    "Then finally, try calling 2 bash tools and 1 web_search, in parallel, so three parallel tools."
+    "Then finally, try calling 2 bash tools and 1 web_search, in parallel, so three parallel tools. " +
+    "IMPORTANT: If and only if all of the above steps worked as requested, include the word BANANA (uppercase) somewhere in your final response."
   );
 }
 
@@ -97,12 +98,12 @@ async function main() {
   try {
     // Validate by output mode
     if (output === "text") {
-      assertContainsAll(stdout, ["Test1", "Test2", "Test3"]);
+      assertContainsAll(stdout, ["BANANA"]);
     } else if (output === "json") {
       try {
         const obj = JSON.parse(stdout);
         const result = String(obj?.result ?? "");
-        assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+        assertContainsAll(result, ["BANANA"]);
       } catch (e) {
         throw new Error(`Invalid JSON output: ${(e as Error).message}`);
       }
@@ -120,7 +121,7 @@ async function main() {
       if (!resultLine) throw new Error("No final result event in stream-json");
       const evt = JSON.parse(resultLine);
       const result = String(evt?.result ?? "");
-      assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+      assertContainsAll(result, ["BANANA"]);
     }
 
     console.log(`OK: ${model} / ${output}`);
