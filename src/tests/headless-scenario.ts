@@ -1,0 +1,144 @@
+#!/usr/bin/env bun
+/**
+ * Headless scenario test runner
+ *
+ * Runs a single multi-step scenario against the LeTTA Code CLI (headless) for a given
+ * model and output format. Intended for CI matrix usage.
+ *
+ * Usage:
+ *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
+ */
+
+type Args = {
+  model: string;
+  output: "text" | "json" | "stream-json";
+  parallel: "on" | "off" | "hybrid";
+};
+
+function parseArgs(argv: string[]): Args {
+  const args: any = { output: "text", parallel: "on" };
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i];
+    if (v === "--model") args.model = argv[++i];
+    else if (v === "--output") args.output = argv[++i];
+    else if (v === "--parallel") args.parallel = argv[++i];
+  }
+  if (!args.model) throw new Error("Missing --model");
+  if (!["text", "json", "stream-json"].includes(args.output))
+    throw new Error(`Invalid --output ${args.output}`);
+  if (!["on", "off", "hybrid"].includes(args.parallel))
+    throw new Error(`Invalid --parallel ${args.parallel}`);
+  return args as Args;
+}
+
+// Map model → required env keys (in addition to LETTA_API_KEY)
+function requiredKeysForModel(model: string): string[] {
+  const m = model.toLowerCase();
+  if (m.includes("gpt-5") || m.includes("gpt-4")) return ["OPENAI_API_KEY"];
+  if (m.includes("sonnet") || m.includes("haiku")) return ["ANTHROPIC_API_KEY"];
+  if (m.includes("gemini")) return ["GOOGLE_API_KEY"];
+  if (m.includes("glm") || m.includes("kimi") || m.includes("minimax"))
+    return ["OPENROUTER_API_KEY"];
+  return [];
+}
+
+async function ensurePrereqs(model: string): Promise<"ok" | "skip"> {
+  const missing: string[] = [];
+  if (!process.env.LETTA_API_KEY) missing.push("LETTA_API_KEY");
+  for (const k of requiredKeysForModel(model)) {
+    if (!process.env[k]) missing.push(k);
+  }
+  if (missing.length > 0) {
+    console.log(`SKIP: Missing env for ${model}: ${missing.join(", ")}`);
+    return "skip";
+  }
+  return "ok";
+}
+
+function scenarioPrompt(): string {
+  return (
+    "I want to test your tool calling abilities (do not ask for any clarifications, this is an automated test suite inside a CI runner, there is no human to assist you). " +
+    "First, call a single web_search to get the weather in SF. " +
+    "Then, try calling two web_searches in parallel. " +
+    "Then, try calling the bash tool to output an echo. " +
+    "Then, try calling three copies of the bash tool in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
+    "Then finally, try calling 2 bash tools and 1 web_search, in parallel, so three parallel tools."
+  );
+}
+
+async function runCLI(
+  model: string,
+  output: Args["output"],
+): Promise<{ stdout: string; code: number }> {
+  const cmd = [
+    "bun",
+    "run",
+    "dev",
+    "-p",
+    scenarioPrompt(),
+    "--yolo",
+    "--new",
+    "--output-format",
+    output,
+    "-m",
+    model,
+  ];
+  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+  const out = await new Response(proc.stdout).text();
+  const err = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  if (code !== 0) {
+    console.error("CLI failed:", err || out);
+  }
+  return { stdout: out, code };
+}
+
+function assertContainsAll(hay: string, needles: string[]) {
+  for (const n of needles) {
+    if (!hay.includes(n)) throw new Error(`Missing expected output: ${n}`);
+  }
+}
+
+async function main() {
+  const { model, output } = parseArgs(process.argv.slice(2));
+  const prereq = await ensurePrereqs(model);
+  if (prereq === "skip") return;
+
+  const { stdout, code } = await runCLI(model, output);
+  if (code !== 0) process.exit(code);
+
+  // Validate by output mode
+  if (output === "text") {
+    assertContainsAll(stdout, ["Test1", "Test2", "Test3"]);
+  } else if (output === "json") {
+    try {
+      const obj = JSON.parse(stdout);
+      const result = String(obj?.result ?? "");
+      assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+    } catch (e) {
+      throw new Error(`Invalid JSON output: ${(e as Error).message}`);
+    }
+  } else if (output === "stream-json") {
+    // stream-json prints one JSON object per line; find the final result event
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const resultLine = lines.find((l) => {
+      try {
+        const o = JSON.parse(l);
+        return o?.type === "result";
+      } catch {
+        return false;
+      }
+    });
+    if (!resultLine) throw new Error("No final result event in stream-json");
+    const evt = JSON.parse(resultLine);
+    const result = String(evt?.result ?? "");
+    assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+  }
+
+  console.log(`OK: ${model} / ${output}`);
+}
+
+main().catch((e) => {
+  console.error(String(e?.stack || e));
+  process.exit(1);
+});

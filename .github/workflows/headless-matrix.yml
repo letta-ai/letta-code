@@ -1,0 +1,37 @@
+name: Headless Matrix (PR)
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'src/tests/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/headless-matrix.yml'
+
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [gpt-5-minimal, gpt-4.1, claude-3-5-sonnet, gemini-pro, glm-4.6]
+    name: Headless / ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Run scenario across output modes
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
+          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
+          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
+
