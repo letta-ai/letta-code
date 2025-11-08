@@ -18,6 +18,7 @@ export interface Settings {
   // OAuth token management
   refreshToken?: string;
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
+  deviceId?: string;
 }
 
 export interface ProjectSettings {
