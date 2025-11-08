@@ -45,8 +45,19 @@ async function main() {
   let fullResponse = "";
   for await (const chunk of stream) {
     if (chunk.message_type === "assistant_message" && chunk.content) {
-      fullResponse += chunk.content;
-      process.stdout.write(chunk.content);
+      // Handle both string and array content
+      let contentText = "";
+      if (typeof chunk.content === "string") {
+        contentText = chunk.content;
+      } else if (Array.isArray(chunk.content)) {
+        // Extract text from content array
+        contentText = chunk.content
+          .filter((item) => item.type === "text")
+          .map((item) => ("text" in item ? item.text : ""))
+          .join("");
+      }
+      fullResponse += contentText;
+      process.stdout.write(contentText);
     }
   }
   if (!fullResponse) {
