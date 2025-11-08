@@ -101,8 +101,8 @@ type StaticItem =
   | Line;
 
 export default function App({
-  agentId,
-  agentState,
+  agentId: initialAgentId,
+  agentState: initialAgentState,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -126,6 +126,9 @@ export default function App({
   messageHistory?: LettaMessageUnion[];
   tokenStreaming?: boolean;
 }) {
+  // Track current agent (can change when swapping)
+  const [agentId, setAgentId] = useState(initialAgentId);
+  const [agentState, setAgentState] = useState(initialAgentState);
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
 
@@ -1111,24 +1114,63 @@ export default function App({
 
           try {
             const client = await getClient();
-            // Check if agent exists
-            await client.agents.retrieve(targetAgentId);
+            // Fetch new agent
+            const agent = await client.agents.retrieve(targetAgentId);
+
+            // Fetch agent's message history
+            const messages = await client.agents.messages.list(targetAgentId);
 
             // Update project settings with new agent
             await updateProjectSettings({ lastAgent: targetAgentId });
 
-            buffersRef.current.byId.set(cmdId, {
+            // Clear current transcript
+            buffersRef.current.byId.clear();
+            buffersRef.current.order = [];
+            buffersRef.current.tokenCount = 0;
+            emittedIdsRef.current.clear();
+            setStaticItems([]);
+
+            // Update agent state
+            setAgentId(targetAgentId);
+            setAgentState(agent);
+            setAgentName(agent.name);
+            setLlmConfig(agent.llm_config);
+
+            // Add welcome screen for new agent
+            welcomeCommittedRef.current = false;
+            setStaticItems([
+              {
+                kind: "welcome",
+                id: `welcome-${Date.now().toString(36)}`,
+                snapshot: {
+                  continueSession: true,
+                  agentState: agent,
+                  terminalWidth: columns,
+                },
+              },
+            ]);
+
+            // Backfill message history
+            if (messages.length > 0) {
+              hasBackfilledRef.current = false;
+              backfillBuffers(buffersRef.current, messages);
+              refreshDerived();
+              commitEligibleLines(buffersRef.current);
+              hasBackfilledRef.current = true;
+            }
+
+            // Add success command to transcript
+            const successCmdId = uid("cmd");
+            buffersRef.current.byId.set(successCmdId, {
               kind: "command",
-              id: cmdId,
+              id: successCmdId,
               input: msg,
-              output: `Switching to agent ${targetAgentId}. Restarting...`,
+              output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
               phase: "finished",
               success: true,
             });
+            buffersRef.current.order.push(successCmdId);
             refreshDerived();
-
-            // Exit and let the process restart with the new agent
-            setTimeout(() => process.exit(0), 500);
           } catch (error) {
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -1576,24 +1618,63 @@ export default function App({
 
       try {
         const client = await getClient();
-        // Check if agent exists
-        await client.agents.retrieve(targetAgentId);
+        // Fetch new agent
+        const agent = await client.agents.retrieve(targetAgentId);
+
+        // Fetch agent's message history
+        const messages = await client.agents.messages.list(targetAgentId);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
 
-        buffersRef.current.byId.set(cmdId, {
+        // Clear current transcript
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        emittedIdsRef.current.clear();
+        setStaticItems([]);
+
+        // Update agent state
+        setAgentId(targetAgentId);
+        setAgentState(agent);
+        setAgentName(agent.name);
+        setLlmConfig(agent.llm_config);
+
+        // Add welcome screen for new agent
+        welcomeCommittedRef.current = false;
+        setStaticItems([
+          {
+            kind: "welcome",
+            id: `welcome-${Date.now().toString(36)}`,
+            snapshot: {
+              continueSession: true,
+              agentState: agent,
+              terminalWidth: columns,
+            },
+          },
+        ]);
+
+        // Backfill message history
+        if (messages.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, messages);
+          refreshDerived();
+          commitEligibleLines(buffersRef.current);
+          hasBackfilledRef.current = true;
+        }
+
+        // Add success command to transcript
+        const successCmdId = uid("cmd");
+        buffersRef.current.byId.set(successCmdId, {
           kind: "command",
-          id: cmdId,
+          id: successCmdId,
           input: `/swap ${targetAgentId}`,
-          output: `Switching to agent ${targetAgentId}. Restarting...`,
+          output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
           phase: "finished",
           success: true,
         });
+        buffersRef.current.order.push(successCmdId);
         refreshDerived();
-
-        // Exit and let the process restart with the new agent
-        setTimeout(() => process.exit(0), 500);
       } catch (error) {
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
@@ -1608,7 +1689,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived],
+    [refreshDerived, commitEligibleLines, columns],
   );
 
   // Track permission mode changes for UI updates
