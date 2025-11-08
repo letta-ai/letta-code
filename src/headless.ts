@@ -406,7 +406,7 @@ export async function handleHeadlessCommand(
             chunk.message_type === "approval_request_message";
           let shouldOutputChunk = true;
 
-          // Track approval requests
+          // Track approval requests (stream-aware: accumulate by tool_call_id)
           if (isApprovalRequest) {
             const chunkWithTools = chunk as typeof chunk & {
               tool_call?: {
@@ -428,77 +428,77 @@ export async function handleHeadlessCommand(
                 : [];
 
             for (const toolCall of toolCalls) {
-              if (toolCall?.tool_call_id && toolCall?.name) {
-                const id = toolCall.tool_call_id;
-                _lastApprovalId = id;
+              const id = toolCall?.tool_call_id;
+              if (!id) continue; // remain strict: do not invent ids
 
-                // Prefer the most complete args we have seen so far; concatenate deltas
-                const prev = approvalRequests.get(id);
-                const base = prev && prev.args !== "{}" ? prev.args : "";
-                const incomingArgs =
-                  toolCall.arguments && toolCall.arguments.trim().length > 0
-                    ? `${base}${toolCall.arguments}`
-                    : base || "{}";
+              _lastApprovalId = id;
 
-                approvalRequests.set(id, {
-                  toolName: toolCall.name,
-                  args: incomingArgs,
-                });
+              // Concatenate argument deltas; do not inject placeholder JSON
+              const prev = approvalRequests.get(id);
+              const base = prev?.args ?? "";
+              const incomingArgs =
+                toolCall?.arguments && toolCall.arguments.trim().length > 0
+                  ? base + toolCall.arguments
+                  : base;
 
-                // Keep an up-to-date approvals array for downstream handling
-                // Update existing approval if present, otherwise add new one
-                const existingIndex = approvals.findIndex(
-                  (a) => a.toolCallId === id,
+              // Preserve previously seen name; set if provided in this chunk
+              const nextName = toolCall?.name || prev?.toolName || "";
+              approvalRequests.set(id, {
+                toolName: nextName,
+                args: incomingArgs,
+              });
+
+              // Keep an up-to-date approvals array for downstream handling
+              // Update existing approval if present, otherwise add new one
+              const existingIndex = approvals.findIndex(
+                (a) => a.toolCallId === id,
+              );
+              const approvalObj = {
+                toolCallId: id,
+                toolName: nextName,
+                toolArgs: incomingArgs,
+              };
+              if (existingIndex >= 0) {
+                approvals[existingIndex] = approvalObj;
+              } else {
+                approvals.push(approvalObj);
+              }
+
+              // Check if this approval will be auto-approved. Dedup per tool_call_id
+              if (!autoApprovalEmitted.has(id) && nextName) {
+                const parsedArgs = safeJsonParseOr<Record<
+                  string,
+                  unknown
+                > | null>(incomingArgs || "{}", null);
+                const permission = await checkToolPermission(
+                  nextName,
+                  parsedArgs || {},
                 );
-                const approvalObj = {
-                  toolCallId: id,
-                  toolName: toolCall.name,
-                  toolArgs: incomingArgs,
-                };
-                if (existingIndex >= 0) {
-                  approvals[existingIndex] = approvalObj;
-                } else {
-                  approvals.push(approvalObj);
-                }
-
-                // Check if this approval will be auto-approved. Dedup per tool_call_id
-                if (!autoApprovalEmitted.has(id)) {
-                  const parsedArgs = safeJsonParseOr<Record<
-                    string,
-                    unknown
-                  > | null>(incomingArgs || "{}", null);
-                  const permission = await checkToolPermission(
-                    toolCall.name,
-                    parsedArgs || {},
+                if (permission.decision === "allow" && parsedArgs) {
+                  // Only emit auto_approval if we already have all required params
+                  const { getToolSchema } = await import("./tools/manager");
+                  const schema = getToolSchema(nextName);
+                  const required =
+                    (schema?.input_schema?.required as string[] | undefined) ||
+                    [];
+                  const missing = required.filter(
+                    (key) =>
+                      !(key in parsedArgs) ||
+                      String((parsedArgs as Record<string, unknown>)[key] ?? "")
+                        .length === 0,
                   );
-                  if (permission.decision === "allow" && parsedArgs) {
-                    // Only emit auto_approval if we already have all required params
-                    const { getToolSchema } = await import("./tools/manager");
-                    const schema = getToolSchema(toolCall.name);
-                    const required =
-                      (schema?.input_schema?.required as
-                        | string[]
-                        | undefined) || [];
-                    const missing = required.filter(
-                      (key) =>
-                        !(key in parsedArgs) ||
-                        String(
-                          (parsedArgs as Record<string, unknown>)[key] ?? "",
-                        ).length === 0,
+                  if (missing.length === 0) {
+                    shouldOutputChunk = false;
+                    console.log(
+                      JSON.stringify({
+                        type: "auto_approval",
+                        tool_name: nextName,
+                        tool_call_id: id,
+                        reason: permission.reason,
+                        matched_rule: permission.matchedRule,
+                      }),
                     );
-                    if (missing.length === 0) {
-                      shouldOutputChunk = false;
-                      console.log(
-                        JSON.stringify({
-                          type: "auto_approval",
-                          tool_name: toolCall.name,
-                          tool_call_id: id,
-                          reason: permission.reason,
-                          matched_rule: permission.matchedRule,
-                        }),
-                      );
-                      autoApprovalEmitted.add(id);
-                    }
+                    autoApprovalEmitted.add(id);
                   }
                 }
               }
