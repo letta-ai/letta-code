@@ -174,6 +174,7 @@ export default function App({
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const [agentName, setAgentName] = useState<string | null>(null);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -397,8 +398,9 @@ export default function App({
           const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
+          setAgentName(agent.name);
         } catch (error) {
-          console.error("Error fetching llm_config:", error);
+          console.error("Error fetching agent config:", error);
         }
       };
       fetchConfig();
@@ -996,6 +998,69 @@ export default function App({
               output: result.message,
               phase: "finished",
               success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /rename command - rename the agent
+        if (msg.trim().startsWith("/rename")) {
+          const parts = msg.trim().split(/\s+/);
+          const newName = parts.slice(1).join(" ");
+
+          if (!newName) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Please provide a new name: /rename <name>",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: `Renaming agent to "${newName}"...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            await client.agents.modify(agentId, { name: newName });
+            setAgentName(newName);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Agent renamed to "${newName}"`,
+              phase: "finished",
+              success: true,
             });
             refreshDerived();
           } catch (error) {
@@ -1662,6 +1727,7 @@ export default function App({
               onInterrupt={handleInterrupt}
               interruptRequested={interruptRequested}
               agentId={agentId}
+              agentName={agentName}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}

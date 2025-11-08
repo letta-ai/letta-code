@@ -31,6 +31,7 @@ export function Input({
   onInterrupt,
   interruptRequested = false,
   agentId,
+  agentName,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -44,6 +45,7 @@ export function Input({
   onInterrupt?: () => void;
   interruptRequested?: boolean;
   agentId?: string;
+  agentName?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -478,6 +480,7 @@ export function Input({
           onFileSelect={handleFileSelect}
           onAutocompleteActiveChange={setIsAutocompleteActive}
           agentId={agentId}
+          agentName={agentName}
           serverUrl={serverUrl}
         />
 
