@@ -3,6 +3,7 @@
  */
 
 import { Box, Text, useApp, useInput } from "ink";
+import { hostname } from "os";
 import { useState } from "react";
 import { asciiLogo } from "../cli/components/AsciiArt.ts";
 import { settingsManager } from "../settings-manager";
@@ -62,11 +63,21 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         console.error("Failed to auto-open browser:", openErr);
       }
 
+      // Get or generate device ID
+      let deviceId = settingsManager.getSetting("deviceId");
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        settingsManager.updateSettings({ deviceId });
+      }
+      const deviceName = hostname();
+
       // Start polling in background
       pollForToken(
         deviceData.device_code,
         deviceData.interval,
         deviceData.expires_in,
+        deviceId,
+        deviceName,
       )
         .then((tokens) => {
           // Save tokens
