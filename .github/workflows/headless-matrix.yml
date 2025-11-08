@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [gpt-5-minimal, gpt-4.1, claude-3-5-sonnet, gemini-pro, glm-4.6]
+        model: [gpt-5-minimal, gpt-4.1, default, gemini-pro, glm-4.6, haiku]
     name: Headless / ${{ matrix.model }}
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +26,7 @@ jobs:
       - name: Run scenario across output modes
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
-          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
-          bun tsx src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
-
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on

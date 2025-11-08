@@ -31,25 +31,10 @@ function parseArgs(argv: string[]): Args {
   return args as Args;
 }
 
-// Map model → required env keys (in addition to LETTA_API_KEY)
-function requiredKeysForModel(model: string): string[] {
-  const m = model.toLowerCase();
-  if (m.includes("gpt-5") || m.includes("gpt-4")) return ["OPENAI_API_KEY"];
-  if (m.includes("sonnet") || m.includes("haiku")) return ["ANTHROPIC_API_KEY"];
-  if (m.includes("gemini")) return ["GOOGLE_API_KEY"];
-  if (m.includes("glm") || m.includes("kimi") || m.includes("minimax"))
-    return ["OPENROUTER_API_KEY"];
-  return [];
-}
-
-async function ensurePrereqs(model: string): Promise<"ok" | "skip"> {
-  const missing: string[] = [];
-  if (!process.env.LETTA_API_KEY) missing.push("LETTA_API_KEY");
-  for (const k of requiredKeysForModel(model)) {
-    if (!process.env[k]) missing.push(k);
-  }
-  if (missing.length > 0) {
-    console.log(`SKIP: Missing env for ${model}: ${missing.join(", ")}`);
+// Tests run against Letta Cloud; only LETTA_API_KEY is required.
+async function ensurePrereqs(_model: string): Promise<"ok" | "skip"> {
+  if (!process.env.LETTA_API_KEY) {
+    console.log("SKIP: Missing env LETTA_API_KEY");
     return "skip";
   }
   return "ok";
