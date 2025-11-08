@@ -143,16 +143,10 @@ export default function App({
 
   // Sequential approval: track results as user reviews each approval
   const [approvalResults, setApprovalResults] = useState<
-    Array<{
-      type: "approval" | "tool";
-      tool_call_id: string;
-      approve?: boolean;
-      reason?: string;
-      tool_return?: string;
-      status?: "success" | "error";
-      stdout?: string[];
-      stderr?: string[];
-    }>
+    Array<
+      | { type: "approve"; approval: ApprovalRequest }
+      | { type: "deny"; approval: ApprovalRequest; reason: string }
+    >
   >([]);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
 
@@ -1164,16 +1158,107 @@ export default function App({
 
   // Helper to send all approval results when done
   const sendAllResults = useCallback(
-    async (additionalResult?: {
-      type: "approval" | "tool";
-      tool_call_id: string;
-      approve?: boolean;
-      reason?: string;
-      tool_return?: string;
-      status?: "success" | "error";
-      stdout?: string[];
-      stderr?: string[];
-    }) => {
+    async (
+      additionalDecision?:
+        | { type: "approve"; approval: ApprovalRequest }
+        | { type: "deny"; approval: ApprovalRequest; reason: string },
+    ) => {
+      // Combine all decisions
+      const allDecisions = [
+        ...approvalResults,
+        ...(additionalDecision ? [additionalDecision] : []),
+      ];
+
+      // Execute approved tools and format results
+      const executedResults: Array<{
+        type: "tool" | "approval";
+        tool_call_id: string;
+        tool_return?: string;
+        status?: "success" | "error";
+        stdout?: string[];
+        stderr?: string[];
+        approve?: boolean;
+        reason?: string;
+      }> = [];
+
+      for (const decision of allDecisions) {
+        if (decision.type === "approve") {
+          // Execute the approved tool
+          try {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              decision.approval.toolArgs,
+              {},
+            );
+            const toolResult = await executeTool(
+              decision.approval.toolName,
+              parsedArgs,
+            );
+
+            // Update buffers with tool return for UI
+            onChunk(buffersRef.current, {
+              message_type: "tool_return_message",
+              id: "dummy",
+              date: new Date().toISOString(),
+              tool_call_id: decision.approval.toolCallId,
+              tool_return: toolResult.toolReturn,
+              status: toolResult.status,
+              stdout: toolResult.stdout,
+              stderr: toolResult.stderr,
+            });
+
+            executedResults.push({
+              type: "tool",
+              tool_call_id: decision.approval.toolCallId,
+              tool_return: toolResult.toolReturn,
+              status: toolResult.status,
+              stdout: toolResult.stdout,
+              stderr: toolResult.stderr,
+            });
+          } catch (e) {
+            appendError(String(e));
+
+            // Still need to send error result to backend for this tool
+            const errorMessage = `Error executing tool: ${String(e)}`;
+
+            // Update buffers with error for UI
+            onChunk(buffersRef.current, {
+              message_type: "tool_return_message",
+              id: "dummy",
+              date: new Date().toISOString(),
+              tool_call_id: decision.approval.toolCallId,
+              tool_return: errorMessage,
+              status: "error",
+            });
+
+            executedResults.push({
+              type: "tool",
+              tool_call_id: decision.approval.toolCallId,
+              tool_return: errorMessage,
+              status: "error",
+            });
+          }
+        } else {
+          // Format denial for backend
+          // Update buffers with denial for UI
+          onChunk(buffersRef.current, {
+            message_type: "tool_return_message",
+            id: "dummy",
+            date: new Date().toISOString(),
+            tool_call_id: decision.approval.toolCallId,
+            tool_return: `Error: request to call tool denied. User reason: ${decision.reason}`,
+            status: "error",
+          });
+
+          executedResults.push({
+            type: "approval",
+            tool_call_id: decision.approval.toolCallId,
+            approve: false,
+            reason: decision.reason,
+          });
+        }
+      }
+
+      // Combine with auto-handled and auto-denied results
       const allResults = [
         ...autoHandledResults.map((ar) => ({
           type: "tool" as const,
@@ -1189,8 +1274,7 @@ export default function App({
           approve: false,
           reason: ad.reason,
         })),
-        ...approvalResults,
-        ...(additionalResult ? [additionalResult] : []),
+        ...executedResults,
       ];
 
       // Clear state
@@ -1218,6 +1302,7 @@ export default function App({
       autoDeniedApprovals,
       processConversation,
       refreshDerived,
+      appendError,
     ],
   );
 
@@ -1229,54 +1314,21 @@ export default function App({
     if (!currentApproval) return;
 
     try {
-      setIsExecutingTool(true);
-
-      // Execute the approved tool
-      const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-        currentApproval.toolArgs,
-        {},
-      );
-      const toolResult = await executeTool(
-        currentApproval.toolName,
-        parsedArgs,
-      );
-
-      // Update buffers with tool return for UI
-      onChunk(buffersRef.current, {
-        message_type: "tool_return_message",
-        id: "dummy",
-        date: new Date().toISOString(),
-        tool_call_id: currentApproval.toolCallId,
-        tool_return: toolResult.toolReturn,
-        status: toolResult.status,
-        stdout: toolResult.stdout,
-        stderr: toolResult.stderr,
-      });
-
-      // Store result
-      const result = {
-        type: "tool" as const,
-        tool_call_id: currentApproval.toolCallId,
-        tool_return: toolResult.toolReturn,
-        status: toolResult.status,
-        stdout: toolResult.stdout,
-        stderr: toolResult.stderr,
+      // Store approval decision (don't execute yet - batch execute after all approvals)
+      const decision = {
+        type: "approve" as const,
+        approval: currentApproval,
       };
-
-      setIsExecutingTool(false);
 
       // Check if we're done with all approvals
       if (currentIndex + 1 >= pendingApprovals.length) {
-        // All approvals processed, send results to backend
-        // Pass the new result directly to avoid async state update issue
-        await sendAllResults(result);
+        // All approvals collected, execute and send to backend
+        await sendAllResults(decision);
       } else {
-        // Not done yet, store result and show next approval
-        setApprovalResults((prev) => [...prev, result]);
+        // Not done yet, store decision and show next approval
+        setApprovalResults((prev) => [...prev, decision]);
       }
-      // Otherwise, next approval will be shown automatically via state update
     } catch (e) {
-      setIsExecutingTool(false);
       appendError(String(e));
       setStreaming(false);
     }
@@ -1332,35 +1384,22 @@ export default function App({
       if (!currentApproval) return;
 
       try {
-        // Store denial result
-        const result = {
-          type: "approval" as const,
-          tool_call_id: currentApproval.toolCallId,
-          approve: false,
+        // Store denial decision
+        const decision = {
+          type: "deny" as const,
+          approval: currentApproval,
           reason: reason || "User denied the tool execution",
         };
 
-        // Update buffers with denial for UI (so it shows in the right order)
-        onChunk(buffersRef.current, {
-          message_type: "tool_return_message",
-          id: "dummy",
-          date: new Date().toISOString(),
-          tool_call_id: currentApproval.toolCallId,
-          tool_return: `Error: request to call tool denied. User reason: ${result.reason}`,
-          status: "error",
-        });
-
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
-          // All approvals processed, send results to backend
-          // Pass the new result directly to avoid async state update issue
+          // All approvals collected, execute and send to backend
           setThinkingMessage(getRandomThinkingMessage());
-          await sendAllResults(result);
+          await sendAllResults(decision);
         } else {
-          // Not done yet, store result and show next approval
-          setApprovalResults((prev) => [...prev, result]);
+          // Not done yet, store decision and show next approval
+          setApprovalResults((prev) => [...prev, decision]);
         }
-        // Otherwise, next approval will be shown automatically via state update
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
