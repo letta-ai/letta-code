@@ -66,13 +66,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install
 
-      - name: Run tests (Windows, extended timeout)
-        if: ${{ matrix.runner == 'windows-latest' }}
+      - name: Run tests (extended timeout)
         run: bun test --timeout 15000
-
-      - name: Run tests
-        if: ${{ matrix.runner != 'windows-latest' }}
-        run: bun test
 
       - name: Build bundle
         run: bun run build
