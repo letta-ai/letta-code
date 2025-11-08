@@ -363,6 +363,8 @@ async function main() {
             updateArgs,
             forceNew,
             skillsDirectory,
+            settings.parallelToolCalls,
+            settings.enableSleeptime,
           );
         }
 
@@ -407,6 +409,8 @@ async function main() {
             updateArgs,
             false,
             skillsDirectory,
+            settings.parallelToolCalls,
+            settings.enableSleeptime,
           );
         }
 

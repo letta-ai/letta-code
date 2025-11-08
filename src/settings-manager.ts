@@ -12,6 +12,8 @@ export interface Settings {
   uiMode: UIMode;
   lastAgent: string | null;
   tokenStreaming: boolean;
+  parallelToolCalls: boolean;
+  enableSleeptime: boolean;
   globalSharedBlockIds: Record<string, string>;
   permissions?: PermissionRules;
   env?: Record<string, string>;
@@ -34,6 +36,8 @@ const DEFAULT_SETTINGS: Settings = {
   uiMode: "simple",
   lastAgent: null,
   tokenStreaming: false,
+  parallelToolCalls: true,
+  enableSleeptime: false,
   globalSharedBlockIds: {},
 };
 

@@ -100,6 +100,8 @@ export async function handleHeadlessCommand(
       updateArgs,
       forceNew,
       skillsDirectory,
+      settings.parallelToolCalls,
+      settings.enableSleeptime,
     );
   }
 
@@ -139,6 +141,8 @@ export async function handleHeadlessCommand(
       updateArgs,
       false,
       skillsDirectory,
+      settings.parallelToolCalls,
+      settings.enableSleeptime,
     );
   }
 
