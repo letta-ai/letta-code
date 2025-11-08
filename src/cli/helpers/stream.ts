@@ -91,10 +91,10 @@ export async function drainStream(
     // tool_call_message = auto-executed server-side (e.g., web_search)
     // approval_request_message = needs user approval (e.g., Bash)
     if (chunk.message_type === "approval_request_message") {
-      console.log(
-        "[drainStream] approval_request_message chunk:",
-        JSON.stringify(chunk, null, 2),
-      );
+      // console.log(
+      // "[drainStream] approval_request_message chunk:",
+      // JSON.stringify(chunk, null, 2),
+      // );
 
       // Normalize tool calls: support both legacy tool_call and new tool_calls array
       const toolCalls = Array.isArray(chunk.tool_calls)
@@ -157,10 +157,10 @@ export async function drainStream(
   if (stopReason === "requires_approval") {
     // Convert map to array, filtering out incomplete entries
     const allPending = Array.from(pendingApprovals.values());
-    console.log(
-      "[drainStream] All pending approvals before filter:",
-      JSON.stringify(allPending, null, 2),
-    );
+    // console.log(
+    // "[drainStream] All pending approvals before filter:",
+    // JSON.stringify(allPending, null, 2),
+    // );
 
     approvals = allPending.filter(
       (a) => a.toolCallId && a.toolName && a.toolArgs,
