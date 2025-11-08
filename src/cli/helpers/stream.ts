@@ -96,14 +96,16 @@ export async function drainStream(
         JSON.stringify(chunk, null, 2),
       );
 
-      // Use deprecated tool_call or new tool_calls array
-      const toolCall =
-        chunk.tool_call ||
-        (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
-          ? chunk.tool_calls[0]
-          : null);
+      // Normalize tool calls: support both legacy tool_call and new tool_calls array
+      const toolCalls = Array.isArray(chunk.tool_calls)
+        ? chunk.tool_calls
+        : chunk.tool_call
+          ? [chunk.tool_call]
+          : [];
 
-      if (toolCall?.tool_call_id) {
+      for (const toolCall of toolCalls) {
+        if (!toolCall?.tool_call_id) continue; // strict: require id
+
         // Get or create entry for this tool_call_id
         const existing = pendingApprovals.get(toolCall.tool_call_id) || {
           toolCallId: toolCall.tool_call_id,
