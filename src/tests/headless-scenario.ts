@@ -90,37 +90,58 @@ async function main() {
   if (prereq === "skip") return;
 
   const { stdout, code } = await runCLI(model, output);
-  if (code !== 0) process.exit(code);
-
-  // Validate by output mode
-  if (output === "text") {
-    assertContainsAll(stdout, ["Test1", "Test2", "Test3"]);
-  } else if (output === "json") {
-    try {
-      const obj = JSON.parse(stdout);
-      const result = String(obj?.result ?? "");
-      assertContainsAll(result, ["Test1", "Test2", "Test3"]);
-    } catch (e) {
-      throw new Error(`Invalid JSON output: ${(e as Error).message}`);
-    }
-  } else if (output === "stream-json") {
-    // stream-json prints one JSON object per line; find the final result event
-    const lines = stdout.split(/\r?\n/).filter(Boolean);
-    const resultLine = lines.find((l) => {
-      try {
-        const o = JSON.parse(l);
-        return o?.type === "result";
-      } catch {
-        return false;
-      }
-    });
-    if (!resultLine) throw new Error("No final result event in stream-json");
-    const evt = JSON.parse(resultLine);
-    const result = String(evt?.result ?? "");
-    assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+  if (code !== 0) {
+    process.exit(code);
   }
 
-  console.log(`OK: ${model} / ${output}`);
+  try {
+    // Validate by output mode
+    if (output === "text") {
+      assertContainsAll(stdout, ["Test1", "Test2", "Test3"]);
+    } else if (output === "json") {
+      try {
+        const obj = JSON.parse(stdout);
+        const result = String(obj?.result ?? "");
+        assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+      } catch (e) {
+        throw new Error(`Invalid JSON output: ${(e as Error).message}`);
+      }
+    } else if (output === "stream-json") {
+      // stream-json prints one JSON object per line; find the final result event
+      const lines = stdout.split(/\r?\n/).filter(Boolean);
+      const resultLine = lines.find((l) => {
+        try {
+          const o = JSON.parse(l);
+          return o?.type === "result";
+        } catch {
+          return false;
+        }
+      });
+      if (!resultLine) throw new Error("No final result event in stream-json");
+      const evt = JSON.parse(resultLine);
+      const result = String(evt?.result ?? "");
+      assertContainsAll(result, ["Test1", "Test2", "Test3"]);
+    }
+
+    console.log(`OK: ${model} / ${output}`);
+  } catch (e) {
+    // Dump full stdout to aid debugging
+    console.error(`\n===== BEGIN STDOUT (${model} / ${output}) =====`);
+    console.error(stdout);
+    console.error(`===== END STDOUT (${model} / ${output}) =====\n`);
+
+    if (output === "stream-json") {
+      const lines = stdout.split(/\r?\n/).filter(Boolean);
+      const tail = lines.slice(-50).join("\n");
+      console.error(
+        "----- stream-json tail (last 50 lines) -----\n" +
+          tail +
+          "\n---------------------------------------------",
+      );
+    }
+
+    throw e;
+  }
 }
 
 main().catch((e) => {
