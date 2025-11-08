@@ -15,7 +15,7 @@ import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission, executeTool } from "./tools/manager";
+import { checkToolPermission } from "./tools/manager";
 
 export async function handleHeadlessCommand(
   argv: string[],

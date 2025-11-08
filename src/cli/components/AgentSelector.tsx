@@ -54,13 +54,13 @@ export function AgentSelector({
     const id = (agent.id || "").toLowerCase();
     return name.includes(query) || id.includes(query);
   });
-  
+
   const filteredAgents = matchingAgents.slice(0, 10);
 
   // Reset selected index when filtered list changes
   useEffect(() => {
     setSelectedIndex(0);
-  }, [debouncedQuery]);
+  }, []);
 
   useInput((input, key) => {
     if (loading || error) return;
@@ -132,7 +132,9 @@ export function AgentSelector({
       {filteredAgents.length > 0 && (
         <Box>
           <Text dimColor>
-            Showing {filteredAgents.length}{matchingAgents.length > 10 ? ` of ${matchingAgents.length}` : ""}{debouncedQuery ? " matching" : ""} agents
+            Showing {filteredAgents.length}
+            {matchingAgents.length > 10 ? ` of ${matchingAgents.length}` : ""}
+            {debouncedQuery ? " matching" : ""} agents
           </Text>
         </Box>
       )}

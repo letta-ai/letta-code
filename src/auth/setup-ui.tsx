@@ -2,8 +2,8 @@
  * Ink UI components for OAuth setup flow
  */
 
+import { hostname } from "node:os";
 import { Box, Text, useApp, useInput } from "ink";
-import { hostname } from "os";
 import { useState } from "react";
 import { asciiLogo } from "../cli/components/AsciiArt.ts";
 import { settingsManager } from "../settings-manager";

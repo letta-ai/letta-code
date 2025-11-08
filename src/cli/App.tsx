@@ -26,6 +26,7 @@ import {
   executeTool,
   savePermissionRule,
 } from "../tools/manager";
+import { AgentSelector } from "./components/AgentSelector";
 // import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
@@ -35,7 +36,6 @@ import { CommandMessage } from "./components/CommandMessage";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
-import { AgentSelector } from "./components/AgentSelector";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
@@ -167,7 +167,7 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [isExecutingTool, _setIsExecutingTool] = useState(false);
 
   // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
@@ -1340,6 +1340,8 @@ export default function App({
       refreshDerived,
       agentId,
       handleExit,
+      columns,
+      commitEligibleLines,
     ],
   );
 
