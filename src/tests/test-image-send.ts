@@ -1,10 +1,11 @@
-import { createAgent } from "./src/agent/create";
-import { sendMessageStream } from "./src/agent/message";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createAgent } from "../agent/create";
+import { sendMessageStream } from "../agent/message";
 
 async function main() {
   // Create a simple test image (1x1 red PNG)
-  const testImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const testImageBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const testImagePath = "/tmp/test.png";
   writeFileSync(testImagePath, Buffer.from(testImageBase64, "base64"));
   console.log("Created test image at", testImagePath);
