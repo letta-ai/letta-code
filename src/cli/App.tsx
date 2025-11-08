@@ -1169,94 +1169,28 @@ export default function App({
         ...(additionalDecision ? [additionalDecision] : []),
       ];
 
-      // Execute approved tools and format results
-      const executedResults: Array<{
-        type: "tool" | "approval";
-        tool_call_id: string;
-        tool_return?: string;
-        status?: "success" | "error";
-        stdout?: string[];
-        stderr?: string[];
-        approve?: boolean;
-        reason?: string;
-      }> = [];
-
-      for (const decision of allDecisions) {
-        if (decision.type === "approve") {
-          // Execute the approved tool
-          try {
-            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-              decision.approval.toolArgs,
-              {},
+      // Execute approved tools and format results using shared function
+      const { executeApprovalBatch } = await import(
+        "../agent/approval-execution"
+      );
+      const executedResults = await executeApprovalBatch(
+        allDecisions,
+        (chunk) => {
+          onChunk(buffersRef.current, chunk);
+          // Also log errors to the UI error display
+          if (
+            chunk.status === "error" &&
+            chunk.message_type === "tool_return_message"
+          ) {
+            const isToolError = chunk.tool_return?.startsWith(
+              "Error executing tool:",
             );
-            const toolResult = await executeTool(
-              decision.approval.toolName,
-              parsedArgs,
-            );
-
-            // Update buffers with tool return for UI
-            onChunk(buffersRef.current, {
-              message_type: "tool_return_message",
-              id: "dummy",
-              date: new Date().toISOString(),
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: toolResult.toolReturn,
-              status: toolResult.status,
-              stdout: toolResult.stdout,
-              stderr: toolResult.stderr,
-            });
-
-            executedResults.push({
-              type: "tool",
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: toolResult.toolReturn,
-              status: toolResult.status,
-              stdout: toolResult.stdout,
-              stderr: toolResult.stderr,
-            });
-          } catch (e) {
-            appendError(String(e));
-
-            // Still need to send error result to backend for this tool
-            const errorMessage = `Error executing tool: ${String(e)}`;
-
-            // Update buffers with error for UI
-            onChunk(buffersRef.current, {
-              message_type: "tool_return_message",
-              id: "dummy",
-              date: new Date().toISOString(),
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: errorMessage,
-              status: "error",
-            });
-
-            executedResults.push({
-              type: "tool",
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: errorMessage,
-              status: "error",
-            });
+            if (isToolError) {
+              appendError(chunk.tool_return);
+            }
           }
-        } else {
-          // Format denial for backend
-          // Update buffers with denial for UI
-          onChunk(buffersRef.current, {
-            message_type: "tool_return_message",
-            id: "dummy",
-            date: new Date().toISOString(),
-            tool_call_id: decision.approval.toolCallId,
-            tool_return: `Error: request to call tool denied. User reason: ${decision.reason}`,
-            status: "error",
-          });
-
-          executedResults.push({
-            type: "approval",
-            tool_call_id: decision.approval.toolCallId,
-            approve: false,
-            reason: decision.reason,
-          });
-        }
-      }
+        },
+      );
 
       // Combine with auto-handled and auto-denied results
       const allResults = [
