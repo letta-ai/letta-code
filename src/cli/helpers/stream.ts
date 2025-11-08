@@ -91,6 +91,11 @@ export async function drainStream(
     // tool_call_message = auto-executed server-side (e.g., web_search)
     // approval_request_message = needs user approval (e.g., Bash)
     if (chunk.message_type === "approval_request_message") {
+      console.log(
+        "[drainStream] approval_request_message chunk:",
+        JSON.stringify(chunk, null, 2),
+      );
+
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
         chunk.tool_call ||
@@ -149,7 +154,13 @@ export async function drainStream(
 
   if (stopReason === "requires_approval") {
     // Convert map to array, filtering out incomplete entries
-    approvals = Array.from(pendingApprovals.values()).filter(
+    const allPending = Array.from(pendingApprovals.values());
+    console.log(
+      "[drainStream] All pending approvals before filter:",
+      JSON.stringify(allPending, null, 2),
+    );
+
+    approvals = allPending.filter(
       (a) => a.toolCallId && a.toolName && a.toolArgs,
     );
 
@@ -157,6 +168,7 @@ export async function drainStream(
       console.error(
         "[drainStream] No valid approvals collected despite requires_approval stop reason",
       );
+      console.error("[drainStream] Pending approvals map:", allPending);
     } else {
       // Set legacy singular field for backward compatibility
       approval = approvals[0] || null;
