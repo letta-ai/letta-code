@@ -20,6 +20,7 @@ export function AgentSelector({
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -36,10 +37,19 @@ export function AgentSelector({
     fetchAgents();
   }, []);
 
-  // Filter agents based on search query
+  // Debounce search query (300ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Filter agents based on debounced search query
   const matchingAgents = agents.filter((agent) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
+    if (!debouncedQuery) return true;
+    const query = debouncedQuery.toLowerCase();
     const name = (agent.name || "").toLowerCase();
     const id = (agent.id || "").toLowerCase();
     return name.includes(query) || id.includes(query);
@@ -50,7 +60,7 @@ export function AgentSelector({
   // Reset selected index when filtered list changes
   useEffect(() => {
     setSelectedIndex(0);
-  }, [searchQuery]);
+  }, [debouncedQuery]);
 
   useInput((input, key) => {
     if (loading || error) return;
@@ -122,7 +132,7 @@ export function AgentSelector({
       {filteredAgents.length > 0 && (
         <Box>
           <Text dimColor>
-            Showing {filteredAgents.length}{matchingAgents.length > 10 ? ` of ${matchingAgents.length}` : ""}{searchQuery ? " matching" : ""} agents
+            Showing {filteredAgents.length}{matchingAgents.length > 10 ? ` of ${matchingAgents.length}` : ""}{debouncedQuery ? " matching" : ""} agents
           </Text>
         </Box>
       )}

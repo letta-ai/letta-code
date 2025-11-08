@@ -129,6 +129,20 @@ export default function App({
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
+
+  // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
+  useEffect(() => {
+    if (initialAgentId !== agentId) {
+      setAgentId(initialAgentId);
+    }
+  }, [initialAgentId, agentId]);
+
+  useEffect(() => {
+    if (initialAgentState !== agentState) {
+      setAgentState(initialAgentState);
+    }
+  }, [initialAgentState, agentState]);
+
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
 
