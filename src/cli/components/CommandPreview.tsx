@@ -42,10 +42,14 @@ export function CommandPreview({
         </Box>
       ))}
       {showBottomBar && (
-        <Box marginTop={1} paddingTop={1} borderTop borderColor="gray" flexDirection="column">
-          {agentName && (
-            <Text dimColor>Agent: {agentName}</Text>
-          )}
+        <Box
+          marginTop={1}
+          paddingTop={1}
+          borderTop
+          borderColor="gray"
+          flexDirection="column"
+        >
+          {agentName && <Text dimColor>Agent: {agentName}</Text>}
           {isCloudUser ? (
             <Link url={`https://app.letta.com/agents/${agentId}`}>
               <Text dimColor>View agent in ADE</Text>
