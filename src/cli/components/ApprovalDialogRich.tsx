@@ -440,7 +440,9 @@ export const ApprovalDialog = memo(function ApprovalDialog({
             {progress.total - (progress.current - 1)} remaining)
           </Text>
         )}
-        {isExecuting && <Text dimColor>Executing tool...</Text>}
+        {isExecuting && progress && progress.total > 1 && (
+          <Text dimColor>Executing tool...</Text>
+        )}
         <Box height={1} />
 
         {/* Dynamic per-tool renderer (indented) */}
