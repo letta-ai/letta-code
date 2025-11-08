@@ -262,11 +262,19 @@ export async function handleHeadlessCommand(
   // Clear any pending approvals before starting a new turn
   await resolveAllPendingApprovals();
 
+  // Get plan mode reminder if in plan mode
+  const { permissionMode } = await import("./permissions/mode");
+  let messageContent = prompt;
+  if (permissionMode.getMode() === "plan") {
+    const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
+    messageContent = PLAN_MODE_REMINDER + prompt;
+  }
+
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
-      content: [{ type: "text", text: prompt }],
+      content: [{ type: "text", text: messageContent }],
     },
   ];
 
