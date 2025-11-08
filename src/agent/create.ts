@@ -220,9 +220,18 @@ export async function createAgent(
     enable_sleeptime: enableSleeptime,
   });
 
-  // Apply updateArgs if provided (e.g., reasoningEffort, contextWindow, etc.)
+  // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
+  // Skip if updateArgs only contains context_window (already set in create)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
-    await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+    const { context_window, ...otherArgs } = updateArgs;
+    if (Object.keys(otherArgs).length > 0) {
+      await updateAgentLLMConfig(
+        agent.id,
+        modelHandle,
+        otherArgs,
+        true, // preserve parallel_tool_calls
+      );
+    }
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
