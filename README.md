@@ -76,6 +76,23 @@ Letta Code uses a hierarchical memory system:
 Memory blocks are highly configurable — see our [docs](https://docs.letta.com/guides/agents/memory-blocks) for advanced configuration options.
 Join our [Discord](https://discord.gg/letta) to share feedback on persistence patterns for coding agents.
 
+### Agent Behavior Settings
+
+You can configure default agent behavior settings in `~/.letta/settings.json`. These settings apply only when creating **new agents** - existing agents retain their original configuration.
+
+Available settings:
+- `parallelToolCalls` (default: `true`) - Enable parallel tool calling for new agents
+- `enableSleeptime` (default: `false`) - Enable sleeptime feature for new agents
+
+Example `~/.letta/settings.json`:
+```json
+{
+  "parallelToolCalls": true,
+  "enableSleeptime": false,
+  "tokenStreaming": false
+}
+```
+
 ## Skills
 
 **Skills are automatically discovered from a `.skills` directory in your project.**
