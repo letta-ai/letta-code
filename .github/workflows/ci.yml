@@ -111,3 +111,34 @@ jobs:
       - name: Pack (no auth available)
         if: ${{ github.event_name != 'push' }}
         run: bun pm pack
+
+  headless:
+    needs: check
+    name: Headless / ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [gpt-5-minimal, gpt-4.1, default, gemini-pro, glm-4.6, haiku]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install
+
+      - name: Run headless scenario (all outputs)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: |
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
+          bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
