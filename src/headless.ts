@@ -258,67 +258,27 @@ export async function handleHeadlessCommand(
         });
       }
 
-      // Phase 2: Execute approved tools and format results
-      const executedResults: Array<{
-        type: "tool" | "approval";
-        tool_call_id: string;
-        tool_return?: string;
-        status?: "success" | "error";
-        stdout?: string[];
-        stderr?: string[];
-        approve?: boolean;
-        reason?: string;
-      }> = [];
+      // Phase 2: Execute approved tools and format results using shared function
+      const { executeApprovalBatch } = await import(
+        "./agent/approval-execution"
+      );
 
-      for (const decision of decisions) {
-        if (decision.type === "approve") {
-          try {
-            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-              decision.approval.toolArgs || "{}",
-              {},
+      // Emit auto_approval events for stream-json format
+      if (outputFormat === "stream-json") {
+        for (const decision of decisions) {
+          if (decision.type === "approve") {
+            console.log(
+              JSON.stringify({
+                type: "auto_approval",
+                tool_name: decision.approval.toolName,
+                tool_call_id: decision.approval.toolCallId,
+              }),
             );
-            const toolResult = await executeTool(
-              decision.approval.toolName,
-              parsedArgs,
-            );
-
-            // Emit auto_approval event for stream-json for visibility
-            if (outputFormat === "stream-json") {
-              console.log(
-                JSON.stringify({
-                  type: "auto_approval",
-                  tool_name: decision.approval.toolName,
-                  tool_call_id: decision.approval.toolCallId,
-                }),
-              );
-            }
-
-            executedResults.push({
-              type: "tool",
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: toolResult.toolReturn,
-              status: toolResult.status,
-              stdout: toolResult.stdout,
-              stderr: toolResult.stderr,
-            });
-          } catch (e) {
-            const errorMessage = `Error executing tool: ${String(e)}`;
-            executedResults.push({
-              type: "tool",
-              tool_call_id: decision.approval.toolCallId,
-              tool_return: errorMessage,
-              status: "error",
-            });
           }
-        } else {
-          executedResults.push({
-            type: "approval",
-            tool_call_id: decision.approval.toolCallId,
-            approve: false,
-            reason: decision.reason,
-          });
         }
       }
+
+      const executedResults = await executeApprovalBatch(decisions);
 
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
@@ -683,59 +643,11 @@ export async function handleHeadlessCommand(
           });
         }
 
-        // Phase 2: Execute all approved tools and format results
-        const executedResults: Array<{
-          type: "tool" | "approval";
-          tool_call_id: string;
-          tool_return?: string;
-          status?: "success" | "error";
-          stdout?: string[];
-          stderr?: string[];
-          approve?: boolean;
-          reason?: string;
-        }> = [];
-
-        for (const decision of decisions) {
-          if (decision.type === "approve") {
-            // Execute the approved tool
-            try {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                decision.approval.toolArgs,
-                {},
-              );
-              const toolResult = await executeTool(
-                decision.approval.toolName,
-                parsedArgs,
-              );
-
-              executedResults.push({
-                type: "tool",
-                tool_call_id: decision.approval.toolCallId,
-                tool_return: toolResult.toolReturn,
-                status: toolResult.status,
-                stdout: toolResult.stdout,
-                stderr: toolResult.stderr,
-              });
-            } catch (e) {
-              // Still need to send error result to backend for this tool
-              const errorMessage = `Error executing tool: ${String(e)}`;
-              executedResults.push({
-                type: "tool",
-                tool_call_id: decision.approval.toolCallId,
-                tool_return: errorMessage,
-                status: "error",
-              });
-            }
-          } else {
-            // Format denial for backend
-            executedResults.push({
-              type: "approval",
-              tool_call_id: decision.approval.toolCallId,
-              approve: false,
-              reason: decision.reason,
-            });
-          }
-        }
+        // Phase 2: Execute all approved tools and format results using shared function
+        const { executeApprovalBatch } = await import(
+          "./agent/approval-execution"
+        );
+        const executedResults = await executeApprovalBatch(decisions);
 
         // Send all results in one batch
         currentInput = [
