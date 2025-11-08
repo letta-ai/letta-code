@@ -64,6 +64,13 @@ export const commands: Record<string, Command> = {
       return "Removing tools...";
     },
   },
+  "/rename": {
+    desc: "Rename the current agent",
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Renaming agent...";
+    },
+  },
 };
 
 /**

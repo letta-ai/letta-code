@@ -7,6 +7,7 @@ interface InputAssistProps {
   onFileSelect: (path: string) => void;
   onAutocompleteActiveChange: (isActive: boolean) => void;
   agentId?: string;
+  agentName?: string | null;
   serverUrl?: string;
 }
 
@@ -22,6 +23,7 @@ export function InputAssist({
   onFileSelect,
   onAutocompleteActiveChange,
   agentId,
+  agentName,
   serverUrl,
 }: InputAssistProps) {
   // Show file autocomplete when @ is present
@@ -42,6 +44,7 @@ export function InputAssist({
       <CommandPreview
         currentInput={currentInput}
         agentId={agentId}
+        agentName={agentName}
         serverUrl={serverUrl}
       />
     );

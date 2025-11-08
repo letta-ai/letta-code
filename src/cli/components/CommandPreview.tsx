@@ -12,10 +12,12 @@ const commandList = Object.entries(commands).map(([cmd, { desc }]) => ({
 export function CommandPreview({
   currentInput,
   agentId,
+  agentName,
   serverUrl,
 }: {
   currentInput: string;
   agentId?: string;
+  agentName?: string | null;
   serverUrl?: string;
 }) {
   if (!currentInput.startsWith("/")) {
@@ -40,7 +42,10 @@ export function CommandPreview({
         </Box>
       ))}
       {showBottomBar && (
-        <Box marginTop={1} paddingTop={1} borderTop borderColor="gray">
+        <Box marginTop={1} paddingTop={1} borderTop borderColor="gray" flexDirection="column">
+          {agentName && (
+            <Text dimColor>Agent: {agentName}</Text>
+          )}
           {isCloudUser ? (
             <Link url={`https://app.letta.com/agents/${agentId}`}>
               <Text dimColor>View agent in ADE</Text>
