@@ -1,10 +1,11 @@
-import { createAgent } from "./src/agent/create";
-import { sendMessageStream } from "./src/agent/message";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createAgent } from "../agent/create";
+import { sendMessageStream } from "../agent/message";
 
 async function main() {
   // Create a simple test image (1x1 red PNG)
-  const testImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  const testImageBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const testImagePath = "/tmp/test.png";
   writeFileSync(testImagePath, Buffer.from(testImageBase64, "base64"));
   console.log("Created test image at", testImagePath);
@@ -44,8 +45,19 @@ async function main() {
   let fullResponse = "";
   for await (const chunk of stream) {
     if (chunk.message_type === "assistant_message" && chunk.content) {
-      fullResponse += chunk.content;
-      process.stdout.write(chunk.content);
+      // Handle both string and array content
+      let contentText = "";
+      if (typeof chunk.content === "string") {
+        contentText = chunk.content;
+      } else if (Array.isArray(chunk.content)) {
+        // Extract text from content array
+        contentText = chunk.content
+          .filter((item) => item.type === "text")
+          .map((item) => ("text" in item ? item.text : ""))
+          .join("");
+      }
+      fullResponse += contentText;
+      process.stdout.write(contentText);
     }
   }
   if (!fullResponse) {
