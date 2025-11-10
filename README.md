@@ -168,6 +168,7 @@ letta --agent <id> --unlink    # Remove Letta Code tools from agent, then start 
 While in a session, you can use these commands:
 - `/agent` - Show current agent link
 - `/model` - Switch models
+- `/rename` - Rename the current agent
 - `/stream` - Toggle token streaming on/off
 - `/link` - Attach Letta Code tools to current agent (enables Read, Write, Edit, Bash, etc.)
 - `/unlink` - Remove Letta Code tools from current agent

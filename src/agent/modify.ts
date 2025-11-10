@@ -14,36 +14,42 @@ import { getClient } from "./client";
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional LLM config args (contextWindow, reasoningEffort, verbosity, etc.)
+ * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
  * @returns The updated LLM configuration from the server
  */
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
+  preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  // Step 1: Update model (top-level field)
-  await client.agents.modify(agentId, { model: modelHandle });
+  // Get current agent to preserve parallel_tool_calls if requested
+  const currentAgent = await client.agents.retrieve(agentId);
+  const originalParallelToolCalls = preserveParallelToolCalls
+    ? (currentAgent.llm_config?.parallel_tool_calls ?? undefined)
+    : undefined;
 
-  // Step 2: Get updated agent to retrieve current llm_config
-  const agent = await client.agents.retrieve(agentId);
-  let finalConfig = agent.llm_config;
+  // Strategy: Do everything in ONE modify call via llm_config
+  // This avoids the backend resetting parallel_tool_calls when we update the model
+  const updatedLlmConfig = {
+    ...currentAgent.llm_config,
+    ...updateArgs,
+    // Explicitly preserve parallel_tool_calls
+    ...(originalParallelToolCalls !== undefined && {
+      parallel_tool_calls: originalParallelToolCalls,
+    }),
+  } as LlmConfig;
 
-  // Step 3: If we have updateArgs, merge them into llm_config and patch again
-  if (updateArgs && Object.keys(updateArgs).length > 0) {
-    const updatedLlmConfig = {
-      ...finalConfig,
-      ...updateArgs,
-    } as LlmConfig;
-    await client.agents.modify(agentId, { llm_config: updatedLlmConfig });
+  await client.agents.modify(agentId, {
+    llm_config: updatedLlmConfig,
+    parallel_tool_calls: originalParallelToolCalls,
+  });
 
-    // Retrieve final state
-    const finalAgent = await client.agents.retrieve(agentId);
-    finalConfig = finalAgent.llm_config;
-  }
-
-  return finalConfig;
+  // Retrieve and return final state
+  const finalAgent = await client.agents.retrieve(agentId);
+  return finalAgent.llm_config;
 }
 
 export interface LinkResult {

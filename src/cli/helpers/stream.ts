@@ -91,14 +91,21 @@ export async function drainStream(
     // tool_call_message = auto-executed server-side (e.g., web_search)
     // approval_request_message = needs user approval (e.g., Bash)
     if (chunk.message_type === "approval_request_message") {
-      // Use deprecated tool_call or new tool_calls array
-      const toolCall =
-        chunk.tool_call ||
-        (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
-          ? chunk.tool_calls[0]
-          : null);
+      // console.log(
+      // "[drainStream] approval_request_message chunk:",
+      // JSON.stringify(chunk, null, 2),
+      // );
 
-      if (toolCall?.tool_call_id) {
+      // Normalize tool calls: support both legacy tool_call and new tool_calls array
+      const toolCalls = Array.isArray(chunk.tool_calls)
+        ? chunk.tool_calls
+        : chunk.tool_call
+          ? [chunk.tool_call]
+          : [];
+
+      for (const toolCall of toolCalls) {
+        if (!toolCall?.tool_call_id) continue; // strict: require id
+
         // Get or create entry for this tool_call_id
         const existing = pendingApprovals.get(toolCall.tool_call_id) || {
           toolCallId: toolCall.tool_call_id,
@@ -149,7 +156,13 @@ export async function drainStream(
 
   if (stopReason === "requires_approval") {
     // Convert map to array, filtering out incomplete entries
-    approvals = Array.from(pendingApprovals.values()).filter(
+    const allPending = Array.from(pendingApprovals.values());
+    // console.log(
+    // "[drainStream] All pending approvals before filter:",
+    // JSON.stringify(allPending, null, 2),
+    // );
+
+    approvals = allPending.filter(
       (a) => a.toolCallId && a.toolName && a.toolArgs,
     );
 
@@ -157,6 +170,7 @@ export async function drainStream(
       console.error(
         "[drainStream] No valid approvals collected despite requires_approval stop reason",
       );
+      console.error("[drainStream] Pending approvals map:", allPending);
     } else {
       // Set legacy singular field for backward compatibility
       approval = approvals[0] || null;
