@@ -428,8 +428,19 @@ export async function handleHeadlessCommand(
                 : [];
 
             for (const toolCall of toolCalls) {
-              const id = toolCall?.tool_call_id;
-              if (!id) continue; // remain strict: do not invent ids
+              // Many backends stream tool_call chunks where only the first frame
+              // carries the tool_call_id; subsequent argument deltas omit it.
+              // Fall back to the last seen id within this turn so we can
+              // properly accumulate args.
+              let id = toolCall?.tool_call_id || _lastApprovalId;
+              if (!id) {
+                // As an additional guard, if exactly one approval is being
+                // tracked already, use that id for continued argument deltas.
+                if (approvalRequests.size === 1) {
+                  id = Array.from(approvalRequests.keys())[0];
+                }
+              }
+              if (!id) continue; // cannot safely attribute this chunk
 
               _lastApprovalId = id;
 
