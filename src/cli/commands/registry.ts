@@ -71,6 +71,13 @@ export const commands: Record<string, Command> = {
       return "Renaming agent...";
     },
   },
+  "/swap": {
+    desc: "Switch to a different agent",
+    handler: () => {
+      // Handled specially in App.tsx to access agent list and client
+      return "Swapping agent...";
+    },
+  },
 };
 
 /**
