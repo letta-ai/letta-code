@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
@@ -15,7 +16,7 @@ import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission, executeTool } from "./tools/manager";
+import { checkToolPermission } from "./tools/manager";
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -213,7 +214,7 @@ export async function handleHeadlessCommand(
       const decisions: Decision[] = [];
 
       for (const currentApproval of pendingApprovals) {
-        const { toolCallId, toolName, toolArgs } = currentApproval;
+        const { toolName, toolArgs } = currentApproval;
         const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
           toolArgs || "{}",
           {},
@@ -239,8 +240,7 @@ export async function handleHeadlessCommand(
         const required =
           (schema?.input_schema?.required as string[] | undefined) || [];
         const missing = required.filter(
-          (key) =>
-            !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
+          (key) => !(key in parsedArgs) || parsedArgs[key] == null,
         );
         if (missing.length > 0) {
           decisions.push({
@@ -283,7 +283,7 @@ export async function handleHeadlessCommand(
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
         type: "approval",
-        approvals: executedResults as any,
+        approvals: executedResults as ApprovalResult[],
       };
 
       // Send the approval to clear the pending state; drain the stream without output
@@ -495,8 +495,7 @@ export async function handleHeadlessCommand(
                   const missing = required.filter(
                     (key) =>
                       !(key in parsedArgs) ||
-                      String((parsedArgs as Record<string, unknown>)[key] ?? "")
-                        .length === 0,
+                      (parsedArgs as Record<string, unknown>)[key] == null,
                   );
                   if (missing.length === 0) {
                     shouldOutputChunk = false;
@@ -597,7 +596,7 @@ export async function handleHeadlessCommand(
         const decisions: Decision[] = [];
 
         for (const currentApproval of approvals) {
-          const { toolCallId, toolName, toolArgs } = currentApproval;
+          const { toolName, toolArgs } = currentApproval;
 
           // Check permission using existing permission system
           const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -633,9 +632,7 @@ export async function handleHeadlessCommand(
           const required =
             (schema?.input_schema?.required as string[] | undefined) || [];
           const missing = required.filter(
-            (key) =>
-              !(key in parsedArgs) ||
-              String(parsedArgs[key] ?? "").length === 0,
+            (key) => !(key in parsedArgs) || parsedArgs[key] == null,
           );
           if (missing.length > 0) {
             // Auto-deny with a clear reason so the model can retry with arguments
@@ -664,7 +661,7 @@ export async function handleHeadlessCommand(
         currentInput = [
           {
             type: "approval",
-            approvals: executedResults as any,
+            approvals: executedResults as ApprovalResult[],
           },
         ];
         continue;

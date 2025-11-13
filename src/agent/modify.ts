@@ -19,7 +19,7 @@ import { getClient } from "./client";
  */
 export async function updateAgentLLMConfig(
   agentId: string,
-  modelHandle: string,
+  _modelHandle: string,
   updateArgs?: Record<string, unknown>,
   preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {

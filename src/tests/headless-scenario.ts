@@ -16,7 +16,14 @@ type Args = {
 };
 
 function parseArgs(argv: string[]): Args {
-  const args: any = { output: "text", parallel: "on" };
+  const args: {
+    model?: string;
+    output: Args["output"];
+    parallel: Args["parallel"];
+  } = {
+    output: "text",
+    parallel: "on",
+  };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === "--model") args.model = argv[++i];
