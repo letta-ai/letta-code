@@ -1132,7 +1132,9 @@ export default function App({
             const agent = await client.agents.retrieve(targetAgentId);
 
             // Fetch agent's message history
-            const messages = await client.agents.messages.list(targetAgentId);
+            const messagesPage =
+              await client.agents.messages.list(targetAgentId);
+            const messages = messagesPage.items;
 
             // Update project settings with new agent
             await updateProjectSettings({ lastAgent: targetAgentId });
@@ -1638,7 +1640,8 @@ export default function App({
         const agent = await client.agents.retrieve(targetAgentId);
 
         // Fetch agent's message history
-        const messages = await client.agents.messages.list(targetAgentId);
+        const messagesPage = await client.agents.messages.list(targetAgentId);
+        const messages = messagesPage.items;
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
