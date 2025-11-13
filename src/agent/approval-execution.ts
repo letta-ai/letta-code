@@ -1,7 +1,11 @@
 // src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
 
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  ToolReturn,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { executeTool } from "../tools/manager";
 
@@ -9,16 +13,8 @@ export type ApprovalDecision =
   | { type: "approve"; approval: ApprovalRequest }
   | { type: "deny"; approval: ApprovalRequest; reason: string };
 
-export type ApprovalResult = {
-  type: "tool" | "approval";
-  tool_call_id: string;
-  tool_return?: string;
-  status?: "success" | "error";
-  stdout?: string[];
-  stderr?: string[];
-  approve?: boolean;
-  reason?: string;
-};
+// Align result type with the SDK's expected union for approvals payloads
+export type ApprovalResult = ToolReturn | ApprovalCreate.ApprovalReturn;
 
 /**
  * Execute a batch of approval decisions and format results for the backend.
@@ -36,7 +32,7 @@ export type ApprovalResult = {
  */
 export async function executeApprovalBatch(
   decisions: ApprovalDecision[],
-  onChunk?: (chunk: LettaStreamingResponse) => void,
+  onChunk?: (chunk: ToolReturnMessage) => void,
 ): Promise<ApprovalResult[]> {
   const results: ApprovalResult[] = [];
 

@@ -20,6 +20,7 @@ import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
+import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -155,7 +156,7 @@ export default function App({
   const [autoHandledResults, setAutoHandledResults] = useState<
     Array<{
       toolCallId: string;
-      result: unknown;
+      result: ToolExecutionResult;
     }>
   >([]);
   const [autoDeniedApprovals, setAutoDeniedApprovals] = useState<
@@ -1760,12 +1761,20 @@ export default function App({
                 <ApprovalDialog
                   approvals={
                     pendingApprovals[approvalResults.length]
-                      ? [pendingApprovals[approvalResults.length]]
+                      ? ([
+                          pendingApprovals[
+                            approvalResults.length
+                          ] as ApprovalRequest,
+                        ] as ApprovalRequest[])
                       : []
                   }
                   approvalContexts={
                     approvalContexts[approvalResults.length]
-                      ? [approvalContexts[approvalResults.length]]
+                      ? ([
+                          approvalContexts[
+                            approvalResults.length
+                          ] as ApprovalContext,
+                        ] as ApprovalContext[])
                       : []
                   }
                   progress={{

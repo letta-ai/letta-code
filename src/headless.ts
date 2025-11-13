@@ -432,12 +432,12 @@ export async function handleHeadlessCommand(
               // carries the tool_call_id; subsequent argument deltas omit it.
               // Fall back to the last seen id within this turn so we can
               // properly accumulate args.
-              let id = toolCall?.tool_call_id || _lastApprovalId;
+              let id: string | null = toolCall?.tool_call_id ?? _lastApprovalId;
               if (!id) {
                 // As an additional guard, if exactly one approval is being
                 // tracked already, use that id for continued argument deltas.
                 if (approvalRequests.size === 1) {
-                  id = Array.from(approvalRequests.keys())[0];
+                  id = Array.from(approvalRequests.keys())[0] ?? null;
                 }
               }
               if (!id) continue; // cannot safely attribute this chunk
