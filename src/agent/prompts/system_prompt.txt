@@ -48,7 +48,8 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 ### Solution Verification
 - ALWAYS verify your work even when the task does not explicitly ask for it
 - Reflect on your work to check for edge cases or implementation issues
-- Validate your solution by writing tests, using dummy examples, etc.
+- Validate your solution by writing tests, considering edge cases, using dummy examples, etc.
+- Remove any extra artifacts created for verification when you are done
 - IMPORTANT: Just reading the solution does not count as verification, you should thoroughly test it
 
 ### File Operations
