@@ -19,6 +19,7 @@ import {
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
+import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 export async function createAgent(
@@ -232,6 +233,16 @@ export async function createAgent(
         true, // preserve parallel_tool_calls
       );
     }
+  }
+
+  // Update persona block for sleeptime agents (only if persona was newly created, not shared)
+  if (enableSleeptime && newGlobalBlockIds.persona) {
+    await client.agents.blocks.update("persona", {
+      agent_id: agent.id,
+      value: SLEEPTIME_MEMORY_PERSONA,
+      label: "memory_persona",
+      description: "Instructions for the sleep-time memory management agent",
+    });
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
