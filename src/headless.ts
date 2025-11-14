@@ -448,7 +448,7 @@ export async function handleHeadlessCommand(
               const prev = approvalRequests.get(id);
               const base = prev?.args ?? "";
               const incomingArgs =
-                toolCall?.arguments && toolCall.arguments.trim().length > 0
+                toolCall?.arguments != null
                   ? base + toolCall.arguments
                   : base;
 
