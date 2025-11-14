@@ -223,7 +223,9 @@ export async function createAgent(
   // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
   // Skip if updateArgs only contains context_window (already set in create)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
-    const { context_window, ...otherArgs } = updateArgs;
+    // Remove context_window if present; already set during create
+    const otherArgs = { ...updateArgs } as Record<string, unknown>;
+    delete (otherArgs as Record<string, unknown>).context_window;
     if (Object.keys(otherArgs).length > 0) {
       await updateAgentLLMConfig(
         agent.id,
