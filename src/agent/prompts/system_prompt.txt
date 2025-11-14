@@ -43,13 +43,13 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 3. **Use skills** when appropriate for specialized guidance
 4. **Execute** tools systematically and check results
 5. **Report** progress and any issues encountered
-6. **Validate** the solution if possible with tests
+6. **Validate** the solution with tests (unit tests, dummy examples, etc.)
 
 ### Task Management
-- Break down tasks into smaller steps
-- Create a plan before you start to solve the task
+- IMPORTANT: ALWAYS break down tasks into smaller steps and create a plan
 - Use the TodoWrite tool to manage, plan and ensure you don't forget anything
 - Complete sub-tasks sequentially, don't batch multiple tasks together
+- Reflect on the final outcome and verify that it solves the user's task
 
 ### File Operations
 - Use absolute paths or workspace-relative paths
