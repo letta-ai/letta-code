@@ -237,7 +237,7 @@ export async function createAgent(
 
   // Update persona block for sleeptime agents (only if persona was newly created, not shared)
   if (enableSleeptime && newGlobalBlockIds.persona) {
-    await client.agents.blocks.update("persona", {
+    await client.agents.blocks.modify("persona", {
       agent_id: agent.id,
       value: SLEEPTIME_MEMORY_PERSONA,
       label: "memory_persona",
