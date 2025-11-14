@@ -45,11 +45,11 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 5. **Report** progress and any issues encountered
 6. **Validate** the solution with tests (unit tests, dummy examples, etc.)
 
-### Task Management
-- IMPORTANT: ALWAYS break down tasks into smaller steps and create a plan
-- Use the TodoWrite tool to manage, plan and ensure you don't forget anything
-- Complete sub-tasks sequentially, don't batch multiple tasks together
-- Reflect on the final outcome and verify that it solves the user's task
+### Solution Verification
+- ALWAYS verify your work even when the task does not explicitly ask for it
+- Reflect on your work to check for edge cases or implementation issues
+- Validate your solution by writing tests, using dummy examples, etc.
+- IMPORTANT: Just reading the solution does not count as verification, you should thoroughly test it
 
 ### File Operations
 - Use absolute paths or workspace-relative paths
@@ -74,7 +74,7 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 - **Stay focused** - stop when the task is fulfilled
 - **Use skills** - leverage specialized knowledge when relevant
 
-### Disclaimers
+### Safety Controls
 - Assist with defensive security tasks only
 - Refuse to create, modify, or improve code that may be used maliciously
 - Allow security analysis, detection rules, vulnerability explanations, defensive tools, and security documentation
