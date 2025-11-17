@@ -33,6 +33,7 @@ OPTIONS
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
+  --sleeptime           Enable sleeptime memory management (only for new agents)
 
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
@@ -95,6 +96,7 @@ async function main() {
         skills: { type: "string" },
         link: { type: "boolean" },
         unlink: { type: "boolean" },
+        sleeptime: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -137,6 +139,7 @@ async function main() {
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
+  const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Check if API key is configured
@@ -364,7 +367,7 @@ async function main() {
             forceNew,
             skillsDirectory,
             settings.parallelToolCalls,
-            settings.enableSleeptime,
+            sleeptimeFlag ?? settings.enableSleeptime,
           );
         }
 
@@ -410,7 +413,7 @@ async function main() {
             false,
             skillsDirectory,
             settings.parallelToolCalls,
-            settings.enableSleeptime,
+            sleeptimeFlag ?? settings.enableSleeptime,
           );
         }
 

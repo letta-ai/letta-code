@@ -12,6 +12,7 @@ import type {
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { sendMessageStream } from "../agent/message";
@@ -20,6 +21,7 @@ import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
+import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
   checkToolPermission,
@@ -173,7 +175,7 @@ export default function App({
   const [autoHandledResults, setAutoHandledResults] = useState<
     Array<{
       toolCallId: string;
-      result: any;
+      result: ToolExecutionResult;
     }>
   >([]);
   const [autoDeniedApprovals, setAutoDeniedApprovals] = useState<
@@ -1417,7 +1419,7 @@ export default function App({
       await processConversation([
         {
           type: "approval",
-          approvals: allResults as any, // Type assertion: union type with optional fields is compatible at runtime
+          approvals: allResults as ApprovalResult[],
         },
       ]);
     },
@@ -1989,12 +1991,20 @@ export default function App({
                 <ApprovalDialog
                   approvals={
                     pendingApprovals[approvalResults.length]
-                      ? [pendingApprovals[approvalResults.length]!]
+                      ? ([
+                          pendingApprovals[
+                            approvalResults.length
+                          ] as ApprovalRequest,
+                        ] as ApprovalRequest[])
                       : []
                   }
                   approvalContexts={
                     approvalContexts[approvalResults.length]
-                      ? [approvalContexts[approvalResults.length]!]
+                      ? ([
+                          approvalContexts[
+                            approvalResults.length
+                          ] as ApprovalContext,
+                        ] as ApprovalContext[])
                       : []
                   }
                   progress={{

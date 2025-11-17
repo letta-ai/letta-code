@@ -1,6 +1,5 @@
 # Letta Code local settings
 .letta/settings.local.json
-.letta
 
 # User-defined skills
 .skills
