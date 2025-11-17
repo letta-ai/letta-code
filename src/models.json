@@ -1,6 +1,6 @@
 [
   {
-    "id": "default",
+    "id": "sonnet-4.5",
     "handle": "anthropic/claude-sonnet-4-5-20250929",
     "label": "Claude Sonnet 4.5 (default)",
     "description": "The recommended default model (currently Sonnet 4.5)",
