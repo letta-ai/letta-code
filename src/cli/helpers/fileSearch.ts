@@ -6,6 +6,25 @@ interface FileMatch {
   type: "file" | "dir" | "url";
 }
 
+export function debounce<T extends (...args: any[]) => any>(
+  func: T,
+  wait: number,
+): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout | null = null;
+
+  return function (this: any, ...args: Parameters<T>) {
+    const context = this;
+
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+
+    timeout = setTimeout(() => {
+      func.apply(context, args);
+    }, wait);
+  };
+}
+
 /**
  * Recursively search a directory for files matching a pattern
  */
@@ -37,16 +56,16 @@ function searchDirectoryRecursive(
         const fullPath = join(dir, entry);
         const stats = statSync(fullPath);
 
-        // Check if entry matches the pattern
+        const relativePath = fullPath.startsWith(process.cwd())
+          ? fullPath.slice(process.cwd().length + 1)
+          : fullPath;
+
+        // Check if entry matches the pattern (match against full relative path for partial path support)
         const matches =
           pattern.length === 0 ||
-          entry.toLowerCase().includes(pattern.toLowerCase());
+          relativePath.toLowerCase().includes(pattern.toLowerCase());
 
         if (matches) {
-          const relativePath = fullPath.startsWith(process.cwd())
-            ? fullPath.slice(process.cwd().length + 1)
-            : fullPath;
-
           results.push({
             path: relativePath,
             type: stats.isDirectory() ? "dir" : "file",
@@ -87,18 +106,30 @@ export async function searchFiles(
     let searchDir = process.cwd();
     let searchPattern = query;
 
-    // Handle relative paths like "./src" or "../test"
+    // Handle explicit relative/absolute paths or directory navigation
+    // Treat as directory navigation if:
+    // 1. Starts with ./ or ../ or / (explicit relative/absolute path)
+    // 2. Contains / and the directory part exists
     if (query.includes("/")) {
       const lastSlashIndex = query.lastIndexOf("/");
       const dirPart = query.slice(0, lastSlashIndex);
-      searchPattern = query.slice(lastSlashIndex + 1);
+      const pattern = query.slice(lastSlashIndex + 1);
 
-      // Resolve the directory path
+      // Try to resolve the directory path
       try {
-        searchDir = resolve(process.cwd(), dirPart);
+        const resolvedDir = resolve(process.cwd(), dirPart);
+        // Check if the directory exists by trying to read it
+        try {
+          statSync(resolvedDir);
+          // Directory exists, use it as the search directory
+          searchDir = resolvedDir;
+          searchPattern = pattern;
+        } catch {
+          // Directory doesn't exist, treat the whole query as a search pattern
+          // This enables partial path matching like "cd/ef" matching "ab/cd/ef"
+        }
       } catch {
-        // If path doesn't exist, return empty results
-        return [];
+        // Path resolution failed, treat as pattern
       }
     }
 
