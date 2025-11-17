@@ -448,9 +448,7 @@ export async function handleHeadlessCommand(
               const prev = approvalRequests.get(id);
               const base = prev?.args ?? "";
               const incomingArgs =
-                toolCall?.arguments != null
-                  ? base + toolCall.arguments
-                  : base;
+                toolCall?.arguments != null ? base + toolCall.arguments : base;
 
               // Preserve previously seen name; set if provided in this chunk
               const nextName = toolCall?.name || prev?.toolName || "";
