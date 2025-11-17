@@ -89,7 +89,7 @@ function analyzeReadApproval(
     const displayPath = dirPath.replace(require("node:os").homedir(), "~");
 
     return {
-      recommendedRule: `Read(${dirPath}/**)`,
+      recommendedRule: `Read(/${dirPath}/**)`,
       ruleDescription: `reading from ${displayPath}/`,
       approveAlwaysText: `Yes, allow reading from ${displayPath}/ in this project`,
       defaultScope: "project",
@@ -98,9 +98,13 @@ function analyzeReadApproval(
     };
   }
 
-  // Inside working directory - shouldn't normally be asked, but offer session approval
+  // Inside working directory - use relative path
+  const relativePath = absolutePath.slice(workingDir.length + 1);
+  const relativeDir = dirname(relativePath);
+  const pattern = relativeDir === "." ? "**" : `${relativeDir}/**`;
+
   return {
-    recommendedRule: `Read(${workingDir}/**)`,
+    recommendedRule: `Read(${pattern})`,
     ruleDescription: "reading project files",
     approveAlwaysText: "Yes, allow reading project files during this session",
     defaultScope: "session",
@@ -139,12 +143,26 @@ function analyzeEditApproval(
   // Can offer project-level for specific directories
   const absolutePath = resolve(workingDir, filePath);
   const dirPath = dirname(absolutePath);
-  const relativeDirPath = dirPath.startsWith(workingDir)
-    ? dirPath.slice(workingDir.length + 1)
-    : dirPath;
+
+  // If outside working directory, use absolute path with // prefix
+  if (!dirPath.startsWith(workingDir)) {
+    const displayPath = dirPath.replace(require("node:os").homedir(), "~");
+    return {
+      recommendedRule: `Edit(/${dirPath}/**)`,
+      ruleDescription: `editing files in ${displayPath}/`,
+      approveAlwaysText: `Yes, allow editing files in ${displayPath}/ in this project`,
+      defaultScope: "project",
+      allowPersistence: true,
+      safetyLevel: "safe",
+    };
+  }
+
+  // Inside working directory, use relative path
+  const relativeDirPath = dirPath.slice(workingDir.length + 1);
+  const pattern = relativeDirPath === "" ? "**" : `${relativeDirPath}/**`;
 
   return {
-    recommendedRule: `Edit(${relativeDirPath}/**)`,
+    recommendedRule: `Edit(${pattern})`,
     ruleDescription: `editing files in ${relativeDirPath || "project"}/`,
     approveAlwaysText: `Yes, allow editing files in ${relativeDirPath || "project"}/ in this project`,
     defaultScope: "project",
@@ -307,7 +325,7 @@ function analyzeBashApproval(
   }
 
   // Handle complex piped/chained commands (cd /path && git diff | head)
-  // Extract the most significant command and generate a wildcard pattern
+  // Strip out cd commands and extract the actual command
   if (
     command.includes("&&") ||
     command.includes("|") ||
@@ -321,6 +339,11 @@ function analyzeBashApproval(
       const segmentBase = segmentParts[0] || "";
       const segmentArg = segmentParts[1] || "";
 
+      // Skip cd commands - we want the actual command
+      if (segmentBase === "cd") {
+        continue;
+      }
+
       // Check if this segment is git command
       if (segmentBase === "git") {
         const gitSubcommand = segmentArg;
@@ -331,15 +354,10 @@ function analyzeBashApproval(
           safeGitCommands.includes(gitSubcommand) ||
           writeGitCommands.includes(gitSubcommand)
         ) {
-          // Generate wildcard pattern that includes the leading commands
-          // e.g., "cd /path && git diff:*"
-          const beforeGit = command.substring(0, command.indexOf("git"));
-          const pattern = `${beforeGit}git ${gitSubcommand}:*`;
-
           return {
-            recommendedRule: `Bash(${pattern})`,
-            ruleDescription: `'${beforeGit}git ${gitSubcommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for '${beforeGit}git ${gitSubcommand}' commands in this project`,
+            recommendedRule: `Bash(git ${gitSubcommand}:*)`,
+            ruleDescription: `'git ${gitSubcommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for 'git ${gitSubcommand}' commands in this project`,
             defaultScope: "project",
             allowPersistence: true,
             safetyLevel: safeGitCommands.includes(gitSubcommand)
@@ -438,7 +456,7 @@ function analyzeSearchApproval(
     const displayPath = absolutePath.replace(require("node:os").homedir(), "~");
 
     return {
-      recommendedRule: `${toolName}(${absolutePath}/**)`,
+      recommendedRule: `${toolName}(/${absolutePath}/**)`,
       ruleDescription: `searching in ${displayPath}/`,
       approveAlwaysText: `Yes, allow searching in ${displayPath}/ in this project`,
       defaultScope: "project",
@@ -448,7 +466,7 @@ function analyzeSearchApproval(
   }
 
   return {
-    recommendedRule: `${toolName}(${workingDir}/**)`,
+    recommendedRule: `${toolName}(**)`,
     ruleDescription: "searching project files",
     approveAlwaysText: "Yes, allow searching project files during this session",
     defaultScope: "session",
