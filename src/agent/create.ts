@@ -242,7 +242,6 @@ export async function createAgent(
     await client.agents.blocks.modify("persona", {
       agent_id: agent.id,
       value: SLEEPTIME_MEMORY_PERSONA,
-      label: "memory_persona",
       description: "Instructions for the sleep-time memory management agent",
     });
   }
