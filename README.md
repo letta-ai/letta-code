@@ -194,6 +194,32 @@ letta --agent <id> --unlink   # Remove Letta Code tools
 
 When you attach tools with `/link` or `--link`, they are added to the agent with approval rules enabled (human-in-the-loop). This means the agent can use these tools, but you'll be prompted to approve each tool call. Use permission modes to control approval behavior (see Permissions section below).
 
+#### Available Tools
+
+Letta Code provides the following tools for filesystem and shell operations:
+
+**File Operations:**
+- **Read** - Read files from the filesystem, supports offset/limit for large files
+- **Write** - Write or overwrite files, creates directories automatically
+- **Edit** - Perform exact string replacements in files (single edit)
+- **MultiEdit** - Perform multiple find-and-replace operations in a single file efficiently
+- **LS** - List files and directories, supports ignore patterns
+
+**Search & Discovery:**
+- **Glob** - Fast file pattern matching with glob patterns (`**/*.js`, `src/**/*.ts`)
+- **Grep** - Powerful search using ripgrep, supports regex and various output modes
+
+**Shell Operations:**
+- **Bash** - Execute shell commands in a persistent session with timeout support
+- **BashOutput** - Retrieve output from background bash shells
+- **KillBash** - Terminate running background bash shells
+
+**Task Management:**
+- **TodoWrite** - Create and manage structured task lists for tracking progress
+- **ExitPlanMode** - Signal completion of planning phase and readiness to implement
+
+All tools support approval rules and permission modes for safe execution. See the Permissions section for details on controlling tool access.
+
 ### Headless Mode
 ```bash
 letta -p "Run bun lint and correct errors"              # Auto-resumes project agent
