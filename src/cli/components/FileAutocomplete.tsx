@@ -176,7 +176,7 @@ export function FileAutocomplete({
     // Keep existing matches visible while debouncing
     setIsLoading(true);
     onActiveChange?.(true);
-    
+
     debounceTimeout.current = setTimeout(() => {
       // Search for matching files (deep search through subdirectories)
       searchFiles(query, true) // Enable deep search
