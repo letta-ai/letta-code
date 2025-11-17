@@ -20,6 +20,7 @@ import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
+import { updateProjectSettings } from "../settings";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -27,6 +28,7 @@ import {
   executeTool,
   savePermissionRule,
 } from "../tools/manager";
+import { AgentSelector } from "./components/AgentSelector";
 // import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
@@ -101,8 +103,8 @@ type StaticItem =
   | Line;
 
 export default function App({
-  agentId,
-  agentState,
+  agentId: initialAgentId,
+  agentState: initialAgentState,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -126,6 +128,23 @@ export default function App({
   messageHistory?: LettaMessageUnion[];
   tokenStreaming?: boolean;
 }) {
+  // Track current agent (can change when swapping)
+  const [agentId, setAgentId] = useState(initialAgentId);
+  const [agentState, setAgentState] = useState(initialAgentState);
+
+  // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
+  useEffect(() => {
+    if (initialAgentId !== agentId) {
+      setAgentId(initialAgentId);
+    }
+  }, [initialAgentId, agentId]);
+
+  useEffect(() => {
+    if (initialAgentState !== agentState) {
+      setAgentState(initialAgentState);
+    }
+  }, [initialAgentState, agentState]);
+
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
 
@@ -177,6 +196,9 @@ export default function App({
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+
+  // Agent selector state
+  const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1081,6 +1103,108 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /swap command - switch to a different agent
+        if (msg.trim().startsWith("/swap")) {
+          const parts = msg.trim().split(/\s+/);
+          const targetAgentId = parts.slice(1).join(" ");
+
+          // If no agent ID provided, open agent selector
+          if (!targetAgentId) {
+            setAgentSelectorOpen(true);
+            return { submitted: true };
+          }
+
+          // Validate and swap to specified agent ID
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: `Switching to agent ${targetAgentId}...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            // Fetch new agent
+            const agent = await client.agents.retrieve(targetAgentId);
+
+            // Fetch agent's message history
+            const messagesPage =
+              await client.agents.messages.list(targetAgentId);
+            const messages = messagesPage.items;
+
+            // Update project settings with new agent
+            await updateProjectSettings({ lastAgent: targetAgentId });
+
+            // Clear current transcript
+            buffersRef.current.byId.clear();
+            buffersRef.current.order = [];
+            buffersRef.current.tokenCount = 0;
+            emittedIdsRef.current.clear();
+            setStaticItems([]);
+
+            // Update agent state
+            setAgentId(targetAgentId);
+            setAgentState(agent);
+            setAgentName(agent.name);
+            setLlmConfig(agent.llm_config);
+
+            // Add welcome screen for new agent
+            welcomeCommittedRef.current = false;
+            setStaticItems([
+              {
+                kind: "welcome",
+                id: `welcome-${Date.now().toString(36)}`,
+                snapshot: {
+                  continueSession: true,
+                  agentState: agent,
+                  terminalWidth: columns,
+                },
+              },
+            ]);
+
+            // Backfill message history
+            if (messages.length > 0) {
+              hasBackfilledRef.current = false;
+              backfillBuffers(buffersRef.current, messages);
+              refreshDerived();
+              commitEligibleLines(buffersRef.current);
+              hasBackfilledRef.current = true;
+            }
+
+            // Add success command to transcript
+            const successCmdId = uid("cmd");
+            buffersRef.current.byId.set(successCmdId, {
+              kind: "command",
+              id: successCmdId,
+              input: msg,
+              output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(successCmdId);
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
@@ -1220,6 +1344,8 @@ export default function App({
       refreshDerived,
       agentId,
       handleExit,
+      columns,
+      commitEligibleLines,
     ],
   );
 
@@ -1493,6 +1619,100 @@ export default function App({
     [agentId, refreshDerived],
   );
 
+  const handleAgentSelect = useCallback(
+    async (targetAgentId: string) => {
+      setAgentSelectorOpen(false);
+
+      const cmdId = uid("cmd");
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: `/swap ${targetAgentId}`,
+        output: `Switching to agent ${targetAgentId}...`,
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
+
+      setCommandRunning(true);
+
+      try {
+        const client = await getClient();
+        // Fetch new agent
+        const agent = await client.agents.retrieve(targetAgentId);
+
+        // Fetch agent's message history
+        const messagesPage = await client.agents.messages.list(targetAgentId);
+        const messages = messagesPage.items;
+
+        // Update project settings with new agent
+        await updateProjectSettings({ lastAgent: targetAgentId });
+
+        // Clear current transcript
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        emittedIdsRef.current.clear();
+        setStaticItems([]);
+
+        // Update agent state
+        setAgentId(targetAgentId);
+        setAgentState(agent);
+        setAgentName(agent.name);
+        setLlmConfig(agent.llm_config);
+
+        // Add welcome screen for new agent
+        welcomeCommittedRef.current = false;
+        setStaticItems([
+          {
+            kind: "welcome",
+            id: `welcome-${Date.now().toString(36)}`,
+            snapshot: {
+              continueSession: true,
+              agentState: agent,
+              terminalWidth: columns,
+            },
+          },
+        ]);
+
+        // Backfill message history
+        if (messages.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, messages);
+          refreshDerived();
+          commitEligibleLines(buffersRef.current);
+          hasBackfilledRef.current = true;
+        }
+
+        // Add success command to transcript
+        const successCmdId = uid("cmd");
+        buffersRef.current.byId.set(successCmdId, {
+          kind: "command",
+          id: successCmdId,
+          input: `/swap ${targetAgentId}`,
+          output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(successCmdId);
+        refreshDerived();
+      } catch (error) {
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/swap ${targetAgentId}`,
+          output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [refreshDerived, commitEligibleLines, columns],
+  );
+
   // Track permission mode changes for UI updates
   const [uiPermissionMode, setUiPermissionMode] = useState(
     permissionMode.getMode(),
@@ -1716,6 +1936,7 @@ export default function App({
                 !showExitStats &&
                 pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
+                !agentSelectorOpen &&
                 !planApprovalPending
               }
               streaming={streaming}
@@ -1738,6 +1959,15 @@ export default function App({
                 currentModel={llmConfig?.model}
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
+              />
+            )}
+
+            {/* Agent Selector - conditionally mounted as overlay */}
+            {agentSelectorOpen && (
+              <AgentSelector
+                currentAgentId={agentId}
+                onSelect={handleAgentSelect}
+                onCancel={() => setAgentSelectorOpen(false)}
               />
             )}
 
