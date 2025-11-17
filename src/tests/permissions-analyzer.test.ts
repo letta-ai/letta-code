@@ -216,7 +216,7 @@ test("Read outside working directory suggests directory pattern", () => {
     "/Users/test/project",
   );
 
-  expect(context.recommendedRule).toBe("Read(/Users/test/docs/**)");
+  expect(context.recommendedRule).toBe("Read(//Users/test/docs/**)");
   expect(context.approveAlwaysText).toContain("/Users/test/docs/");
   expect(context.defaultScope).toBe("project");
   expect(context.safetyLevel).toBe("safe");
@@ -283,7 +283,7 @@ test("Glob outside working directory suggests directory pattern", () => {
     "/Users/test/project",
   );
 
-  expect(context.recommendedRule).toContain("Glob(/Users/test/docs/**)");
+  expect(context.recommendedRule).toContain("Glob(//Users/test/docs/**)");
   expect(context.approveAlwaysText).toContain("/Users/test/docs/");
 });
 
@@ -296,7 +296,7 @@ test("Grep outside working directory suggests directory pattern", () => {
     "/Users/test/project",
   );
 
-  expect(context.recommendedRule).toContain("Grep(/Users/test/docs/**)");
+  expect(context.recommendedRule).toContain("Grep(//Users/test/docs/**)");
   expect(context.approveAlwaysText).toContain("/Users/test/docs/");
 });
 
@@ -373,9 +373,7 @@ test("Long complex bash commands should generate smart wildcard patterns", () =>
   );
 
   // Should extract "git diff" pattern, not save full command
-  expect(context.recommendedRule).toBe(
-    "Bash(cd /Users/test/project && git diff:*)",
-  );
+  expect(context.recommendedRule).toBe("Bash(git diff:*)");
   // Button text should reflect the wildcard pattern
   expect(context.approveAlwaysText).not.toContain("...");
 });
