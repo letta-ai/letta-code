@@ -109,7 +109,7 @@ test("Read outside working directory suggests directory pattern", () => {
     "/Users/test/project",
   );
 
-  expect(context.recommendedRule).toBe("Read(/Users/test/docs/**)");
+  expect(context.recommendedRule).toBe("Read(//Users/test/docs/**)");
   expect(context.approveAlwaysText).toContain("/Users/test/docs/");
   expect(context.defaultScope).toBe("project");
 });
