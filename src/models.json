@@ -43,6 +43,61 @@
     }
   },
   {
+    "id": "gpt-5.1-none",
+    "handle": "openai/gpt-5.1",
+    "label": "GPT-5.1 (none)",
+    "description": "OpenAI's latest model (no reasoning, fastest GPT-5.1 option)",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000
+    }
+  },
+  {
+    "id": "gpt-5.1-low",
+    "handle": "openai/gpt-5.1",
+    "label": "GPT-5.1 (low)",
+    "description": "OpenAI's latest model (some reasoning enabled)",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000
+    }
+  },
+  {
+    "id": "gpt-5.1-medium",
+    "handle": "openai/gpt-5.1",
+    "label": "GPT-5.1 (medium)",
+    "description": "OpenAI's latest model (using their recommended reasoning level)",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000
+    }
+  },
+  {
+    "id": "gpt-5.1-high",
+    "handle": "openai/gpt-5.1",
+    "label": "GPT-5.1 (high)",
+    "description": "OpenAI's latest model (maximum reasoning depth)",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex",
+    "handle": "openai/gpt-5.1-codex",
+    "label": "GPT-5.1-Codex",
+    "description": "A variant of GPT-5.1 optimized for agentic coding",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000
+    }
+  },
+  {
     "id": "gpt-5-minimal",
     "handle": "openai/gpt-5",
     "label": "GPT-5 (minimal)",
