@@ -49,6 +49,7 @@ export async function handleHeadlessCommand(
       skills: { type: "string" },
       link: { type: "boolean" },
       unlink: { type: "boolean" },
+      sleeptime: { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -81,6 +82,7 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
@@ -102,7 +104,7 @@ export async function handleHeadlessCommand(
       forceNew,
       skillsDirectory,
       settings.parallelToolCalls,
-      settings.enableSleeptime,
+      sleeptimeFlag ?? settings.enableSleeptime,
     );
   }
 
@@ -143,7 +145,7 @@ export async function handleHeadlessCommand(
       false,
       skillsDirectory,
       settings.parallelToolCalls,
-      settings.enableSleeptime,
+      sleeptimeFlag ?? settings.enableSleeptime,
     );
   }
 
