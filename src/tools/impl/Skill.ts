@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   getCurrentAgentId,
@@ -5,7 +6,6 @@ import {
   getSkillsDirectory,
 } from "../../agent/context";
 import { SKILLS_DIR } from "../../agent/skills";
-import { read } from "./Read";
 import { validateRequiredParams } from "./validation.js";
 
 interface SkillArgs {
@@ -88,11 +88,11 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     // Construct path to SKILL.md
     const skillPath = join(skillsDir, skillId, "SKILL.md");
 
-    // Read the skill file using the Read tool
-    const skillContent = await read({ file_path: skillPath });
+    // Read the skill file directly
+    const skillContent = await readFile(skillPath, "utf-8");
 
     // Parse current loaded_skills block value
-    const currentValue = loadedSkillsBlock.value || "";
+    let currentValue = loadedSkillsBlock.value || "";
     const loadedSkills = parseLoadedSkills(currentValue);
 
     // Check if skill is already loaded
@@ -102,9 +102,14 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       };
     }
 
+    // Replace placeholder if this is the first skill
+    if (currentValue.includes("[EMPTY: NO SKILLS CURRENTLY LOADED]")) {
+      currentValue = "";
+    }
+
     // Append new skill to loaded_skills block
     const separator = currentValue ? "\n\n---\n\n" : "";
-    const newValue = `${currentValue}${separator}# Skill: ${skillId}\n${skillContent.content}`;
+    const newValue = `${currentValue}${separator}# Skill: ${skillId}\n${skillContent}`;
 
     // Update the block using client.blocks.modify()
     await client.blocks.modify(loadedSkillsBlock.id, {
