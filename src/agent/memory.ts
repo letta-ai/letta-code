@@ -65,6 +65,11 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
         block.description = frontmatter.description;
       }
 
+      // Set character limit for skills block
+      if (filename === "skills.mdx") {
+        block.limit = 50000;
+      }
+
       memoryBlocks.push(block);
     } catch (error) {
       console.error(`Error loading ${filename}:`, error);
