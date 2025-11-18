@@ -1,5 +1,5 @@
 import humanPrompt from "./prompts/human.mdx";
-
+import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
@@ -16,6 +16,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,
+  "loaded_skills.mdx": loadedSkillsPrompt,
   "style.mdx": stylePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
 };

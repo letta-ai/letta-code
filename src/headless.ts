@@ -8,6 +8,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
+import { setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
@@ -153,6 +154,9 @@ export async function handleHeadlessCommand(
   await settingsManager.loadLocalProjectSettings();
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
+
+  // Set agent context for tools that need it (e.g., Skill tool)
+  setAgentContext(agent.id, client, skillsDirectory);
 
   // Validate output format
   const outputFormat =
