@@ -107,6 +107,7 @@
       "verbosity": "medium",
       "context_window": 272000
     }
+  },
   {
     "id": "gpt-5.1-codex-high",
     "handle": "openai/gpt-5.1-codex",
