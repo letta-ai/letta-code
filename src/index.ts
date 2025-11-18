@@ -15,7 +15,8 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 USAGE
   # interactive TUI
   letta                 Auto-resume project agent (from .letta/settings.local.json)
-  letta --new           Force create a new agent
+  letta --new           Create a new agent (reuses global persona/human blocks)
+  letta --fresh-blocks  Create a new agent with all new memory blocks
   letta --continue      Resume global last agent (deprecated, use project-based)
   letta --agent <id>    Open a specific agent by ID
 
@@ -25,7 +26,8 @@ USAGE
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
-  --new                 Force create new agent (skip auto-resume)
+  --new                 Create new agent (reuses global blocks like persona/human)
+  --fresh-blocks        Force create all new memory blocks (isolate from other agents)
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus" or "anthropic/claude-opus-4-1-20250805")
@@ -37,15 +39,23 @@ OPTIONS
 
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
-  (stored in .letta/settings.local.json). Use --new to force a new agent.
+  (stored in .letta/settings.local.json). 
+  
+  Memory blocks (persona, human, project, skills) are shared between agents:
+  - Global blocks (persona, human) are shared across all agents
+  - Local blocks (project, skills) are shared within the current directory
+  
+  Use --new to create a new agent that reuses your global persona/human blocks.
+  Use --fresh-blocks to create a completely isolated agent with new blocks.
   
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
 
 EXAMPLES
   # when installed as an executable
-  letta                 # Auto-resume project agent or create new
-  letta --new           # Force new agent
+  letta                    # Auto-resume project agent or create new
+  letta --new              # New agent, keeps your persona/human blocks
+  letta --fresh-blocks     # New agent, all blocks fresh (full isolation)
   letta --agent agent_123
   
   # inside the interactive session
@@ -83,6 +93,7 @@ async function main() {
         version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
+        "fresh-blocks": { type: "boolean" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
         prompt: { type: "boolean", short: "p" },
@@ -136,6 +147,7 @@ async function main() {
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
+  const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
@@ -277,12 +289,14 @@ async function main() {
   function LoadingApp({
     continueSession,
     forceNew,
+    freshBlocks,
     agentIdArg,
     model,
     skillsDirectory,
   }: {
     continueSession: boolean;
     forceNew: boolean;
+    freshBlocks: boolean;
     agentIdArg: string | null;
     model?: string;
     skillsDirectory?: string;
@@ -357,14 +371,14 @@ async function main() {
 
         // Priority 2: Check if --new flag was passed (skip all resume logic)
         if (!agent && forceNew) {
-          // Create new agent with new memory blocks
+          // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
           agent = await createAgent(
             undefined,
             model,
             undefined,
             updateArgs,
-            forceNew,
+            freshBlocks, // Only create new blocks if --fresh-blocks passed
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
@@ -410,7 +424,7 @@ async function main() {
             model,
             undefined,
             updateArgs,
-            false,
+            false, // Don't force new blocks when auto-creating (reuse shared blocks)
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
@@ -451,7 +465,7 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, agentIdArg, model]);
+    }, [continueSession, forceNew, freshBlocks, agentIdArg, model]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -481,6 +495,7 @@ async function main() {
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,
       forceNew: forceNew,
+      freshBlocks: freshBlocks,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
       skillsDirectory: skillsDirectory,
