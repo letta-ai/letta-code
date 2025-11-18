@@ -16,12 +16,19 @@ type Args = {
 };
 
 function parseArgs(argv: string[]): Args {
-  const args: any = { output: "text", parallel: "on" };
+  const args: {
+    model?: string;
+    output: Args["output"];
+    parallel: Args["parallel"];
+  } = {
+    output: "text",
+    parallel: "on",
+  };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === "--model") args.model = argv[++i];
-    else if (v === "--output") args.output = argv[++i];
-    else if (v === "--parallel") args.parallel = argv[++i];
+    else if (v === "--output") args.output = argv[++i] as Args["output"];
+    else if (v === "--parallel") args.parallel = argv[++i] as Args["parallel"];
   }
   if (!args.model) throw new Error("Missing --model");
   if (!["text", "json", "stream-json"].includes(args.output))

@@ -19,6 +19,7 @@ import {
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT } from "./promptAssets";
+import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 export async function createAgent(
@@ -223,7 +224,9 @@ export async function createAgent(
   // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
   // Skip if updateArgs only contains context_window (already set in create)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
-    const { context_window, ...otherArgs } = updateArgs;
+    // Remove context_window if present; already set during create
+    const otherArgs = { ...updateArgs } as Record<string, unknown>;
+    delete (otherArgs as Record<string, unknown>).context_window;
     if (Object.keys(otherArgs).length > 0) {
       await updateAgentLLMConfig(
         agent.id,
@@ -232,6 +235,15 @@ export async function createAgent(
         true, // preserve parallel_tool_calls
       );
     }
+  }
+
+  // Update persona block for sleeptime agents (only if persona was newly created, not shared)
+  if (enableSleeptime && newGlobalBlockIds.persona) {
+    await client.agents.blocks.modify("memory_persona", {
+      agent_id: agent.id,
+      value: SLEEPTIME_MEMORY_PERSONA,
+      description: "Instructions for the sleep-time memory management agent",
+    });
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks

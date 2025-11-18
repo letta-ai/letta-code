@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
@@ -15,7 +16,7 @@ import { createBuffers, toLines } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission, executeTool } from "./tools/manager";
+import { checkToolPermission } from "./tools/manager";
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -48,6 +49,7 @@ export async function handleHeadlessCommand(
       skills: { type: "string" },
       link: { type: "boolean" },
       unlink: { type: "boolean" },
+      sleeptime: { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -80,6 +82,7 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
@@ -101,7 +104,7 @@ export async function handleHeadlessCommand(
       forceNew,
       skillsDirectory,
       settings.parallelToolCalls,
-      settings.enableSleeptime,
+      sleeptimeFlag ?? settings.enableSleeptime,
     );
   }
 
@@ -142,7 +145,7 @@ export async function handleHeadlessCommand(
       false,
       skillsDirectory,
       settings.parallelToolCalls,
-      settings.enableSleeptime,
+      sleeptimeFlag ?? settings.enableSleeptime,
     );
   }
 
@@ -213,7 +216,7 @@ export async function handleHeadlessCommand(
       const decisions: Decision[] = [];
 
       for (const currentApproval of pendingApprovals) {
-        const { toolCallId, toolName, toolArgs } = currentApproval;
+        const { toolName, toolArgs } = currentApproval;
         const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
           toolArgs || "{}",
           {},
@@ -239,8 +242,7 @@ export async function handleHeadlessCommand(
         const required =
           (schema?.input_schema?.required as string[] | undefined) || [];
         const missing = required.filter(
-          (key) =>
-            !(key in parsedArgs) || String(parsedArgs[key] ?? "").length === 0,
+          (key) => !(key in parsedArgs) || parsedArgs[key] == null,
         );
         if (missing.length > 0) {
           decisions.push({
@@ -283,7 +285,7 @@ export async function handleHeadlessCommand(
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
         type: "approval",
-        approvals: executedResults as any,
+        approvals: executedResults as ApprovalResult[],
       };
 
       // Send the approval to clear the pending state; drain the stream without output
@@ -428,8 +430,19 @@ export async function handleHeadlessCommand(
                 : [];
 
             for (const toolCall of toolCalls) {
-              const id = toolCall?.tool_call_id;
-              if (!id) continue; // remain strict: do not invent ids
+              // Many backends stream tool_call chunks where only the first frame
+              // carries the tool_call_id; subsequent argument deltas omit it.
+              // Fall back to the last seen id within this turn so we can
+              // properly accumulate args.
+              let id: string | null = toolCall?.tool_call_id ?? _lastApprovalId;
+              if (!id) {
+                // As an additional guard, if exactly one approval is being
+                // tracked already, use that id for continued argument deltas.
+                if (approvalRequests.size === 1) {
+                  id = Array.from(approvalRequests.keys())[0] ?? null;
+                }
+              }
+              if (!id) continue; // cannot safely attribute this chunk
 
               _lastApprovalId = id;
 
@@ -437,9 +450,7 @@ export async function handleHeadlessCommand(
               const prev = approvalRequests.get(id);
               const base = prev?.args ?? "";
               const incomingArgs =
-                toolCall?.arguments && toolCall.arguments.trim().length > 0
-                  ? base + toolCall.arguments
-                  : base;
+                toolCall?.arguments != null ? base + toolCall.arguments : base;
 
               // Preserve previously seen name; set if provided in this chunk
               const nextName = toolCall?.name || prev?.toolName || "";
@@ -484,8 +495,7 @@ export async function handleHeadlessCommand(
                   const missing = required.filter(
                     (key) =>
                       !(key in parsedArgs) ||
-                      String((parsedArgs as Record<string, unknown>)[key] ?? "")
-                        .length === 0,
+                      (parsedArgs as Record<string, unknown>)[key] == null,
                   );
                   if (missing.length === 0) {
                     shouldOutputChunk = false;
@@ -586,7 +596,7 @@ export async function handleHeadlessCommand(
         const decisions: Decision[] = [];
 
         for (const currentApproval of approvals) {
-          const { toolCallId, toolName, toolArgs } = currentApproval;
+          const { toolName, toolArgs } = currentApproval;
 
           // Check permission using existing permission system
           const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
@@ -622,9 +632,7 @@ export async function handleHeadlessCommand(
           const required =
             (schema?.input_schema?.required as string[] | undefined) || [];
           const missing = required.filter(
-            (key) =>
-              !(key in parsedArgs) ||
-              String(parsedArgs[key] ?? "").length === 0,
+            (key) => !(key in parsedArgs) || parsedArgs[key] == null,
           );
           if (missing.length > 0) {
             // Auto-deny with a clear reason so the model can retry with arguments
@@ -653,7 +661,7 @@ export async function handleHeadlessCommand(
         currentInput = [
           {
             type: "approval",
-            approvals: executedResults as any,
+            approvals: executedResults as ApprovalResult[],
           },
         ];
         continue;
