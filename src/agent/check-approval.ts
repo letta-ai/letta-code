@@ -121,20 +121,18 @@ export async function getResumeData(
           : [];
 
       // Extract ALL tool calls for parallel approval support
-      type ValidToolCall = {
-        tool_call_id: string;
-        name: string;
-        arguments: string;
-      };
-      const validToolCalls = toolCalls.filter(
-        (tc): tc is ValidToolCall =>
-          !!tc && !!tc.tool_call_id && !!tc.name && !!tc.arguments,
-      );
-      pendingApprovals = validToolCalls.map((tc) => ({
-        toolCallId: tc.tool_call_id,
-        toolName: tc.name,
-        toolArgs: tc.arguments,
-      }));
+      // Include ALL tool_call_ids, even those with incomplete name/arguments
+      // Incomplete entries will be denied at the business logic layer
+      pendingApprovals = toolCalls
+        .filter(
+          (tc): tc is typeof tc & { tool_call_id: string } =>
+            !!tc && !!tc.tool_call_id,
+        )
+        .map((tc) => ({
+          toolCallId: tc.tool_call_id,
+          toolName: tc.name || "",
+          toolArgs: tc.arguments || "",
+        }));
 
       // Set legacy singular field for backward compatibility (first approval only)
       if (pendingApprovals.length > 0) {
