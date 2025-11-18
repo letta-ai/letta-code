@@ -51,17 +51,15 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const client = getCurrentClient();
     const agentId = getCurrentAgentId();
 
-    // Retrieve the agent to access memory blocks
-    const agent = await client.agents.retrieve(agentId);
-
-    // Find the loaded_skills block
-    const loadedSkillsBlock = agent.memory_blocks?.find(
-      (b) => b.label === "loaded_skills",
-    );
-
-    if (!loadedSkillsBlock?.id) {
+    // Retrieve the loaded_skills block directly
+    let loadedSkillsBlock;
+    try {
+      loadedSkillsBlock = await client.agents.blocks.retrieve("loaded_skills", {
+        agent_id: agentId,
+      });
+    } catch (error) {
       throw new Error(
-        'Error: loaded_skills block not found. This block is required for the Skill tool to work.',
+        `Error: loaded_skills block not found. This block is required for the Skill tool to work.\nAgent ID: ${agentId}\nError: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
@@ -70,9 +68,15 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
     if (!skillsDir) {
       // Try to extract from skills block
-      const skillsBlock = agent.memory_blocks?.find((b) => b.label === "skills");
-      if (skillsBlock?.value) {
-        skillsDir = extractSkillsDir(skillsBlock.value);
+      try {
+        const skillsBlock = await client.agents.blocks.retrieve("skills", {
+          agent_id: agentId,
+        });
+        if (skillsBlock?.value) {
+          skillsDir = extractSkillsDir(skillsBlock.value);
+        }
+      } catch {
+        // Skills block doesn't exist, will fall back to default
       }
     }
 

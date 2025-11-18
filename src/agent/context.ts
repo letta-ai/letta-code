@@ -11,12 +11,27 @@ interface AgentContext {
   skillsDirectory: string | null;
 }
 
-// Global agent context
-const context: AgentContext = {
-  agentId: null,
-  client: null,
-  skillsDirectory: null,
+// Use globalThis to ensure singleton across bundle
+// This prevents Bun's bundler from creating duplicate instances of the context
+const CONTEXT_KEY = Symbol.for("@letta/agentContext");
+
+type GlobalWithContext = typeof globalThis & {
+  [key: symbol]: AgentContext;
 };
+
+function getContext(): AgentContext {
+  const global = globalThis as GlobalWithContext;
+  if (!global[CONTEXT_KEY]) {
+    global[CONTEXT_KEY] = {
+      agentId: null,
+      client: null,
+      skillsDirectory: null,
+    };
+  }
+  return global[CONTEXT_KEY];
+}
+
+const context = getContext();
 
 /**
  * Set the current agent context
