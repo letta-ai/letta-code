@@ -237,15 +237,36 @@ export async function createAgent(
     }
   }
 
-  // Update persona block for sleeptime agents (only if persona was newly created, not shared)
-  if (enableSleeptime && newGlobalBlockIds.persona) {
-    await client.agents.blocks.modify("memory_persona", {
-      agent_id: agent.id,
-      value: SLEEPTIME_MEMORY_PERSONA,
-      description: "Instructions for the sleep-time memory management agent",
-    });
+  // Always retrieve the agent to ensure we get the full state with populated memory blocks
+  const fullAgent = await client.agents.retrieve(agent.id, {
+    include: ["agent.managed_group"],
+  });
+
+  // Update persona block for sleeptime agent (only if persona was newly created, not shared)
+  if (enableSleeptime && newGlobalBlockIds.persona && fullAgent.managed_group) {
+    // Find the sleeptime agent in the managed group by checking agent_type
+    for (const groupAgentId of fullAgent.managed_group.agent_ids) {
+      try {
+        const groupAgent = await client.agents.retrieve(groupAgentId);
+        if (groupAgent.agent_type === "sleeptime_agent") {
+          // Update the persona block on the SLEEPTIME agent, not the primary agent
+          await client.agents.blocks.modify("persona", {
+            agent_id: groupAgentId,
+            value: SLEEPTIME_MEMORY_PERSONA,
+            label: "memory_persona",
+            description:
+              "Instructions for the sleep-time memory management agent",
+          });
+          break; // Found and updated sleeptime agent
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to check/update agent ${groupAgentId}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
   }
 
-  // Always retrieve the agent to ensure we get the full state with populated memory blocks
-  return await client.agents.retrieve(agent.id);
+  return fullAgent;
 }
