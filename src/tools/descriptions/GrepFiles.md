@@ -8,3 +8,4 @@ Finds files whose contents match a regular expression pattern, similar to Codex'
 - **limit**: Accepted for compatibility but currently ignored; output may be truncated for very large result sets.
 
 
+

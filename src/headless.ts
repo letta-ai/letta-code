@@ -50,6 +50,8 @@ export async function handleHeadlessCommand(
       link: { type: "boolean" },
       unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
+      "empty-system-prompt": { type: "boolean" },
+      "empty-persona": { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,

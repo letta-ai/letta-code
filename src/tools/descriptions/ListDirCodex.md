@@ -6,3 +6,4 @@ Lists entries in a local directory, compatible with the Codex `list_dir` tool.
 - **offset / limit / depth**: Accepted for compatibility but currently ignored; the underlying implementation returns a tree-style listing of the directory.
 
 
+

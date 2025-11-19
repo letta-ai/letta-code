@@ -8,3 +8,4 @@ Reads a local file with 1-indexed line numbers, compatible with the Codex `read_
 - **mode / indentation**: Accepted for compatibility with Codex but currently treated as slice-only; indentation mode is not yet implemented.
 
 
+

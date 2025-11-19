@@ -203,9 +203,12 @@ export async function createAgent(
   const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
 
   // Create agent with all block IDs (existing + newly created)
+  const systemPrompt =
+    settings.useEmptySystemPrompt === true ? "" : SYSTEM_PROMPT;
+
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     name,
     embedding: embeddingModel,
     model: modelHandle,

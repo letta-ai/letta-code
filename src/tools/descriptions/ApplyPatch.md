@@ -10,3 +10,4 @@ Applies a patch to the local filesystem using the Codex/Letta ApplyPatch format.
 - The tool validates that each hunk's old content appears in the target file and fails if it cannot be applied cleanly.
 
 
+

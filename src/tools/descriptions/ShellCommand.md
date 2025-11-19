@@ -8,3 +8,4 @@ Runs a shell script string in the user's default shell and returns its output.
 - **with_escalated_permissions / justification**: Accepted for compatibility with Codex; currently treated as hints only and do not bypass local sandboxing.
 
 
+
