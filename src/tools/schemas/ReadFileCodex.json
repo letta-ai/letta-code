@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "Absolute path to the file."
+    },
+    "offset": {
+      "type": "number",
+      "description": "The line number to start reading from. Must be 1 or greater."
+    },
+    "limit": {
+      "type": "number",
+      "description": "The maximum number of lines to return."
+    },
+    "mode": {
+      "type": "string",
+      "description": "Optional mode selector: \"slice\" for simple ranges (default) or \"indentation\" to expand around an anchor line."
+    },
+    "indentation": {
+      "type": "object",
+      "properties": {
+        "anchor_line": {
+          "type": "number",
+          "description": "Anchor line to center the indentation lookup on (defaults to offset)."
+        },
+        "max_levels": {
+          "type": "number",
+          "description": "How many parent indentation levels (smaller indents) to include."
+        },
+        "include_siblings": {
+          "type": "boolean",
+          "description": "When true, include additional blocks that share the anchor indentation."
+        },
+        "include_header": {
+          "type": "boolean",
+          "description": "Include doc comments or attributes directly above the selected block."
+        },
+        "max_lines": {
+          "type": "number",
+          "description": "Hard cap on the number of lines returned when using indentation mode."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": ["file_path"],
+  "additionalProperties": false
+}
+
+

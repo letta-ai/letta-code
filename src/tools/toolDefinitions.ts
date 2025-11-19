@@ -5,10 +5,17 @@ import ExitPlanModeDescription from "./descriptions/ExitPlanMode.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
 import KillBashDescription from "./descriptions/KillBash.md";
+import ListDirCodexDescription from "./descriptions/ListDirCodex.md";
 import LSDescription from "./descriptions/LS.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
+import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
+import ShellDescription from "./descriptions/Shell.md";
+import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
+import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
+import GrepFilesDescription from "./descriptions/GrepFiles.md";
+import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import WriteDescription from "./descriptions/Write.md";
 import { bash } from "./impl/Bash";
 import { bash_output } from "./impl/BashOutput";
@@ -16,23 +23,37 @@ import { edit } from "./impl/Edit";
 import { exit_plan_mode } from "./impl/ExitPlanMode";
 import { glob } from "./impl/Glob";
 import { grep } from "./impl/Grep";
+import { grep_files } from "./impl/GrepFiles";
 import { kill_bash } from "./impl/KillBash";
+import { list_dir } from "./impl/ListDirCodex";
 import { ls } from "./impl/LS";
 import { multi_edit } from "./impl/MultiEdit";
 import { read } from "./impl/Read";
+import { read_file } from "./impl/ReadFileCodex";
+import { shell } from "./impl/Shell";
+import { shell_command } from "./impl/ShellCommand";
 import { todo_write } from "./impl/TodoWrite";
+import { update_plan } from "./impl/UpdatePlan";
 import { write } from "./impl/Write";
+import { apply_patch } from "./impl/ApplyPatch";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
 import ExitPlanModeSchema from "./schemas/ExitPlanMode.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
+import GrepFilesSchema from "./schemas/GrepFiles.json";
 import KillBashSchema from "./schemas/KillBash.json";
+import ListDirCodexSchema from "./schemas/ListDirCodex.json";
 import LSSchema from "./schemas/LS.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
+import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
+import ShellCommandSchema from "./schemas/ShellCommand.json";
+import ShellSchema from "./schemas/Shell.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
+import UpdatePlanSchema from "./schemas/UpdatePlan.json";
+import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import WriteSchema from "./schemas/Write.json";
 
 type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
@@ -103,6 +124,41 @@ const toolDefinitions = {
     schema: WriteSchema,
     description: WriteDescription.trim(),
     impl: write as unknown as ToolImplementation,
+  },
+  shell_command: {
+    schema: ShellCommandSchema,
+    description: ShellCommandDescription.trim(),
+    impl: shell_command as unknown as ToolImplementation,
+  },
+  shell: {
+    schema: ShellSchema,
+    description: ShellDescription.trim(),
+    impl: shell as unknown as ToolImplementation,
+  },
+  read_file: {
+    schema: ReadFileCodexSchema,
+    description: ReadFileCodexDescription.trim(),
+    impl: read_file as unknown as ToolImplementation,
+  },
+  list_dir: {
+    schema: ListDirCodexSchema,
+    description: ListDirCodexDescription.trim(),
+    impl: list_dir as unknown as ToolImplementation,
+  },
+  grep_files: {
+    schema: GrepFilesSchema,
+    description: GrepFilesDescription.trim(),
+    impl: grep_files as unknown as ToolImplementation,
+  },
+  update_plan: {
+    schema: UpdatePlanSchema,
+    description: UpdatePlanDescription.trim(),
+    impl: update_plan as unknown as ToolImplementation,
+  },
+  apply_patch: {
+    schema: ApplyPatchSchema,
+    description: ApplyPatchDescription.trim(),
+    impl: apply_patch as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 

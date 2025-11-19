@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "pattern": {
+      "type": "string",
+      "description": "Regular expression pattern to search for."
+    },
+    "include": {
+      "type": "string",
+      "description": "Optional glob that limits which files are searched (e.g. \"*.rs\" or \"*.{ts,tsx}\")."
+    },
+    "path": {
+      "type": "string",
+      "description": "Directory or file path to search. Defaults to the session's working directory."
+    },
+    "limit": {
+      "type": "number",
+      "description": "Maximum number of file paths to return (defaults to 100)."
+    }
+  },
+  "required": ["pattern"],
+  "additionalProperties": false
+}
+
+

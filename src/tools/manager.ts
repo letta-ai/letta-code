@@ -3,9 +3,35 @@ import {
   AuthenticationError,
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
+import { getModelInfo } from "../agent/model";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+
+const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillBash",
+  "LS",
+  "MultiEdit",
+  "Read",
+  "TodoWrite",
+  "Write",
+];
+
+const OPENAI_DEFAULT_TOOLS: ToolName[] = [
+  "shell_command",
+  "shell",
+  "read_file",
+  "list_dir",
+  "grep_files",
+  "update_plan",
+  "apply_patch",
+];
 
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
@@ -21,6 +47,13 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Read: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  shell_command: { requiresApproval: true },
+  shell: { requiresApproval: true },
+  read_file: { requiresApproval: false },
+  list_dir: { requiresApproval: false },
+  grep_files: { requiresApproval: false },
+  update_plan: { requiresApproval: false },
+  apply_patch: { requiresApproval: true },
 };
 
 interface JsonSchema {
@@ -186,10 +219,21 @@ export async function analyzeToolApproval(
  *
  * @returns Promise that resolves when all tools are loaded
  */
-export async function loadTools(): Promise<void> {
+export async function loadTools(modelIdentifier?: string): Promise<void> {
   const { toolFilter } = await import("./filter");
+  const filterActive = toolFilter.isActive();
 
-  for (const name of TOOL_NAMES) {
+  let baseToolNames: ToolName[];
+  if (!filterActive && modelIdentifier && isOpenAIModel(modelIdentifier)) {
+    baseToolNames = OPENAI_DEFAULT_TOOLS;
+  } else if (!filterActive) {
+    baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
+  } else {
+    // When user explicitly sets --tools, respect that and allow any tool name
+    baseToolNames = TOOL_NAMES;
+  }
+
+  for (const name of baseToolNames) {
     if (!toolFilter.isEnabled(name)) {
       continue;
     }
@@ -222,6 +266,15 @@ export async function loadTools(): Promise<void> {
       );
     }
   }
+}
+
+function isOpenAIModel(modelIdentifier: string): boolean {
+  const info = getModelInfo(modelIdentifier);
+  if (info?.handle && typeof info.handle === "string") {
+    return info.handle.startsWith("openai/");
+  }
+  // Fallback: treat raw handle-style identifiers as OpenAI if they start with openai/
+  return modelIdentifier.startsWith("openai/");
 }
 
 /**

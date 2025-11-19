@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "explanation": {
+      "type": "string",
+      "description": "Optional explanation for why the plan changed."
+    },
+    "plan": {
+      "type": "array",
+      "description": "The list of steps in the task plan.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string",
+            "description": "A short description of the step."
+          },
+          "status": {
+            "type": "string",
+            "description": "One of: pending, in_progress, completed."
+          }
+        },
+        "required": ["step", "status"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["plan"],
+  "additionalProperties": false
+}
+
+

@@ -269,8 +269,8 @@ async function main() {
   }
 
   if (isHeadless) {
-    // For headless mode, load tools synchronously
-    await loadTools();
+    // For headless mode, load tools synchronously (respecting model when provided)
+    await loadTools(specifiedModel);
     const client = await getClient();
     await upsertToolsToServer(client);
 
@@ -318,7 +318,7 @@ async function main() {
     useEffect(() => {
       async function init() {
         setLoadingState("assembling");
-        await loadTools();
+        await loadTools(model);
 
         setLoadingState("upserting");
         const client = await getClient();
