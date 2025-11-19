@@ -4,8 +4,8 @@ import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
-import skillsPrompt from "./prompts/skills.mdx";
 import skillUnloadReminder from "./prompts/skill_unload_reminder.txt";
+import skillsPrompt from "./prompts/skills.mdx";
 import stylePrompt from "./prompts/style.mdx";
 import systemPrompt from "./prompts/system_prompt.txt";
 

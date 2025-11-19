@@ -3,10 +3,7 @@ import { parseArgs } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
-import {
-  initializeLoadedSkillsFlag,
-  setAgentContext,
-} from "./agent/context";
+import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";

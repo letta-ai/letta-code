@@ -23,13 +23,14 @@ interface SkillResult {
 function parseLoadedSkills(value: string): string[] {
   const skillRegex = /# Skill: ([^\n]+)/g;
   const skills: string[] = [];
-  let match: RegExpExecArray | null;
+  let match: RegExpExecArray | null = skillRegex.exec(value);
 
-  while ((match = skillRegex.exec(value)) !== null) {
+  while (match !== null) {
     const skillId = match[1]?.trim();
     if (skillId) {
       skills.push(skillId);
     }
+    match = skillRegex.exec(value);
   }
 
   return skills;
@@ -53,7 +54,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const agentId = getCurrentAgentId();
 
     // Retrieve the loaded_skills block directly
-    let loadedSkillsBlock;
+    let loadedSkillsBlock: Awaited<
+      ReturnType<typeof client.agents.blocks.retrieve>
+    >;
     try {
       loadedSkillsBlock = await client.agents.blocks.retrieve("loaded_skills", {
         agent_id: agentId,

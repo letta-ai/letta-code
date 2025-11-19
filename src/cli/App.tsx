@@ -1298,10 +1298,7 @@ export default function App({
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
           : Array.isArray(contentParts) && allReminders
-            ? [
-                { type: "text" as const, text: allReminders },
-                ...contentParts,
-              ]
+            ? [{ type: "text" as const, text: allReminders }, ...contentParts]
             : contentParts;
 
       // Append the user message to transcript IMMEDIATELY (optimistic update)
