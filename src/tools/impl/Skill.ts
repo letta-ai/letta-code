@@ -4,6 +4,7 @@ import {
   getCurrentAgentId,
   getCurrentClient,
   getSkillsDirectory,
+  setHasLoadedSkills,
 } from "../../agent/context";
 import { SKILLS_DIR } from "../../agent/skills";
 import { validateRequiredParams } from "./validation.js";
@@ -92,7 +93,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const skillContent = await readFile(skillPath, "utf-8");
 
     // Parse current loaded_skills block value
-    let currentValue = loadedSkillsBlock.value || "";
+    const currentValue = loadedSkillsBlock.value?.trim() || "";
     const loadedSkills = parseLoadedSkills(currentValue);
 
     // Check if skill is already loaded
@@ -100,11 +101,6 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       return {
         message: `Skill "${skillId}" is already loaded`,
       };
-    }
-
-    // Replace placeholder if this is the first skill
-    if (currentValue.includes("[EMPTY: NO SKILLS CURRENTLY LOADED]")) {
-      currentValue = "";
     }
 
     // Append new skill to loaded_skills block
@@ -115,6 +111,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     await client.blocks.modify(loadedSkillsBlock.id, {
       value: newValue,
     });
+
+    // Update the cached flag to indicate skills are loaded
+    setHasLoadedSkills(true);
 
     return {
       message: `Skill "${skillId}" loaded successfully`,

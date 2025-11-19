@@ -89,6 +89,16 @@ function getPlanModeReminder(): string {
   return PLAN_MODE_REMINDER;
 }
 
+// Get skill unload reminder if skills are loaded (using cached flag)
+function getSkillUnloadReminder(): string {
+  const { hasLoadedSkills } = require("../agent/context");
+  if (hasLoadedSkills()) {
+    const { SKILL_UNLOAD_REMINDER } = require("../agent/promptAssets");
+    return SKILL_UNLOAD_REMINDER;
+  }
+  return "";
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -1278,12 +1288,18 @@ export default function App({
 
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
+
+      // Prepend skill unload reminder if skills are loaded (using cached flag)
+      const skillUnloadReminder = getSkillUnloadReminder();
+
+      // Combine reminders with content (plan mode first, then skill unload)
+      const allReminders = planModeReminder + skillUnloadReminder;
       const messageContent =
-        planModeReminder && typeof contentParts === "string"
-          ? planModeReminder + contentParts
-          : Array.isArray(contentParts) && planModeReminder
+        allReminders && typeof contentParts === "string"
+          ? allReminders + contentParts
+          : Array.isArray(contentParts) && allReminders
             ? [
-                { type: "text" as const, text: planModeReminder },
+                { type: "text" as const, text: allReminders },
                 ...contentParts,
               ]
             : contentParts;

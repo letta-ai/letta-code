@@ -9,6 +9,7 @@ interface AgentContext {
   agentId: string | null;
   client: Letta | null;
   skillsDirectory: string | null;
+  hasLoadedSkills: boolean;
 }
 
 // Use globalThis to ensure singleton across bundle
@@ -26,6 +27,7 @@ function getContext(): AgentContext {
       agentId: null,
       client: null,
       skillsDirectory: null,
+      hasLoadedSkills: false,
     };
   }
   return global[CONTEXT_KEY];
@@ -80,10 +82,48 @@ export function getSkillsDirectory(): string | null {
 }
 
 /**
+ * Check if skills are currently loaded (cached state)
+ * @returns true if skills are loaded, false otherwise
+ */
+export function hasLoadedSkills(): boolean {
+  return context.hasLoadedSkills;
+}
+
+/**
+ * Update the loaded skills state (called by Skill tool)
+ * @param loaded - Whether skills are currently loaded
+ */
+export function setHasLoadedSkills(loaded: boolean): void {
+  context.hasLoadedSkills = loaded;
+}
+
+/**
+ * Initialize the loaded skills flag by checking the block
+ * Should be called after setAgentContext to sync the cached state
+ */
+export async function initializeLoadedSkillsFlag(): Promise<void> {
+  if (!context.client || !context.agentId) {
+    return;
+  }
+
+  try {
+    const loadedSkillsBlock = await context.client.agents.blocks.retrieve(
+      "loaded_skills",
+      { agent_id: context.agentId },
+    );
+    context.hasLoadedSkills = !!loadedSkillsBlock?.value?.trim();
+  } catch {
+    // Block doesn't exist, no skills loaded
+    context.hasLoadedSkills = false;
+  }
+}
+
+/**
  * Clear the agent context (useful for cleanup)
  */
 export function clearAgentContext(): void {
   context.agentId = null;
   context.client = null;
   context.skillsDirectory = null;
+  context.hasLoadedSkills = false;
 }
