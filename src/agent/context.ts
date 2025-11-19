@@ -111,7 +111,9 @@ export async function initializeLoadedSkillsFlag(): Promise<void> {
       "loaded_skills",
       { agent_id: context.agentId },
     );
-    context.hasLoadedSkills = !!loadedSkillsBlock?.value?.trim();
+    const value = loadedSkillsBlock?.value?.trim() || "";
+    // Consider empty or placeholder as no skills loaded
+    context.hasLoadedSkills = value !== "" && value !== "[CURRENTLY EMPTY]";
   } catch {
     // Block doesn't exist, no skills loaded
     context.hasLoadedSkills = false;

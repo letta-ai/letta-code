@@ -93,7 +93,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const skillContent = await readFile(skillPath, "utf-8");
 
     // Parse current loaded_skills block value
-    const currentValue = loadedSkillsBlock.value?.trim() || "";
+    let currentValue = loadedSkillsBlock.value?.trim() || "";
     const loadedSkills = parseLoadedSkills(currentValue);
 
     // Check if skill is already loaded
@@ -101,6 +101,11 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       return {
         message: `Skill "${skillId}" is already loaded`,
       };
+    }
+
+    // Replace placeholder if this is the first skill
+    if (currentValue === "[CURRENTLY EMPTY]") {
+      currentValue = "";
     }
 
     // Append new skill to loaded_skills block
