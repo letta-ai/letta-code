@@ -16,6 +16,7 @@ export interface Settings {
   enableSleeptime: boolean;
   useEmptySystemPrompt: boolean;
   useEmptyPersona: boolean;
+  useCodexSystemPrompt: boolean;
   globalSharedBlockIds: Record<string, string>;
   permissions?: PermissionRules;
   env?: Record<string, string>;
@@ -40,8 +41,9 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   parallelToolCalls: true,
   enableSleeptime: false,
-   useEmptySystemPrompt: false,
-   useEmptyPersona: false,
+  useEmptySystemPrompt: false,
+  useEmptyPersona: false,
+  useCodexSystemPrompt: false,
   globalSharedBlockIds: {},
 };
 

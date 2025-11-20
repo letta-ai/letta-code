@@ -18,7 +18,7 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { SYSTEM_PROMPT } from "./promptAssets";
+import { getSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
@@ -203,12 +203,9 @@ export async function createAgent(
   const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
 
   // Create agent with all block IDs (existing + newly created)
-  const systemPrompt =
-    settings.useEmptySystemPrompt === true ? "" : SYSTEM_PROMPT;
-
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
-    system: systemPrompt,
+    system: getSystemPrompt(modelHandle),
     name,
     embedding: embeddingModel,
     model: modelHandle,
