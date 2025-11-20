@@ -83,14 +83,8 @@ export async function forkAgent(
     agent.tags.push("ephemeral:true");
   }
 
-  // Handle memory blocks
-  if (!options.isolated) {
-    // Share memory blocks with parent - use parent's block IDs
-    agent.block_ids = parentAgent.blocks?.map((b) => b.id) || [];
-    // Remove blocks from export (they'll be referenced by ID)
-    exported.blocks = [];
-  }
   // For isolated mode, keep exported blocks (new blocks will be created on import)
+  // For shared mode, we'll swap blocks after import (keep exported blocks for now)
 
   // Clear conversation history if requested
   if (options.freshConversation) {
@@ -120,6 +114,14 @@ export async function forkAgent(
   const forkedAgentId = importResult.agent_ids[0];
   if (!forkedAgentId) {
     throw new Error("Imported agent ID is undefined");
+  }
+
+  // If shared memory mode, swap imported blocks for parent's blocks
+  if (!options.isolated) {
+    const parentBlockIds = parentAgent.blocks?.map((b) => b.id) || [];
+    await client.agents.modify(forkedAgentId, {
+      block_ids: parentBlockIds,
+    });
   }
 
   // Register for cleanup if ephemeral
