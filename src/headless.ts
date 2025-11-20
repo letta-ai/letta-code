@@ -282,7 +282,12 @@ export async function handleHeadlessCommand(
         }
       }
 
-      const executedResults = await executeApprovalBatch(decisions);
+      const executedResults = await executeApprovalBatch(
+        decisions,
+        undefined,
+        agent.id,
+        client,
+      );
 
       // Send all results in one batch
       const approvalInput: ApprovalCreate = {
@@ -657,7 +662,12 @@ export async function handleHeadlessCommand(
         const { executeApprovalBatch } = await import(
           "./agent/approval-execution"
         );
-        const executedResults = await executeApprovalBatch(decisions);
+        const executedResults = await executeApprovalBatch(
+          decisions,
+          undefined,
+          agent.id,
+          client,
+        );
 
         // Send all results in one batch
         currentInput = [

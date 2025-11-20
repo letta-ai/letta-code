@@ -1388,6 +1388,7 @@ export default function App({
       const { executeApprovalBatch } = await import(
         "../agent/approval-execution"
       );
+      const client = await getClient();
       const executedResults = await executeApprovalBatch(
         allDecisions,
         (chunk) => {
@@ -1405,6 +1406,8 @@ export default function App({
             }
           }
         },
+        agentId,
+        client,
       );
 
       // Combine with auto-handled and auto-denied results
