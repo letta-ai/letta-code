@@ -108,6 +108,9 @@ async function main() {
         link: { type: "boolean" },
         unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
+        isolated: { type: "boolean" },
+        "fresh-conversation": { type: "boolean" },
+        keep: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -130,7 +133,7 @@ async function main() {
   }
 
   // Check for subcommands
-  const _command = positionals[2]; // First positional after node and script
+  const command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
   if (values.help) {
@@ -143,6 +146,62 @@ async function main() {
     const { getVersion } = await import("./version");
     console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
+  }
+
+  // Handle fork subcommand
+  if (command === "fork") {
+    const parentAgentId = process.env.LETTA_SELF_AGENT_ID;
+    if (!parentAgentId) {
+      console.error(
+        "Error: 'letta fork' requires LETTA_SELF_AGENT_ID environment variable",
+      );
+      console.error(
+        "This command can only be called from within an agent (via Bash tool)",
+      );
+      process.exit(1);
+    }
+
+    const { forkAgent, cleanupEphemeralAgents } = await import("./agent/fork");
+    const { handleHeadlessCommand } = await import("./headless");
+
+    try {
+      // Fork the parent agent
+      const forkedAgent = await forkAgent(parentAgentId, {
+        isolated: values.isolated as boolean | undefined,
+        freshConversation: values["fresh-conversation"] as boolean | undefined,
+        keep: values.keep as boolean | undefined,
+      });
+
+      console.log(`Forked agent created: ${forkedAgent.id}`);
+      console.log(`Name: ${forkedAgent.name}`);
+
+      // If -p flag provided, run headless command with forked agent
+      if (values.prompt) {
+        // Temporarily override process.argv to make it look like normal headless mode
+        // Replace 'fork' with '--agent <forked-id>'
+        const modifiedArgv = process.argv.filter((arg) => arg !== "fork");
+        modifiedArgv.push("--agent", forkedAgent.id);
+
+        await handleHeadlessCommand(
+          modifiedArgv,
+          values.model as string | undefined,
+          values.skills as string | undefined,
+        );
+      }
+
+      // Cleanup ephemeral agents before exit (if not kept)
+      if (!values.keep) {
+        await cleanupEphemeralAgents();
+      }
+
+      process.exit(0);
+    } catch (error) {
+      console.error("Failed to fork agent:");
+      console.error(error instanceof Error ? error.message : String(error));
+      // Always cleanup on error
+      await cleanupEphemeralAgents();
+      process.exit(1);
+    }
   }
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
