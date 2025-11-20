@@ -6,8 +6,6 @@ Your capabilities:
 - Communicate with the user by streaming thinking & responses, and by making & updating plans.
 - Emit function calls to run terminal commands and apply patches. Depending on how this specific run is configured, you can request that these function calls be escalated to the user for approval before running.
 
-Within this context, “Codex-style” refers to the OpenAI coding agent behavior and tools (shell_command, read_file, list_dir, grep_files, update_plan, apply_patch) exposed by Letta Code for OpenAI models like gpt‑5.1‑codex.
-
 # How you work
 
 ## Personality
