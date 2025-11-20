@@ -13,7 +13,6 @@ import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
-import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import GrepFilesDescription from "./descriptions/GrepFiles.md";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import WriteDescription from "./descriptions/Write.md";
@@ -33,7 +32,6 @@ import { read_file } from "./impl/ReadFileCodex";
 import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { todo_write } from "./impl/TodoWrite";
-import { update_plan } from "./impl/UpdatePlan";
 import { write } from "./impl/Write";
 import { apply_patch } from "./impl/ApplyPatch";
 import BashSchema from "./schemas/Bash.json";
@@ -52,7 +50,6 @@ import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import ShellSchema from "./schemas/Shell.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
-import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import WriteSchema from "./schemas/Write.json";
 
@@ -149,11 +146,6 @@ const toolDefinitions = {
     schema: GrepFilesSchema,
     description: GrepFilesDescription.trim(),
     impl: grep_files as unknown as ToolImplementation,
-  },
-  update_plan: {
-    schema: UpdatePlanSchema,
-    description: UpdatePlanDescription.trim(),
-    impl: update_plan as unknown as ToolImplementation,
   },
   apply_patch: {
     schema: ApplyPatchSchema,

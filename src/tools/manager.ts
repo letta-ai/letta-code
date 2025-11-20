@@ -29,7 +29,6 @@ const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "read_file",
   "list_dir",
   "grep_files",
-  "update_plan",
   "apply_patch",
 ];
 
@@ -52,7 +51,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   read_file: { requiresApproval: false },
   list_dir: { requiresApproval: false },
   grep_files: { requiresApproval: false },
-  update_plan: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
 };
 
