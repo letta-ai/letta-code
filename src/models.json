@@ -5,6 +5,7 @@
     "label": "Claude Sonnet 4.5 (default)",
     "description": "The recommended default model (currently Sonnet 4.5)",
     "isDefault": true,
+    "isFrontier": true,
     "updateArgs": { "context_window": 180000 }
   },
   {
@@ -22,6 +23,7 @@
     "handle": "google_ai/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
+    "isFrontier": true,
     "updateArgs": { "context_window": 180000 }
   },
   {
@@ -29,6 +31,7 @@
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
     "description": "Anthropic's smartest (and slowest) model",
+    "isFrontier": true,
     "updateArgs": { "context_window": 180000 }
   },
   {
@@ -36,6 +39,7 @@
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Claude Haiku 4.5",
     "description": "Anthropic's fastest model",
+    "isFrontier": true,
     "updateArgs": { "context_window": 180000 }
   },
   {
@@ -76,6 +80,7 @@
     "handle": "openai/gpt-5.1",
     "label": "GPT-5.1 (medium)",
     "description": "OpenAI's latest model (using their recommended reasoning level)",
+    "isFrontier": true,
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
