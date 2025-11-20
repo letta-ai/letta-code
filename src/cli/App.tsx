@@ -1428,7 +1428,12 @@ export default function App({
 
       // Dev-only validation: ensure outgoing IDs match expected IDs
       if (process.env.NODE_ENV !== "production") {
-        const expectedIds = new Set(pendingApprovals.map((a) => a.toolCallId));
+        // Include ALL tool call IDs: auto-handled, auto-denied, and pending approvals
+        const expectedIds = new Set([
+          ...autoHandledResults.map((ar) => ar.toolCallId),
+          ...autoDeniedApprovals.map((ad) => ad.approval.toolCallId),
+          ...pendingApprovals.map((a) => a.toolCallId),
+        ]);
         const sendingIds = new Set(
           allResults.map((r) => r.tool_call_id).filter(Boolean),
         );
