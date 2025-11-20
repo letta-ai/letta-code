@@ -51,13 +51,19 @@ export async function createAgent(
   const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
-  const toolNames = [
+  const baseToolNames = [
     ...getToolNames(),
-    "memory",
     "web_search",
     "conversation_search",
     "fetch_webpage",
   ];
+
+  const isOpenAIModel = modelHandle.startsWith("openai/");
+
+  // For OpenAI/Codex models, prefer fine-grained memory tools; others use the standard `memory` tool.
+  const toolNames = isOpenAIModel
+    ? [...baseToolNames, "memory_insert", "memory_replace"]
+    : [...baseToolNames, "memory"];
 
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
