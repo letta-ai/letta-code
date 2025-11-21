@@ -24,16 +24,3 @@ export async function list_dir(
   // LS handles path resolution and formatting.
   return ls({ path: dir_path, ignore: [] });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

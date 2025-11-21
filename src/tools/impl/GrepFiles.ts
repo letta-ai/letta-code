@@ -1,4 +1,4 @@
-import { grep, type GrepArgs } from "./Grep.js";
+import { type GrepArgs, grep } from "./Grep.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface GrepFilesArgs {
@@ -30,16 +30,3 @@ export async function grep_files(
 
   return grep(grepArgs);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

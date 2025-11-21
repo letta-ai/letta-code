@@ -155,8 +155,6 @@ async function main() {
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
-  
-
   // Check if API key is configured
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
   const baseURL =

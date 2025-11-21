@@ -29,16 +29,3 @@
   "required": ["command"],
   "additionalProperties": false
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

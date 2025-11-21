@@ -188,7 +188,9 @@ export async function apply_patch(
           );
         }
         content =
-          content.slice(0, idx) + newChunk + content.slice(idx + oldChunk.length);
+          content.slice(0, idx) +
+          newChunk +
+          content.slice(idx + oldChunk.length);
       }
 
       const targetPath = op.toPath ?? op.fromPath;
@@ -230,7 +232,10 @@ export async function apply_patch(
   };
 }
 
-function buildOldNewChunks(lines: string[]): { oldChunk: string; newChunk: string } {
+function buildOldNewChunks(lines: string[]): {
+  oldChunk: string;
+  newChunk: string;
+} {
   const oldParts: string[] = [];
   const newParts: string[] = [];
 
@@ -258,16 +263,3 @@ function buildOldNewChunks(lines: string[]): { oldChunk: string; newChunk: strin
     newChunk: newParts.join(""),
   };
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

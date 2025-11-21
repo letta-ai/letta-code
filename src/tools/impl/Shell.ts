@@ -43,7 +43,9 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     });
 
     const text = (result.content ?? [])
-      .map((item) => ("text" in item && typeof item.text === "string" ? item.text : ""))
+      .map((item) =>
+        "text" in item && typeof item.text === "string" ? item.text : "",
+      )
       .filter(Boolean)
       .join("\n");
 
@@ -68,16 +70,3 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     }
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

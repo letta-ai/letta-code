@@ -40,16 +40,3 @@ export async function read_file(
 
   return { content: result.content };
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

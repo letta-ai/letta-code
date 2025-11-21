@@ -2,7 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { getToolNames, getAllLettaToolNames } from "../tools/manager";
+import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
 /**
