@@ -1,0 +1,17 @@
+
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 22774,
+  "duration_api_ms": 15308,
+  "num_turns": 5,
+  "result": "Executed 4 tools in parallel: listed files, checked git branch (main), verified Node.js version (v22.7.0), and found 2 markdown files.",
+  "agent_id": "agent-6aad3a4f-abf8-478e-a9a5-bdffa1e584db",
+  "usage": {
+    "prompt_tokens": 13243,
+    "completion_tokens": 383,
+    "total_tokens": 13626
+  },
+  "note": "apply_patch demo"
+}

@@ -36,9 +36,7 @@ OPTIONS
                         Default: text
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
-  --empty-system-prompt Use an empty system prompt instead of the built-in one
-  --empty-persona       Use an empty persona memory block instead of the default
-  --codex-system-prompt Use the Codex-style system prompt (even for non-OpenAI models)
+
 
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
@@ -111,9 +109,6 @@ async function main() {
         link: { type: "boolean" },
         unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
-        "empty-system-prompt": { type: "boolean" },
-        "empty-persona": { type: "boolean" },
-        "codex-system-prompt": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -160,30 +155,7 @@ async function main() {
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
-  const emptySystemPromptFlag =
-    (values["empty-system-prompt"] as boolean | undefined) ?? undefined;
-  const emptyPersonaFlag =
-    (values["empty-persona"] as boolean | undefined) ?? undefined;
-  const codexSystemPromptFlag =
-    (values["codex-system-prompt"] as boolean | undefined) ?? undefined;
-
-  if (
-    emptySystemPromptFlag !== undefined ||
-    emptyPersonaFlag !== undefined ||
-    codexSystemPromptFlag !== undefined
-  ) {
-    const updates: Partial<import("./settings-manager").Settings> = {};
-    if (emptySystemPromptFlag !== undefined) {
-      updates.useEmptySystemPrompt = emptySystemPromptFlag;
-    }
-    if (emptyPersonaFlag !== undefined) {
-      updates.useEmptyPersona = emptyPersonaFlag;
-    }
-    if (codexSystemPromptFlag !== undefined) {
-      updates.useCodexSystemPrompt = codexSystemPromptFlag;
-    }
-    settingsManager.updateSettings(updates);
-  }
+  
 
   // Check if API key is configured
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;

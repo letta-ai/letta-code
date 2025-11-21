@@ -5,7 +5,6 @@
 
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import { MEMORY_PROMPTS } from "./promptAssets";
-import { settingsManager } from "../settings-manager";
 
 /**
  * Parse frontmatter and content from an .mdx file
@@ -48,10 +47,6 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   // const mdxFiles = ["persona.mdx", "human.mdx", "style.mdx"];
   // const mdxFiles = ["persona_kawaii.mdx", "human.mdx", "style.mdx"];
 
-  // Settings are initialized during CLI startup; this will throw if not initialized.
-  const settings = settingsManager.getSettings();
-  const useEmptyPersona = settings.useEmptyPersona === true;
-
   for (const filename of mdxFiles) {
     try {
       const content = MEMORY_PROMPTS[filename];
@@ -61,14 +56,9 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
       }
       const { frontmatter, body } = parseMdxFrontmatter(content);
 
-      const label = frontmatter.label || filename.replace(".mdx", "");
-
       const block: CreateBlock = {
-        label,
-        value:
-          useEmptyPersona && filename === "persona.mdx"
-            ? ""
-            : body,
+        label: frontmatter.label || filename.replace(".mdx", ""),
+        value: body,
       };
 
       if (frontmatter.description) {
