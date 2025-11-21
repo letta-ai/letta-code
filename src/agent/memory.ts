@@ -83,24 +83,6 @@ let cachedMemoryBlocks: CreateBlock[] | null = null;
 export async function getDefaultMemoryBlocks(): Promise<CreateBlock[]> {
   if (!cachedMemoryBlocks) {
     cachedMemoryBlocks = await loadMemoryBlocksFromMdx();
-
-    // Add a dedicated per-agent plan block so Codex-style tools like update_plan
-    // have a concrete memory target from the very first run.
-    //
-    // We intentionally do NOT persist this block's ID in global/local shared
-    // block mappings, so each new agent gets its own plan block instead of
-    // reusing another agent's plan.
-    const hasPlanBlock = cachedMemoryBlocks.some(
-      (block) => block.label === "plan",
-    );
-
-    if (!hasPlanBlock) {
-      cachedMemoryBlocks.push({
-        label: "plan",
-        value: "",
-        description: "Structured task plan recorded and updated via update_plan",
-      });
-    }
   }
   return cachedMemoryBlocks;
 }
