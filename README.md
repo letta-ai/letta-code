@@ -2,7 +2,7 @@
 
 A self-improving, stateful coding agent that can learn from experience and improve with use.
 
-https://github.com/user-attachments/assets/5561a3ff-afd9-42a9-8601-55d245946394
+<img width="1713" height="951" alt="letta-code" src="https://github.com/user-attachments/assets/ae546e96-368a-4a7b-9397-3963a35c8d6b" />
 
 ---
 
