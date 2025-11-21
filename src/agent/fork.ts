@@ -152,8 +152,12 @@ function registerEphemeralAgent(agentId: string) {
  * Clean up all ephemeral forked agents
  */
 export async function cleanupEphemeralAgents() {
-  if (ephemeralAgents.size === 0) return;
+  if (ephemeralAgents.size === 0) {
+    console.log("No ephemeral agents to cleanup");
+    return;
+  }
 
+  console.log(`Cleaning up ${ephemeralAgents.size} ephemeral agents:`, Array.from(ephemeralAgents));
   const client = await getClient();
   const deletePromises = Array.from(ephemeralAgents).map(async (agentId) => {
     try {
