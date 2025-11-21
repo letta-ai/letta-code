@@ -60,9 +60,9 @@ export async function createAgent(
 
   const isOpenAIModel = modelHandle.startsWith("openai/");
 
-  // For OpenAI/Codex models, prefer fine-grained memory tools; others use the standard `memory` tool.
+  // For OpenAI/Codex models, prefer the patch-style memory tool; others use the standard `memory` tool.
   const toolNames = isOpenAIModel
-    ? [...baseToolNames, "memory_insert", "memory_replace"]
+    ? [...baseToolNames, "memory_apply_patch"]
     : [...baseToolNames, "memory"];
 
   // Load memory blocks from .mdx files
