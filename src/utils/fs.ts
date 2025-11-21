@@ -45,3 +45,18 @@ export async function mkdir(
 ): Promise<void> {
   mkdirSync(path, options);
 }
+
+export async function readJsonFile<T>(path: string): Promise<T> {
+  const text = await readFile(path);
+  return JSON.parse(text) as T;
+}
+
+export async function writeJsonFile(
+  path: string,
+  data: unknown,
+  options?: { indent?: number },
+): Promise<void> {
+  const indent = options?.indent ?? 2;
+  const content = `${JSON.stringify(data, null, indent)}\n`;
+  await writeFile(path, content);
+}
