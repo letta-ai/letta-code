@@ -124,6 +124,9 @@ export async function forkAgent(
     });
   }
 
+  // Wait for agent to fully initialize (imported agents may need time)
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
   // Register for cleanup if ephemeral
   if (!options.keep) {
     registerEphemeralAgent(forkedAgentId);
