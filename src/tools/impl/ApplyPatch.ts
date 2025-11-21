@@ -70,8 +70,9 @@ export async function apply_patch(
       const filePath = line.replace("*** Add File:", "").trim();
       i += 1;
       const contentLines: string[] = [];
-      while (i < endIndex && !lines[i].startsWith("*** ")) {
+      while (i < endIndex) {
         const raw = lines[i];
+        if (raw === undefined || raw.startsWith("*** ")) break;
         if (raw.startsWith("+")) {
           contentLines.push(raw.slice(1));
         }
@@ -86,24 +87,27 @@ export async function apply_patch(
       i += 1;
 
       let toPath: string | undefined;
-      if (i < endIndex && lines[i].startsWith("*** Move to:")) {
-        toPath = lines[i].replace("*** Move to:", "").trim();
-        i += 1;
+      if (i < endIndex) {
+        const moveLine = lines[i];
+        if (moveLine && moveLine.startsWith("*** Move to:")) {
+          toPath = moveLine.replace("*** Move to:", "").trim();
+          i += 1;
+        }
       }
 
       const hunks: Hunk[] = [];
-      while (i < endIndex && !lines[i].startsWith("*** ")) {
+      while (i < endIndex) {
         const hLine = lines[i];
+        if (hLine === undefined || hLine.startsWith("*** ")) break;
         if (hLine.startsWith("@@")) {
           // Start of a new hunk
           i += 1;
           const hunkLines: string[] = [];
-          while (
-            i < endIndex &&
-            !lines[i].startsWith("@@") &&
-            !lines[i].startsWith("*** ")
-          ) {
+          while (i < endIndex) {
             const l = lines[i];
+            if (l === undefined || l.startsWith("@@") || l.startsWith("*** ")) {
+              break;
+            }
             if (
               l.startsWith(" ") ||
               l.startsWith("+") ||
