@@ -560,6 +560,14 @@ export function getToolNames(): string[] {
 }
 
 /**
+ * Returns all Letta Code tool names known to this build, regardless of what is currently loaded.
+ * Useful for unlinking/removing tools when switching providers/models.
+ */
+export function getAllLettaToolNames(): string[] {
+  return [...TOOL_NAMES];
+}
+
+/**
  * Gets all loaded tool schemas (for inspection/debugging).
  *
  * @returns Array of tool schemas

@@ -1631,6 +1631,21 @@ export default function App({
         );
         setLlmConfig(updatedConfig);
 
+        // After switching models, reload tools for the selected provider and relink
+        const { clearTools, loadTools, upsertToolsToServer } = await import(
+          "../tools/manager"
+        );
+        clearTools();
+        await loadTools(selectedModel.handle);
+        const { getClient } = await import("../agent/client");
+        const client = await getClient();
+        await upsertToolsToServer(client);
+        const { unlinkToolsFromAgent, linkToolsToAgent } = await import(
+          "../agent/modify"
+        );
+        await unlinkToolsFromAgent(agentId);
+        await linkToolsToAgent(agentId);
+
         // Update the same command with final result
         buffersRef.current.byId.set(cmdId, {
           kind: "command",

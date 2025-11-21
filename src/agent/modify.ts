@@ -2,7 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { getToolNames } from "../tools/manager";
+import { getToolNames, getAllLettaToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
 /**
@@ -159,7 +159,7 @@ export async function unlinkToolsFromAgent(
     // Get ALL agent tools from agent state (not tools.list which may be incomplete)
     const agent = await client.agents.retrieve(agentId);
     const allTools = agent.tools || [];
-    const lettaCodeToolNames = new Set(getToolNames());
+    const lettaCodeToolNames = new Set(getAllLettaToolNames());
 
     // Filter out Letta Code tools, keep everything else
     const remainingTools = allTools.filter(
