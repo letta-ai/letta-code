@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import { setCurrentAgentId } from "../agent/context";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
@@ -136,6 +137,10 @@ export default function App({
   useEffect(() => {
     if (initialAgentId !== agentId) {
       setAgentId(initialAgentId);
+    }
+    // Update global agent context for tool execution
+    if (agentId && agentId !== "loading") {
+      setCurrentAgentId(agentId);
     }
   }, [initialAgentId, agentId]);
 

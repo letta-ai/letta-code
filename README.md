@@ -220,6 +220,50 @@ Letta Code provides the following tools for filesystem and shell operations:
 
 All tools support approval rules and permission modes for safe execution. See the Permissions section for details on controlling tool access.
 
+#### Agent Forking
+
+Agents can clone themselves to spawn subagents for parallel work using the `fork` subcommand:
+
+```bash
+# From within an agent via Bash tool, clone self for subtask
+Bash(letta fork -p "analyze src/ directory")
+
+# Create isolated fork (cloned memory blocks, not shared)
+Bash(letta fork -p "experiment with refactor" --isolated)
+
+# Create fork with fresh conversation history
+Bash(letta fork -p "start from scratch" --fresh-conversation)
+
+# Keep forked agent permanently (don't auto-cleanup)
+Bash(letta fork -p "long-running task" --keep)
+```
+
+**How it works:**
+- Exports parent agent configuration (model, tools, memory blocks)
+- Creates new agent with same config
+- By default, shares memory blocks with parent (changes visible to both)
+- Ephemeral forks auto-cleanup on exit (unless `--keep` specified)
+
+**Fork bomb prevention:**
+- Requires `LETTA_SELF_AGENT_ID` environment variable (only available inside agents)
+- Maximum fork depth: 3 levels
+- Forked agents tagged with `origin:letta-code-fork`, `parent:${parentId}`, `fork-depth:N`
+
+**Options:**
+- `--isolated` - Clone memory blocks instead of sharing (full isolation)
+- `--fresh-conversation` - Clear conversation history (fresh start)
+- `--keep` - Persist forked agent permanently (otherwise auto-deleted on exit)
+- `-p "prompt"` - Execute prompt in forked agent (headless mode)
+
+**Example workflow:**
+```bash
+# Agent delegates subtask to fork
+Bash(letta fork -p "Run all tests and report results" --keep)
+
+# Parent continues while fork works independently
+# Fork results come back in Bash tool output
+```
+
 ### Headless Mode
 ```bash
 letta -p "Run bun lint and correct errors"              # Auto-resumes project agent
