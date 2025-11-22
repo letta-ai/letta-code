@@ -459,6 +459,7 @@ function flattenToolResponse(result: unknown): string {
 export async function executeTool(
   name: string,
   args: ToolArgs,
+  options?: { signal?: AbortSignal },
 ): Promise<ToolExecutionResult> {
   const tool = toolRegistry.get(name);
 
@@ -470,7 +471,13 @@ export async function executeTool(
   }
 
   try {
-    const result = await tool.fn(args);
+    // Inject abort signal for tools that support it (currently Bash) without altering schemas
+    const argsWithSignal =
+      name === "Bash" && options?.signal
+        ? { ...args, signal: options.signal }
+        : args;
+
+    const result = await tool.fn(argsWithSignal);
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;
@@ -478,6 +485,12 @@ export async function executeTool(
     const stderrValue = recordResult?.stderr;
     const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
     const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
+    const statusFromResult =
+      recordResult && typeof recordResult.isError === "boolean"
+        ? recordResult.isError
+          ? "error"
+          : "success"
+        : "success";
 
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
@@ -485,11 +498,26 @@ export async function executeTool(
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
-      status: "success",
+      status: statusFromResult,
       ...(stdout && { stdout }),
       ...(stderr && { stderr }),
     };
   } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        error.message === "The operation was aborted" ||
+        // node:child_process AbortError may include code/message variants
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).code === "ABORT_ERR");
+
+    if (isAbort) {
+      return {
+        toolReturn: "User interrupted tool execution",
+        status: "error",
+      };
+    }
+
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
     return {

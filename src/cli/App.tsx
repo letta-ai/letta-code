@@ -170,6 +170,10 @@ export default function App({
     >
   >([]);
   const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [queuedApprovalResults, setQueuedApprovalResults] = useState<
+    ApprovalResult[] | null
+  >(null);
+  const toolAbortControllerRef = useRef<AbortController | null>(null);
 
   // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
@@ -726,6 +730,14 @@ export default function App({
   }, []);
 
   const handleInterrupt = useCallback(async () => {
+    // If we're executing client-side tools, abort them locally instead of hitting the backend
+    if (isExecutingTool && toolAbortControllerRef.current) {
+      toolAbortControllerRef.current.abort();
+      setStreaming(false);
+      setIsExecutingTool(false);
+      return;
+    }
+
     if (!streaming || interruptRequested) return;
 
     setInterruptRequested(true);
@@ -755,7 +767,7 @@ export default function App({
       appendError(`Failed to interrupt stream: ${String(e)}`);
       setInterruptRequested(false);
     }
-  }, [agentId, streaming, interruptRequested, appendError]);
+  }, [agentId, streaming, interruptRequested, appendError, isExecutingTool]);
 
   // Reset interrupt flag when streaming ends
   useEffect(() => {
@@ -1308,8 +1320,9 @@ export default function App({
       setStreaming(true);
       refreshDerived();
 
-      // Check for pending approvals before sending message
-      if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+      // Check for pending approvals before sending message (skip if we already have
+      // a queued approval response to send first).
+      if (CHECK_PENDING_APPROVALS_BEFORE_SEND && !queuedApprovalResults) {
         try {
           const client = await getClient();
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
@@ -1347,14 +1360,25 @@ export default function App({
         }
       }
 
-      // Start the conversation loop
-      await processConversation([
-        {
-          type: "message",
-          role: "user",
-          content: messageContent as unknown as MessageCreate["content"],
-        },
-      ]);
+      // Start the conversation loop. If we have queued approval results from an interrupted
+      // client-side execution, send them first before the new user message.
+      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
+
+      if (queuedApprovalResults) {
+        initialInput.push({
+          type: "approval",
+          approvals: queuedApprovalResults,
+        });
+        setQueuedApprovalResults(null);
+      }
+
+      initialInput.push({
+        type: "message",
+        role: "user",
+        content: messageContent as unknown as MessageCreate["content"],
+      });
+
+      await processConversation(initialInput);
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
@@ -1372,6 +1396,7 @@ export default function App({
       columns,
       commitEligibleLines,
       isExecutingTool,
+      queuedApprovalResults,
     ],
   );
 
@@ -1399,6 +1424,9 @@ export default function App({
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
 
+        const approvalAbortController = new AbortController();
+        toolAbortControllerRef.current = approvalAbortController;
+
         // Combine all decisions using snapshots
         const allDecisions = [
           ...approvalResultsSnapshot,
@@ -1425,7 +1453,10 @@ export default function App({
                 appendError(chunk.tool_return);
               }
             }
+            // Flush UI so completed tools show up while the batch continues
+            refreshDerived();
           },
+          { abortSignal: approvalAbortController.signal },
         );
 
         // Combine with auto-handled and auto-denied results using snapshots
@@ -1476,16 +1507,25 @@ export default function App({
         setThinkingMessage(getRandomThinkingMessage());
         refreshDerived();
 
-        // Continue conversation with all results
-        await processConversation([
-          {
-            type: "approval",
-            approvals: allResults as ApprovalResult[],
-          },
-        ]);
+        const wasAborted = approvalAbortController.signal.aborted;
+
+        if (wasAborted) {
+          // Queue results to send alongside the next user message
+          setQueuedApprovalResults(allResults as ApprovalResult[]);
+          setStreaming(false);
+        } else {
+          // Continue conversation with all results
+          await processConversation([
+            {
+              type: "approval",
+              approvals: allResults as ApprovalResult[],
+            },
+          ]);
+        }
       } finally {
         // Always release the execution guard, even if an error occurred
         setIsExecutingTool(false);
+        toolAbortControllerRef.current = null;
       }
     },
     [

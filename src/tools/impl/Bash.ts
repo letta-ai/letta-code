@@ -12,6 +12,7 @@ interface BashArgs {
   timeout?: number;
   description?: string;
   run_in_background?: boolean;
+  signal?: AbortSignal;
 }
 
 interface BashResult {
@@ -29,6 +30,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     timeout = 120000,
     description: _description,
     run_in_background = false,
+    signal,
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
 
@@ -110,6 +112,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       maxBuffer: 10 * 1024 * 1024,
       cwd: userCwd,
       env: { ...process.env },
+      signal,
     };
     const { stdout, stderr } = await execAsync(command, options);
     const stdoutStr = typeof stdout === "string" ? stdout : stdout.toString();
@@ -133,14 +136,26 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       stderr?: string;
       killed?: boolean;
       signal?: string;
+      code?: string;
+      name?: string;
     };
+    const isAbort =
+      signal?.aborted ||
+      err.code === "ABORT_ERR" ||
+      err.name === "AbortError" ||
+      err.message === "The operation was aborted";
+
     let errorMessage = "";
-    if (err.killed && err.signal === "SIGTERM")
-      errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
-    if (err.code) errorMessage += `Exit code: ${err.code}\n`;
-    if (err.stderr) errorMessage += err.stderr;
-    else if (err.message) errorMessage += err.message;
-    if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
+    if (isAbort) {
+      errorMessage = "User interrupted tool execution";
+    } else {
+      if (err.killed && err.signal === "SIGTERM")
+        errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
+      if (err.code) errorMessage += `Exit code: ${err.code}\n`;
+      if (err.stderr) errorMessage += err.stderr;
+      else if (err.message) errorMessage += err.message;
+      if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
+    }
 
     // Apply character limit even to error messages
     const { content: truncatedError } = truncateByChars(
