@@ -1,6 +1,5 @@
 // src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
-
 import type {
   ApprovalCreate,
   ToolReturn,
