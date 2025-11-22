@@ -10,7 +10,7 @@ describe("Bash tool", () => {
 
     expect(result.content).toBeDefined();
     expect(result.content[0]?.text).toContain("Hello, World!");
-    expect(result.isError).toBeUndefined();
+    expect(result.status).toBe("success");
   });
 
   test("captures stderr in output", async () => {
@@ -28,7 +28,7 @@ describe("Bash tool", () => {
       description: "Test exit code",
     });
 
-    expect(result.isError).toBe(true);
+    expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("Exit code");
   });
 
@@ -39,7 +39,7 @@ describe("Bash tool", () => {
       timeout: 100,
     });
 
-    expect(result.isError).toBe(true);
+    expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("timed out");
   }, 2000);
 

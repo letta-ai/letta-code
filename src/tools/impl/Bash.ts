@@ -12,6 +12,7 @@ interface BashArgs {
   timeout?: number;
   description?: string;
   run_in_background?: boolean;
+  signal?: AbortSignal;
 }
 
 interface BashResult {
@@ -19,7 +20,7 @@ interface BashResult {
     type: string;
     text: string;
   }>;
-  isError?: boolean;
+  status: "success" | "error";
 }
 
 export async function bash(args: BashArgs): Promise<BashResult> {
@@ -29,13 +30,17 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     timeout = 120000,
     description: _description,
     run_in_background = false,
+    signal,
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
 
   if (command === "/bashes") {
     const processes = Array.from(backgroundProcesses.entries());
     if (processes.length === 0) {
-      return { content: [{ type: "text", text: "(no content)" }] };
+      return {
+        content: [{ type: "text", text: "(no content)" }],
+        status: "success",
+      };
     }
     let output = "";
     for (const [id, proc] of processes) {
@@ -44,7 +49,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         : "unknown";
       output += `${id}: ${proc.command} (${proc.status}, runtime: ${runtime})\n`;
     }
-    return { content: [{ type: "text", text: output.trim() }] };
+    return {
+      content: [{ type: "text", text: output.trim() }],
+      status: "success",
+    };
   }
 
   if (run_in_background) {
@@ -100,6 +108,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
           text: `Command running in background with ID: ${bashId}`,
         },
       ],
+      status: "success",
     };
   }
 
@@ -110,6 +119,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       maxBuffer: 10 * 1024 * 1024,
       cwd: userCwd,
       env: { ...process.env },
+      signal,
     };
     const { stdout, stderr } = await execAsync(command, options);
     const stdoutStr = typeof stdout === "string" ? stdout : stdout.toString();
@@ -126,6 +136,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     return {
       content: [{ type: "text", text: truncatedOutput }],
+      status: "success",
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException & {
@@ -133,14 +144,26 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       stderr?: string;
       killed?: boolean;
       signal?: string;
+      code?: string;
+      name?: string;
     };
+    const isAbort =
+      signal?.aborted ||
+      err.code === "ABORT_ERR" ||
+      err.name === "AbortError" ||
+      err.message === "The operation was aborted";
+
     let errorMessage = "";
-    if (err.killed && err.signal === "SIGTERM")
-      errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
-    if (err.code) errorMessage += `Exit code: ${err.code}\n`;
-    if (err.stderr) errorMessage += err.stderr;
-    else if (err.message) errorMessage += err.message;
-    if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
+    if (isAbort) {
+      errorMessage = "User interrupted tool execution";
+    } else {
+      if (err.killed && err.signal === "SIGTERM")
+        errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
+      if (err.code) errorMessage += `Exit code: ${err.code}\n`;
+      if (err.stderr) errorMessage += err.stderr;
+      else if (err.message) errorMessage += err.message;
+      if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;
+    }
 
     // Apply character limit even to error messages
     const { content: truncatedError } = truncateByChars(
@@ -151,7 +174,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     return {
       content: [{ type: "text", text: truncatedError }],
-      isError: true,
+      status: "error",
     };
   }
 }
