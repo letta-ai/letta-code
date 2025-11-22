@@ -20,7 +20,7 @@ interface BashResult {
     type: string;
     text: string;
   }>;
-  isError?: boolean;
+  status: "success" | "error";
 }
 
 export async function bash(args: BashArgs): Promise<BashResult> {
@@ -37,7 +37,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   if (command === "/bashes") {
     const processes = Array.from(backgroundProcesses.entries());
     if (processes.length === 0) {
-      return { content: [{ type: "text", text: "(no content)" }] };
+      return {
+        content: [{ type: "text", text: "(no content)" }],
+        status: "success",
+      };
     }
     let output = "";
     for (const [id, proc] of processes) {
@@ -46,7 +49,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         : "unknown";
       output += `${id}: ${proc.command} (${proc.status}, runtime: ${runtime})\n`;
     }
-    return { content: [{ type: "text", text: output.trim() }] };
+    return {
+      content: [{ type: "text", text: output.trim() }],
+      status: "success",
+    };
   }
 
   if (run_in_background) {
@@ -102,6 +108,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
           text: `Command running in background with ID: ${bashId}`,
         },
       ],
+      status: "success",
     };
   }
 
@@ -129,6 +136,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     return {
       content: [{ type: "text", text: truncatedOutput }],
+      status: "success",
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException & {
@@ -166,7 +174,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     return {
       content: [{ type: "text", text: truncatedError }],
-      isError: true,
+      status: "error",
     };
   }
 }

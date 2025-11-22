@@ -485,20 +485,13 @@ export async function executeTool(
     const stderrValue = recordResult?.stderr;
     const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
     const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
-    const statusFromResult =
-      recordResult && typeof recordResult.isError === "boolean"
-        ? recordResult.isError
-          ? "error"
-          : "success"
-        : "success";
-
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
-      status: statusFromResult,
+      status: "success",
       ...(stdout && { stdout }),
       ...(stderr && { stderr }),
     };
