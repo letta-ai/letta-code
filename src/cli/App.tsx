@@ -169,7 +169,7 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const [isExecutingTool, _setIsExecutingTool] = useState(false);
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
 
   // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
@@ -465,7 +465,7 @@ export default function App({
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
-              abortControllerRef.current.signal,
+              abortControllerRef.current?.signal,
             );
 
           // Track API duration
@@ -767,7 +767,10 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      if (!msg || streaming || commandRunning) return { submitted: false };
+      // Block submission while a stream is in flight, a command is running, or an approval batch
+      // is currently executing tools (prevents re-surfacing pending approvals mid-execution).
+      if (!msg || streaming || commandRunning || isExecutingTool)
+        return { submitted: false };
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
@@ -1368,6 +1371,7 @@ export default function App({
       handleExit,
       columns,
       commitEligibleLines,
+      isExecutingTool,
     ],
   );
 
@@ -1378,97 +1382,111 @@ export default function App({
         | { type: "approve"; approval: ApprovalRequest }
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
-      // Combine all decisions
-      const allDecisions = [
-        ...approvalResults,
-        ...(additionalDecision ? [additionalDecision] : []),
-      ];
+      try {
+        // Snapshot current state before clearing dialog
+        const approvalResultsSnapshot = [...approvalResults];
+        const autoHandledSnapshot = [...autoHandledResults];
+        const autoDeniedSnapshot = [...autoDeniedApprovals];
+        const pendingSnapshot = [...pendingApprovals];
 
-      // Execute approved tools and format results using shared function
-      const { executeApprovalBatch } = await import(
-        "../agent/approval-execution"
-      );
-      const executedResults = await executeApprovalBatch(
-        allDecisions,
-        (chunk) => {
-          onChunk(buffersRef.current, chunk);
-          // Also log errors to the UI error display
-          if (
-            chunk.status === "error" &&
-            chunk.message_type === "tool_return_message"
-          ) {
-            const isToolError = chunk.tool_return?.startsWith(
-              "Error executing tool:",
-            );
-            if (isToolError) {
-              appendError(chunk.tool_return);
+        // Clear dialog state immediately so UI updates right away
+        setPendingApprovals([]);
+        setApprovalContexts([]);
+        setApprovalResults([]);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+
+        // Show "thinking" state and lock input while executing approved tools client-side
+        setStreaming(true);
+
+        // Combine all decisions using snapshots
+        const allDecisions = [
+          ...approvalResultsSnapshot,
+          ...(additionalDecision ? [additionalDecision] : []),
+        ];
+
+        // Execute approved tools and format results using shared function
+        const { executeApprovalBatch } = await import(
+          "../agent/approval-execution"
+        );
+        const executedResults = await executeApprovalBatch(
+          allDecisions,
+          (chunk) => {
+            onChunk(buffersRef.current, chunk);
+            // Also log errors to the UI error display
+            if (
+              chunk.status === "error" &&
+              chunk.message_type === "tool_return_message"
+            ) {
+              const isToolError = chunk.tool_return?.startsWith(
+                "Error executing tool:",
+              );
+              if (isToolError) {
+                appendError(chunk.tool_return);
+              }
             }
-          }
-        },
-      );
-
-      // Combine with auto-handled and auto-denied results
-      const allResults = [
-        ...autoHandledResults.map((ar) => ({
-          type: "tool" as const,
-          tool_call_id: ar.toolCallId,
-          tool_return: ar.result.toolReturn,
-          status: ar.result.status,
-          stdout: ar.result.stdout,
-          stderr: ar.result.stderr,
-        })),
-        ...autoDeniedApprovals.map((ad) => ({
-          type: "approval" as const,
-          tool_call_id: ad.approval.toolCallId,
-          approve: false,
-          reason: ad.reason,
-        })),
-        ...executedResults,
-      ];
-
-      // Dev-only validation: ensure outgoing IDs match expected IDs
-      if (process.env.NODE_ENV !== "production") {
-        // Include ALL tool call IDs: auto-handled, auto-denied, and pending approvals
-        const expectedIds = new Set([
-          ...autoHandledResults.map((ar) => ar.toolCallId),
-          ...autoDeniedApprovals.map((ad) => ad.approval.toolCallId),
-          ...pendingApprovals.map((a) => a.toolCallId),
-        ]);
-        const sendingIds = new Set(
-          allResults.map((r) => r.tool_call_id).filter(Boolean),
+          },
         );
 
-        const setsEqual = (a: Set<string>, b: Set<string>) =>
-          a.size === b.size && [...a].every((id) => b.has(id));
+        // Combine with auto-handled and auto-denied results using snapshots
+        const allResults = [
+          ...autoHandledSnapshot.map((ar) => ({
+            type: "tool" as const,
+            tool_call_id: ar.toolCallId,
+            tool_return: ar.result.toolReturn,
+            status: ar.result.status,
+            stdout: ar.result.stdout,
+            stderr: ar.result.stderr,
+          })),
+          ...autoDeniedSnapshot.map((ad) => ({
+            type: "approval" as const,
+            tool_call_id: ad.approval.toolCallId,
+            approve: false,
+            reason: ad.reason,
+          })),
+          ...executedResults,
+        ];
 
-        if (!setsEqual(expectedIds, sendingIds)) {
-          console.error("[BUG] Approval ID mismatch detected");
-          console.error("Expected IDs:", Array.from(expectedIds));
-          console.error("Sending IDs:", Array.from(sendingIds));
-          throw new Error(
-            "Approval ID mismatch - refusing to send mismatched IDs",
+        // Dev-only validation: ensure outgoing IDs match expected IDs (using snapshots)
+        if (process.env.NODE_ENV !== "production") {
+          // Include ALL tool call IDs: auto-handled, auto-denied, and pending approvals
+          const expectedIds = new Set([
+            ...autoHandledSnapshot.map((ar) => ar.toolCallId),
+            ...autoDeniedSnapshot.map((ad) => ad.approval.toolCallId),
+            ...pendingSnapshot.map((a) => a.toolCallId),
+          ]);
+          const sendingIds = new Set(
+            allResults.map((r) => r.tool_call_id).filter(Boolean),
           );
+
+          const setsEqual = (a: Set<string>, b: Set<string>) =>
+            a.size === b.size && [...a].every((id) => b.has(id));
+
+          if (!setsEqual(expectedIds, sendingIds)) {
+            console.error("[BUG] Approval ID mismatch detected");
+            console.error("Expected IDs:", Array.from(expectedIds));
+            console.error("Sending IDs:", Array.from(sendingIds));
+            throw new Error(
+              "Approval ID mismatch - refusing to send mismatched IDs",
+            );
+          }
         }
+
+        // Rotate to a new thinking message
+        setThinkingMessage(getRandomThinkingMessage());
+        refreshDerived();
+
+        // Continue conversation with all results
+        await processConversation([
+          {
+            type: "approval",
+            approvals: allResults as ApprovalResult[],
+          },
+        ]);
+      } finally {
+        // Always release the execution guard, even if an error occurred
+        setIsExecutingTool(false);
       }
-
-      // Clear state
-      setPendingApprovals([]);
-      setApprovalContexts([]);
-      setApprovalResults([]);
-      setAutoHandledResults([]);
-      setAutoDeniedApprovals([]);
-
-      // Rotate to a new thinking message
-      setThinkingMessage(getRandomThinkingMessage());
-      refreshDerived();
-
-      // Continue conversation with all results
-      await processConversation([
-        {
-          type: "approval",
-          approvals: allResults as ApprovalResult[],
-        },
-      ]);
     },
     [
       approvalResults,
@@ -1483,10 +1501,14 @@ export default function App({
 
   // Handle approval callbacks - sequential review
   const handleApproveCurrent = useCallback(async () => {
+    if (isExecutingTool) return;
+
     const currentIndex = approvalResults.length;
     const currentApproval = pendingApprovals[currentIndex];
 
     if (!currentApproval) return;
+
+    setIsExecutingTool(true);
 
     try {
       // Store approval decision (don't execute yet - batch execute after all approvals)
@@ -1498,19 +1520,30 @@ export default function App({
       // Check if we're done with all approvals
       if (currentIndex + 1 >= pendingApprovals.length) {
         // All approvals collected, execute and send to backend
+        // sendAllResults owns the lock release via its finally block
         await sendAllResults(decision);
       } else {
         // Not done yet, store decision and show next approval
         setApprovalResults((prev) => [...prev, decision]);
+        setIsExecutingTool(false);
       }
     } catch (e) {
       appendError(String(e));
       setStreaming(false);
+      setIsExecutingTool(false);
     }
-  }, [pendingApprovals, approvalResults, sendAllResults, appendError]);
+  }, [
+    pendingApprovals,
+    approvalResults,
+    sendAllResults,
+    appendError,
+    isExecutingTool,
+  ]);
 
   const handleApproveAlways = useCallback(
     async (scope?: "project" | "session") => {
+      if (isExecutingTool) return;
+
       // For now, just handle the first approval with approve-always
       // TODO: Support approve-always for multiple approvals
       if (pendingApprovals.length === 0 || approvalContexts.length === 0)
@@ -1539,7 +1572,7 @@ export default function App({
       buffersRef.current.order.push(cmdId);
       refreshDerived();
 
-      // Approve current tool
+      // Approve current tool (handleApproveCurrent manages the execution guard)
       await handleApproveCurrent();
     },
     [
@@ -1548,15 +1581,20 @@ export default function App({
       pendingApprovals,
       handleApproveCurrent,
       refreshDerived,
+      isExecutingTool,
     ],
   );
 
   const handleDenyCurrent = useCallback(
     async (reason: string) => {
+      if (isExecutingTool) return;
+
       const currentIndex = approvalResults.length;
       const currentApproval = pendingApprovals[currentIndex];
 
       if (!currentApproval) return;
+
+      setIsExecutingTool(true);
 
       try {
         // Store denial decision
@@ -1569,18 +1607,27 @@ export default function App({
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
+          // sendAllResults owns the lock release via its finally block
           setThinkingMessage(getRandomThinkingMessage());
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
           setApprovalResults((prev) => [...prev, decision]);
+          setIsExecutingTool(false);
         }
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
+        setIsExecutingTool(false);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, appendError],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      appendError,
+      isExecutingTool,
+    ],
   );
 
   const handleModelSelect = useCallback(
