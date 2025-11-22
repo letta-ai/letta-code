@@ -19,6 +19,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  Skill: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
 };
