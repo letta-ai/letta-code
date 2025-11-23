@@ -73,6 +73,12 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 // Can be disabled if the latency check adds too much overhead
 const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 
+// Feature flag: Eagerly cancel streams client-side when user presses ESC
+// When true (default), immediately abort the stream after calling .cancel()
+// This provides instant feedback to the user without waiting for backend acknowledgment
+// When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
+const EAGER_CANCEL = true;
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -736,21 +742,11 @@ export default function App({
       const _cancelResult = await client.agents.messages.cancel(agentId);
       // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
-      // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
-      // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
-      // if (abortControllerRef.current) {
-      //   abortControllerRef.current.abort();
-      // }
-
-      // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
-      // This gives the backend 5 seconds to gracefully close the stream before forcing abort
-      // const abortTimeout = setTimeout(() => {
-      //   if (abortControllerRef.current) {
-      //     abortControllerRef.current.abort();
-      //   }
-      // }, 5000);
-      //
-      // // The timeout will be cleared in processConversation's finally block when stream ends
+      // If EAGER_CANCEL is enabled, immediately abort the stream client-side
+      // This provides instant feedback without waiting for backend to acknowledge
+      if (EAGER_CANCEL && abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     } catch (e) {
       appendError(`Failed to interrupt stream: ${String(e)}`);
       setInterruptRequested(false);
