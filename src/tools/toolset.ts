@@ -11,6 +11,36 @@ import {
 } from "./manager";
 
 /**
+ * Force switch to a specific toolset regardless of model.
+ *
+ * @param toolsetName - The toolset to switch to ("codex" or "default")
+ * @param agentId - Agent to relink tools to
+ */
+export async function forceToolsetSwitch(
+  toolsetName: "codex" | "default",
+  agentId: string,
+): Promise<void> {
+  // Clear currently loaded tools
+  clearTools();
+
+  // Load the appropriate toolset by passing a model identifier from that provider
+  // This triggers the loadTools logic that selects OPENAI_DEFAULT_TOOLS vs ANTHROPIC_DEFAULT_TOOLS
+  if (toolsetName === "codex") {
+    await loadTools("openai/gpt-4"); // Pass OpenAI model to trigger codex toolset
+  } else {
+    await loadTools("anthropic/claude-sonnet-4"); // Pass Anthropic to trigger default toolset
+  }
+
+  // Upsert the new toolset to server
+  const client = await getClient();
+  await upsertToolsToServer(client);
+
+  // Remove old Letta tools and add new ones
+  await unlinkToolsFromAgent(agentId);
+  await linkToolsToAgent(agentId);
+}
+
+/**
  * Switches the loaded toolset based on the target model identifier,
  * upserts the tools to the server, and relinks them to the agent.
  *
