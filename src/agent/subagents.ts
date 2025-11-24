@@ -122,14 +122,14 @@ export const SUBAGENT_CONFIGS: Record<SubagentType, SubagentConfig> = {
   Explore: {
     systemPrompt: EXPLORE_SYSTEM_PROMPT,
     allowedTools: ["Glob", "Grep", "Read", "LS", "BashOutput"],
-    recommendedModel: "anthropic/claude-haiku-4-20250514",
+    recommendedModel: "haiku", // Use model ID, will be resolved via model.ts
     description:
       "Fast agent for codebase exploration - finding files, searching code, understanding structure",
   },
   Plan: {
     systemPrompt: PLAN_SYSTEM_PROMPT,
     allowedTools: ["Glob", "Grep", "Read", "LS", "BashOutput"],
-    recommendedModel: "anthropic/claude-haiku-4-20250514",
+    recommendedModel: "opus", // Use model ID, will be resolved via model.ts
     description:
       "Planning agent that breaks down complex tasks into actionable steps",
   },
@@ -148,7 +148,7 @@ export const SUBAGENT_CONFIGS: Record<SubagentType, SubagentConfig> = {
       "TodoWrite",
       "Write",
     ],
-    recommendedModel: "anthropic/claude-sonnet-4-5-20250929",
+    recommendedModel: "sonnet-4.5", // Use model ID, will be resolved via model.ts
     description:
       "Full-capability agent for research, planning, and implementation",
   },

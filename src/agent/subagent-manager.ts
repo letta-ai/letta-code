@@ -12,13 +12,9 @@
 import type {
   AgentResponse,
   AgentType,
+  MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  AssistantMessage,
-  LettaStreamingResponse,
-  SystemMessage,
-  UserMessage,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./client";
 import {
   type SubagentConfig,
@@ -52,23 +48,35 @@ const subagentRegistry = new Map<string, SubagentInfo>();
 
 /**
  * Resolve model string to full model identifier
+ * Uses the model resolution utilities from model.ts
  */
-function resolveSubagentModel(
+async function resolveSubagentModel(
   modelShorthand: string | undefined,
   config: SubagentConfig,
-): string {
-  if (!modelShorthand) {
-    return config.recommendedModel;
+): Promise<string> {
+  // Import dynamically to avoid circular dependencies
+  const { resolveModel } = await import("./model");
+
+  // If user provided a model, try to resolve it
+  if (modelShorthand) {
+    const resolved = resolveModel(modelShorthand);
+    if (resolved) {
+      return resolved;
+    }
+    console.warn(
+      `Failed to resolve model "${modelShorthand}", falling back to recommended model`,
+    );
   }
 
-  // Map short names to full identifiers
-  const modelMap: Record<string, string> = {
-    haiku: "anthropic/claude-haiku-4-20250514",
-    sonnet: "anthropic/claude-sonnet-4-5-20250929",
-    opus: "anthropic/claude-opus-4-20250514",
-  };
+  // Fall back to recommended model from config, and resolve it
+  const resolved = resolveModel(config.recommendedModel);
+  if (!resolved) {
+    throw new Error(
+      `Failed to resolve recommended model "${config.recommendedModel}" for subagent`,
+    );
+  }
 
-  return modelMap[modelShorthand] || config.recommendedModel;
+  return resolved;
 }
 
 /**
@@ -76,32 +84,33 @@ function resolveSubagentModel(
  */
 export async function getConversationHistory(
   agentId: string,
-): Promise<Array<UserMessage | AssistantMessage | SystemMessage>> {
+): Promise<MessageCreate[]> {
   const client = await getClient();
 
   // Get the agent's message history
-  const messages = await client.agents.messages.list(agentId, {
+  const messagesPage = await client.agents.messages.list(agentId, {
     limit: 100, // Get last 100 messages for context
   });
+  const messages = messagesPage.items;
 
-  // Convert message history to format suitable for new agent
-  const history: Array<UserMessage | AssistantMessage | SystemMessage> = [];
+  // Convert message history to MessageCreate format for sending to new agent
+  const history: MessageCreate[] = [];
 
   for (const msg of messages) {
     if (msg.message_type === "user_message") {
       history.push({
         role: "user" as const,
-        content: msg.text || "",
+        content: msg.content || "",
       });
     } else if (msg.message_type === "assistant_message") {
       history.push({
         role: "assistant" as const,
-        content: msg.text || "",
+        content: msg.content || "",
       });
     } else if (msg.message_type === "system_message") {
       history.push({
         role: "system" as const,
-        content: msg.text || "",
+        content: msg.content || "",
       });
     }
   }
@@ -131,7 +140,7 @@ async function createSubagent(
 
   const client = await getClient();
 
-  // Create agent using the standard createAgent function
+  // Create agent using the standard createAgent function with custom system prompt
   const agent = await createAgent(
     `subagent-${type}-${Date.now()}`,
     model,
@@ -141,95 +150,112 @@ async function createSubagent(
     undefined, // no skills directory
     true, // parallel tool calls
     false, // no sleeptime
+    systemPrompt, // custom system prompt for this subagent type
   );
-
-  // Update the agent's system prompt to use the subagent-specific prompt
-  await client.agents.update(agent.id, {
-    system: systemPrompt,
-  });
 
   // Unlink tools that aren't allowed for this subagent type
   const allTools = agent.tools || [];
-  const allowedTools = config.allowedTools;
+  const allowedToolNames = new Set(config.allowedTools);
 
-  const toolsToUnlink = allTools.filter(
-    (tool) => !allowedTools.includes(tool as never),
-  );
+  // Filter to keep only allowed tools (and base tools like memory, web_search, etc.)
+  const remainingTools = allTools.filter((tool) => {
+    if (!tool.name) return true; // Keep tools without names (shouldn't happen)
+    // Keep if it's an allowed tool OR a base Letta tool (memory, web_search, etc.)
+    return (
+      allowedToolNames.has(tool.name as never) ||
+      ["memory", "web_search", "conversation_search", "fetch_webpage"].includes(
+        tool.name,
+      )
+    );
+  });
 
-  if (toolsToUnlink.length > 0) {
-    // Unlink unauthorized tools
-    for (const tool of toolsToUnlink) {
-      try {
-        await client.agents.tools.remove(agent.id, {
-          tool_name: tool,
-        });
-      } catch (error) {
-        console.warn(
-          `Failed to unlink tool ${tool} from subagent: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
+  // Extract tool IDs from remaining tools
+  const remainingToolIds = remainingTools
+    .map((t) => t.id)
+    .filter((id): id is string => typeof id === "string");
+
+  // Update agent with filtered tools
+  if (remainingToolIds.length !== allTools.length) {
+    await client.agents.modify(agent.id, {
+      tool_ids: remainingToolIds,
+    });
   }
 
   return agent;
 }
 
 /**
- * Execute a subagent and collect its final report
+ * Execute a subagent and collect its final report by spawning letta in headless mode
  */
 async function executeSubagent(
   agent: AgentResponse,
-  conversationHistory: Array<UserMessage | AssistantMessage | SystemMessage>,
+  conversationHistory: MessageCreate[],
   userPrompt: string,
 ): Promise<SubagentResult> {
-  const client = await getClient();
-
   try {
-    // Send conversation history + user prompt to subagent
-    const messages = [
-      ...conversationHistory.map((msg) => ({
-        role: msg.role,
-        text: msg.content,
-      })),
-      {
-        role: "user" as const,
-        text: userPrompt,
-      },
-    ];
+    // First, send conversation history to the subagent
+    const { sendMessageStream } = await import("./message");
+    const stream = await sendMessageStream(agent.id, conversationHistory);
 
-    // Send messages and stream the response
-    const stream = await client.agents.messages.stream(agent.id, {
-      messages: messages.map((msg) => ({
-        role: msg.role,
-        text: msg.text,
-      })),
-      stream_tokens: true,
-      background: true,
-    });
-
-    // Collect all assistant messages into final report
-    let report = "";
-    const chunks: LettaStreamingResponse[] = [];
-
-    for await (const chunk of stream) {
-      chunks.push(chunk);
-
-      if (
-        chunk.message_type === "assistant_message" ||
-        chunk.message_type === "internal_monologue"
-      ) {
-        report += chunk.text || "";
-      }
-
-      // Handle tool calls if needed
-      // For now, we'll let the backend handle tool execution
+    // Drain the stream (just need to populate the agent's message history)
+    for await (const _chunk of stream) {
+      // No-op, just consuming the stream to populate history
     }
 
-    return {
-      agentId: agent.id,
-      report: report.trim(),
-      success: true,
-    };
+    // Now run letta in headless mode with the user prompt
+    // This reuses ALL the existing headless logic (tool execution, approvals, etc.)
+
+    // Spawn letta in headless mode with JSON output
+    const proc = Bun.spawn(
+      ["letta", "--agent", agent.id, "-p", userPrompt, "--output-format", "json"],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+      }
+    );
+
+    // Collect stdout and stderr
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    // Check for errors
+    if (exitCode !== 0) {
+      return {
+        agentId: agent.id,
+        report: "",
+        success: false,
+        error: `Subagent execution failed with exit code ${exitCode}: ${stderr}`,
+      };
+    }
+
+    // Parse JSON output
+    try {
+      const result = JSON.parse(stdout);
+
+      if (result.is_error || result.subtype !== "success") {
+        return {
+          agentId: agent.id,
+          report: "",
+          success: false,
+          error: result.result || "Unknown error",
+        };
+      }
+
+      return {
+        agentId: agent.id,
+        report: result.result || "",
+        success: true,
+      };
+    } catch (parseError) {
+      return {
+        agentId: agent.id,
+        report: "",
+        success: false,
+        error: `Failed to parse subagent output: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+      };
+    }
   } catch (error) {
     return {
       agentId: agent.id,
@@ -251,7 +277,7 @@ export async function spawnSubagent(
   model?: string,
 ): Promise<SubagentResult> {
   const config = getSubagentConfig(type);
-  const resolvedModel = resolveSubagentModel(model, config);
+  const resolvedModel = await resolveSubagentModel(model, config);
 
   // Get conversation history from main agent
   const conversationHistory = await getConversationHistory(mainAgentId);

@@ -31,6 +31,7 @@ export async function createAgent(
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
+  systemPrompt?: string,
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -205,7 +206,7 @@ export async function createAgent(
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt || SYSTEM_PROMPT,
     name,
     embedding: embeddingModel,
     model: modelHandle,
