@@ -19,6 +19,7 @@ export async function search_file_content(
     pattern: args.pattern,
     path: args.dir_path,
     glob: args.include,
+    output_mode: "content" as const, // Return actual matching lines, not just file paths
   };
 
   const result = await grep(lettaArgs);

@@ -15,7 +15,13 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir.createFile("file2.txt", "Content 2");
     testDir.createFile("file3.md", "Markdown");
 
+    // Change to testDir for testing
+    const originalCwd = process.cwd();
+    process.chdir(testDir.path);
+
     const result = await read_many_files({ include: ["*.txt"] });
+
+    process.chdir(originalCwd);
 
     expect(result.message).toContain("Content 1");
     expect(result.message).toContain("Content 2");
@@ -27,7 +33,12 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir.createFile("a.txt", "First");
     testDir.createFile("b.txt", "Second");
 
+    const originalCwd = process.cwd();
+    process.chdir(testDir.path);
+
     const result = await read_many_files({ include: ["*.txt"] });
+
+    process.chdir(originalCwd);
 
     expect(result.message).toContain("First");
     expect(result.message).toContain("Second");
@@ -39,10 +50,15 @@ describe("ReadManyFiles tool (Gemini)", () => {
     testDir.createFile("include.txt", "Include me");
     testDir.createFile("exclude.txt", "Exclude me");
 
+    const originalCwd = process.cwd();
+    process.chdir(testDir.path);
+
     const result = await read_many_files({
       include: ["*.txt"],
       exclude: ["exclude.txt"],
     });
+
+    process.chdir(originalCwd);
 
     expect(result.message).toContain("Include me");
     expect(result.message).not.toContain("Exclude me");

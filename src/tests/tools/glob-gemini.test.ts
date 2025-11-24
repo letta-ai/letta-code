@@ -15,7 +15,10 @@ describe("GlobGemini tool", () => {
     testDir.createFile("test.js", "content");
     testDir.createFile("README.md", "content");
 
-    const result = await glob_gemini({ pattern: "*.ts" });
+    const result = await glob_gemini({
+      pattern: "*.ts",
+      dir_path: testDir.path,
+    });
 
     expect(result.message).toContain("test.ts");
     expect(result.message).not.toContain("test.js");
@@ -37,7 +40,10 @@ describe("GlobGemini tool", () => {
     testDir = new TestDirectory();
     testDir.createFile("test.txt", "content");
 
-    const result = await glob_gemini({ pattern: "*.nonexistent" });
+    const result = await glob_gemini({
+      pattern: "*.nonexistent",
+      dir_path: testDir.path,
+    });
 
     expect(result.message).toBe("");
   });

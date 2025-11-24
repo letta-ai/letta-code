@@ -39,7 +39,8 @@ describe("ListDirectory tool", () => {
 
     const result = await list_directory({ dir_path: testDir.path });
 
-    expect(result.message).toBe("");
+    // LS tool returns a message about empty directory
+    expect(result.message).toContain("empty directory");
   });
 
   test("throws error for nonexistent directory", async () => {

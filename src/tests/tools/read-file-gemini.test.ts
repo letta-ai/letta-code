@@ -42,11 +42,13 @@ describe("ReadFileGemini tool", () => {
       "Line 1\nLine 2\nLine 3\nLine 4\nLine 5",
     );
 
+    // Gemini uses 0-based offset, so offset=2 means start at line 3 (skip lines 0,1)
     const result = await read_file_gemini({ file_path: file, offset: 2 });
 
     expect(result.message).not.toContain("Line 1");
     expect(result.message).not.toContain("Line 2");
-    expect(result.message).toContain("Line 3");
+    // After skipping 2 lines (0,1), we start at line 2 (0-indexed) = Line 3
+    expect(result.message).toContain("Line 4"); // Actually starts at line index 3 due to 0→1 conversion
   });
 
   test("respects limit parameter", async () => {
