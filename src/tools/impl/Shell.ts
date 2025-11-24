@@ -51,7 +51,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
     const stdout = text ? text.split("\n") : [];
     const stderr =
-      "isError" in result && (result as { isError?: boolean }).isError
+      result.status === "error"
         ? ["Command reported an error. See output for details."]
         : [];
 

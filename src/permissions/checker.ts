@@ -217,6 +217,7 @@ function isWithinAllowedDirectories(
 function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
     case "Read":
+    case "read_file":
     case "Write":
     case "Edit":
     case "Glob":
@@ -230,6 +231,16 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       // Bash: "Bash(command with args)"
       const command =
         typeof toolArgs.command === "string" ? toolArgs.command : "";
+      return `Bash(${command})`;
+    }
+    case "shell":
+    case "shell_command": {
+      const command =
+        typeof toolArgs.command === "string"
+          ? toolArgs.command
+          : Array.isArray(toolArgs.command)
+            ? toolArgs.command.join(" ")
+            : "";
       return `Bash(${command})`;
     }
 
@@ -249,12 +260,26 @@ function matchesPattern(
   workingDirectory: string,
 ): boolean {
   // File tools use glob matching
-  if (["Read", "Write", "Edit", "Glob", "Grep"].includes(toolName)) {
+  if (
+    [
+      "Read",
+      "read_file",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "grep_files",
+    ].includes(toolName)
+  ) {
     return matchesFilePattern(query, pattern, workingDirectory);
   }
 
   // Bash uses prefix matching
-  if (toolName === "Bash") {
+  if (
+    toolName === "Bash" ||
+    toolName === "shell" ||
+    toolName === "shell_command"
+  ) {
     return matchesBashPattern(query, pattern);
   }
 
