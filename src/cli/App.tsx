@@ -1720,26 +1720,26 @@ export default function App({
         setLlmConfig(updatedConfig);
 
         // After switching models, reload tools for the selected provider and relink
-        const { clearTools, loadTools, upsertToolsToServer } = await import(
-          "../tools/manager"
+        const { switchToolsetForModel } = await import("../tools/toolset");
+        const toolsetName = await switchToolsetForModel(
+          selectedModel.handle ?? "",
+          agentId,
         );
-        clearTools();
-        await loadTools(selectedModel.handle);
-        const { getClient } = await import("../agent/client");
-        const client = await getClient();
-        await upsertToolsToServer(client);
-        const { unlinkToolsFromAgent, linkToolsToAgent } = await import(
-          "../agent/modify"
-        );
-        await unlinkToolsFromAgent(agentId);
-        await linkToolsToAgent(agentId);
 
-        // Update the same command with final result
+        // Update the same command with final result (include toolset info)
+        const autoToolsetLine = toolsetName
+          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
+          : null;
+        const outputLines = [
+          `Switched to ${selectedModel.label}`,
+          ...(autoToolsetLine ? [autoToolsetLine] : []),
+        ].join("\n");
+
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/model ${modelId}`,
-          output: `Switched to ${selectedModel.label}`,
+          output: outputLines,
           phase: "finished",
           success: true,
         });

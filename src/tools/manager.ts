@@ -266,7 +266,7 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
   }
 }
 
-function isOpenAIModel(modelIdentifier: string): boolean {
+export function isOpenAIModel(modelIdentifier: string): boolean {
   const info = getModelInfo(modelIdentifier);
   if (info?.handle && typeof info.handle === "string") {
     return info.handle.startsWith("openai/");
