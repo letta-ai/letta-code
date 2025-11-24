@@ -31,7 +31,7 @@ OPTIONS
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus" or "anthropic/claude-opus-4-1-20250805")
-  --toolset <name>      Force toolset: "codex" or "default" (overrides model-based auto-selection)
+  --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
@@ -77,12 +77,15 @@ EXAMPLES
  */
 function getModelForToolLoading(
   specifiedModel?: string,
-  specifiedToolset?: "codex" | "default",
+  specifiedToolset?: "codex" | "default" | "gemini",
 ): string | undefined {
   // If toolset is explicitly specified, use a dummy model from that provider
   // to trigger the correct toolset loading logic
   if (specifiedToolset === "codex") {
     return "openai/gpt-4";
+  }
+  if (specifiedToolset === "gemini") {
+    return "google/gemini-3-pro";
   }
   if (specifiedToolset === "default") {
     return "anthropic/claude-sonnet-4";
@@ -182,10 +185,11 @@ async function main() {
   if (
     specifiedToolset &&
     specifiedToolset !== "codex" &&
-    specifiedToolset !== "default"
+    specifiedToolset !== "default" &&
+    specifiedToolset !== "gemini"
   ) {
     console.error(
-      `Error: Invalid toolset "${specifiedToolset}". Must be "codex" or "default".`,
+      `Error: Invalid toolset "${specifiedToolset}". Must be "codex", "default", or "gemini".`,
     );
     process.exit(1);
   }
@@ -340,7 +344,7 @@ async function main() {
     freshBlocks: boolean;
     agentIdArg: string | null;
     model?: string;
-    toolset?: "codex" | "default";
+    toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
@@ -607,7 +611,7 @@ async function main() {
       freshBlocks: freshBlocks,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
-      toolset: specifiedToolset as "codex" | "default" | undefined,
+      toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
     }),
     {

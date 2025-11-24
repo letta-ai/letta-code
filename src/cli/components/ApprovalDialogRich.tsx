@@ -71,7 +71,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 }) => {
   const t = toolName.toLowerCase();
 
-  if (t === "bash" || t === "shell_command") {
+  if (t === "bash" || t === "shell_command" || t === "run_shell_command") {
     const cmdVal = parsedArgs?.command;
     const cmd =
       typeof cmdVal === "string" ? cmdVal : toolArgs || "(no arguments)";
@@ -105,8 +105,9 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "ls" || t === "list_dir") {
-    const pathVal = parsedArgs?.path || parsedArgs?.target_directory;
+  if (t === "ls" || t === "list_dir" || t === "list_directory") {
+    const pathVal =
+      parsedArgs?.path || parsedArgs?.target_directory || parsedArgs?.dir_path;
     const path = typeof pathVal === "string" ? pathVal : "(current directory)";
     const ignoreVal = parsedArgs?.ignore || parsedArgs?.ignore_globs;
     const ignore =
@@ -122,7 +123,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "read" || t === "read_file") {
+  if (t === "read" || t === "read_file" || t === "read_file_gemini") {
     const pathVal = parsedArgs?.file_path || parsedArgs?.target_file;
     const path = typeof pathVal === "string" ? pathVal : "(no file specified)";
     const offsetVal = parsedArgs?.offset;
@@ -142,7 +143,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "grep" || t === "grep_files") {
+  if (t === "grep" || t === "grep_files" || t === "search_file_content") {
     const patternVal = parsedArgs?.pattern;
     const pattern =
       typeof patternVal === "string" ? patternVal : "(no pattern)";
@@ -216,8 +217,32 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     }
   }
 
-  // File edit previews: write/edit/multi_edit
-  if ((t === "write" || t === "edit" || t === "multiedit") && parsedArgs) {
+  if (t === "glob" || t === "glob_gemini") {
+    const patternVal = parsedArgs?.pattern;
+    const pattern =
+      typeof patternVal === "string" ? patternVal : "(no pattern)";
+    const dirPathVal = parsedArgs?.dir_path;
+    const dirInfo = typeof dirPathVal === "string" ? ` in ${dirPathVal}` : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>
+          Find files matching: {pattern}
+          {dirInfo}
+        </Text>
+      </Box>
+    );
+  }
+
+  // File edit previews: write/edit/multi_edit/replace/write_file_gemini
+  if (
+    (t === "write" ||
+      t === "edit" ||
+      t === "multiedit" ||
+      t === "replace" ||
+      t === "write_file_gemini") &&
+    parsedArgs
+  ) {
     try {
       const filePath = String(parsedArgs.file_path || "");
       if (!filePath) throw new Error("no file_path");
@@ -313,7 +338,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   }
 
   // Default for file-edit tools when args not parseable yet
-  if (t === "write" || t === "edit" || t === "multiedit") {
+  if (
+    t === "write" ||
+    t === "edit" ||
+    t === "multiedit" ||
+    t === "replace" ||
+    t === "write_file_gemini"
+  ) {
     return (
       <Box flexDirection="column" paddingLeft={2}>
         <Text dimColor>Preparing preview…</Text>
@@ -605,5 +636,15 @@ function getHeaderLabel(toolName: string): string {
   if (t === "grep_files") return "Search in Files";
   if (t === "apply_patch") return "Apply Patch";
   if (t === "update_plan") return "Plan update";
+  // Gemini toolset
+  if (t === "run_shell_command") return "Shell command";
+  if (t === "read_file_gemini") return "Read File";
+  if (t === "list_directory") return "List Directory";
+  if (t === "glob_gemini") return "Find Files";
+  if (t === "search_file_content") return "Search in Files";
+  if (t === "replace") return "Edit File";
+  if (t === "write_file_gemini") return "Write File";
+  if (t === "write_todos") return "Update Todos";
+  if (t === "read_many_files") return "Read Multiple Files";
   return toolName;
 }

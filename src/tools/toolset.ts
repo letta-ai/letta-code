@@ -36,6 +36,18 @@ const ANTHROPIC_TOOLS = [
   "Write",
 ];
 
+const GEMINI_TOOLS = [
+  "run_shell_command",
+  "read_file_gemini",
+  "list_directory",
+  "glob_gemini",
+  "search_file_content",
+  "replace",
+  "write_file_gemini",
+  "write_todos",
+  "read_many_files",
+];
+
 /**
  * Gets the list of Letta Code tools currently attached to an agent.
  * Returns the tool names that are both attached to the agent AND in our tool definitions.
@@ -54,7 +66,7 @@ export async function getAttachedLettaTools(
       .filter((name): name is string => typeof name === "string") || [];
 
   // Get all possible Letta Code tool names
-  const allLettaTools = [...CODEX_TOOLS, ...ANTHROPIC_TOOLS];
+  const allLettaTools = [...CODEX_TOOLS, ...ANTHROPIC_TOOLS, ...GEMINI_TOOLS];
 
   // Return intersection: tools that are both attached AND in our definitions
   return toolNames.filter((name) => allLettaTools.includes(name));
@@ -62,13 +74,12 @@ export async function getAttachedLettaTools(
 
 /**
  * Detects which toolset is attached to an agent by examining its tools.
- * Returns "codex" if majority are codex tools, "default" if majority are anthropic tools,
- * or null if no Letta Code tools are detected.
+ * Returns "codex", "default", "gemini" based on majority, or null if no Letta Code tools.
  */
 export async function detectToolsetFromAgent(
   client: Letta,
   agentId: string,
-): Promise<"codex" | "default" | null> {
+): Promise<"codex" | "default" | "gemini" | null> {
   const attachedTools = await getAttachedLettaTools(client, agentId);
 
   if (attachedTools.length === 0) {
@@ -81,30 +92,37 @@ export async function detectToolsetFromAgent(
   const anthropicCount = attachedTools.filter((name) =>
     ANTHROPIC_TOOLS.includes(name),
   ).length;
+  const geminiCount = attachedTools.filter((name) =>
+    GEMINI_TOOLS.includes(name),
+  ).length;
 
-  // Return whichever has more tools attached
-  return codexCount > anthropicCount ? "codex" : "default";
+  // Return whichever has the most tools attached
+  const max = Math.max(codexCount, anthropicCount, geminiCount);
+  if (geminiCount === max) return "gemini";
+  if (codexCount === max) return "codex";
+  return "default";
 }
 
 /**
  * Force switch to a specific toolset regardless of model.
  *
- * @param toolsetName - The toolset to switch to ("codex" or "default")
+ * @param toolsetName - The toolset to switch to ("codex", "default", or "gemini")
  * @param agentId - Agent to relink tools to
  */
 export async function forceToolsetSwitch(
-  toolsetName: "codex" | "default",
+  toolsetName: "codex" | "default" | "gemini",
   agentId: string,
 ): Promise<void> {
   // Clear currently loaded tools
   clearTools();
 
   // Load the appropriate toolset by passing a model identifier from that provider
-  // This triggers the loadTools logic that selects OPENAI_DEFAULT_TOOLS vs ANTHROPIC_DEFAULT_TOOLS
   if (toolsetName === "codex") {
-    await loadTools("openai/gpt-4"); // Pass OpenAI model to trigger codex toolset
+    await loadTools("openai/gpt-4");
+  } else if (toolsetName === "gemini") {
+    await loadTools("google/gemini-3-pro");
   } else {
-    await loadTools("anthropic/claude-sonnet-4"); // Pass Anthropic to trigger default toolset
+    await loadTools("anthropic/claude-sonnet-4");
   }
 
   // Upsert the new toolset to server
@@ -127,7 +145,7 @@ export async function forceToolsetSwitch(
 export async function switchToolsetForModel(
   modelIdentifier: string,
   agentId: string,
-): Promise<"codex" | "default"> {
+): Promise<"codex" | "default" | "gemini"> {
   // Resolve model ID to handle when possible so provider checks stay consistent
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
 
@@ -158,6 +176,11 @@ export async function switchToolsetForModel(
   await unlinkToolsFromAgent(agentId);
   await linkToolsToAgent(agentId);
 
-  const toolsetName = isOpenAIModel(resolvedModel) ? "codex" : "default";
+  const { isGeminiModel } = await import("./manager");
+  const toolsetName = isOpenAIModel(resolvedModel)
+    ? "codex"
+    : isGeminiModel(resolvedModel)
+      ? "gemini"
+      : "default";
   return toolsetName;
 }

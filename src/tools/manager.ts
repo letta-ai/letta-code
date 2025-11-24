@@ -33,6 +33,18 @@ const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "update_plan",
 ];
 
+const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+  "run_shell_command",
+  "read_file_gemini",
+  "list_directory",
+  "glob_gemini",
+  "search_file_content",
+  "replace",
+  "write_file_gemini",
+  "write_todos",
+  "read_many_files",
+];
+
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Bash: { requiresApproval: true },
@@ -54,6 +66,16 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
+  // Gemini toolset
+  glob_gemini: { requiresApproval: false },
+  list_directory: { requiresApproval: false },
+  read_file_gemini: { requiresApproval: false },
+  read_many_files: { requiresApproval: false },
+  replace: { requiresApproval: true },
+  run_shell_command: { requiresApproval: true },
+  search_file_content: { requiresApproval: false },
+  write_todos: { requiresApproval: false },
+  write_file_gemini: { requiresApproval: true },
 };
 
 interface JsonSchema {
@@ -264,7 +286,13 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
   const filterActive = toolFilter.isActive();
 
   let baseToolNames: ToolName[];
-  if (!filterActive && modelIdentifier && isOpenAIModel(modelIdentifier)) {
+  if (!filterActive && modelIdentifier && isGeminiModel(modelIdentifier)) {
+    baseToolNames = GEMINI_DEFAULT_TOOLS;
+  } else if (
+    !filterActive &&
+    modelIdentifier &&
+    isOpenAIModel(modelIdentifier)
+  ) {
     baseToolNames = OPENAI_DEFAULT_TOOLS;
   } else if (!filterActive) {
     baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
@@ -315,6 +343,15 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   }
   // Fallback: treat raw handle-style identifiers as OpenAI if they start with openai/
   return modelIdentifier.startsWith("openai/");
+}
+
+export function isGeminiModel(modelIdentifier: string): boolean {
+  const info = getModelInfo(modelIdentifier);
+  if (info?.handle && typeof info.handle === "string") {
+    return info.handle.startsWith("google/");
+  }
+  // Fallback: treat raw handle-style identifiers as Gemini if they start with google/
+  return modelIdentifier.startsWith("google/");
 }
 
 /**
