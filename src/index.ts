@@ -360,11 +360,77 @@ async function main() {
     useEffect(() => {
       async function init() {
         setLoadingState("assembling");
-        const modelForTools = getModelForToolLoading(model, toolset);
-        await loadTools(modelForTools);
+        const client = await getClient();
+
+        // Determine which agent we'll be using (before loading tools)
+        let resumingAgentId: string | null = null;
+
+        // Priority 1: --agent flag
+        if (agentIdArg) {
+          try {
+            await client.agents.retrieve(agentIdArg);
+            resumingAgentId = agentIdArg;
+          } catch {
+            // Agent doesn't exist, will create new later
+          }
+        }
+
+        // Priority 2: Skip resume if --new flag
+        if (!resumingAgentId && !forceNew) {
+          // Priority 3: Try project settings
+          await settingsManager.loadLocalProjectSettings();
+          const localProjectSettings =
+            settingsManager.getLocalProjectSettings();
+          if (localProjectSettings?.lastAgent) {
+            try {
+              await client.agents.retrieve(localProjectSettings.lastAgent);
+              resumingAgentId = localProjectSettings.lastAgent;
+            } catch {
+              // Agent no longer exists
+            }
+          }
+
+          // Priority 4: Try global settings if --continue flag
+          if (!resumingAgentId && continueSession && settings.lastAgent) {
+            try {
+              await client.agents.retrieve(settings.lastAgent);
+              resumingAgentId = settings.lastAgent;
+            } catch {
+              // Agent no longer exists
+            }
+          }
+        }
+
+        // If resuming an existing agent, load the exact tools attached to it
+        // Otherwise, load a full toolset based on model/toolset preference
+        if (resumingAgentId && !toolset) {
+          try {
+            const { getAttachedLettaTools } = await import("./tools/toolset");
+            const { loadSpecificTools } = await import("./tools/manager");
+            const attachedTools = await getAttachedLettaTools(
+              client,
+              resumingAgentId,
+            );
+            if (attachedTools.length > 0) {
+              // Load only the specific tools attached to this agent
+              await loadSpecificTools(attachedTools);
+            } else {
+              // No Letta Code tools attached, load default based on model
+              const modelForTools = getModelForToolLoading(model, undefined);
+              await loadTools(modelForTools);
+            }
+          } catch {
+            // Detection failed, use model-based default
+            const modelForTools = getModelForToolLoading(model, undefined);
+            await loadTools(modelForTools);
+          }
+        } else {
+          // Creating new agent or explicit toolset specified - load full toolset
+          const modelForTools = getModelForToolLoading(model, toolset);
+          await loadTools(modelForTools);
+        }
 
         setLoadingState("upserting");
-        const client = await getClient();
         await upsertToolsToServer(client);
 
         // Handle --link/--unlink after upserting tools

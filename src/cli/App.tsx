@@ -438,6 +438,13 @@ export default function App({
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
           setAgentName(agent.name);
+
+          // Detect current toolset from attached tools
+          const { detectToolsetFromAgent } = await import("../tools/toolset");
+          const detected = await detectToolsetFromAgent(client, agentId);
+          if (detected) {
+            setCurrentToolset(detected);
+          }
         } catch (error) {
           console.error("Error fetching agent config:", error);
         }

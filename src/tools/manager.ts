@@ -216,6 +216,43 @@ export async function analyzeToolApproval(
 }
 
 /**
+ * Loads specific tools by name into the registry.
+ * Used when resuming an agent to load only the tools attached to that agent.
+ *
+ * @param toolNames - Array of specific tool names to load
+ */
+export async function loadSpecificTools(toolNames: string[]): Promise<void> {
+  for (const name of toolNames) {
+    // Skip if tool filter is active and this tool is not enabled
+    const { toolFilter } = await import("./filter");
+    if (!toolFilter.isEnabled(name)) {
+      continue;
+    }
+
+    const definition = TOOL_DEFINITIONS[name as ToolName];
+    if (!definition) {
+      console.warn(`Tool ${name} not found in definitions, skipping`);
+      continue;
+    }
+
+    if (!definition.impl) {
+      throw new Error(`Tool implementation not found for ${name}`);
+    }
+
+    const toolSchema: ToolSchema = {
+      name,
+      description: definition.description,
+      input_schema: definition.schema,
+    };
+
+    toolRegistry.set(name, {
+      schema: toolSchema,
+      fn: definition.impl,
+    });
+  }
+}
+
+/**
  * Loads all tools defined in TOOL_NAMES and constructs their full schemas + function references.
  * This should be called on program startup.
  * Will error if any expected tool files are missing.
