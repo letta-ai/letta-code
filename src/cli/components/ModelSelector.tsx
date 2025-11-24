@@ -1,8 +1,18 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { models } from "../../agent/model";
 import { colors } from "./colors";
+
+type UiModel = {
+  id: string;
+  handle: string;
+  label: string;
+  description: string;
+  isDefault?: boolean;
+  isFeatured?: boolean;
+  updateArgs?: Record<string, unknown>;
+};
 
 interface ModelSelectorProps {
   currentModel?: string;
@@ -15,17 +25,37 @@ export function ModelSelector({
   onSelect,
   onCancel,
 }: ModelSelectorProps) {
+  const typedModels = models as UiModel[];
+  const [showAll, setShowAll] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const featuredModels = useMemo(
+    () => typedModels.filter((model) => model.isFeatured),
+    [typedModels],
+  );
+
+  const visibleModels = useMemo(() => {
+    if (showAll) return typedModels;
+    if (featuredModels.length > 0) return featuredModels;
+    return typedModels.slice(0, 5);
+  }, [featuredModels, showAll, typedModels]);
+
+  const totalItems = showAll ? visibleModels.length : visibleModels.length + 1;
 
   useInput((_input, key) => {
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(models.length - 1, prev + 1));
+      setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
     } else if (key.return) {
-      const selectedModel = models[selectedIndex];
-      if (selectedModel) {
-        onSelect(selectedModel.id);
+      if (!showAll && selectedIndex === visibleModels.length) {
+        setShowAll(true);
+        setSelectedIndex(0);
+      } else {
+        const selectedModel = visibleModels[selectedIndex];
+        if (selectedModel) {
+          onSelect(selectedModel.id);
+        }
       }
     } else if (key.escape) {
       onCancel();
@@ -41,7 +71,7 @@ export function ModelSelector({
       </Box>
 
       <Box flexDirection="column">
-        {models.map((model, index) => {
+        {visibleModels.map((model, index) => {
           const isSelected = index === selectedIndex;
           const isCurrent = model.handle === currentModel;
 
@@ -69,6 +99,20 @@ export function ModelSelector({
             </Box>
           );
         })}
+        {!showAll && (
+          <Box flexDirection="row" gap={1}>
+            <Text
+              color={
+                selectedIndex === visibleModels.length
+                  ? colors.selector.itemHighlighted
+                  : undefined
+              }
+            >
+              {selectedIndex === visibleModels.length ? "›" : " "}
+            </Text>
+            <Text dimColor>Show all models</Text>
+          </Box>
+        )}
       </Box>
     </Box>
   );
