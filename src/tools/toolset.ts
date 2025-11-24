@@ -1,3 +1,4 @@
+import type Letta from "@letta-ai/letta-client";
 import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
@@ -9,6 +10,81 @@ import {
   loadTools,
   upsertToolsToServer,
 } from "./manager";
+
+const CODEX_TOOLS = [
+  "shell_command",
+  "shell",
+  "read_file",
+  "list_dir",
+  "grep_files",
+  "apply_patch",
+  "update_plan",
+];
+
+const ANTHROPIC_TOOLS = [
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillBash",
+  "LS",
+  "MultiEdit",
+  "Read",
+  "TodoWrite",
+  "Write",
+];
+
+/**
+ * Gets the list of Letta Code tools currently attached to an agent.
+ * Returns the tool names that are both attached to the agent AND in our tool definitions.
+ */
+export async function getAttachedLettaTools(
+  client: Letta,
+  agentId: string,
+): Promise<string[]> {
+  const agent = await client.agents.retrieve(agentId, {
+    include: ["agent.tools"],
+  });
+
+  const toolNames =
+    agent.tools
+      ?.map((t) => t.name)
+      .filter((name): name is string => typeof name === "string") || [];
+
+  // Get all possible Letta Code tool names
+  const allLettaTools = [...CODEX_TOOLS, ...ANTHROPIC_TOOLS];
+
+  // Return intersection: tools that are both attached AND in our definitions
+  return toolNames.filter((name) => allLettaTools.includes(name));
+}
+
+/**
+ * Detects which toolset is attached to an agent by examining its tools.
+ * Returns "codex" if majority are codex tools, "default" if majority are anthropic tools,
+ * or null if no Letta Code tools are detected.
+ */
+export async function detectToolsetFromAgent(
+  client: Letta,
+  agentId: string,
+): Promise<"codex" | "default" | null> {
+  const attachedTools = await getAttachedLettaTools(client, agentId);
+
+  if (attachedTools.length === 0) {
+    return null;
+  }
+
+  const codexCount = attachedTools.filter((name) =>
+    CODEX_TOOLS.includes(name),
+  ).length;
+  const anthropicCount = attachedTools.filter((name) =>
+    ANTHROPIC_TOOLS.includes(name),
+  ).length;
+
+  // Return whichever has more tools attached
+  return codexCount > anthropicCount ? "codex" : "default";
+}
 
 /**
  * Force switch to a specific toolset regardless of model.
