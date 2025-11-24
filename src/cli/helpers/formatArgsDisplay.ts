@@ -27,7 +27,16 @@ export function formatArgsDisplay(argsJson: string): {
         if (
           keys.length === 1 &&
           firstKey &&
-          ["query", "path", "file_path", "command", "label"].includes(firstKey)
+          [
+            "query",
+            "path",
+            "file_path",
+            "target_file",
+            "target_directory",
+            "command",
+            "label",
+            "pattern",
+          ].includes(firstKey)
         ) {
           const v = parsed[firstKey];
           display = typeof v === "string" ? v : String(v);

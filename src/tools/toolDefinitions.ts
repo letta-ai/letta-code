@@ -15,6 +15,7 @@ import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
+import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import WriteDescription from "./descriptions/Write.md";
 import { apply_patch } from "./impl/ApplyPatch";
 import { bash } from "./impl/Bash";
@@ -33,6 +34,7 @@ import { read_file } from "./impl/ReadFileCodex";
 import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { todo_write } from "./impl/TodoWrite";
+import { update_plan } from "./impl/UpdatePlan";
 import { write } from "./impl/Write";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import BashSchema from "./schemas/Bash.json";
@@ -51,6 +53,7 @@ import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
+import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import WriteSchema from "./schemas/Write.json";
 
 type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
@@ -151,6 +154,11 @@ const toolDefinitions = {
     schema: ApplyPatchSchema,
     description: ApplyPatchDescription.trim(),
     impl: apply_patch as unknown as ToolImplementation,
+  },
+  update_plan: {
+    schema: UpdatePlanSchema,
+    description: UpdatePlanDescription.trim(),
+    impl: update_plan as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 
