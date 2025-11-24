@@ -51,8 +51,15 @@ export async function createAgent(
   const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
+  // Map internal names to server names so the agent sees the correct tool names
+  const { getServerToolName } = await import("../tools/manager");
+  const internalToolNames = getToolNames();
+  const serverToolNames = internalToolNames.map((name) =>
+    getServerToolName(name),
+  );
+
   const toolNames = [
-    ...getToolNames(),
+    ...serverToolNames,
     "memory",
     "web_search",
     "conversation_search",

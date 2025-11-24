@@ -32,11 +32,14 @@ describe("GlobGemini tool", () => {
     testDir.createFile("README.md", "content");
 
     const result = await glob_gemini({
-      pattern: "src/**/*.ts",
+      pattern: "**/*.ts",
       dir_path: testDir.path,
     });
 
+    // Should find both .ts files regardless of platform path separators
+    expect(result.message.length).toBeGreaterThan(0);
     expect(result.message).toContain("index.ts");
+    expect(result.message).toContain("utils.ts");
   });
 
   test("handles no matches", async () => {
