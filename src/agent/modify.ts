@@ -31,7 +31,7 @@ export async function updateAgentLLMConfig(
     ? currentAgent.llm_config?.parallel_tool_calls
     : undefined;
 
-  await client.agents.modify(agentId, {
+  await client.agents.update(agentId, {
     model: modelHandle,
     parallel_tool_calls: currentParallel,
   });
@@ -49,7 +49,7 @@ export async function updateAgentLLMConfig(
       }),
     } as LlmConfig;
 
-    await client.agents.modify(agentId, {
+    await client.agents.update(agentId, {
       llm_config: mergedLlmConfig,
       parallel_tool_calls: currentParallel,
     });
@@ -82,7 +82,9 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const client = await getClient();
 
     // Get ALL agent tools from agent state
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
     const currentTools = agent.tools || [];
     const currentToolIds = currentTools
       .map((t) => t.id)
@@ -112,8 +114,8 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     // Look up tool IDs from global tool list
     const toolsToAddIds: string[] = [];
     for (const toolName of toolsToAdd) {
-      const tools = await client.tools.list({ name: toolName });
-      const tool = tools[0];
+      const toolsResponse = await client.tools.list({ name: toolName });
+      const tool = toolsResponse.items[0];
       if (tool?.id) {
         toolsToAddIds.push(tool.id);
       }
@@ -133,7 +135,7 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
       })),
     ];
 
-    await client.agents.modify(agentId, {
+    await client.agents.update(agentId, {
       tool_ids: newToolIds,
       tool_rules: newToolRules,
     });
@@ -164,7 +166,9 @@ export async function unlinkToolsFromAgent(
     const client = await getClient();
 
     // Get ALL agent tools from agent state (not tools.list which may be incomplete)
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
     const allTools = agent.tools || [];
     const lettaCodeToolNames = new Set(getAllLettaToolNames());
 
@@ -187,7 +191,7 @@ export async function unlinkToolsFromAgent(
         !lettaCodeToolNames.has(rule.tool_name),
     );
 
-    await client.agents.modify(agentId, {
+    await client.agents.update(agentId, {
       tool_ids: remainingToolIds,
       tool_rules: remainingToolRules,
     });

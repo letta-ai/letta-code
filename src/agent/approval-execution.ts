@@ -2,6 +2,7 @@
 // Shared logic for executing approval batches (used by both interactive and headless modes)
 import type {
   ApprovalCreate,
+  ApprovalReturn,
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
@@ -13,7 +14,7 @@ export type ApprovalDecision =
   | { type: "deny"; approval: ApprovalRequest; reason: string };
 
 // Align result type with the SDK's expected union for approvals payloads
-export type ApprovalResult = ToolReturn | ApprovalCreate.ApprovalReturn;
+export type ApprovalResult = ToolReturn | ApprovalReturn;
 
 /**
  * Execute a batch of approval decisions and format results for the backend.

@@ -150,8 +150,8 @@ describeOrSkip("Link/Unlink Tools", () => {
     await linkToolsToAgent(testAgentId);
 
     // Attach memory tool
-    const memoryTools = await client.tools.list({ name: "memory" });
-    const memoryTool = memoryTools[0];
+    const memoryToolsResponse = await client.tools.list({ name: "memory" });
+    const memoryTool = memoryToolsResponse.items[0];
     if (memoryTool?.id) {
       await client.agents.tools.attach(memoryTool.id, {
         agent_id: testAgentId,
@@ -189,7 +189,7 @@ describeOrSkip("Link/Unlink Tools", () => {
       },
     ];
 
-    await client.agents.modify(testAgentId, { tool_rules: newToolRules });
+    await client.agents.update(testAgentId, { tool_rules: newToolRules });
 
     // Unlink Letta Code tools
     await unlinkToolsFromAgent(testAgentId);
