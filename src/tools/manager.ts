@@ -30,6 +30,7 @@ const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "list_dir",
   "grep_files",
   "apply_patch",
+  "update_plan",
 ];
 
 // Tool permissions configuration
@@ -52,6 +53,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   list_dir: { requiresApproval: false },
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
+  update_plan: { requiresApproval: false },
 };
 
 interface JsonSchema {
@@ -112,13 +114,16 @@ function generatePythonStub(
   const params = (schema.properties ?? {}) as Record<string, JsonSchema>;
   const required = schema.required ?? [];
 
-  // Generate function parameters
-  const paramList = Object.keys(params)
-    .map((key) => {
-      const isRequired = required.includes(key);
-      return isRequired ? key : `${key}=None`;
-    })
-    .join(", ");
+  // Split parameters into required and optional
+  const allKeys = Object.keys(params);
+  const requiredParams = allKeys.filter((key) => required.includes(key));
+  const optionalParams = allKeys.filter((key) => !required.includes(key));
+
+  // Generate function parameters: required first, then optional with defaults
+  const paramList = [
+    ...requiredParams,
+    ...optionalParams.map((key) => `${key}=None`),
+  ].join(", ");
 
   return `def ${name}(${paramList}):
     """Stub method. This tool is executed client-side via the approval flow.

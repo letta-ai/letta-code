@@ -291,8 +291,24 @@ function matchesPattern(
  * Get default decision for a tool (when no rules match)
  */
 function getDefaultDecision(toolName: string): PermissionDecision {
-  // Tools that default to auto-allow
-  const autoAllowTools = ["Read", "Glob", "Grep", "TodoWrite"];
+  // Check TOOL_PERMISSIONS to determine if tool requires approval
+  // Import is async so we need to do this synchronously - get the permissions from manager
+  // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
+  const autoAllowTools = [
+    // Anthropic toolset - tools that don't require approval
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+    "BashOutput",
+    "ExitPlanMode",
+    "LS",
+    // Codex toolset - tools that don't require approval
+    "read_file",
+    "list_dir",
+    "grep_files",
+    "update_plan",
+  ];
 
   if (autoAllowTools.includes(toolName)) {
     return "allow";
