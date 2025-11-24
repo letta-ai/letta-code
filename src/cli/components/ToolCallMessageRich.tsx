@@ -71,14 +71,10 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "list_dir") displayName = "LS";
   else if (displayName === "grep_files") displayName = "Grep";
   else if (displayName === "apply_patch") displayName = "Patch";
-  // Gemini toolset
+  // Gemini toolset (uses server names)
   else if (displayName === "run_shell_command") displayName = "Shell";
-  else if (displayName === "read_file_gemini") displayName = "Read";
   else if (displayName === "list_directory") displayName = "LS";
-  else if (displayName === "glob_gemini") displayName = "Glob";
   else if (displayName === "search_file_content") displayName = "Grep";
-  else if (displayName === "replace") displayName = "Edit";
-  else if (displayName === "write_file_gemini") displayName = "Write";
   else if (displayName === "write_todos") displayName = "TODO";
   else if (displayName === "read_many_files") displayName = "Read Multiple";
 

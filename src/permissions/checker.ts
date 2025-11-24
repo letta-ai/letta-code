@@ -308,13 +308,12 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "list_dir",
     "grep_files",
     "update_plan",
-    // Gemini toolset - tools that don't require approval
-    "read_file_gemini",
+    // Gemini toolset - tools that don't require approval (using server names)
     "list_directory",
-    "glob_gemini",
     "search_file_content",
     "write_todos",
     "read_many_files",
+    // Note: read_file, glob already covered above (shared across toolsets)
   ];
 
   if (autoAllowTools.includes(toolName)) {

@@ -8,6 +8,44 @@ import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
+// Maps internal tool names to server/model-facing tool names
+// This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
+// that map to the same server tool name since only one toolset is active at a time
+const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
+  // Gemini tools - map to their original Gemini CLI names
+  glob_gemini: "glob",
+  write_todos: "write_todos",
+  write_file_gemini: "write_file",
+  replace: "replace",
+  search_file_content: "search_file_content",
+  read_many_files: "read_many_files",
+  read_file_gemini: "read_file",
+  list_directory: "list_directory",
+  run_shell_command: "run_shell_command",
+};
+
+/**
+ * Get the server-facing name for a tool (maps internal names to what the model sees)
+ */
+export function getServerToolName(internalName: string): string {
+  return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
+}
+
+/**
+ * Get the internal tool name from a server-facing name
+ * Used when the server sends back tool calls/approvals with server names
+ */
+export function getInternalToolName(serverName: string): string {
+  // Build reverse mapping
+  for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
+    if (server === serverName) {
+      return internal;
+    }
+  }
+  // If not in mapping, the server name is the internal name
+  return serverName;
+}
+
 const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Bash",
   "BashOutput",
@@ -348,10 +386,15 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
 export function isGeminiModel(modelIdentifier: string): boolean {
   const info = getModelInfo(modelIdentifier);
   if (info?.handle && typeof info.handle === "string") {
-    return info.handle.startsWith("google/");
+    return (
+      info.handle.startsWith("google/") || info.handle.startsWith("google_ai/")
+    );
   }
-  // Fallback: treat raw handle-style identifiers as Gemini if they start with google/
-  return modelIdentifier.startsWith("google/");
+  // Fallback: treat raw handle-style identifiers as Gemini
+  return (
+    modelIdentifier.startsWith("google/") ||
+    modelIdentifier.startsWith("google_ai/")
+  );
 }
 
 /**
@@ -393,15 +436,18 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       // Race the upsert against the timeout
       const upsertPromise = Promise.all(
         Array.from(toolRegistry.entries()).map(async ([name, tool]) => {
+          // Get the server-facing tool name (may differ from internal name)
+          const serverName = TOOL_NAME_MAPPINGS[name as ToolName] || name;
+
           const pythonStub = generatePythonStub(
-            name,
+            serverName,
             tool.schema.description,
             tool.schema.input_schema,
           );
 
           // Construct the full JSON schema in Letta's expected format
           const fullJsonSchema = {
-            name,
+            name: serverName,
             description: tool.schema.description,
             parameters: tool.schema.input_schema,
           };
@@ -591,7 +637,9 @@ export async function executeTool(
   args: ToolArgs,
   options?: { signal?: AbortSignal },
 ): Promise<ToolExecutionResult> {
-  const tool = toolRegistry.get(name);
+  // Map server name to internal name for registry lookup
+  const internalName = getInternalToolName(name);
+  const tool = toolRegistry.get(internalName);
 
   if (!tool) {
     return {

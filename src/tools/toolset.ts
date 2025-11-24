@@ -120,7 +120,7 @@ export async function forceToolsetSwitch(
   if (toolsetName === "codex") {
     await loadTools("openai/gpt-4");
   } else if (toolsetName === "gemini") {
-    await loadTools("google/gemini-3-pro");
+    await loadTools("google_ai/gemini-3-pro-preview");
   } else {
     await loadTools("anthropic/claude-sonnet-4");
   }

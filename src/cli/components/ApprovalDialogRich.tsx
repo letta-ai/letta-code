@@ -123,7 +123,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "read" || t === "read_file" || t === "read_file_gemini") {
+  if (t === "read" || t === "read_file") {
     const pathVal = parsedArgs?.file_path || parsedArgs?.target_file;
     const path = typeof pathVal === "string" ? pathVal : "(no file specified)";
     const offsetVal = parsedArgs?.offset;
@@ -217,7 +217,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     }
   }
 
-  if (t === "glob" || t === "glob_gemini") {
+  if (t === "glob") {
     const patternVal = parsedArgs?.pattern;
     const pattern =
       typeof patternVal === "string" ? patternVal : "(no pattern)";
@@ -234,13 +234,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  // File edit previews: write/edit/multi_edit/replace/write_file_gemini
+  // File edit previews: write/edit/multi_edit/replace/write_file
   if (
     (t === "write" ||
       t === "edit" ||
       t === "multiedit" ||
       t === "replace" ||
-      t === "write_file_gemini") &&
+      t === "write_file") &&
     parsedArgs
   ) {
     try {
@@ -250,7 +250,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       if (precomputedDiff) {
         return (
           <Box flexDirection="column" paddingLeft={2}>
-            {t === "write" ? (
+            {t === "write" || t === "write_file" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="write"
@@ -258,7 +258,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
                 content={String(parsedArgs.content ?? "")}
                 showHeader={false}
               />
-            ) : t === "edit" ? (
+            ) : t === "edit" || t === "replace" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="edit"
@@ -288,7 +288,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       }
 
       // Fallback to non-precomputed rendering
-      if (t === "write") {
+      if (t === "write" || t === "write_file") {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -300,7 +300,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
           </Box>
         );
       }
-      if (t === "edit") {
+      if (t === "edit" || t === "replace") {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -343,7 +343,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     t === "edit" ||
     t === "multiedit" ||
     t === "replace" ||
-    t === "write_file_gemini"
+    t === "write_file"
   ) {
     return (
       <Box flexDirection="column" paddingLeft={2}>
@@ -636,15 +636,16 @@ function getHeaderLabel(toolName: string): string {
   if (t === "grep_files") return "Search in Files";
   if (t === "apply_patch") return "Apply Patch";
   if (t === "update_plan") return "Plan update";
-  // Gemini toolset
+  // Gemini toolset (uses server names)
   if (t === "run_shell_command") return "Shell command";
-  if (t === "read_file_gemini") return "Read File";
   if (t === "list_directory") return "List Directory";
-  if (t === "glob_gemini") return "Find Files";
   if (t === "search_file_content") return "Search in Files";
-  if (t === "replace") return "Edit File";
-  if (t === "write_file_gemini") return "Write File";
   if (t === "write_todos") return "Update Todos";
   if (t === "read_many_files") return "Read Multiple Files";
+  // Shared names between toolsets - these get overwritten based on active toolset
+  if (t === "read_file") return "Read File";
+  if (t === "glob") return "Find Files";
+  if (t === "replace") return "Edit File";
+  if (t === "write_file") return "Write File";
   return toolName;
 }
