@@ -213,11 +213,11 @@ letta --model gpt-5-codex     # Loads codex toolset
 You can force a specific toolset regardless of model:
 ```bash
 # CLI flag (at startup)
-letta --model haiku --toolset codex       # Use codex tools with Claude
-letta --model gpt-5-codex --toolset default   # Use default tools with GPT
+letta --model haiku --toolset codex           # Use Codex-style tools with Claude Haiku
+letta --model gpt-5-codex --toolset default   # Use Anthropic-style tools with GPT-5-Codex
 
 # Interactive command (during session)
-/toolset                                   # Opens toolset selector
+/toolset                                      # Opens toolset selector
 ```
 
 The `/model` command automatically switches toolsets when you change models. Use `/toolset` if you want to manually override the automatic selection.
