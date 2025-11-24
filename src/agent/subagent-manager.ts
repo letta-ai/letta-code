@@ -204,21 +204,37 @@ async function executeSubagent(
 
     // Now run letta in headless mode with the user prompt
     // This reuses ALL the existing headless logic (tool execution, approvals, etc.)
+    const { spawn } = await import("node:child_process");
 
     // Spawn letta in headless mode with JSON output
-    const proc = Bun.spawn(
-      ["letta", "--agent", agent.id, "-p", userPrompt, "--output-format", "json"],
+    const proc = spawn(
+      "letta",
+      ["--agent", agent.id, "-p", userPrompt, "--output-format", "json"],
       {
-        stdout: "pipe",
-        stderr: "pipe",
         env: process.env,
       }
     );
 
     // Collect stdout and stderr
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdoutChunks.push(data);
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      stderrChunks.push(data);
+    });
+
+    // Wait for process to complete
+    const exitCode = await new Promise<number | null>((resolve) => {
+      proc.on("close", (code) => resolve(code));
+      proc.on("error", () => resolve(null));
+    });
+
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    const stderr = Buffer.concat(stderrChunks).toString("utf-8");
 
     // Check for errors
     if (exitCode !== 0) {
