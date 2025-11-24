@@ -9,7 +9,10 @@
  * - Tracking subagent state for resume functionality
  */
 
-import type { AgentResponse } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentResponse,
+  AgentType,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   AssistantMessage,
   LettaStreamingResponse,
@@ -17,7 +20,6 @@ import type {
   UserMessage,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./client";
-import { createAgent } from "./create";
 import {
   type SubagentConfig,
   type SubagentType,
@@ -109,6 +111,7 @@ export async function getConversationHistory(
 
 /**
  * Create a subagent with specified type and configuration
+ * Uses dynamic import to reuse createAgent while avoiding circular dependencies
  */
 async function createSubagent(
   type: SubagentType,
@@ -123,10 +126,12 @@ async function createSubagent(
     userPrompt,
   );
 
+  // Use dynamic import to break circular dependency at module initialization time
+  const { createAgent } = await import("./create");
+
   const client = await getClient();
 
-  // Create a new agent with subagent configuration
-  // We'll use createAgent but with restricted tools
+  // Create agent using the standard createAgent function
   const agent = await createAgent(
     `subagent-${type}-${Date.now()}`,
     model,
