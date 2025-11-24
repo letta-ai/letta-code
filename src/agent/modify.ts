@@ -19,35 +19,42 @@ import { getClient } from "./client";
  */
 export async function updateAgentLLMConfig(
   agentId: string,
-  _modelHandle: string,
+  modelHandle: string,
   updateArgs?: Record<string, unknown>,
   preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  // Get current agent to preserve parallel_tool_calls if requested
+  // Step 1: change model (preserve parallel_tool_calls if requested)
   const currentAgent = await client.agents.retrieve(agentId);
-  const originalParallelToolCalls = preserveParallelToolCalls
-    ? (currentAgent.llm_config?.parallel_tool_calls ?? undefined)
+  const currentParallel = preserveParallelToolCalls
+    ? currentAgent.llm_config?.parallel_tool_calls
     : undefined;
 
-  // Strategy: Do everything in ONE modify call via llm_config
-  // This avoids the backend resetting parallel_tool_calls when we update the model
-  const updatedLlmConfig = {
-    ...currentAgent.llm_config,
-    ...updateArgs,
-    // Explicitly preserve parallel_tool_calls
-    ...(originalParallelToolCalls !== undefined && {
-      parallel_tool_calls: originalParallelToolCalls,
-    }),
-  } as LlmConfig;
-
   await client.agents.modify(agentId, {
-    llm_config: updatedLlmConfig,
-    parallel_tool_calls: originalParallelToolCalls,
+    model: modelHandle,
+    parallel_tool_calls: currentParallel,
   });
 
-  // Retrieve and return final state
+  // Step 2: if there are llm_config overrides, apply them using fresh state
+  if (updateArgs && Object.keys(updateArgs).length > 0) {
+    const refreshed = await client.agents.retrieve(agentId);
+    const refreshedConfig = (refreshed.llm_config || {}) as LlmConfig;
+
+    const mergedLlmConfig: LlmConfig = {
+      ...refreshedConfig,
+      ...(updateArgs as Record<string, unknown>),
+      ...(currentParallel !== undefined && {
+        parallel_tool_calls: currentParallel,
+      }),
+    } as LlmConfig;
+
+    await client.agents.modify(agentId, {
+      llm_config: mergedLlmConfig,
+      parallel_tool_calls: currentParallel,
+    });
+  }
+
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
 }
