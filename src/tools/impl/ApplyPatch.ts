@@ -89,7 +89,7 @@ export async function apply_patch(
       let toPath: string | undefined;
       if (i < endIndex) {
         const moveLine = lines[i];
-        if (moveLine && moveLine.startsWith("*** Move to:")) {
+        if (moveLine?.startsWith("*** Move to:")) {
           toPath = moveLine.replace("*** Move to:", "").trim();
           i += 1;
         }
@@ -253,12 +253,12 @@ function buildOldNewChunks(lines: string[]): {
     const text = raw.slice(1);
 
     if (prefix === " ") {
-      oldParts.push(text + "\n");
-      newParts.push(text + "\n");
+      oldParts.push(`${text}\n`);
+      newParts.push(`${text}\n`);
     } else if (prefix === "-") {
-      oldParts.push(text + "\n");
+      oldParts.push(`${text}\n`);
     } else if (prefix === "+") {
-      newParts.push(text + "\n");
+      newParts.push(`${text}\n`);
     }
   }
 

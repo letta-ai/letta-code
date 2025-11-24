@@ -552,8 +552,7 @@ export async function executeTool(
       (error.name === "AbortError" ||
         error.message === "The operation was aborted" ||
         // node:child_process AbortError may include code/message variants
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (error as any).code === "ABORT_ERR");
+        ("code" in error && error.code === "ABORT_ERR"));
 
     if (isAbort) {
       return {
