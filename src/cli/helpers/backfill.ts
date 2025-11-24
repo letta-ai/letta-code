@@ -1,7 +1,7 @@
 import type {
   LettaAssistantMessageContentUnion,
-  LettaMessageUnion,
   LettaUserMessageContentUnion,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Buffers } from "./accumulator";
 
@@ -53,10 +53,7 @@ function renderUserContentParts(
   return out;
 }
 
-export function backfillBuffers(
-  buffers: Buffers,
-  history: LettaMessageUnion[],
-): void {
+export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   // Clear buffers to ensure idempotency (in case this is called multiple times)
   buffers.order = [];
   buffers.byId.clear();
