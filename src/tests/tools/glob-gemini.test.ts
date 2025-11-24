@@ -31,7 +31,10 @@ describe("GlobGemini tool", () => {
     testDir.createFile("src/utils.ts", "content");
     testDir.createFile("README.md", "content");
 
-    const result = await glob_gemini({ pattern: "src/**/*.ts" });
+    const result = await glob_gemini({
+      pattern: "src/**/*.ts",
+      dir_path: testDir.path,
+    });
 
     expect(result.message).toContain("index.ts");
   });
