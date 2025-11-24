@@ -50,6 +50,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
   // Apply tool name remapping from old codebase
   let displayName = rawName;
+  // Anthropic toolset
   if (displayName === "write") displayName = "Write";
   else if (displayName === "edit" || displayName === "multi_edit")
     displayName = "Edit";
@@ -61,6 +62,13 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "todo_write") displayName = "TODO";
   else if (displayName === "TodoWrite") displayName = "TODO";
   else if (displayName === "ExitPlanMode") displayName = "Planning";
+  // Codex toolset
+  else if (displayName === "shell_command") displayName = "Shell";
+  else if (displayName === "shell") displayName = "Shell";
+  else if (displayName === "read_file") displayName = "Read";
+  else if (displayName === "list_dir") displayName = "LS";
+  else if (displayName === "grep_files") displayName = "Grep";
+  else if (displayName === "apply_patch") displayName = "Patch";
 
   // Format arguments for display using the old formatting logic
   const formatted = formatArgsDisplay(argsText);
