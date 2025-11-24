@@ -7,7 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  LettaMessageUnion,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static } from "ink";
@@ -131,7 +131,7 @@ export default function App({
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
-  messageHistory?: LettaMessageUnion[];
+  messageHistory?: Message[];
   tokenStreaming?: boolean;
 }) {
   // Track current agent (can change when swapping)
@@ -1107,7 +1107,7 @@ export default function App({
 
           try {
             const client = await getClient();
-            await client.agents.modify(agentId, { name: newName });
+            await client.agents.update(agentId, { name: newName });
             setAgentName(newName);
 
             buffersRef.current.byId.set(cmdId, {
@@ -1719,12 +1719,27 @@ export default function App({
         );
         setLlmConfig(updatedConfig);
 
-        // Update the same command with final result
+        // After switching models, reload tools for the selected provider and relink
+        const { switchToolsetForModel } = await import("../tools/toolset");
+        const toolsetName = await switchToolsetForModel(
+          selectedModel.handle ?? "",
+          agentId,
+        );
+
+        // Update the same command with final result (include toolset info)
+        const autoToolsetLine = toolsetName
+          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
+          : null;
+        const outputLines = [
+          `Switched to ${selectedModel.label}`,
+          ...(autoToolsetLine ? [autoToolsetLine] : []),
+        ].join("\n");
+
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/model ${modelId}`,
-          output: `Switched to ${selectedModel.label}`,
+          output: outputLines,
           phase: "finished",
           success: true,
         });

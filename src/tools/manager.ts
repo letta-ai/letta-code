@@ -3,9 +3,34 @@ import {
   AuthenticationError,
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
+import { getModelInfo } from "../agent/model";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+
+const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillBash",
+  "LS",
+  "MultiEdit",
+  "Read",
+  "TodoWrite",
+  "Write",
+];
+
+const OPENAI_DEFAULT_TOOLS: ToolName[] = [
+  "shell_command",
+  "shell",
+  "read_file",
+  "list_dir",
+  "grep_files",
+  "apply_patch",
+];
 
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
@@ -21,6 +46,12 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Read: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  shell_command: { requiresApproval: true },
+  shell: { requiresApproval: true },
+  read_file: { requiresApproval: false },
+  list_dir: { requiresApproval: false },
+  grep_files: { requiresApproval: false },
+  apply_patch: { requiresApproval: true },
 };
 
 interface JsonSchema {
@@ -186,10 +217,21 @@ export async function analyzeToolApproval(
  *
  * @returns Promise that resolves when all tools are loaded
  */
-export async function loadTools(): Promise<void> {
+export async function loadTools(modelIdentifier?: string): Promise<void> {
   const { toolFilter } = await import("./filter");
+  const filterActive = toolFilter.isActive();
 
-  for (const name of TOOL_NAMES) {
+  let baseToolNames: ToolName[];
+  if (!filterActive && modelIdentifier && isOpenAIModel(modelIdentifier)) {
+    baseToolNames = OPENAI_DEFAULT_TOOLS;
+  } else if (!filterActive) {
+    baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
+  } else {
+    // When user explicitly sets --tools, respect that and allow any tool name
+    baseToolNames = TOOL_NAMES;
+  }
+
+  for (const name of baseToolNames) {
     if (!toolFilter.isEnabled(name)) {
       continue;
     }
@@ -222,6 +264,15 @@ export async function loadTools(): Promise<void> {
       );
     }
   }
+}
+
+export function isOpenAIModel(modelIdentifier: string): boolean {
+  const info = getModelInfo(modelIdentifier);
+  if (info?.handle && typeof info.handle === "string") {
+    return info.handle.startsWith("openai/");
+  }
+  // Fallback: treat raw handle-style identifiers as OpenAI if they start with openai/
+  return modelIdentifier.startsWith("openai/");
 }
 
 /**
@@ -501,8 +552,7 @@ export async function executeTool(
       (error.name === "AbortError" ||
         error.message === "The operation was aborted" ||
         // node:child_process AbortError may include code/message variants
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (error as any).code === "ABORT_ERR");
+        ("code" in error && error.code === "ABORT_ERR"));
 
     if (isAbort) {
       return {
@@ -527,6 +577,14 @@ export async function executeTool(
  */
 export function getToolNames(): string[] {
   return Array.from(toolRegistry.keys());
+}
+
+/**
+ * Returns all Letta Code tool names known to this build, regardless of what is currently loaded.
+ * Useful for unlinking/removing tools when switching providers/models.
+ */
+export function getAllLettaToolNames(): string[] {
+  return [...TOOL_NAMES];
 }
 
 /**

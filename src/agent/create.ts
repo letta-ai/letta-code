@@ -250,7 +250,7 @@ export async function createAgent(
         const groupAgent = await client.agents.retrieve(groupAgentId);
         if (groupAgent.agent_type === "sleeptime_agent") {
           // Update the persona block on the SLEEPTIME agent, not the primary agent
-          await client.agents.blocks.modify("memory_persona", {
+          await client.agents.blocks.update("memory_persona", {
             agent_id: groupAgentId,
             value: SLEEPTIME_MEMORY_PERSONA,
             description:
