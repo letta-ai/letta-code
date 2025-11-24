@@ -4,49 +4,20 @@ import { resolveModel } from "../agent/model";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { toolFilter } from "./filter";
 import {
+  ANTHROPIC_DEFAULT_TOOLS,
   clearTools,
+  GEMINI_DEFAULT_TOOLS,
   getToolNames,
   isOpenAIModel,
   loadTools,
+  OPENAI_DEFAULT_TOOLS,
   upsertToolsToServer,
 } from "./manager";
 
-const CODEX_TOOLS = [
-  "shell_command",
-  "shell",
-  "read_file",
-  "list_dir",
-  "grep_files",
-  "apply_patch",
-  "update_plan",
-];
-
-const ANTHROPIC_TOOLS = [
-  "Bash",
-  "BashOutput",
-  "Edit",
-  "ExitPlanMode",
-  "Glob",
-  "Grep",
-  "KillBash",
-  "LS",
-  "MultiEdit",
-  "Read",
-  "TodoWrite",
-  "Write",
-];
-
-const GEMINI_TOOLS = [
-  "run_shell_command",
-  "read_file_gemini",
-  "list_directory",
-  "glob_gemini",
-  "search_file_content",
-  "replace",
-  "write_file_gemini",
-  "write_todos",
-  "read_many_files",
-];
+// Use the same toolset definitions from manager.ts (single source of truth)
+const ANTHROPIC_TOOLS = ANTHROPIC_DEFAULT_TOOLS;
+const CODEX_TOOLS = OPENAI_DEFAULT_TOOLS;
+const GEMINI_TOOLS = GEMINI_DEFAULT_TOOLS;
 
 /**
  * Gets the list of Letta Code tools currently attached to an agent.
@@ -66,7 +37,11 @@ export async function getAttachedLettaTools(
       .filter((name): name is string => typeof name === "string") || [];
 
   // Get all possible Letta Code tool names
-  const allLettaTools = [...CODEX_TOOLS, ...ANTHROPIC_TOOLS, ...GEMINI_TOOLS];
+  const allLettaTools: string[] = [
+    ...CODEX_TOOLS,
+    ...ANTHROPIC_TOOLS,
+    ...GEMINI_TOOLS,
+  ];
 
   // Return intersection: tools that are both attached AND in our definitions
   return toolNames.filter((name) => allLettaTools.includes(name));
@@ -86,14 +61,18 @@ export async function detectToolsetFromAgent(
     return null;
   }
 
+  const codexToolNames: string[] = [...CODEX_TOOLS];
+  const anthropicToolNames: string[] = [...ANTHROPIC_TOOLS];
+  const geminiToolNames: string[] = [...GEMINI_TOOLS];
+
   const codexCount = attachedTools.filter((name) =>
-    CODEX_TOOLS.includes(name),
+    codexToolNames.includes(name),
   ).length;
   const anthropicCount = attachedTools.filter((name) =>
-    ANTHROPIC_TOOLS.includes(name),
+    anthropicToolNames.includes(name),
   ).length;
   const geminiCount = attachedTools.filter((name) =>
-    GEMINI_TOOLS.includes(name),
+    geminiToolNames.includes(name),
   ).length;
 
   // Return whichever has the most tools attached

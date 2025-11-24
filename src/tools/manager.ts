@@ -46,7 +46,7 @@ export function getInternalToolName(serverName: string): string {
   return serverName;
 }
 
-const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Bash",
   "BashOutput",
   "Edit",
@@ -61,7 +61,7 @@ const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Write",
 ];
 
-const OPENAI_DEFAULT_TOOLS: ToolName[] = [
+export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "shell_command",
   "shell",
   "read_file",
@@ -71,7 +71,7 @@ const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "update_plan",
 ];
 
-const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "run_shell_command",
   "read_file_gemini",
   "list_directory",
