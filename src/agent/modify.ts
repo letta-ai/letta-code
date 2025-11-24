@@ -95,13 +95,16 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
         .filter((name): name is string => typeof name === "string"),
     );
 
-    // Get Letta Code tool names
+    // Get Letta Code tool names (internal names from registry)
+    const { getServerToolName } = await import("../tools/manager");
     const lettaCodeToolNames = getToolNames();
 
     // Find tools to add (tools that aren't already attached)
-    const toolsToAdd = lettaCodeToolNames.filter(
-      (name) => !currentToolNames.has(name),
-    );
+    // Compare using server names since that's what the agent has
+    const toolsToAdd = lettaCodeToolNames.filter((internalName) => {
+      const serverName = getServerToolName(internalName);
+      return !currentToolNames.has(serverName);
+    });
 
     if (toolsToAdd.length === 0) {
       return {
@@ -112,9 +115,11 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     }
 
     // Look up tool IDs from global tool list
+    // Use server names when querying, since that's how tools are registered on the server
     const toolsToAddIds: string[] = [];
     for (const toolName of toolsToAdd) {
-      const toolsResponse = await client.tools.list({ name: toolName });
+      const serverName = getServerToolName(toolName);
+      const toolsResponse = await client.tools.list({ name: serverName });
       const tool = toolsResponse.items[0];
       if (tool?.id) {
         toolsToAddIds.push(tool.id);
@@ -130,7 +135,7 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const newToolRules = [
       ...currentToolRules,
       ...toolsToAdd.map((toolName) => ({
-        tool_name: toolName,
+        tool_name: getServerToolName(toolName),
         type: "requires_approval" as const,
         prompt_template: null,
       })),
@@ -171,11 +176,18 @@ export async function unlinkToolsFromAgent(
       include: ["agent.tools"],
     });
     const allTools = agent.tools || [];
+
+    // Get all possible Letta Code tool names (both internal and server names)
+    const { getServerToolName } = await import("../tools/manager");
     const lettaCodeToolNames = new Set(getAllLettaToolNames());
+    const lettaCodeServerNames = new Set(
+      Array.from(lettaCodeToolNames).map((name) => getServerToolName(name)),
+    );
 
     // Filter out Letta Code tools, keep everything else
+    // Check against server names since that's what the agent sees
     const remainingTools = allTools.filter(
-      (t) => t.name && !lettaCodeToolNames.has(t.name),
+      (t) => t.name && !lettaCodeServerNames.has(t.name),
     );
     const removedCount = allTools.length - remainingTools.length;
 
@@ -185,11 +197,12 @@ export async function unlinkToolsFromAgent(
       .filter((id): id is string => typeof id === "string");
 
     // Remove approval rules for Letta Code tools being unlinked
+    // Check against server names since that's what appears in tool_rules
     const currentToolRules = agent.tool_rules || [];
     const remainingToolRules = currentToolRules.filter(
       (rule) =>
         rule.type !== "requires_approval" ||
-        !lettaCodeToolNames.has(rule.tool_name),
+        !lettaCodeServerNames.has(rule.tool_name),
     );
 
     await client.agents.update(agentId, {

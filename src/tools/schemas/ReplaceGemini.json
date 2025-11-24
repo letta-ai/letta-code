@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "The path to the file to modify."
+    },
+    "old_string": {
+      "type": "string",
+      "description": "The exact literal text to replace, preferably unescaped. For single replacements (default), include at least 3 lines of context BEFORE and AFTER the target text, matching whitespace and indentation precisely. For multiple replacements, specify expected_replacements parameter. If this string is not the exact literal text (i.e. you escaped it) or does not match exactly, the tool will fail."
+    },
+    "new_string": {
+      "type": "string",
+      "description": "The exact literal text to replace `old_string` with, preferably unescaped. Provide the EXACT text. Ensure the resulting code is correct and idiomatic."
+    },
+    "expected_replacements": {
+      "type": "number",
+      "description": "Number of replacements expected. Defaults to 1 if not specified. Use when you want to replace multiple occurrences.",
+      "minimum": 1
+    }
+  },
+  "required": ["file_path", "old_string", "new_string"],
+  "additionalProperties": false
+}
