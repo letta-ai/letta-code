@@ -278,6 +278,7 @@ export async function handleHeadlessCommand(
                 type: "auto_approval",
                 tool_name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
+                tool_args: decision.approval.toolArgs,
               }),
             );
           }
@@ -508,6 +509,7 @@ export async function handleHeadlessCommand(
                         type: "auto_approval",
                         tool_name: nextName,
                         tool_call_id: id,
+                        tool_args: incomingArgs,
                         reason: permission.reason,
                         matched_rule: permission.matchedRule,
                       }),

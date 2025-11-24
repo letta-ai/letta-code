@@ -205,22 +205,142 @@ async function executeSubagent(
     // Now run letta in headless mode with the user prompt
     // This reuses ALL the existing headless logic (tool execution, approvals, etc.)
     const { spawn } = await import("node:child_process");
+    const { createInterface } = await import("node:readline");
 
-    // Spawn letta in headless mode with JSON output
+    // Spawn letta in headless mode with stream-json output for progress visibility
     const proc = spawn(
       "letta",
-      ["--agent", agent.id, "-p", userPrompt, "--output-format", "json"],
+      ["--agent", agent.id, "-p", userPrompt, "--output-format", "stream-json"],
       {
         env: process.env,
       }
     );
 
-    // Collect stdout and stderr
+    // Track all stdout for final result parsing
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    proc.stdout.on("data", (data: Buffer) => {
-      stdoutChunks.push(data);
+    // Create readline interface to parse JSON events line by line
+    const rl = createInterface({
+      input: proc.stdout,
+      crlfDelay: Number.POSITIVE_INFINITY,
+    });
+
+    // Track tool calls for display (by tool_call_id to avoid duplicates)
+    const displayedToolCalls = new Set<string>();
+    // Accumulate tool call info from message chunks (name + args may come separately)
+    const pendingToolCalls = new Map<string, { name: string; args: string }>();
+    let finalResult: string | null = null;
+    let resultStats: { durationMs: number; totalTokens: number } | null = null;
+
+    // Helper to format tool arguments for display
+    function formatToolArgs(argsStr: string): string {
+      try {
+        const args = JSON.parse(argsStr);
+        // Show only the most important arguments, limit length
+        const entries = Object.entries(args)
+          .filter(([_, value]) => value !== undefined && value !== null)
+          .slice(0, 2); // Show max 2 args
+
+        if (entries.length === 0) return "";
+
+        return entries
+          .map(([key, value]) => {
+            let displayValue = String(value);
+            // Truncate long values
+            if (displayValue.length > 50) {
+              displayValue = displayValue.slice(0, 47) + "...";
+            }
+            return `${key}: "${displayValue}"`;
+          })
+          .join(", ");
+      } catch {
+        return "";
+      }
+    }
+
+    // Helper to display a tool call (with dim color like thinking messages)
+    const dim = "\x1b[2m";
+    const reset = "\x1b[0m";
+
+    function displayToolCall(toolCallId: string, toolName: string, toolArgs: string) {
+      if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
+      displayedToolCalls.add(toolCallId);
+
+      const formattedArgs = formatToolArgs(toolArgs);
+      if (formattedArgs) {
+        console.log(`${dim}     ${toolName}(${formattedArgs})${reset}`);
+      } else {
+        console.log(`${dim}     ${toolName}()${reset}`);
+      }
+    }
+
+    // Parse each line as a JSON event
+    rl.on("line", (line: string) => {
+      // Also collect for final parsing
+      stdoutChunks.push(Buffer.from(line + "\n"));
+
+      try {
+        const event = JSON.parse(line);
+
+        // Track tool calls from message chunks (handles streamed tool calls)
+        if (event.type === "message" && event.message_type === "approval_request_message") {
+          const toolCalls = Array.isArray(event.tool_calls)
+            ? event.tool_calls
+            : event.tool_call
+              ? [event.tool_call]
+              : [];
+
+          for (const toolCall of toolCalls) {
+            const id = toolCall.tool_call_id;
+            if (!id) continue;
+
+            // Accumulate name and args (they may come in separate chunks)
+            const prev = pendingToolCalls.get(id) || { name: "", args: "" };
+            const name = toolCall.name || prev.name;
+            const args = prev.args + (toolCall.arguments || "");
+            pendingToolCalls.set(id, { name, args });
+          }
+        }
+
+        // Display tool calls from auto_approval events (has complete name + args)
+        if (event.type === "auto_approval") {
+          const toolCallId = event.tool_call_id;
+          const toolName = event.tool_name;
+          const toolArgs = event.tool_args || "{}";
+          displayToolCall(toolCallId, toolName, toolArgs);
+        }
+
+        // Capture final result and stats
+        if (event.type === "result") {
+          finalResult = event.result || "";
+          resultStats = {
+            durationMs: event.duration_ms || 0,
+            totalTokens: event.usage?.total_tokens || 0,
+          };
+
+          // Display any pending tool calls that weren't auto-approved
+          for (const [id, { name, args }] of pendingToolCalls.entries()) {
+            if (name && !displayedToolCalls.has(id)) {
+              displayToolCall(id, name, args || "{}");
+            }
+          }
+
+          // Display completion stats
+          const toolCount = displayedToolCalls.size;
+          const tokenStr = resultStats.totalTokens >= 1000
+            ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
+            : String(resultStats.totalTokens);
+          const durationSec = resultStats.durationMs / 1000;
+          const durationStr = durationSec >= 60
+            ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
+            : `${durationSec.toFixed(1)}s`;
+
+          console.log(`${dim}  ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${reset}`);
+        }
+      } catch {
+        // Not valid JSON, ignore
+      }
     });
 
     proc.stderr.on("data", (data: Buffer) => {
@@ -233,7 +353,6 @@ async function executeSubagent(
       proc.on("error", () => resolve(null));
     });
 
-    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
     const stderr = Buffer.concat(stderrChunks).toString("utf-8");
 
     // Check for errors
@@ -246,23 +365,38 @@ async function executeSubagent(
       };
     }
 
-    // Parse JSON output
-    try {
-      const result = JSON.parse(stdout);
+    // Use the captured final result, or parse from stdout if not captured
+    if (finalResult !== null) {
+      return {
+        agentId: agent.id,
+        report: finalResult,
+        success: true,
+      };
+    }
 
-      if (result.is_error || result.subtype !== "success") {
+    // Fallback: parse the last JSON line for result
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    const lines = stdout.trim().split("\n");
+    const lastLine = lines[lines.length - 1];
+
+    try {
+      const result = JSON.parse(lastLine);
+
+      if (result.type === "result") {
         return {
           agentId: agent.id,
-          report: "",
-          success: false,
-          error: result.result || "Unknown error",
+          report: result.result || "",
+          success: !result.is_error,
+          error: result.is_error ? (result.result || "Unknown error") : undefined,
         };
       }
 
+      // Unexpected format
       return {
         agentId: agent.id,
-        report: result.result || "",
-        success: true,
+        report: "",
+        success: false,
+        error: "Unexpected output format from subagent",
       };
     } catch (parseError) {
       return {
@@ -283,6 +417,26 @@ async function executeSubagent(
 }
 
 /**
+ * Get the base URL for constructing agent links
+ */
+function getBaseURL(): string {
+  const { settingsManager } = require("../settings-manager");
+  const settings = settingsManager.getSettings();
+
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    "https://api.letta.com";
+
+  // Convert API URL to web UI URL if using hosted service
+  if (baseURL === "https://api.letta.com") {
+    return "https://app.letta.com";
+  }
+
+  return baseURL;
+}
+
+/**
  * Spawn a subagent and execute it autonomously
  */
 export async function spawnSubagent(
@@ -300,6 +454,17 @@ export async function spawnSubagent(
 
   // Create subagent with appropriate configuration
   const subagent = await createSubagent(type, resolvedModel, prompt);
+
+  // Show subagent info with link (using ✻ and dim color like thinking messages)
+  const baseURL = getBaseURL();
+  const agentURL = `${baseURL}/agents/${subagent.id}`;
+
+  // ANSI escape codes for dim text
+  const dim = "\x1b[2m";
+  const reset = "\x1b[0m";
+
+  console.log(`${dim}✻ ${type}(${description})${reset}`);
+  console.log(`${dim}  ⎿  ${agentURL}${reset}`);
 
   // Register subagent for potential resume
   subagentRegistry.set(subagent.id, {
