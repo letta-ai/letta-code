@@ -125,6 +125,7 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const newToolIds = [...currentToolIds, ...toolsToAddIds];
 
     // Get current tool_rules and add requires_approval rules for new tools
+    // ALL Letta Code tools need requires_approval to be routed to the client
     const currentToolRules = agent.tool_rules || [];
     const newToolRules = [
       ...currentToolRules,

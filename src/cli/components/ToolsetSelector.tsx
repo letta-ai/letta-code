@@ -22,6 +22,7 @@ const toolsets: ToolsetOption[] = [
       "list_dir",
       "grep_files",
       "apply_patch",
+      "update_plan",
     ],
   },
   {

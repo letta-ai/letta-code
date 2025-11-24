@@ -1,5 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
+import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
@@ -70,7 +71,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 }) => {
   const t = toolName.toLowerCase();
 
-  if (t === "bash" || t === "shell_command" || t === "shell") {
+  if (t === "bash" || t === "shell_command") {
     const cmdVal = parsedArgs?.command;
     const cmd =
       typeof cmdVal === "string" ? cmdVal : toolArgs || "(no arguments)";
@@ -81,6 +82,25 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       <Box flexDirection="column" paddingLeft={2}>
         <Text>{cmd}</Text>
         {desc ? <Text dimColor>{desc}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (t === "shell") {
+    const cmdVal = parsedArgs?.command;
+    const cmd = Array.isArray(cmdVal)
+      ? cmdVal.join(" ")
+      : typeof cmdVal === "string"
+        ? cmdVal
+        : "(no command)";
+    const justificationVal = parsedArgs?.justification;
+    const justification =
+      typeof justificationVal === "string" ? justificationVal : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>{cmd}</Text>
+        {justification ? <Text dimColor>{justification}</Text> : null}
       </Box>
     );
   }
@@ -158,6 +178,42 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
         <Text dimColor>{patchPreview}</Text>
       </Box>
     );
+  }
+
+  if (t === "update_plan") {
+    const planVal = parsedArgs?.plan;
+    const explanationVal = parsedArgs?.explanation;
+
+    if (Array.isArray(planVal)) {
+      const explanation =
+        typeof explanationVal === "string" ? explanationVal : undefined;
+
+      return (
+        <Box flexDirection="column" paddingLeft={2}>
+          {explanation && (
+            <Text italic dimColor>
+              {explanation}
+            </Text>
+          )}
+          {planVal
+            .map((item: unknown, idx: number) => {
+              if (typeof item === "object" && item !== null) {
+                const stepItem = item as { step?: string; status?: string };
+                const step = stepItem.step || "(no description)";
+                const status = stepItem.status || "pending";
+                const checkbox = status === "completed" ? "☒" : "☐";
+                return (
+                  <Text key={`${idx}-${step.slice(0, 20)}`}>
+                    {checkbox} {step}
+                  </Text>
+                );
+              }
+              return null;
+            })
+            .filter((el): el is React.ReactElement => el !== null)}
+        </Box>
+      );
+    }
   }
 
   // File edit previews: write/edit/multi_edit
@@ -548,5 +604,6 @@ function getHeaderLabel(toolName: string): string {
   if (t === "list_dir") return "List Files";
   if (t === "grep_files") return "Search in Files";
   if (t === "apply_patch") return "Apply Patch";
+  if (t === "update_plan") return "Plan update";
   return toolName;
 }
