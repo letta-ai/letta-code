@@ -1,5 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentAgentId } from "../../agent/context";
+import { trackFileRead } from "../file-tracker";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -134,6 +136,13 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
       throw new Error(`Cannot read binary file: ${file_path}`);
     const content = await fs.readFile(file_path, "utf-8");
     const formattedContent = formatWithLineNumbers(content, offset, limit);
+
+    // Track file read for conflict detection
+    const agentId = getCurrentAgentId();
+    if (agentId) {
+      await trackFileRead(agentId, file_path);
+    }
+
     return { content: formattedContent };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

@@ -8,6 +8,7 @@ import KillBashDescription from "./descriptions/KillBash.md";
 import LSDescription from "./descriptions/LS.md";
 import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
+import TaskDescription from "./descriptions/Task.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import WriteDescription from "./descriptions/Write.md";
 import { bash } from "./impl/Bash";
@@ -20,6 +21,7 @@ import { kill_bash } from "./impl/KillBash";
 import { ls } from "./impl/LS";
 import { multi_edit } from "./impl/MultiEdit";
 import { read } from "./impl/Read";
+import { task } from "./impl/Task";
 import { todo_write } from "./impl/TodoWrite";
 import { write } from "./impl/Write";
 import BashSchema from "./schemas/Bash.json";
@@ -32,6 +34,7 @@ import KillBashSchema from "./schemas/KillBash.json";
 import LSSchema from "./schemas/LS.json";
 import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
+import TaskSchema from "./schemas/Task.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import WriteSchema from "./schemas/Write.json";
 
@@ -93,6 +96,11 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read as unknown as ToolImplementation,
+  },
+  Task: {
+    schema: TaskSchema,
+    description: TaskDescription.trim(),
+    impl: task as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,

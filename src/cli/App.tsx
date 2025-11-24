@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import { setCurrentAgentId } from "../agent/context";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
@@ -144,6 +145,13 @@ export default function App({
       setAgentState(initialAgentState);
     }
   }, [initialAgentState, agentState]);
+
+  // Set agent context for tools (especially Task tool)
+  useEffect(() => {
+    if (agentId) {
+      setCurrentAgentId(agentId);
+    }
+  }, [agentId]);
 
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);

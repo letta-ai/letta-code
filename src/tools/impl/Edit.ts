@@ -1,5 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { getCurrentAgentId } from "../../agent/context";
+import { hasFileChanged, updateFileHash } from "../file-tracker";
 import { validateRequiredParams } from "./validation.js";
 
 interface EditArgs {
@@ -27,6 +29,18 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       "No changes to make: old_string and new_string are exactly the same.",
     );
   try {
+    // Check for conflicts if we're tracking this agent's files
+    const agentId = getCurrentAgentId();
+    if (agentId) {
+      const fileChanged = await hasFileChanged(agentId, file_path);
+      if (fileChanged) {
+        throw new Error(
+          `File has been modified since read, either by the user, another subagent, or by a linter. ` +
+            `Read it again before attempting to write it.`,
+        );
+      }
+    }
+
     const content = await fs.readFile(file_path, "utf-8");
     const occurrences = content.split(old_string).length - 1;
     if (occurrences === 0)
@@ -49,6 +63,12 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       replacements = 1;
     }
     await fs.writeFile(file_path, newContent, "utf-8");
+
+    // Update file hash after successful write
+    if (agentId) {
+      await updateFileHash(agentId, file_path);
+    }
+
     return {
       message: `Successfully replaced ${replacements} occurrence${replacements !== 1 ? "s" : ""} in ${file_path}`,
       replacements,
