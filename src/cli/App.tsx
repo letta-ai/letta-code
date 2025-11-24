@@ -45,6 +45,7 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
+import { ToolsetSelector } from "./components/ToolsetSelector";
 // import { UserMessage } from "./components/UserMessage";
 import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -204,6 +205,10 @@ export default function App({
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
+  const [currentToolset, setCurrentToolset] = useState<
+    "codex" | "default" | null
+  >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
 
@@ -785,6 +790,12 @@ export default function App({
         // Special handling for /model command - opens selector
         if (msg.trim() === "/model") {
           setModelSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /toolset command - opens selector
+        if (msg.trim() === "/toolset") {
+          setToolsetSelectorOpen(true);
           return { submitted: true };
         }
 
@@ -1725,6 +1736,7 @@ export default function App({
           selectedModel.handle ?? "",
           agentId,
         );
+        setCurrentToolset(toolsetName);
 
         // Update the same command with final result (include toolset info)
         const autoToolsetLine = toolsetName
@@ -1757,6 +1769,60 @@ export default function App({
           });
           refreshDerived();
         }
+      } finally {
+        // Unlock input
+        setCommandRunning(false);
+      }
+    },
+    [agentId, refreshDerived],
+  );
+
+  const handleToolsetSelect = useCallback(
+    async (toolsetId: "codex" | "default") => {
+      setToolsetSelectorOpen(false);
+
+      const cmdId = uid("cmd");
+
+      try {
+        // Immediately add command to transcript with "running" phase
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Switching toolset to ${toolsetId}...`,
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Lock input during async operation
+        setCommandRunning(true);
+
+        // Force switch to the selected toolset
+        const { forceToolsetSwitch } = await import("../tools/toolset");
+        await forceToolsetSwitch(toolsetId, agentId);
+        setCurrentToolset(toolsetId);
+
+        // Update the command with final result
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Switched toolset to ${toolsetId}`,
+          phase: "finished",
+          success: true,
+        });
+        refreshDerived();
+      } catch (error) {
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
       } finally {
         // Unlock input
         setCommandRunning(false);
@@ -2082,6 +2148,7 @@ export default function App({
                 !showExitStats &&
                 pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
+                !toolsetSelectorOpen &&
                 !agentSelectorOpen &&
                 !planApprovalPending
               }
@@ -2105,6 +2172,15 @@ export default function App({
                 currentModel={llmConfig?.model}
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
+              />
+            )}
+
+            {/* Toolset Selector - conditionally mounted as overlay */}
+            {toolsetSelectorOpen && (
+              <ToolsetSelector
+                currentToolset={currentToolset ?? undefined}
+                onSelect={handleToolsetSelect}
+                onCancel={() => setToolsetSelectorOpen(false)}
               />
             )}
 
