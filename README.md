@@ -217,8 +217,75 @@ Letta Code provides the following tools for filesystem and shell operations:
 **Task Management:**
 - **TodoWrite** - Create and manage structured task lists for tracking progress
 - **ExitPlanMode** - Signal completion of planning phase and readiness to implement
+- **Task** - Launch specialized subagents to handle complex, multi-step tasks autonomously
 
 All tools support approval rules and permission modes for safe execution. See the Permissions section for details on controlling tool access.
+
+#### Subagents
+
+The **Task** tool allows the main agent to spawn specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools:
+
+**Available Subagent Types:**
+
+- **Explore** - Fast agent for codebase exploration (read-only)
+  - Tools: Glob, Grep, Read, LS, BashOutput
+  - Use for: Finding files, searching code, understanding structure
+  - Recommended model: Haiku (fast and efficient)
+
+- **Plan** - Fast agent for planning complex tasks (read-only)
+  - Tools: Glob, Grep, Read, LS, BashOutput
+  - Use for: Breaking down complex tasks, understanding dependencies
+  - Recommended model: Haiku (fast and efficient)
+
+- **general-purpose** - Full-capability agent for research and implementation
+  - Tools: All tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
+  - Use for: Complex multi-step tasks, autonomous coding
+  - Recommended model: Sonnet (more capable)
+
+**Key Features:**
+
+- **Parallel execution**: Launch multiple subagents concurrently for independent tasks
+- **Conflict detection**: Automatic detection and retry when multiple agents edit the same file
+- **Context-aware**: Subagents see full conversation history and can reference earlier context
+- **Stateless**: Each subagent returns a single final report when done
+
+**Example Usage:**
+
+```typescript
+// Explore the codebase for authentication code
+Task({
+  subagent_type: "Explore",
+  description: "Find authentication code",
+  prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
+})
+
+// Plan a complex feature implementation
+Task({
+  subagent_type: "Plan",
+  description: "Plan user dashboard feature",
+  prompt: "Plan implementation of a user dashboard that shows usage metrics. Break down into steps."
+})
+
+// Implement a feature autonomously
+Task({
+  subagent_type: "general-purpose",
+  description: "Add input validation",
+  prompt: "Add email and password validation to the registration form. Check existing patterns first."
+})
+
+// Launch multiple subagents in parallel
+Task({ subagent_type: "Explore", description: "Find frontend components", prompt: "..." })
+Task({ subagent_type: "Explore", description: "Find backend APIs", prompt: "..." })
+```
+
+**Best Practices:**
+
+- ✅ Use parallel Explore/Plan subagents for read-only operations
+- ✅ Use parallel general-purpose subagents for editing different files
+- ⚠️  Be cautious with parallel edits to the same file (conflict detection will handle it, but may require retries)
+- 📝 Provide detailed, self-contained prompts (subagents cannot ask questions mid-execution)
+
+For more details on subagent architecture and concurrency behavior, see [`subagent-experiments/SUBAGENTS.md`](subagent-experiments/SUBAGENTS.md).
 
 ### Headless Mode
 ```bash
