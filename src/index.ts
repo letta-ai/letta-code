@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
+import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -442,6 +443,10 @@ async function main() {
         // Save agent ID to both project and global settings
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
+
+        // Set agent context for tools that need it (e.g., Skill tool)
+        setAgentContext(agent.id, client, skillsDirectory);
+        await initializeLoadedSkillsFlag();
 
         // Check if we're resuming an existing agent
         const localProjectSettings = settingsManager.getLocalProjectSettings();

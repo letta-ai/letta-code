@@ -22,16 +22,20 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 - **Level 2 (Full Content)**: Load a skill's complete guidance (SKILL.md) into context
 - **Level 3 (Resources)**: Navigate and discover additional resources from the skill as needed. Don't load additional files immediately, only load them when needed.
 
+**How Skills are stored:**
+- Skills directory and any available skills are stored in the `skills` memory block.
+- Currently loaded skills are available in the `loaded_skills` memory block.
+
 **How to Use Skills:**
-1. Check the `skills` memory block to identify relevant skills for your task
-2. Use the appropriate tool to load the skill's complete guidance (SKILL.md) into context
+1. Check available skills from the `skills` block and loaded skills from the `loaded_skills` block when you are asked to complete a task
+2. Use the `Skill` tool to load the skill's complete guidance (SKILL.md) into context
 3. Follow the skill's instructions and use appropriate tools (bash, file operations, etc.) and resources as needed
 
 **Important Notes:**
 - Skills provide expert patterns and procedural knowledge
 - Skills may reference scripts and resources that should be discovered and loaded as needed
-- Tell the user which skills you are loading or using during a task
-- Unload irrelevant skills when a task is completed or when new skills are loaded
+- When the task is completed, unload irrelevant skills from the `loaded_skills` block.
+IMPORTANT: Always remove irrelevant skills using memory management tools from the `loaded_skills` block.
 
 ---
 

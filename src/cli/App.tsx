@@ -89,6 +89,16 @@ function getPlanModeReminder(): string {
   return PLAN_MODE_REMINDER;
 }
 
+// Get skill unload reminder if skills are loaded (using cached flag)
+function getSkillUnloadReminder(): string {
+  const { hasLoadedSkills } = require("../agent/context");
+  if (hasLoadedSkills()) {
+    const { SKILL_UNLOAD_REMINDER } = require("../agent/promptAssets");
+    return SKILL_UNLOAD_REMINDER;
+  }
+  return "";
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -490,6 +500,10 @@ export default function App({
 
           // Case 2: Requires approval
           if (stopReason === "requires_approval") {
+            // Clear stale state immediately to prevent ID mismatch bugs
+            setAutoHandledResults([]);
+            setAutoDeniedApprovals([]);
+
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
               approvals && approvals.length > 0
@@ -529,6 +543,19 @@ export default function App({
             // Check permissions for all approvals
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
+                // Check if approval is incomplete (missing name or arguments)
+                if (!approvalItem.toolName || !approvalItem.toolArgs) {
+                  return {
+                    approval: approvalItem,
+                    permission: {
+                      decision: "deny" as const,
+                      reason:
+                        "Tool call incomplete - missing name or arguments",
+                    },
+                    context: null,
+                  };
+                }
+
                 const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
                   approvalItem.toolArgs,
                   {},
@@ -590,7 +617,10 @@ export default function App({
             // Create denial results for auto-denied tools
             const autoDeniedResults = autoDenied.map((ac) => ({
               approval: ac.approval,
-              reason: `Permission denied by rule: ${ac.permission.matchedRule || ac.permission.reason}`,
+              reason:
+                "matchedRule" in ac.permission && ac.permission.matchedRule
+                  ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`,
             }));
 
             // If all are auto-handled, continue immediately without showing dialog
@@ -610,13 +640,10 @@ export default function App({
                   stderr: ar.result.stderr,
                 })),
                 ...autoDeniedResults.map((ad) => ({
-                  type: "tool" as const,
+                  type: "approval" as const,
                   tool_call_id: ad.approval.toolCallId,
-                  tool_return: JSON.stringify({
-                    status: "error",
-                    message: ad.reason,
-                  }),
-                  status: "error" as const,
+                  approve: false,
+                  reason: ad.reason,
                 })),
               ];
 
@@ -631,7 +658,11 @@ export default function App({
 
             // Show approval dialog for tools that need user input
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
-            setApprovalContexts(needsUserInput.map((ac) => ac.context));
+            setApprovalContexts(
+              needsUserInput
+                .map((ac) => ac.context)
+                .filter((ctx): ctx is ApprovalContext => ctx !== null),
+            );
             setAutoHandledResults(autoAllowedResults);
             setAutoDeniedApprovals(autoDeniedResults);
             setStreaming(false);
@@ -1257,14 +1288,17 @@ export default function App({
 
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
+
+      // Prepend skill unload reminder if skills are loaded (using cached flag)
+      const skillUnloadReminder = getSkillUnloadReminder();
+
+      // Combine reminders with content (plan mode first, then skill unload)
+      const allReminders = planModeReminder + skillUnloadReminder;
       const messageContent =
-        planModeReminder && typeof contentParts === "string"
-          ? planModeReminder + contentParts
-          : Array.isArray(contentParts) && planModeReminder
-            ? [
-                { type: "text" as const, text: planModeReminder },
-                ...contentParts,
-              ]
+        allReminders && typeof contentParts === "string"
+          ? allReminders + contentParts
+          : Array.isArray(contentParts) && allReminders
+            ? [{ type: "text" as const, text: allReminders }, ...contentParts]
             : contentParts;
 
       // Append the user message to transcript IMMEDIATELY (optimistic update)
@@ -1290,28 +1324,29 @@ export default function App({
           const client = await getClient();
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
           const agent = await client.agents.retrieve(agentId);
-          const { pendingApproval: existingApproval } = await getResumeData(
+          const { pendingApprovals: existingApprovals } = await getResumeData(
             client,
             agent,
           );
 
-          if (existingApproval) {
-            // There's a pending approval - show it and DON'T send the message yet
+          if (existingApprovals && existingApprovals.length > 0) {
+            // There are pending approvals - show them and DON'T send the message yet
             // The message will be restored to the input field for the user to decide
             // Note: The user message is already in the transcript (optimistic update)
             setStreaming(false); // Stop streaming indicator
-            setPendingApprovals([existingApproval]);
+            setPendingApprovals(existingApprovals);
 
-            // Analyze approval context
-            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-              existingApproval.toolArgs,
-              {},
+            // Analyze approval contexts for ALL pending approvals
+            const contexts = await Promise.all(
+              existingApprovals.map(async (approval) => {
+                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                  approval.toolArgs,
+                  {},
+                );
+                return await analyzeToolApproval(approval.toolName, parsedArgs);
+              }),
             );
-            const context = await analyzeToolApproval(
-              existingApproval.toolName,
-              parsedArgs,
-            );
-            setApprovalContexts([context]);
+            setApprovalContexts(contexts);
 
             // Return false = message NOT submitted, will be restored to input
             return { submitted: false };
@@ -1404,6 +1439,26 @@ export default function App({
         ...executedResults,
       ];
 
+      // Dev-only validation: ensure outgoing IDs match expected IDs
+      if (process.env.NODE_ENV !== "production") {
+        const expectedIds = new Set(pendingApprovals.map((a) => a.toolCallId));
+        const sendingIds = new Set(
+          allResults.map((r) => r.tool_call_id).filter(Boolean),
+        );
+
+        const setsEqual = (a: Set<string>, b: Set<string>) =>
+          a.size === b.size && [...a].every((id) => b.has(id));
+
+        if (!setsEqual(expectedIds, sendingIds)) {
+          console.error("[BUG] Approval ID mismatch detected");
+          console.error("Expected IDs:", Array.from(expectedIds));
+          console.error("Sending IDs:", Array.from(sendingIds));
+          throw new Error(
+            "Approval ID mismatch - refusing to send mismatched IDs",
+          );
+        }
+      }
+
       // Clear state
       setPendingApprovals([]);
       setApprovalContexts([]);
@@ -1427,6 +1482,7 @@ export default function App({
       approvalResults,
       autoHandledResults,
       autoDeniedApprovals,
+      pendingApprovals,
       processConversation,
       refreshDerived,
       appendError,

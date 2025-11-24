@@ -155,20 +155,25 @@ export async function drainStream(
   let approvals: ApprovalRequest[] = [];
 
   if (stopReason === "requires_approval") {
-    // Convert map to array, filtering out incomplete entries
+    // Convert map to array, including ALL tool_call_ids (even incomplete ones)
+    // Incomplete entries will be denied at the business logic layer
     const allPending = Array.from(pendingApprovals.values());
     // console.log(
-    // "[drainStream] All pending approvals before filter:",
+    // "[drainStream] All pending approvals before processing:",
     // JSON.stringify(allPending, null, 2),
     // );
 
-    approvals = allPending.filter(
-      (a) => a.toolCallId && a.toolName && a.toolArgs,
-    );
+    // Include ALL tool_call_ids - don't filter out incomplete entries
+    // Missing name/args will be handled by denial logic in App.tsx
+    approvals = allPending.map((a) => ({
+      toolCallId: a.toolCallId,
+      toolName: a.toolName || "",
+      toolArgs: a.toolArgs || "",
+    }));
 
     if (approvals.length === 0) {
       console.error(
-        "[drainStream] No valid approvals collected despite requires_approval stop reason",
+        "[drainStream] No approvals collected despite requires_approval stop reason",
       );
       console.error("[drainStream] Pending approvals map:", allPending);
     } else {
