@@ -31,6 +31,7 @@ OPTIONS
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus" or "anthropic/claude-opus-4-1-20250805")
+  --toolset <name>      Force toolset: "codex" or "default" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
@@ -70,6 +71,26 @@ EXAMPLES
   console.log(usage);
 }
 
+/**
+ * Helper to determine which model identifier to pass to loadTools()
+ * based on user's model and/or toolset preferences.
+ */
+function getModelForToolLoading(
+  specifiedModel?: string,
+  specifiedToolset?: "codex" | "default",
+): string | undefined {
+  // If toolset is explicitly specified, use a dummy model from that provider
+  // to trigger the correct toolset loading logic
+  if (specifiedToolset === "codex") {
+    return "openai/gpt-4";
+  }
+  if (specifiedToolset === "default") {
+    return "anthropic/claude-sonnet-4";
+  }
+  // Otherwise, use the specified model (or undefined for auto-detection)
+  return specifiedModel;
+}
+
 async function main() {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
@@ -97,6 +118,7 @@ async function main() {
         "fresh-blocks": { type: "boolean" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
+        toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
         tools: { type: "string" },
@@ -151,9 +173,22 @@ async function main() {
   const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
+  const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // Validate toolset if provided
+  if (
+    specifiedToolset &&
+    specifiedToolset !== "codex" &&
+    specifiedToolset !== "default"
+  ) {
+    console.error(
+      `Error: Invalid toolset "${specifiedToolset}". Must be "codex" or "default".`,
+    );
+    process.exit(1);
+  }
 
   // Check if API key is configured
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
@@ -270,8 +305,12 @@ async function main() {
   }
 
   if (isHeadless) {
-    // For headless mode, load tools synchronously (respecting model when provided)
-    await loadTools(specifiedModel);
+    // For headless mode, load tools synchronously (respecting model/toolset when provided)
+    const modelForTools = getModelForToolLoading(
+      specifiedModel,
+      specifiedToolset as "codex" | "default" | undefined,
+    );
+    await loadTools(modelForTools);
     const client = await getClient();
     await upsertToolsToServer(client);
 
@@ -293,6 +332,7 @@ async function main() {
     freshBlocks,
     agentIdArg,
     model,
+    toolset,
     skillsDirectory,
   }: {
     continueSession: boolean;
@@ -300,6 +340,7 @@ async function main() {
     freshBlocks: boolean;
     agentIdArg: string | null;
     model?: string;
+    toolset?: "codex" | "default";
     skillsDirectory?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
@@ -319,7 +360,8 @@ async function main() {
     useEffect(() => {
       async function init() {
         setLoadingState("assembling");
-        await loadTools(model);
+        const modelForTools = getModelForToolLoading(model, toolset);
+        await loadTools(modelForTools);
 
         setLoadingState("upserting");
         const client = await getClient();
@@ -499,6 +541,7 @@ async function main() {
       freshBlocks: freshBlocks,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
+      toolset: specifiedToolset as "codex" | "default" | undefined,
       skillsDirectory: skillsDirectory,
     }),
     {
