@@ -233,8 +233,12 @@ async function executeSubagent(
     let finalResult: string | null = null;
     let resultStats: { durationMs: number; totalTokens: number } | null = null;
 
+    // ANSI escape codes for dim text
+    const dim = "\x1b[2m";
+    const reset = "\x1b[0m";
+
     // Helper to format tool arguments for display
-    function formatToolArgs(argsStr: string): string {
+    function formatToolArgs(toolName: string, argsStr: string): string {
       try {
         const args = JSON.parse(argsStr);
         // Show only the most important arguments, limit length
@@ -247,9 +251,8 @@ async function executeSubagent(
         return entries
           .map(([key, value]) => {
             let displayValue = String(value);
-            // Truncate long values
-            if (displayValue.length > 50) {
-              displayValue = displayValue.slice(0, 47) + "...";
+            if (displayValue.length > 100) {
+              displayValue = displayValue.slice(0, 97) + "...";
             }
             return `${key}: "${displayValue}"`;
           })
@@ -259,15 +262,12 @@ async function executeSubagent(
       }
     }
 
-    // Helper to display a tool call (with dim color like thinking messages)
-    const dim = "\x1b[2m";
-    const reset = "\x1b[0m";
-
+    // Helper to display a tool call live
     function displayToolCall(toolCallId: string, toolName: string, toolArgs: string) {
       if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
       displayedToolCalls.add(toolCallId);
 
-      const formattedArgs = formatToolArgs(toolArgs);
+      const formattedArgs = formatToolArgs(toolName, toolArgs);
       if (formattedArgs) {
         console.log(`${dim}     ${toolName}(${formattedArgs})${reset}`);
       } else {
@@ -303,7 +303,7 @@ async function executeSubagent(
           }
         }
 
-        // Display tool calls from auto_approval events (has complete name + args)
+        // Display tool calls live from auto_approval events (has complete name + args)
         if (event.type === "auto_approval") {
           const toolCallId = event.tool_call_id;
           const toolName = event.tool_name;
@@ -326,7 +326,7 @@ async function executeSubagent(
             }
           }
 
-          // Display completion stats
+          // Display completion stats (extra indentation to stand out from tool calls)
           const toolCount = displayedToolCalls.size;
           const tokenStr = resultStats.totalTokens >= 1000
             ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
@@ -336,7 +336,7 @@ async function executeSubagent(
             ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
             : `${durationSec.toFixed(1)}s`;
 
-          console.log(`${dim}  ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${reset}`);
+          console.log(`${dim}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${reset}`);
         }
       } catch {
         // Not valid JSON, ignore

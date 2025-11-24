@@ -20,19 +20,11 @@ interface TaskArgs {
   resume?: string;
 }
 
-interface TaskResult {
-  agentId: string;
-  type: string;
-  description: string;
-  report: string;
-  success: boolean;
-  error?: string;
-}
-
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
+ * Returns the subagent's report (details are displayed live during execution)
  */
-export async function task(args: TaskArgs): Promise<TaskResult> {
+export async function task(args: TaskArgs): Promise<string> {
   // Validate required parameters
   validateRequiredParams(args, ["subagent_type", "prompt", "description"]);
 
@@ -41,27 +33,12 @@ export async function task(args: TaskArgs): Promise<TaskResult> {
   // Get current agent ID from context
   const mainAgentId = getCurrentAgentId();
   if (!mainAgentId) {
-    return {
-      agentId: "",
-      type: subagent_type,
-      description,
-      report: "",
-      success: false,
-      error:
-        "No agent context available. Task tool can only be called from within an agent.",
-    };
+    return "Error: No agent context available. Task tool can only be called from within an agent.";
   }
 
   // Validate subagent type
   if (!isValidSubagentType(subagent_type)) {
-    return {
-      agentId: "",
-      type: subagent_type,
-      description,
-      report: "",
-      success: false,
-      error: `Invalid subagent type: ${subagent_type}. Valid types are: Explore, Plan, general-purpose`,
-    };
+    return `Error: Invalid subagent type: ${subagent_type}. Valid types are: Explore, Plan, general-purpose`;
   }
 
   try {
@@ -80,22 +57,13 @@ export async function task(args: TaskArgs): Promise<TaskResult> {
       );
     }
 
-    return {
-      agentId: result.agentId,
-      type: subagent_type,
-      description,
-      report: result.report,
-      success: result.success,
-      error: result.error,
-    };
+    if (!result.success) {
+      return `Error: ${result.error || "Subagent execution failed"}`;
+    }
+
+    // Return report for the main agent to use
+    return result.report;
   } catch (error) {
-    return {
-      agentId: "",
-      type: subagent_type,
-      description,
-      report: "",
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return `Error: ${error instanceof Error ? error.message : String(error)}`;
   }
 }

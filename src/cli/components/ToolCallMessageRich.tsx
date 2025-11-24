@@ -94,6 +94,12 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const getResultElement = () => {
     if (!line.resultText) return null;
 
+    // Don't display Task tool results - they're shown live during execution
+    // and the main agent will use the report in its response
+    if (rawName === "Task" || rawName === "task") {
+      return null;
+    }
+
     const prefix = `  ⎿  `; // Match old format: 2 spaces, glyph, 2 spaces
     const prefixWidth = 5; // Total width of prefix
     const contentWidth = Math.max(0, columns - prefixWidth);
