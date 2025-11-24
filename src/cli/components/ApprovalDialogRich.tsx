@@ -288,6 +288,8 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   }, [progress, approvalContext, onApproveAll, onApproveAlways]);
 
   useInput((_input, key) => {
+    if (isExecuting) return;
+
     if (isEnteringReason) {
       // When entering reason, only handle enter/escape
       if (key.return) {
