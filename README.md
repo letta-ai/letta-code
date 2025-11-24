@@ -201,12 +201,14 @@ Letta Code includes different toolsets optimized for different model providers:
 
 1. **Default Toolset** (Anthropic-optimized, best for Claude models)
 2. **Codex Toolset** (OpenAI-optimized, best for GPT models)
+3. **Gemini Toolset** (Google-optimized, best for Gemini models)
 
 **Automatic Selection:**
 When you specify a model, Letta Code automatically selects the appropriate toolset:
 ```bash
 letta --model haiku           # Loads default toolset
 letta --model gpt-5-codex     # Loads codex toolset
+letta --model gemini-3-pro    # Loads gemini toolset
 ```
 
 **Manual Override:**
@@ -214,7 +216,8 @@ You can force a specific toolset regardless of model:
 ```bash
 # CLI flag (at startup)
 letta --model haiku --toolset codex           # Use Codex-style tools with Claude Haiku
-letta --model gpt-5-codex --toolset default   # Use Anthropic-style tools with GPT-5-Codex
+letta --model gpt-5-codex --toolset gemini    # Use Gemini-style tools with GPT-5-Codex
+letta --toolset gemini                        # Use Gemini tools with default model
 
 # Interactive command (during session)
 /toolset                                      # Opens toolset selector

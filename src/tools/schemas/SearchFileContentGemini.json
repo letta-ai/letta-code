@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "pattern": {
+      "type": "string",
+      "description": "The regular expression (regex) pattern to search for within file contents (e.g., 'function\\s+myFunction', 'import\\s+\\{.*\\}\\s+from\\s+.*')."
+    },
+    "dir_path": {
+      "type": "string",
+      "description": "Optional: The absolute path to the directory to search within. If omitted, searches the current working directory."
+    },
+    "include": {
+      "type": "string",
+      "description": "Optional: A glob pattern to filter which files are searched (e.g., '*.js', '*.{ts,tsx}', 'src/**'). If omitted, searches all files (respecting potential global ignores)."
+    }
+  },
+  "required": ["pattern"],
+  "additionalProperties": false
+}

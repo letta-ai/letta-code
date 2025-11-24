@@ -4,27 +4,13 @@ import { useState } from "react";
 import { colors } from "./colors";
 
 interface ToolsetOption {
-  id: "codex" | "default";
+  id: "codex" | "default" | "gemini";
   label: string;
   description: string;
   tools: string[];
 }
 
 const toolsets: ToolsetOption[] = [
-  {
-    id: "codex",
-    label: "Codex Tools",
-    description: "OpenAI-style tools optimized for GPT models",
-    tools: [
-      "shell_command",
-      "shell",
-      "read_file",
-      "list_dir",
-      "grep_files",
-      "apply_patch",
-      "update_plan",
-    ],
-  },
   {
     id: "default",
     label: "Default Tools",
@@ -42,11 +28,41 @@ const toolsets: ToolsetOption[] = [
       "Write",
     ],
   },
+  {
+    id: "codex",
+    label: "Codex Tools",
+    description: "OpenAI-style tools optimized for GPT models",
+    tools: [
+      "shell_command",
+      "shell",
+      "read_file",
+      "list_dir",
+      "grep_files",
+      "apply_patch",
+      "update_plan",
+    ],
+  },
+  {
+    id: "gemini",
+    label: "Gemini Tools",
+    description: "Google-style tools optimized for Gemini models",
+    tools: [
+      "run_shell_command",
+      "read_file_gemini",
+      "list_directory",
+      "glob_gemini",
+      "search_file_content",
+      "replace",
+      "write_file_gemini",
+      "write_todos",
+      "read_many_files",
+    ],
+  },
 ];
 
 interface ToolsetSelectorProps {
-  currentToolset?: "codex" | "default";
-  onSelect: (toolsetId: "codex" | "default") => void;
+  currentToolset?: "codex" | "default" | "gemini";
+  onSelect: (toolsetId: "codex" | "default" | "gemini") => void;
   onCancel: () => void;
 }
 

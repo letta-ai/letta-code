@@ -207,7 +207,7 @@ export default function App({
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "default" | null
+    "codex" | "default" | "gemini" | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
@@ -1785,7 +1785,7 @@ export default function App({
   );
 
   const handleToolsetSelect = useCallback(
-    async (toolsetId: "codex" | "default") => {
+    async (toolsetId: "codex" | "default" | "gemini") => {
       setToolsetSelectorOpen(false);
 
       const cmdId = uid("cmd");
