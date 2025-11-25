@@ -21,14 +21,32 @@ interface TaskArgs {
 }
 
 /**
+ * Format args for display (truncate prompt)
+ */
+function formatTaskArgs(args: TaskArgs): string {
+  const parts: string[] = [];
+  parts.push(`subagent_type="${args.subagent_type}"`);
+  parts.push(`description="${args.description}"`);
+  // Truncate prompt for display
+  const promptPreview = args.prompt.length > 20
+    ? args.prompt.slice(0, 17) + "..."
+    : args.prompt;
+  parts.push(`prompt="${promptPreview}"`);
+  if (args.model) parts.push(`model="${args.model}"`);
+  return parts.join(", ");
+}
+
+/**
  * Task tool - Launch a specialized subagent to handle complex tasks
- * Returns the subagent's report (details are displayed live during execution)
  */
 export async function task(args: TaskArgs): Promise<string> {
   // Validate required parameters
   validateRequiredParams(args, ["subagent_type", "prompt", "description"]);
 
   const { subagent_type, prompt, description, model, resume } = args;
+
+  // Print Task header FIRST so subagent output appears below it
+  console.log(`● Task(${formatTaskArgs(args)})`);
 
   // Get current agent ID from context
   const mainAgentId = getCurrentAgentId();
@@ -61,7 +79,6 @@ export async function task(args: TaskArgs): Promise<string> {
       return `Error: ${result.error || "Subagent execution failed"}`;
     }
 
-    // Return report for the main agent to use
     return result.report;
   } catch (error) {
     return `Error: ${error instanceof Error ? error.message : String(error)}`;

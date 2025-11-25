@@ -19,7 +19,7 @@ import type {
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
+const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep", "LS"];
 
 /**
  * Check permission for a tool execution.
@@ -266,8 +266,8 @@ function matchesPattern(
  * Get default decision for a tool (when no rules match)
  */
 function getDefaultDecision(toolName: string): PermissionDecision {
-  // Tools that default to auto-allow
-  const autoAllowTools = ["Read", "Glob", "Grep", "TodoWrite"];
+  // Tools that default to auto-allow (read-only operations)
+  const autoAllowTools = ["Read", "Glob", "Grep", "LS", "TodoWrite"];
 
   if (autoAllowTools.includes(toolName)) {
     return "allow";

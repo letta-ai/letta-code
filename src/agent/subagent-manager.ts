@@ -326,7 +326,7 @@ async function executeSubagent(
             }
           }
 
-          // Display completion stats (extra indentation to stand out from tool calls)
+          // Display completion stats
           const toolCount = displayedToolCalls.size;
           const tokenStr = resultStats.totalTokens >= 1000
             ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
@@ -455,7 +455,7 @@ export async function spawnSubagent(
   // Create subagent with appropriate configuration
   const subagent = await createSubagent(type, resolvedModel, prompt);
 
-  // Show subagent info with link (using ✻ and dim color like thinking messages)
+  // Build and print header lines
   const baseURL = getBaseURL();
   const agentURL = `${baseURL}/agents/${subagent.id}`;
 
@@ -463,8 +463,9 @@ export async function spawnSubagent(
   const dim = "\x1b[2m";
   const reset = "\x1b[0m";
 
+  // Print subagent header before execution starts
   console.log(`${dim}✻ ${type}(${description})${reset}`);
-  console.log(`${dim}  ⎿  ${agentURL}${reset}`);
+  console.log(`${dim}  ⎿  Subagent: ${agentURL}${reset}`);
 
   // Register subagent for potential resume
   subagentRegistry.set(subagent.id, {
@@ -481,9 +482,7 @@ export async function spawnSubagent(
     const client = await getClient();
     await client.agents.delete(subagent.id);
   } catch (error) {
-    console.warn(
-      `Failed to delete subagent ${subagent.id}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    // Silently ignore cleanup errors
   }
 
   return result;

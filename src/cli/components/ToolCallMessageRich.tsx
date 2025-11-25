@@ -48,6 +48,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const rawName = line.name ?? "?";
   const argsText = line.argsText ?? "...";
 
+  // Task tool handles its own display via console.log - suppress UI rendering entirely
+  if (rawName === "Task" || rawName === "task") {
+    return null;
+  }
+
   // Apply tool name remapping from old codebase
   let displayName = rawName;
   if (displayName === "write") displayName = "Write";
@@ -93,12 +98,6 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   // Format result for display
   const getResultElement = () => {
     if (!line.resultText) return null;
-
-    // Don't display Task tool results - they're shown live during execution
-    // and the main agent will use the report in its response
-    if (rawName === "Task" || rawName === "task") {
-      return null;
-    }
 
     const prefix = `  ⎿  `; // Match old format: 2 spaces, glyph, 2 spaces
     const prefixWidth = 5; // Total width of prefix
