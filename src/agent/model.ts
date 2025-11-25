@@ -7,7 +7,7 @@ export const models = modelsData;
 
 /**
  * Resolve a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus") or a full handle (e.g., "anthropic/claude-opus-4-1-20250805")
+ * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
  * @returns The model handle if found, null otherwise
  */
 export function resolveModel(modelIdentifier: string): string | null {
@@ -43,7 +43,7 @@ export function formatAvailableModels(): string {
 
 /**
  * Get model info by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus") or a full handle (e.g., "anthropic/claude-opus-4-1-20250805")
+ * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
  * @returns The model info if found, null otherwise
  */
 export function getModelInfo(modelIdentifier: string) {
@@ -58,7 +58,7 @@ export function getModelInfo(modelIdentifier: string) {
 
 /**
  * Get updateArgs for a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus") or a full handle (e.g., "anthropic/claude-opus-4-1-20250805")
+ * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
  * @returns The updateArgs if found, undefined otherwise
  */
 export function getModelUpdateArgs(
