@@ -7,7 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  LettaMessageUnion,
+  Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static } from "ink";
@@ -45,6 +45,7 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
+import { ToolsetSelector } from "./components/ToolsetSelector";
 // import { UserMessage } from "./components/UserMessage";
 import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -72,6 +73,12 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 // This prevents infinite thinking state when there's an orphaned approval
 // Can be disabled if the latency check adds too much overhead
 const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
+
+// Feature flag: Eagerly cancel streams client-side when user presses ESC
+// When true (default), immediately abort the stream after calling .cancel()
+// This provides instant feedback to the user without waiting for backend acknowledgment
+// When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
+const EAGER_CANCEL = true;
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -135,7 +142,7 @@ export default function App({
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
-  messageHistory?: LettaMessageUnion[];
+  messageHistory?: Message[];
   tokenStreaming?: boolean;
 }) {
   // Track current agent (can change when swapping)
@@ -179,7 +186,11 @@ export default function App({
       | { type: "deny"; approval: ApprovalRequest; reason: string }
     >
   >([]);
-  const [isExecutingTool, _setIsExecutingTool] = useState(false);
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [queuedApprovalResults, setQueuedApprovalResults] = useState<
+    ApprovalResult[] | null
+  >(null);
+  const toolAbortControllerRef = useRef<AbortController | null>(null);
 
   // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
@@ -204,6 +215,10 @@ export default function App({
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
+  const [currentToolset, setCurrentToolset] = useState<
+    "codex" | "default" | "gemini" | null
+  >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
 
@@ -433,6 +448,13 @@ export default function App({
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
           setAgentName(agent.name);
+
+          // Detect current toolset from attached tools
+          const { detectToolsetFromAgent } = await import("../tools/toolset");
+          const detected = await detectToolsetFromAgent(client, agentId);
+          if (detected) {
+            setCurrentToolset(detected);
+          }
         } catch (error) {
           console.error("Error fetching agent config:", error);
         }
@@ -475,7 +497,7 @@ export default function App({
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
-              abortControllerRef.current.signal,
+              abortControllerRef.current?.signal,
             );
 
           // Track API duration
@@ -736,6 +758,14 @@ export default function App({
   }, []);
 
   const handleInterrupt = useCallback(async () => {
+    // If we're executing client-side tools, abort them locally instead of hitting the backend
+    if (isExecutingTool && toolAbortControllerRef.current) {
+      toolAbortControllerRef.current.abort();
+      setStreaming(false);
+      setIsExecutingTool(false);
+      return;
+    }
+
     if (!streaming || interruptRequested) return;
 
     setInterruptRequested(true);
@@ -746,26 +776,16 @@ export default function App({
       const _cancelResult = await client.agents.messages.cancel(agentId);
       // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
 
-      // WORKAROUND: Also abort the stream immediately since backend cancellation is buggy
-      // TODO: Once backend is fixed, comment out the immediate abort below and uncomment the timeout version
-      // if (abortControllerRef.current) {
-      //   abortControllerRef.current.abort();
-      // }
-
-      // FUTURE: Use this timeout-based abort once backend properly sends "cancelled" stop reason
-      // This gives the backend 5 seconds to gracefully close the stream before forcing abort
-      // const abortTimeout = setTimeout(() => {
-      //   if (abortControllerRef.current) {
-      //     abortControllerRef.current.abort();
-      //   }
-      // }, 5000);
-      //
-      // // The timeout will be cleared in processConversation's finally block when stream ends
+      // If EAGER_CANCEL is enabled, immediately abort the stream client-side
+      // This provides instant feedback without waiting for backend to acknowledge
+      if (EAGER_CANCEL && abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     } catch (e) {
       appendError(`Failed to interrupt stream: ${String(e)}`);
       setInterruptRequested(false);
     }
-  }, [agentId, streaming, interruptRequested, appendError]);
+  }, [agentId, streaming, interruptRequested, appendError, isExecutingTool]);
 
   // Reset interrupt flag when streaming ends
   useEffect(() => {
@@ -777,13 +797,22 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      if (!msg || streaming || commandRunning) return { submitted: false };
+      // Block submission while a stream is in flight, a command is running, or an approval batch
+      // is currently executing tools (prevents re-surfacing pending approvals mid-execution).
+      if (!msg || streaming || commandRunning || isExecutingTool)
+        return { submitted: false };
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
         // Special handling for /model command - opens selector
         if (msg.trim() === "/model") {
           setModelSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /toolset command - opens selector
+        if (msg.trim() === "/toolset") {
+          setToolsetSelectorOpen(true);
           return { submitted: true };
         }
 
@@ -1106,7 +1135,7 @@ export default function App({
 
           try {
             const client = await getClient();
-            await client.agents.modify(agentId, { name: newName });
+            await client.agents.update(agentId, { name: newName });
             setAgentName(newName);
 
             buffersRef.current.byId.set(cmdId, {
@@ -1318,8 +1347,9 @@ export default function App({
       setStreaming(true);
       refreshDerived();
 
-      // Check for pending approvals before sending message
-      if (CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+      // Check for pending approvals before sending message (skip if we already have
+      // a queued approval response to send first).
+      if (CHECK_PENDING_APPROVALS_BEFORE_SEND && !queuedApprovalResults) {
         try {
           const client = await getClient();
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
@@ -1357,14 +1387,25 @@ export default function App({
         }
       }
 
-      // Start the conversation loop
-      await processConversation([
-        {
-          type: "message",
-          role: "user",
-          content: messageContent as unknown as MessageCreate["content"],
-        },
-      ]);
+      // Start the conversation loop. If we have queued approval results from an interrupted
+      // client-side execution, send them first before the new user message.
+      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
+
+      if (queuedApprovalResults) {
+        initialInput.push({
+          type: "approval",
+          approvals: queuedApprovalResults,
+        });
+        setQueuedApprovalResults(null);
+      }
+
+      initialInput.push({
+        type: "message",
+        role: "user",
+        content: messageContent as unknown as MessageCreate["content"],
+      });
+
+      await processConversation(initialInput);
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
@@ -1381,6 +1422,8 @@ export default function App({
       handleExit,
       columns,
       commitEligibleLines,
+      isExecutingTool,
+      queuedApprovalResults,
     ],
   );
 
@@ -1391,92 +1434,126 @@ export default function App({
         | { type: "approve"; approval: ApprovalRequest }
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
-      // Combine all decisions
-      const allDecisions = [
-        ...approvalResults,
-        ...(additionalDecision ? [additionalDecision] : []),
-      ];
+      try {
+        // Snapshot current state before clearing dialog
+        const approvalResultsSnapshot = [...approvalResults];
+        const autoHandledSnapshot = [...autoHandledResults];
+        const autoDeniedSnapshot = [...autoDeniedApprovals];
+        const pendingSnapshot = [...pendingApprovals];
 
-      // Execute approved tools and format results using shared function
-      const { executeApprovalBatch } = await import(
-        "../agent/approval-execution"
-      );
-      const executedResults = await executeApprovalBatch(
-        allDecisions,
-        (chunk) => {
-          onChunk(buffersRef.current, chunk);
-          // Also log errors to the UI error display
-          if (
-            chunk.status === "error" &&
-            chunk.message_type === "tool_return_message"
-          ) {
-            const isToolError = chunk.tool_return?.startsWith(
-              "Error executing tool:",
-            );
-            if (isToolError) {
-              appendError(chunk.tool_return);
+        // Clear dialog state immediately so UI updates right away
+        setPendingApprovals([]);
+        setApprovalContexts([]);
+        setApprovalResults([]);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+
+        // Show "thinking" state and lock input while executing approved tools client-side
+        setStreaming(true);
+
+        const approvalAbortController = new AbortController();
+        toolAbortControllerRef.current = approvalAbortController;
+
+        // Combine all decisions using snapshots
+        const allDecisions = [
+          ...approvalResultsSnapshot,
+          ...(additionalDecision ? [additionalDecision] : []),
+        ];
+
+        // Execute approved tools and format results using shared function
+        const { executeApprovalBatch } = await import(
+          "../agent/approval-execution"
+        );
+        const executedResults = await executeApprovalBatch(
+          allDecisions,
+          (chunk) => {
+            onChunk(buffersRef.current, chunk);
+            // Also log errors to the UI error display
+            if (
+              chunk.status === "error" &&
+              chunk.message_type === "tool_return_message"
+            ) {
+              const isToolError = chunk.tool_return?.startsWith(
+                "Error executing tool:",
+              );
+              if (isToolError) {
+                appendError(chunk.tool_return);
+              }
             }
-          }
-        },
-      );
-
-      // Combine with auto-handled and auto-denied results
-      const allResults = [
-        ...autoHandledResults.map((ar) => ({
-          type: "tool" as const,
-          tool_call_id: ar.toolCallId,
-          tool_return: ar.result.toolReturn,
-          status: ar.result.status,
-          stdout: ar.result.stdout,
-          stderr: ar.result.stderr,
-        })),
-        ...autoDeniedApprovals.map((ad) => ({
-          type: "approval" as const,
-          tool_call_id: ad.approval.toolCallId,
-          approve: false,
-          reason: ad.reason,
-        })),
-        ...executedResults,
-      ];
-
-      // Dev-only validation: ensure outgoing IDs match expected IDs
-      if (process.env.NODE_ENV !== "production") {
-        const expectedIds = new Set(pendingApprovals.map((a) => a.toolCallId));
-        const sendingIds = new Set(
-          allResults.map((r) => r.tool_call_id).filter(Boolean),
+            // Flush UI so completed tools show up while the batch continues
+            refreshDerived();
+          },
+          { abortSignal: approvalAbortController.signal },
         );
 
-        const setsEqual = (a: Set<string>, b: Set<string>) =>
-          a.size === b.size && [...a].every((id) => b.has(id));
+        // Combine with auto-handled and auto-denied results using snapshots
+        const allResults = [
+          ...autoHandledSnapshot.map((ar) => ({
+            type: "tool" as const,
+            tool_call_id: ar.toolCallId,
+            tool_return: ar.result.toolReturn,
+            status: ar.result.status,
+            stdout: ar.result.stdout,
+            stderr: ar.result.stderr,
+          })),
+          ...autoDeniedSnapshot.map((ad) => ({
+            type: "approval" as const,
+            tool_call_id: ad.approval.toolCallId,
+            approve: false,
+            reason: ad.reason,
+          })),
+          ...executedResults,
+        ];
 
-        if (!setsEqual(expectedIds, sendingIds)) {
-          console.error("[BUG] Approval ID mismatch detected");
-          console.error("Expected IDs:", Array.from(expectedIds));
-          console.error("Sending IDs:", Array.from(sendingIds));
-          throw new Error(
-            "Approval ID mismatch - refusing to send mismatched IDs",
+        // Dev-only validation: ensure outgoing IDs match expected IDs (using snapshots)
+        if (process.env.NODE_ENV !== "production") {
+          // Include ALL tool call IDs: auto-handled, auto-denied, and pending approvals
+          const expectedIds = new Set([
+            ...autoHandledSnapshot.map((ar) => ar.toolCallId),
+            ...autoDeniedSnapshot.map((ad) => ad.approval.toolCallId),
+            ...pendingSnapshot.map((a) => a.toolCallId),
+          ]);
+          const sendingIds = new Set(
+            allResults.map((r) => r.tool_call_id).filter(Boolean),
           );
+
+          const setsEqual = (a: Set<string>, b: Set<string>) =>
+            a.size === b.size && [...a].every((id) => b.has(id));
+
+          if (!setsEqual(expectedIds, sendingIds)) {
+            console.error("[BUG] Approval ID mismatch detected");
+            console.error("Expected IDs:", Array.from(expectedIds));
+            console.error("Sending IDs:", Array.from(sendingIds));
+            throw new Error(
+              "Approval ID mismatch - refusing to send mismatched IDs",
+            );
+          }
         }
+
+        // Rotate to a new thinking message
+        setThinkingMessage(getRandomThinkingMessage());
+        refreshDerived();
+
+        const wasAborted = approvalAbortController.signal.aborted;
+
+        if (wasAborted) {
+          // Queue results to send alongside the next user message
+          setQueuedApprovalResults(allResults as ApprovalResult[]);
+          setStreaming(false);
+        } else {
+          // Continue conversation with all results
+          await processConversation([
+            {
+              type: "approval",
+              approvals: allResults as ApprovalResult[],
+            },
+          ]);
+        }
+      } finally {
+        // Always release the execution guard, even if an error occurred
+        setIsExecutingTool(false);
+        toolAbortControllerRef.current = null;
       }
-
-      // Clear state
-      setPendingApprovals([]);
-      setApprovalContexts([]);
-      setApprovalResults([]);
-      setAutoHandledResults([]);
-      setAutoDeniedApprovals([]);
-
-      // Rotate to a new thinking message
-      setThinkingMessage(getRandomThinkingMessage());
-      refreshDerived();
-
-      // Continue conversation with all results
-      await processConversation([
-        {
-          type: "approval",
-          approvals: allResults as ApprovalResult[],
-        },
-      ]);
     },
     [
       approvalResults,
@@ -1491,10 +1568,14 @@ export default function App({
 
   // Handle approval callbacks - sequential review
   const handleApproveCurrent = useCallback(async () => {
+    if (isExecutingTool) return;
+
     const currentIndex = approvalResults.length;
     const currentApproval = pendingApprovals[currentIndex];
 
     if (!currentApproval) return;
+
+    setIsExecutingTool(true);
 
     try {
       // Store approval decision (don't execute yet - batch execute after all approvals)
@@ -1506,19 +1587,30 @@ export default function App({
       // Check if we're done with all approvals
       if (currentIndex + 1 >= pendingApprovals.length) {
         // All approvals collected, execute and send to backend
+        // sendAllResults owns the lock release via its finally block
         await sendAllResults(decision);
       } else {
         // Not done yet, store decision and show next approval
         setApprovalResults((prev) => [...prev, decision]);
+        setIsExecutingTool(false);
       }
     } catch (e) {
       appendError(String(e));
       setStreaming(false);
+      setIsExecutingTool(false);
     }
-  }, [pendingApprovals, approvalResults, sendAllResults, appendError]);
+  }, [
+    pendingApprovals,
+    approvalResults,
+    sendAllResults,
+    appendError,
+    isExecutingTool,
+  ]);
 
   const handleApproveAlways = useCallback(
     async (scope?: "project" | "session") => {
+      if (isExecutingTool) return;
+
       // For now, just handle the first approval with approve-always
       // TODO: Support approve-always for multiple approvals
       if (pendingApprovals.length === 0 || approvalContexts.length === 0)
@@ -1547,7 +1639,7 @@ export default function App({
       buffersRef.current.order.push(cmdId);
       refreshDerived();
 
-      // Approve current tool
+      // Approve current tool (handleApproveCurrent manages the execution guard)
       await handleApproveCurrent();
     },
     [
@@ -1556,15 +1648,20 @@ export default function App({
       pendingApprovals,
       handleApproveCurrent,
       refreshDerived,
+      isExecutingTool,
     ],
   );
 
   const handleDenyCurrent = useCallback(
     async (reason: string) => {
+      if (isExecutingTool) return;
+
       const currentIndex = approvalResults.length;
       const currentApproval = pendingApprovals[currentIndex];
 
       if (!currentApproval) return;
+
+      setIsExecutingTool(true);
 
       try {
         // Store denial decision
@@ -1577,18 +1674,27 @@ export default function App({
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
+          // sendAllResults owns the lock release via its finally block
           setThinkingMessage(getRandomThinkingMessage());
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
           setApprovalResults((prev) => [...prev, decision]);
+          setIsExecutingTool(false);
         }
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
+        setIsExecutingTool(false);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, appendError],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      appendError,
+      isExecutingTool,
+    ],
   );
 
   const handleModelSelect = useCallback(
@@ -1644,12 +1750,28 @@ export default function App({
         );
         setLlmConfig(updatedConfig);
 
-        // Update the same command with final result
+        // After switching models, reload tools for the selected provider and relink
+        const { switchToolsetForModel } = await import("../tools/toolset");
+        const toolsetName = await switchToolsetForModel(
+          selectedModel.handle ?? "",
+          agentId,
+        );
+        setCurrentToolset(toolsetName);
+
+        // Update the same command with final result (include toolset info)
+        const autoToolsetLine = toolsetName
+          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
+          : null;
+        const outputLines = [
+          `Switched to ${selectedModel.label}`,
+          ...(autoToolsetLine ? [autoToolsetLine] : []),
+        ].join("\n");
+
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/model ${modelId}`,
-          output: `Switched to ${selectedModel.label}`,
+          output: outputLines,
           phase: "finished",
           success: true,
         });
@@ -1667,6 +1789,60 @@ export default function App({
           });
           refreshDerived();
         }
+      } finally {
+        // Unlock input
+        setCommandRunning(false);
+      }
+    },
+    [agentId, refreshDerived],
+  );
+
+  const handleToolsetSelect = useCallback(
+    async (toolsetId: "codex" | "default" | "gemini") => {
+      setToolsetSelectorOpen(false);
+
+      const cmdId = uid("cmd");
+
+      try {
+        // Immediately add command to transcript with "running" phase
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Switching toolset to ${toolsetId}...`,
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Lock input during async operation
+        setCommandRunning(true);
+
+        // Force switch to the selected toolset
+        const { forceToolsetSwitch } = await import("../tools/toolset");
+        await forceToolsetSwitch(toolsetId, agentId);
+        setCurrentToolset(toolsetId);
+
+        // Update the command with final result
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Switched toolset to ${toolsetId}`,
+          phase: "finished",
+          success: true,
+        });
+        refreshDerived();
+      } catch (error) {
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
       } finally {
         // Unlock input
         setCommandRunning(false);
@@ -1992,6 +2168,7 @@ export default function App({
                 !showExitStats &&
                 pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
+                !toolsetSelectorOpen &&
                 !agentSelectorOpen &&
                 !planApprovalPending
               }
@@ -2015,6 +2192,15 @@ export default function App({
                 currentModel={llmConfig?.model}
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
+              />
+            )}
+
+            {/* Toolset Selector - conditionally mounted as overlay */}
+            {toolsetSelectorOpen && (
+              <ToolsetSelector
+                currentToolset={currentToolset ?? undefined}
+                onSelect={handleToolsetSelect}
+                onCancel={() => setToolsetSelectorOpen(false)}
               />
             )}
 

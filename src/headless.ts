@@ -36,6 +36,7 @@ export async function handleHeadlessCommand(
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
+      toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
       // Additional flags from index.ts that need to be filtered out

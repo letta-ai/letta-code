@@ -225,6 +225,7 @@ function isWithinAllowedDirectories(
 function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
     case "Read":
+    case "read_file":
     case "Write":
     case "Edit":
     case "Glob":
@@ -238,6 +239,16 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       // Bash: "Bash(command with args)"
       const command =
         typeof toolArgs.command === "string" ? toolArgs.command : "";
+      return `Bash(${command})`;
+    }
+    case "shell":
+    case "shell_command": {
+      const command =
+        typeof toolArgs.command === "string"
+          ? toolArgs.command
+          : Array.isArray(toolArgs.command)
+            ? toolArgs.command.join(" ")
+            : "";
       return `Bash(${command})`;
     }
 
@@ -257,12 +268,26 @@ function matchesPattern(
   workingDirectory: string,
 ): boolean {
   // File tools use glob matching
-  if (["Read", "Write", "Edit", "Glob", "Grep"].includes(toolName)) {
+  if (
+    [
+      "Read",
+      "read_file",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "grep_files",
+    ].includes(toolName)
+  ) {
     return matchesFilePattern(query, pattern, workingDirectory);
   }
 
   // Bash uses prefix matching
-  if (toolName === "Bash") {
+  if (
+    toolName === "Bash" ||
+    toolName === "shell" ||
+    toolName === "shell_command"
+  ) {
     return matchesBashPattern(query, pattern);
   }
 
@@ -274,8 +299,30 @@ function matchesPattern(
  * Get default decision for a tool (when no rules match)
  */
 function getDefaultDecision(toolName: string): PermissionDecision {
-  // Tools that default to auto-allow
-  const autoAllowTools = ["Read", "Glob", "Grep", "TodoWrite"];
+  // Check TOOL_PERMISSIONS to determine if tool requires approval
+  // Import is async so we need to do this synchronously - get the permissions from manager
+  // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
+  const autoAllowTools = [
+    // Anthropic toolset - tools that don't require approval
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+    "BashOutput",
+    "ExitPlanMode",
+    "LS",
+    // Codex toolset - tools that don't require approval
+    "read_file",
+    "list_dir",
+    "grep_files",
+    "update_plan",
+    // Gemini toolset - tools that don't require approval (using server names)
+    "list_directory",
+    "search_file_content",
+    "write_todos",
+    "read_many_files",
+    // Note: read_file, glob already covered above (shared across toolsets)
+  ];
 
   if (autoAllowTools.includes(toolName)) {
     return "allow";

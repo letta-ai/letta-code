@@ -41,6 +41,7 @@ export function analyzeApprovalContext(
 
   switch (toolName) {
     case "Read":
+    case "read_file":
       return analyzeReadApproval(resolveFilePath(), workingDirectory);
 
     case "Write":
@@ -51,6 +52,8 @@ export function analyzeApprovalContext(
       return analyzeEditApproval(resolveFilePath(), workingDirectory);
 
     case "Bash":
+    case "shell":
+    case "shell_command":
       return analyzeBashApproval(
         typeof toolArgs.command === "string" ? toolArgs.command : "",
         workingDirectory,
@@ -63,6 +66,7 @@ export function analyzeApprovalContext(
 
     case "Glob":
     case "Grep":
+    case "grep_files":
       return analyzeSearchApproval(
         toolName,
         typeof toolArgs.path === "string" ? toolArgs.path : workingDirectory,

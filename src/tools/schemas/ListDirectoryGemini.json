@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "dir_path": {
+      "type": "string",
+      "description": "The path to the directory to list"
+    },
+    "ignore": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of glob patterns to ignore"
+    },
+    "file_filtering_options": {
+      "type": "object",
+      "description": "Optional: Whether to respect ignore patterns from .gitignore or .geminiignore",
+      "properties": {
+        "respect_git_ignore": {
+          "type": "boolean",
+          "description": "Optional: Whether to respect .gitignore patterns when listing files. Only available in git repositories. Defaults to true."
+        },
+        "respect_gemini_ignore": {
+          "type": "boolean",
+          "description": "Optional: Whether to respect .geminiignore patterns when listing files. Defaults to true."
+        }
+      }
+    }
+  },
+  "required": ["dir_path"],
+  "additionalProperties": false
+}

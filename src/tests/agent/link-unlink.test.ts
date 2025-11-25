@@ -59,7 +59,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     expect(result.addedCount).toBeGreaterThan(0);
 
     // Verify tools were attached
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const toolNames = agent.tools?.map((t) => t.name) || [];
     const lettaCodeTools = getToolNames();
 
@@ -76,7 +78,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     await linkToolsToAgent(testAgentId);
 
     // Verify approval rules were added
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const approvalRules = agent.tool_rules?.filter(
       (rule) => rule.type === "requires_approval",
     );
@@ -115,7 +119,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     expect(result.removedCount).toBeGreaterThan(0);
 
     // Verify tools were removed
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const toolNames = agent.tools?.map((t) => t.name) || [];
     const lettaCodeTools = getToolNames();
 
@@ -132,7 +138,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     await unlinkToolsFromAgent(testAgentId);
 
     // Verify approval rules were removed
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const approvalRules = agent.tool_rules?.filter(
       (rule) => rule.type === "requires_approval",
     );
@@ -150,8 +158,8 @@ describeOrSkip("Link/Unlink Tools", () => {
     await linkToolsToAgent(testAgentId);
 
     // Attach memory tool
-    const memoryTools = await client.tools.list({ name: "memory" });
-    const memoryTool = memoryTools[0];
+    const memoryToolsResponse = await client.tools.list({ name: "memory" });
+    const memoryTool = memoryToolsResponse.items[0];
     if (memoryTool?.id) {
       await client.agents.tools.attach(memoryTool.id, {
         agent_id: testAgentId,
@@ -162,7 +170,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     await unlinkToolsFromAgent(testAgentId);
 
     // Verify memory tool is still there
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const toolNames = agent.tools?.map((t) => t.name) || [];
 
     expect(toolNames).toContain("memory");
@@ -179,7 +189,9 @@ describeOrSkip("Link/Unlink Tools", () => {
     await linkToolsToAgent(testAgentId);
 
     // Add a continue_loop rule manually
-    const agent = await client.agents.retrieve(testAgentId);
+    const agent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const newToolRules = [
       ...(agent.tool_rules || []),
       {
@@ -189,13 +201,15 @@ describeOrSkip("Link/Unlink Tools", () => {
       },
     ];
 
-    await client.agents.modify(testAgentId, { tool_rules: newToolRules });
+    await client.agents.update(testAgentId, { tool_rules: newToolRules });
 
     // Unlink Letta Code tools
     await unlinkToolsFromAgent(testAgentId);
 
     // Verify continue_loop rule is still there
-    const updatedAgent = await client.agents.retrieve(testAgentId);
+    const updatedAgent = await client.agents.retrieve(testAgentId, {
+      include: ["agent.tools"],
+    });
     const continueLoopRules = updatedAgent.tool_rules?.filter(
       (r) => r.type === "continue_loop" && r.tool_name === "memory",
     );

@@ -51,8 +51,15 @@ export async function createAgent(
   const client = await getClient();
 
   // Get loaded tool names (tools are already registered with Letta)
+  // Map internal names to server names so the agent sees the correct tool names
+  const { getServerToolName } = await import("../tools/manager");
+  const internalToolNames = getToolNames();
+  const serverToolNames = internalToolNames.map((name) =>
+    getServerToolName(name),
+  );
+
   const toolNames = [
-    ...getToolNames(),
+    ...serverToolNames,
     "memory",
     "web_search",
     "conversation_search",
@@ -250,7 +257,7 @@ export async function createAgent(
         const groupAgent = await client.agents.retrieve(groupAgentId);
         if (groupAgent.agent_type === "sleeptime_agent") {
           // Update the persona block on the SLEEPTIME agent, not the primary agent
-          await client.agents.blocks.modify("memory_persona", {
+          await client.agents.blocks.update("memory_persona", {
             agent_id: groupAgentId,
             value: SLEEPTIME_MEMORY_PERSONA,
             description:

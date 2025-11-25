@@ -2,7 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { getToolNames } from "../tools/manager";
+import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
 /**
@@ -19,35 +19,42 @@ import { getClient } from "./client";
  */
 export async function updateAgentLLMConfig(
   agentId: string,
-  _modelHandle: string,
+  modelHandle: string,
   updateArgs?: Record<string, unknown>,
   preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  // Get current agent to preserve parallel_tool_calls if requested
+  // Step 1: change model (preserve parallel_tool_calls if requested)
   const currentAgent = await client.agents.retrieve(agentId);
-  const originalParallelToolCalls = preserveParallelToolCalls
-    ? (currentAgent.llm_config?.parallel_tool_calls ?? undefined)
+  const currentParallel = preserveParallelToolCalls
+    ? currentAgent.llm_config?.parallel_tool_calls
     : undefined;
 
-  // Strategy: Do everything in ONE modify call via llm_config
-  // This avoids the backend resetting parallel_tool_calls when we update the model
-  const updatedLlmConfig = {
-    ...currentAgent.llm_config,
-    ...updateArgs,
-    // Explicitly preserve parallel_tool_calls
-    ...(originalParallelToolCalls !== undefined && {
-      parallel_tool_calls: originalParallelToolCalls,
-    }),
-  } as LlmConfig;
-
-  await client.agents.modify(agentId, {
-    llm_config: updatedLlmConfig,
-    parallel_tool_calls: originalParallelToolCalls,
+  await client.agents.update(agentId, {
+    model: modelHandle,
+    parallel_tool_calls: currentParallel,
   });
 
-  // Retrieve and return final state
+  // Step 2: if there are llm_config overrides, apply them using fresh state
+  if (updateArgs && Object.keys(updateArgs).length > 0) {
+    const refreshed = await client.agents.retrieve(agentId);
+    const refreshedConfig = (refreshed.llm_config || {}) as LlmConfig;
+
+    const mergedLlmConfig: LlmConfig = {
+      ...refreshedConfig,
+      ...(updateArgs as Record<string, unknown>),
+      ...(currentParallel !== undefined && {
+        parallel_tool_calls: currentParallel,
+      }),
+    } as LlmConfig;
+
+    await client.agents.update(agentId, {
+      llm_config: mergedLlmConfig,
+      parallel_tool_calls: currentParallel,
+    });
+  }
+
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
 }
@@ -75,7 +82,9 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const client = await getClient();
 
     // Get ALL agent tools from agent state
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
     const currentTools = agent.tools || [];
     const currentToolIds = currentTools
       .map((t) => t.id)
@@ -86,13 +95,16 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
         .filter((name): name is string => typeof name === "string"),
     );
 
-    // Get Letta Code tool names
+    // Get Letta Code tool names (internal names from registry)
+    const { getServerToolName } = await import("../tools/manager");
     const lettaCodeToolNames = getToolNames();
 
     // Find tools to add (tools that aren't already attached)
-    const toolsToAdd = lettaCodeToolNames.filter(
-      (name) => !currentToolNames.has(name),
-    );
+    // Compare using server names since that's what the agent has
+    const toolsToAdd = lettaCodeToolNames.filter((internalName) => {
+      const serverName = getServerToolName(internalName);
+      return !currentToolNames.has(serverName);
+    });
 
     if (toolsToAdd.length === 0) {
       return {
@@ -103,10 +115,12 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     }
 
     // Look up tool IDs from global tool list
+    // Use server names when querying, since that's how tools are registered on the server
     const toolsToAddIds: string[] = [];
     for (const toolName of toolsToAdd) {
-      const tools = await client.tools.list({ name: toolName });
-      const tool = tools[0];
+      const serverName = getServerToolName(toolName);
+      const toolsResponse = await client.tools.list({ name: serverName });
+      const tool = toolsResponse.items[0];
       if (tool?.id) {
         toolsToAddIds.push(tool.id);
       }
@@ -116,17 +130,18 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
     const newToolIds = [...currentToolIds, ...toolsToAddIds];
 
     // Get current tool_rules and add requires_approval rules for new tools
+    // ALL Letta Code tools need requires_approval to be routed to the client
     const currentToolRules = agent.tool_rules || [];
     const newToolRules = [
       ...currentToolRules,
       ...toolsToAdd.map((toolName) => ({
-        tool_name: toolName,
+        tool_name: getServerToolName(toolName),
         type: "requires_approval" as const,
         prompt_template: null,
       })),
     ];
 
-    await client.agents.modify(agentId, {
+    await client.agents.update(agentId, {
       tool_ids: newToolIds,
       tool_rules: newToolRules,
     });
@@ -157,13 +172,22 @@ export async function unlinkToolsFromAgent(
     const client = await getClient();
 
     // Get ALL agent tools from agent state (not tools.list which may be incomplete)
-    const agent = await client.agents.retrieve(agentId);
+    const agent = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
     const allTools = agent.tools || [];
-    const lettaCodeToolNames = new Set(getToolNames());
+
+    // Get all possible Letta Code tool names (both internal and server names)
+    const { getServerToolName } = await import("../tools/manager");
+    const lettaCodeToolNames = new Set(getAllLettaToolNames());
+    const lettaCodeServerNames = new Set(
+      Array.from(lettaCodeToolNames).map((name) => getServerToolName(name)),
+    );
 
     // Filter out Letta Code tools, keep everything else
+    // Check against server names since that's what the agent sees
     const remainingTools = allTools.filter(
-      (t) => t.name && !lettaCodeToolNames.has(t.name),
+      (t) => t.name && !lettaCodeServerNames.has(t.name),
     );
     const removedCount = allTools.length - remainingTools.length;
 
@@ -173,14 +197,15 @@ export async function unlinkToolsFromAgent(
       .filter((id): id is string => typeof id === "string");
 
     // Remove approval rules for Letta Code tools being unlinked
+    // Check against server names since that's what appears in tool_rules
     const currentToolRules = agent.tool_rules || [];
     const remainingToolRules = currentToolRules.filter(
       (rule) =>
         rule.type !== "requires_approval" ||
-        !lettaCodeToolNames.has(rule.tool_name),
+        !lettaCodeServerNames.has(rule.tool_name),
     );
 
-    await client.agents.modify(agentId, {
+    await client.agents.update(agentId, {
       tool_ids: remainingToolIds,
       tool_rules: remainingToolRules,
     });

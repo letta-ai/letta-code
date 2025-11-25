@@ -66,8 +66,18 @@ class PermissionModeManager {
         return "allow";
 
       case "acceptEdits":
-        // Auto-allow edit tools: Write, Edit, MultiEdit, NotebookEdit
-        if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) {
+        // Auto-allow edit tools: Write, Edit, MultiEdit, NotebookEdit, apply_patch, replace, write_file
+        if (
+          [
+            "Write",
+            "Edit",
+            "MultiEdit",
+            "NotebookEdit",
+            "apply_patch",
+            "replace",
+            "write_file",
+          ].includes(toolName)
+        ) {
           return "allow";
         }
         return null;

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "The path to the file to write to."
+    },
+    "content": {
+      "type": "string",
+      "description": "The content to write to the file."
+    }
+  },
+  "required": ["file_path", "content"],
+  "additionalProperties": false
+}

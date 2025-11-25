@@ -1,5 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
+import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
@@ -70,7 +71,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 }) => {
   const t = toolName.toLowerCase();
 
-  if (t === "bash") {
+  if (t === "bash" || t === "shell_command" || t === "run_shell_command") {
     const cmdVal = parsedArgs?.command;
     const cmd =
       typeof cmdVal === "string" ? cmdVal : toolArgs || "(no arguments)";
@@ -85,10 +86,30 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "ls") {
-    const pathVal = parsedArgs?.path;
+  if (t === "shell") {
+    const cmdVal = parsedArgs?.command;
+    const cmd = Array.isArray(cmdVal)
+      ? cmdVal.join(" ")
+      : typeof cmdVal === "string"
+        ? cmdVal
+        : "(no command)";
+    const justificationVal = parsedArgs?.justification;
+    const justification =
+      typeof justificationVal === "string" ? justificationVal : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>{cmd}</Text>
+        {justification ? <Text dimColor>{justification}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (t === "ls" || t === "list_dir" || t === "list_directory") {
+    const pathVal =
+      parsedArgs?.path || parsedArgs?.target_directory || parsedArgs?.dir_path;
     const path = typeof pathVal === "string" ? pathVal : "(current directory)";
-    const ignoreVal = parsedArgs?.ignore;
+    const ignoreVal = parsedArgs?.ignore || parsedArgs?.ignore_globs;
     const ignore =
       Array.isArray(ignoreVal) && ignoreVal.length > 0
         ? ` (ignoring: ${ignoreVal.join(", ")})`
@@ -102,8 +123,126 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  // File edit previews: write/edit/multi_edit
-  if ((t === "write" || t === "edit" || t === "multiedit") && parsedArgs) {
+  if (t === "read" || t === "read_file") {
+    const pathVal = parsedArgs?.file_path || parsedArgs?.target_file;
+    const path = typeof pathVal === "string" ? pathVal : "(no file specified)";
+    const offsetVal = parsedArgs?.offset;
+    const limitVal = parsedArgs?.limit;
+    const rangeInfo =
+      typeof offsetVal === "number" || typeof limitVal === "number"
+        ? ` (lines ${offsetVal ?? 1}–${typeof offsetVal === "number" && typeof limitVal === "number" ? offsetVal + limitVal : "end"})`
+        : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>
+          Read file: {path}
+          {rangeInfo}
+        </Text>
+      </Box>
+    );
+  }
+
+  if (t === "grep" || t === "grep_files" || t === "search_file_content") {
+    const patternVal = parsedArgs?.pattern;
+    const pattern =
+      typeof patternVal === "string" ? patternVal : "(no pattern)";
+    const pathVal = parsedArgs?.path;
+    const path = typeof pathVal === "string" ? ` in ${pathVal}` : "";
+    const includeVal = parsedArgs?.include || parsedArgs?.glob;
+    const includeInfo =
+      typeof includeVal === "string" ? ` (${includeVal})` : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>
+          Search for: {pattern}
+          {path}
+          {includeInfo}
+        </Text>
+      </Box>
+    );
+  }
+
+  if (t === "apply_patch") {
+    const inputVal = parsedArgs?.input;
+    const patchPreview =
+      typeof inputVal === "string" && inputVal.length > 100
+        ? `${inputVal.slice(0, 100)}...`
+        : typeof inputVal === "string"
+          ? inputVal
+          : "(no patch content)";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>Apply patch:</Text>
+        <Text dimColor>{patchPreview}</Text>
+      </Box>
+    );
+  }
+
+  if (t === "update_plan") {
+    const planVal = parsedArgs?.plan;
+    const explanationVal = parsedArgs?.explanation;
+
+    if (Array.isArray(planVal)) {
+      const explanation =
+        typeof explanationVal === "string" ? explanationVal : undefined;
+
+      return (
+        <Box flexDirection="column" paddingLeft={2}>
+          {explanation && (
+            <Text italic dimColor>
+              {explanation}
+            </Text>
+          )}
+          {planVal
+            .map((item: unknown, idx: number) => {
+              if (typeof item === "object" && item !== null) {
+                const stepItem = item as { step?: string; status?: string };
+                const step = stepItem.step || "(no description)";
+                const status = stepItem.status || "pending";
+                const checkbox = status === "completed" ? "☒" : "☐";
+                return (
+                  <Text key={`${idx}-${step.slice(0, 20)}`}>
+                    {checkbox} {step}
+                  </Text>
+                );
+              }
+              return null;
+            })
+            .filter((el): el is React.ReactElement => el !== null)}
+        </Box>
+      );
+    }
+  }
+
+  if (t === "glob") {
+    const patternVal = parsedArgs?.pattern;
+    const pattern =
+      typeof patternVal === "string" ? patternVal : "(no pattern)";
+    const dirPathVal = parsedArgs?.dir_path;
+    const dirInfo = typeof dirPathVal === "string" ? ` in ${dirPathVal}` : "";
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Text>
+          Find files matching: {pattern}
+          {dirInfo}
+        </Text>
+      </Box>
+    );
+  }
+
+  // File edit previews: write/edit/multi_edit/replace/write_file
+  if (
+    (t === "write" ||
+      t === "edit" ||
+      t === "multiedit" ||
+      t === "replace" ||
+      t === "write_file") &&
+    parsedArgs
+  ) {
     try {
       const filePath = String(parsedArgs.file_path || "");
       if (!filePath) throw new Error("no file_path");
@@ -111,7 +250,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       if (precomputedDiff) {
         return (
           <Box flexDirection="column" paddingLeft={2}>
-            {t === "write" ? (
+            {t === "write" || t === "write_file" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="write"
@@ -119,7 +258,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
                 content={String(parsedArgs.content ?? "")}
                 showHeader={false}
               />
-            ) : t === "edit" ? (
+            ) : t === "edit" || t === "replace" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="edit"
@@ -149,7 +288,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       }
 
       // Fallback to non-precomputed rendering
-      if (t === "write") {
+      if (t === "write" || t === "write_file") {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -161,7 +300,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
           </Box>
         );
       }
-      if (t === "edit") {
+      if (t === "edit" || t === "replace") {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -199,7 +338,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   }
 
   // Default for file-edit tools when args not parseable yet
-  if (t === "write" || t === "edit" || t === "multiedit") {
+  if (
+    t === "write" ||
+    t === "edit" ||
+    t === "multiedit" ||
+    t === "replace" ||
+    t === "write_file"
+  ) {
     return (
       <Box flexDirection="column" paddingLeft={2}>
         <Text dimColor>Preparing preview…</Text>
@@ -288,6 +433,8 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   }, [progress, approvalContext, onApproveAll, onApproveAlways]);
 
   useInput((_input, key) => {
+    if (isExecuting) return;
+
     if (isEnteringReason) {
       // When entering reason, only handle enter/escape
       if (key.return) {
@@ -471,6 +618,7 @@ ApprovalDialog.displayName = "ApprovalDialog";
 // Helper functions for tool name mapping
 function getHeaderLabel(toolName: string): string {
   const t = toolName.toLowerCase();
+  // Anthropic toolset
   if (t === "bash") return "Bash command";
   if (t === "ls") return "List Files";
   if (t === "read") return "Read File";
@@ -480,5 +628,24 @@ function getHeaderLabel(toolName: string): string {
   if (t === "grep") return "Search in Files";
   if (t === "glob") return "Find Files";
   if (t === "todo_write" || t === "todowrite") return "Update Todos";
+  // Codex toolset
+  if (t === "shell_command") return "Shell command";
+  if (t === "shell") return "Shell script";
+  if (t === "read_file") return "Read File";
+  if (t === "list_dir") return "List Files";
+  if (t === "grep_files") return "Search in Files";
+  if (t === "apply_patch") return "Apply Patch";
+  if (t === "update_plan") return "Plan update";
+  // Gemini toolset (uses server names)
+  if (t === "run_shell_command") return "Shell command";
+  if (t === "list_directory") return "List Directory";
+  if (t === "search_file_content") return "Search in Files";
+  if (t === "write_todos") return "Update Todos";
+  if (t === "read_many_files") return "Read Multiple Files";
+  // Shared names between toolsets - these get overwritten based on active toolset
+  if (t === "read_file") return "Read File";
+  if (t === "glob") return "Find Files";
+  if (t === "replace") return "Edit File";
+  if (t === "write_file") return "Write File";
   return toolName;
 }

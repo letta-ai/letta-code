@@ -65,7 +65,7 @@ describe("tool truncation integration tests", () => {
 
         const output = result.content[0]?.text || "";
         expect(output).toContain("[Output truncated after 30,000 characters");
-        expect(result.isError).toBe(true);
+        expect(result.status).toBe("error");
       },
     );
   });
