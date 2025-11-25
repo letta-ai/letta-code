@@ -6,13 +6,13 @@
  * - Passing conversation history to subagents
  * - Executing subagents and collecting final reports
  * - Managing parallel subagent execution
- * - Tracking subagent state for resume functionality
  */
 
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { getErrorMessage } from "../utils/error";
 import { getClient } from "./client";
 import {
   type SubagentConfig,
@@ -20,14 +20,22 @@ import {
   getAllSubagentConfigs,
 } from "./subagents";
 
-/**
- * Stored subagent information for resume functionality
- */
-interface SubagentInfo {
-  agentId: string;
-  type: SubagentType;
-  createdAt: Date;
-}
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** ANSI escape codes for console output */
+const ANSI_DIM = "\x1b[2m";
+const ANSI_RESET = "\x1b[0m";
+
+/** Maximum number of messages to fetch for conversation history */
+const CONVERSATION_HISTORY_LIMIT = 100;
+
+/** Default embedding model for subagents */
+const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+
+/** Base Letta tools that are always kept regardless of allowedTools config */
+const BASE_LETTA_TOOLS = ["memory", "web_search", "conversation_search", "fetch_webpage"];
 
 /**
  * Subagent execution result
@@ -37,6 +45,15 @@ export interface SubagentResult {
   report: string;
   success: boolean;
   error?: string;
+}
+
+/**
+ * Stored subagent information for resume functionality
+ */
+interface SubagentInfo {
+  agentId: string;
+  type: SubagentType;
+  createdAt: Date;
 }
 
 /**
@@ -80,14 +97,14 @@ async function resolveSubagentModel(
 /**
  * Extract conversation history from main agent
  */
-export async function getConversationHistory(
+async function getConversationHistory(
   agentId: string,
 ): Promise<MessageCreate[]> {
   const client = await getClient();
 
   // Get the agent's message history
   const messagesPage = await client.agents.messages.list(agentId, {
-    limit: 100, // Get last 100 messages for context
+    limit: CONVERSATION_HISTORY_LIMIT,
   });
   const messages = messagesPage.items;
 
@@ -141,7 +158,7 @@ async function createSubagent(
   const agent = await createAgent(
     `subagent-${type}-${Date.now()}`,
     model,
-    "openai/text-embedding-3-small",
+    DEFAULT_EMBEDDING_MODEL,
     undefined, // no update args
     false, // share memory blocks with parent agent
     undefined, // no skills directory
@@ -162,12 +179,10 @@ async function createSubagent(
   const allowedToolNames = new Set(config.allowedTools);
   const remainingTools = allTools.filter((tool) => {
     if (!tool.name) return true; // Keep tools without names (shouldn't happen)
-    // Keep if it's an allowed tool OR a base Letta tool (memory, web_search, etc.)
+    // Keep if it's an allowed tool OR a base Letta tool
     return (
       allowedToolNames.has(tool.name as never) ||
-      ["memory", "web_search", "conversation_search", "fetch_webpage"].includes(
-        tool.name,
-      )
+      BASE_LETTA_TOOLS.includes(tool.name)
     );
   });
 
@@ -235,10 +250,6 @@ async function executeSubagent(
     let finalResult: string | null = null;
     let resultStats: { durationMs: number; totalTokens: number } | null = null;
 
-    // ANSI escape codes for dim text
-    const dim = "\x1b[2m";
-    const reset = "\x1b[0m";
-
     // Helper to format tool arguments for display
     function formatToolArgs(toolName: string, argsStr: string): string {
       try {
@@ -271,9 +282,9 @@ async function executeSubagent(
 
       const formattedArgs = formatToolArgs(toolName, toolArgs);
       if (formattedArgs) {
-        console.log(`${dim}     ${toolName}(${formattedArgs})${reset}`);
+        console.log(`${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`);
       } else {
-        console.log(`${dim}     ${toolName}()${reset}`);
+        console.log(`${ANSI_DIM}     ${toolName}()${ANSI_RESET}`);
       }
     }
 
@@ -338,7 +349,7 @@ async function executeSubagent(
             ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
             : `${durationSec.toFixed(1)}s`;
 
-          console.log(`${dim}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${reset}`);
+          console.log(`${ANSI_DIM}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
         }
       } catch {
         // Not valid JSON, ignore
@@ -405,7 +416,7 @@ async function executeSubagent(
         agentId: agent.id,
         report: "",
         success: false,
-        error: `Failed to parse subagent output: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+        error: `Failed to parse subagent output: ${getErrorMessage(parseError)}`,
       };
     }
   } catch (error) {
@@ -413,7 +424,7 @@ async function executeSubagent(
       agentId: agent.id,
       report: "",
       success: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     };
   }
 }
@@ -421,8 +432,8 @@ async function executeSubagent(
 /**
  * Get the base URL for constructing agent links
  */
-function getBaseURL(): string {
-  const { settingsManager } = require("../settings-manager");
+async function getBaseURL(): Promise<string> {
+  const { settingsManager } = await import("../settings-manager");
   const settings = settingsManager.getSettings();
 
   const baseURL =
@@ -470,16 +481,12 @@ export async function spawnSubagent(
   const subagent = await createSubagent(type, config, resolvedModel, prompt);
 
   // Build and print header lines
-  const baseURL = getBaseURL();
+  const baseURL = await getBaseURL();
   const agentURL = `${baseURL}/agents/${subagent.id}`;
 
-  // ANSI escape codes for dim text
-  const dim = "\x1b[2m";
-  const reset = "\x1b[0m";
-
   // Print subagent header before execution starts
-  console.log(`${dim}✻ ${type}(${description})${reset}`);
-  console.log(`${dim}  ⎿  Subagent: ${agentURL}${reset}`);
+  console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
+  console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
 
   // Register subagent for potential resume
   subagentRegistry.set(subagent.id, {
@@ -537,26 +544,7 @@ export async function resumeSubagent(
       agentId: subagentId,
       report: "",
       success: false,
-      error: `Failed to resume subagent: ${error instanceof Error ? error.message : String(error)}`,
+      error: `Failed to resume subagent: ${getErrorMessage(error)}`,
     };
-  }
-}
-
-/**
- * Get information about a spawned subagent
- */
-export function getSubagentInfo(subagentId: string): SubagentInfo | undefined {
-  return subagentRegistry.get(subagentId);
-}
-
-/**
- * Clear old subagents from registry (cleanup)
- */
-export function cleanupSubagentRegistry(maxAgeMs = 24 * 60 * 60 * 1000) {
-  const now = Date.now();
-  for (const [id, info] of subagentRegistry.entries()) {
-    if (now - info.createdAt.getTime() > maxAgeMs) {
-      subagentRegistry.delete(id);
-    }
   }
 }

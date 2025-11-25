@@ -3,6 +3,25 @@
  */
 
 /**
+ * Parse a comma-separated string into an array of trimmed, non-empty strings
+ */
+export function parseCommaSeparatedList(str: string | undefined): string[] {
+  if (!str || str.trim() === "") return [];
+  return str.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/**
+ * Get a string field from a frontmatter object, or undefined if not a string
+ */
+export function getStringField(
+  obj: Record<string, string | string[]>,
+  field: string,
+): string | undefined {
+  const val = obj[field];
+  return typeof val === "string" ? val : undefined;
+}
+
+/**
  * Parse frontmatter and content from a markdown file
  */
 export function parseFrontmatter(content: string): {

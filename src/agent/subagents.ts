@@ -8,7 +8,13 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseFrontmatter, generateFrontmatter } from "../utils/frontmatter";
+import { getErrorMessage } from "../utils/error";
+import {
+  generateFrontmatter,
+  getStringField,
+  parseCommaSeparatedList,
+  parseFrontmatter,
+} from "../utils/frontmatter";
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
 
 // Re-export for convenience
@@ -74,12 +80,7 @@ function parseTools(toolsStr: string | undefined): string[] | "all" {
   if (!toolsStr || toolsStr.trim() === "" || toolsStr.trim().toLowerCase() === "all") {
     return "all";
   }
-
-  const tools = toolsStr
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
-
+  const tools = parseCommaSeparatedList(toolsStr);
   return tools.length > 0 ? tools : "all";
 }
 
@@ -87,14 +88,7 @@ function parseTools(toolsStr: string | undefined): string[] | "all" {
  * Parse comma-separated skills string
  */
 function parseSkills(skillsStr: string | undefined): string[] {
-  if (!skillsStr || skillsStr.trim() === "") {
-    return [];
-  }
-
-  return skillsStr
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  return parseCommaSeparatedList(skillsStr);
 }
 
 /**
@@ -111,14 +105,8 @@ function parseMemoryBlocks(
     return "none";
   }
 
-  const blocks: MemoryBlockLabel[] = [];
-  const parts = blocksStr.split(",").map((b) => b.trim().toLowerCase());
-
-  for (const part of parts) {
-    if (VALID_MEMORY_BLOCKS.has(part)) {
-      blocks.push(part as MemoryBlockLabel);
-    }
-  }
+  const parts = parseCommaSeparatedList(blocksStr).map((b) => b.toLowerCase());
+  const blocks = parts.filter((p) => VALID_MEMORY_BLOCKS.has(p)) as MemoryBlockLabel[];
 
   return blocks.length > 0 ? blocks : "all";
 }
@@ -167,32 +155,19 @@ async function parseSubagentFile(filePath: string): Promise<SubagentConfig | nul
     throw new Error(validation.errors.join("; "));
   }
 
+  // Extract fields using helper
   const name = frontmatter.name as string;
   const description = frontmatter.description as string;
-  const toolsStr =
-    typeof frontmatter.tools === "string" ? frontmatter.tools : undefined;
-  const modelStr =
-    typeof frontmatter.model === "string" ? frontmatter.model : undefined;
-  const permissionModeStr =
-    typeof frontmatter.permissionMode === "string"
-      ? frontmatter.permissionMode
-      : undefined;
-  const skillsStr =
-    typeof frontmatter.skills === "string" ? frontmatter.skills : undefined;
-  const memoryBlocksStr =
-    typeof frontmatter.memoryBlocks === "string"
-      ? frontmatter.memoryBlocks
-      : undefined;
 
   return {
     name,
     description,
     systemPrompt: body,
-    allowedTools: parseTools(toolsStr),
-    recommendedModel: modelStr || "inherit",
-    permissionMode: (permissionModeStr as PermissionMode) || "default",
-    skills: parseSkills(skillsStr),
-    memoryBlocks: parseMemoryBlocks(memoryBlocksStr),
+    allowedTools: parseTools(getStringField(frontmatter, "tools")),
+    recommendedModel: getStringField(frontmatter, "model") || "inherit",
+    permissionMode: getStringField(frontmatter, "permissionMode") || "default",
+    skills: parseSkills(getStringField(frontmatter, "skills")),
+    memoryBlocks: parseMemoryBlocks(getStringField(frontmatter, "memoryBlocks")),
     filePath,
   };
 }
@@ -241,14 +216,14 @@ export async function discoverSubagents(
       } catch (error) {
         errors.push({
           path: filePath,
-          message: error instanceof Error ? error.message : String(error),
+          message: getErrorMessage(error),
         });
       }
     }
   } catch (error) {
     errors.push({
       path: agentsDir,
-      message: `Failed to read agents directory: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Failed to read agents directory: ${getErrorMessage(error)}`,
     });
   }
 
