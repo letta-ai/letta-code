@@ -115,8 +115,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const separator = currentValue ? "\n\n---\n\n" : "";
     const newValue = `${currentValue}${separator}# Skill: ${skillId}\n${skillContent}`;
 
-    // Update the block using client.blocks.modify()
-    await client.blocks.modify(loadedSkillsBlock.id, {
+    // Update the block
+    await client.agents.blocks.update("loaded_skills", {
+      agent_id: agentId,
       value: newValue,
     });
 
