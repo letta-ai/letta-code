@@ -7,6 +7,16 @@ import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
+ * Available memory block labels
+ */
+export const MEMORY_BLOCK_LABELS = ["persona", "human", "project", "skills"] as const;
+
+/**
+ * Type for memory block labels
+ */
+export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
+
+/**
  * Parse frontmatter and content from an .mdx file
  */
 function parseMdxFrontmatter(content: string): {
@@ -43,9 +53,7 @@ function parseMdxFrontmatter(content: string): {
 async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   const memoryBlocks: CreateBlock[] = [];
 
-  const mdxFiles = ["persona.mdx", "human.mdx", "project.mdx", "skills.mdx"];
-  // const mdxFiles = ["persona.mdx", "human.mdx", "style.mdx"];
-  // const mdxFiles = ["persona_kawaii.mdx", "human.mdx", "style.mdx"];
+  const mdxFiles = MEMORY_BLOCK_LABELS.map((label) => `${label}.mdx`);
 
   for (const filename of mdxFiles) {
     try {

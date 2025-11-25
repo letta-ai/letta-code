@@ -10,6 +10,7 @@ import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFrontmatter, generateFrontmatter } from "../utils/frontmatter";
 import type { ToolName } from "../tools/toolDefinitions";
+import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
 
 /**
  * Permission modes for custom subagents
@@ -30,7 +31,11 @@ export interface CustomSubagentFrontmatter {
   model?: string;
   permissionMode?: string;
   skills?: string;
+  memoryBlocks?: string;
 }
+
+// Re-export MemoryBlockLabel for convenience
+export type { MemoryBlockLabel };
 
 /**
  * Parsed and validated custom subagent configuration
@@ -50,6 +55,8 @@ export interface CustomSubagentConfig {
   permissionMode: PermissionMode;
   /** Skills to auto-load */
   skills: string[];
+  /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
+  memoryBlocks: MemoryBlockLabel[] | "all" | "none";
   /** Path to the source file */
   filePath: string;
 }
@@ -102,6 +109,11 @@ const VALID_PERMISSION_MODES = new Set([
 ]);
 
 /**
+ * Valid memory block labels (derived from memory.ts)
+ */
+const VALID_MEMORY_BLOCKS: Set<string> = new Set(MEMORY_BLOCK_LABELS);
+
+/**
  * Validate a custom subagent name
  */
 function isValidName(name: string): boolean {
@@ -140,6 +152,32 @@ function parseSkills(skillsStr: string | undefined): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Parse comma-separated memory blocks string into validated block labels
+ */
+function parseMemoryBlocks(
+  blocksStr: string | undefined,
+): MemoryBlockLabel[] | "all" | "none" {
+  if (!blocksStr || blocksStr.trim() === "" || blocksStr.trim().toLowerCase() === "all") {
+    return "all";
+  }
+
+  if (blocksStr.trim().toLowerCase() === "none") {
+    return "none";
+  }
+
+  const blocks: MemoryBlockLabel[] = [];
+  const parts = blocksStr.split(",").map((b) => b.trim().toLowerCase());
+
+  for (const part of parts) {
+    if (VALID_MEMORY_BLOCKS.has(part)) {
+      blocks.push(part as MemoryBlockLabel);
+    }
+  }
+
+  return blocks.length > 0 ? blocks : "all";
 }
 
 /**
@@ -215,6 +253,10 @@ async function parseCustomSubagentFile(
       : undefined;
   const skillsStr =
     typeof frontmatter.skills === "string" ? frontmatter.skills : undefined;
+  const memoryBlocksStr =
+    typeof frontmatter.memoryBlocks === "string"
+      ? frontmatter.memoryBlocks
+      : undefined;
 
   return {
     name,
@@ -224,6 +266,7 @@ async function parseCustomSubagentFile(
     recommendedModel: modelStr || "inherit",
     permissionMode: (permissionModeStr as PermissionMode) || "default",
     skills: parseSkills(skillsStr),
+    memoryBlocks: parseMemoryBlocks(memoryBlocksStr),
     filePath,
   };
 }
@@ -317,6 +360,7 @@ export async function createCustomSubagentFile(
     model?: string;
     permissionMode?: string;
     skills?: string;
+    memoryBlocks?: string;
     systemPrompt?: string;
   } = {},
   workingDirectory: string = process.cwd(),

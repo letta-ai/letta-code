@@ -16,6 +16,7 @@ import {
   discoverCustomSubagents,
   type CustomSubagentConfig,
   type PermissionMode,
+  type MemoryBlockLabel,
 } from "./custom-subagents";
 
 /** Built-in subagent types */
@@ -37,6 +38,8 @@ export interface SubagentConfig {
   permissionMode?: PermissionMode;
   /** Skills to auto-load (custom subagents only) */
   skills?: string[];
+  /** Memory blocks the subagent has access to - list of labels, "all", or "none" */
+  memoryBlocks?: MemoryBlockLabel[] | "all" | "none";
   /** Whether this is a built-in subagent */
   isBuiltin?: boolean;
   /** Path to the source file (custom subagents only) */
@@ -190,6 +193,7 @@ function customToSubagentConfig(custom: CustomSubagentConfig): SubagentConfig {
     description: custom.description,
     permissionMode: custom.permissionMode,
     skills: custom.skills,
+    memoryBlocks: custom.memoryBlocks,
     isBuiltin: false,
     filePath: custom.filePath,
   };

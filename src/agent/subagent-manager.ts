@@ -145,7 +145,7 @@ async function createSubagent(
     model,
     "openai/text-embedding-3-small",
     undefined, // no update args
-    true, // force new blocks (subagents shouldn't share memory)
+    false, // share memory blocks with parent agent
     undefined, // no skills directory
     true, // parallel tool calls
     false, // no sleeptime
