@@ -19,10 +19,10 @@
     }
   },
   {
-    "id": "opus-4.5",
+    "id": "opus",
     "handle": "anthropic/claude-opus-4-5-20251101",
     "label": "Claude Opus 4.5",
-    "description": "Anthropic's best model",
+    "description": "Anthropic's largest (and slowest) model",
     "isFeatured": true,
     "updateArgs": { "context_window": 180000 }
   },
@@ -30,8 +30,7 @@
     "id": "opus-4.1",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
-    "description": "Anthropic's largest (and slowest) model",
-    "isFeatured": true,
+    "description": "The previous version of Claude Opus",
     "updateArgs": { "context_window": 180000 }
   },
   {
