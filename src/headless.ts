@@ -8,7 +8,9 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
+import { setCurrentAgentId } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { cleanupEphemeralAgents } from "./agent/fork";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -154,6 +156,9 @@ export async function handleHeadlessCommand(
   await settingsManager.loadLocalProjectSettings();
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
+
+  // Set global agent context for tool execution (enables LETTA_SELF_AGENT_ID in Bash)
+  setCurrentAgentId(agent.id);
 
   // Validate output format
   const outputFormat =
@@ -715,6 +720,7 @@ export async function handleHeadlessCommand(
       } else {
         console.error(errorMessage);
       }
+      await cleanupEphemeralAgents();
       process.exit(1);
     }
   } catch (error) {
@@ -729,6 +735,7 @@ export async function handleHeadlessCommand(
       // Fallback for non-API errors
       console.error(`Error: ${error}`);
     }
+    await cleanupEphemeralAgents();
     process.exit(1);
   }
 
@@ -804,4 +811,7 @@ export async function handleHeadlessCommand(
     }
     console.log(lastAssistant.text);
   }
+
+  // Cleanup any ephemeral forked agents before exit
+  await cleanupEphemeralAgents();
 }
