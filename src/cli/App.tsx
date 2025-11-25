@@ -39,6 +39,7 @@ import { CommandMessage } from "./components/CommandMessage";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
+import { AgentManager } from "./components/AgentManager";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
@@ -207,6 +208,9 @@ export default function App({
 
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
+
+  // Agent manager state (for /agents command)
+  const [agentManagerOpen, setAgentManagerOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -782,6 +786,12 @@ export default function App({
         // Special handling for /model command - opens selector
         if (msg.trim() === "/model") {
           setModelSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /agents command - opens agent manager
+        if (msg.trim() === "/agents") {
+          setAgentManagerOpen(true);
           return { submitted: true };
         }
 
@@ -2025,6 +2035,11 @@ export default function App({
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
               />
+            )}
+
+            {/* Agent Manager - for managing custom subagents */}
+            {agentManagerOpen && (
+              <AgentManager onClose={() => setAgentManagerOpen(false)} />
             )}
 
             {/* Plan Mode Dialog - below live items */}

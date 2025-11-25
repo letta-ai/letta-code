@@ -7,21 +7,40 @@
  * - A whitelist of allowed tools
  * - A recommended model
  * - A description of when to use it
+ *
+ * Custom subagents can be defined in .letta/agents/ as Markdown files.
  */
 
 import type { ToolName } from "../tools/toolDefinitions";
+import {
+  discoverCustomSubagents,
+  type CustomSubagentConfig,
+  type PermissionMode,
+} from "./custom-subagents";
 
-export type SubagentType = "Explore" | "Plan" | "general-purpose";
+/** Built-in subagent types */
+export type BuiltinSubagentType = "Explore" | "Plan" | "general-purpose";
+
+/** All subagent types (built-in or custom) */
+export type SubagentType = string;
 
 export interface SubagentConfig {
   /** System prompt for this subagent type */
   systemPrompt: string;
-  /** Tools this subagent type can access */
-  allowedTools: ToolName[];
+  /** Tools this subagent type can access - list of tools or "all" */
+  allowedTools: ToolName[] | "all";
   /** Recommended model for this subagent type */
   recommendedModel: string;
   /** Description of when to use this subagent type */
   description: string;
+  /** Permission mode for the subagent (custom subagents only) */
+  permissionMode?: PermissionMode;
+  /** Skills to auto-load (custom subagents only) */
+  skills?: string[];
+  /** Whether this is a built-in subagent */
+  isBuiltin?: boolean;
+  /** Path to the source file (custom subagents only) */
+  filePath?: string;
 }
 
 /**
@@ -116,15 +135,16 @@ Output format:
 Remember: You are stateless and return ONE final report when done. Make changes confidently based on the context provided.`;
 
 /**
- * Configuration for each subagent type
+ * Configuration for built-in subagent types
  */
-export const SUBAGENT_CONFIGS: Record<SubagentType, SubagentConfig> = {
+export const BUILTIN_SUBAGENT_CONFIGS: Record<BuiltinSubagentType, SubagentConfig> = {
   Explore: {
     systemPrompt: EXPLORE_SYSTEM_PROMPT,
     allowedTools: ["Glob", "Grep", "Read", "LS", "BashOutput"],
     recommendedModel: "haiku", // Use model ID, will be resolved via model.ts
     description:
       "Fast agent for codebase exploration - finding files, searching code, understanding structure",
+    isBuiltin: true,
   },
   Plan: {
     systemPrompt: PLAN_SYSTEM_PROMPT,
@@ -132,6 +152,7 @@ export const SUBAGENT_CONFIGS: Record<SubagentType, SubagentConfig> = {
     recommendedModel: "opus", // Use model ID, will be resolved via model.ts
     description:
       "Planning agent that breaks down complex tasks into actionable steps",
+    isBuiltin: true,
   },
   "general-purpose": {
     systemPrompt: GENERAL_PURPOSE_SYSTEM_PROMPT,
@@ -151,30 +172,135 @@ export const SUBAGENT_CONFIGS: Record<SubagentType, SubagentConfig> = {
     recommendedModel: "sonnet-4.5", // Use model ID, will be resolved via model.ts
     description:
       "Full-capability agent for research, planning, and implementation",
+    isBuiltin: true,
   },
 };
 
+/** @deprecated Use BUILTIN_SUBAGENT_CONFIGS instead */
+export const SUBAGENT_CONFIGS = BUILTIN_SUBAGENT_CONFIGS;
+
 /**
- * Get subagent configuration for a given type
+ * Convert a CustomSubagentConfig to a SubagentConfig
  */
-export function getSubagentConfig(type: SubagentType): SubagentConfig {
-  const config = SUBAGENT_CONFIGS[type];
+function customToSubagentConfig(custom: CustomSubagentConfig): SubagentConfig {
+  return {
+    systemPrompt: custom.systemPrompt,
+    allowedTools: custom.allowedTools,
+    recommendedModel: custom.recommendedModel,
+    description: custom.description,
+    permissionMode: custom.permissionMode,
+    skills: custom.skills,
+    isBuiltin: false,
+    filePath: custom.filePath,
+  };
+}
+
+/**
+ * Cache for merged configs to avoid repeated discovery
+ */
+let cachedConfigs: Record<string, SubagentConfig> | null = null;
+let cacheWorkingDir: string | null = null;
+
+/**
+ * Get all subagent configurations (built-in + custom)
+ * Results are cached per working directory
+ */
+export async function getAllSubagentConfigs(
+  workingDirectory: string = process.cwd(),
+): Promise<Record<string, SubagentConfig>> {
+  // Return cached if same working directory
+  if (cachedConfigs && cacheWorkingDir === workingDirectory) {
+    return cachedConfigs;
+  }
+
+  // Start with built-in configs
+  const configs: Record<string, SubagentConfig> = {
+    ...BUILTIN_SUBAGENT_CONFIGS,
+  };
+
+  // Discover and add custom subagents
+  const { subagents, errors } = await discoverCustomSubagents(workingDirectory);
+
+  // Log any discovery errors
+  for (const error of errors) {
+    console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
+  }
+
+  // Add custom subagents (they override built-ins if names conflict, but that shouldn't happen)
+  for (const custom of subagents) {
+    if (custom.name in configs) {
+      console.warn(
+        `[subagent] Warning: Custom subagent "${custom.name}" conflicts with built-in, skipping`,
+      );
+      continue;
+    }
+    configs[custom.name] = customToSubagentConfig(custom);
+  }
+
+  // Cache results
+  cachedConfigs = configs;
+  cacheWorkingDir = workingDirectory;
+
+  return configs;
+}
+
+/**
+ * Clear the subagent config cache (useful when files change)
+ */
+export function clearSubagentConfigCache(): void {
+  cachedConfigs = null;
+  cacheWorkingDir = null;
+}
+
+/**
+ * Get subagent configuration for a given type (built-in only, synchronous)
+ * @deprecated Use getAllSubagentConfigs for custom subagent support
+ */
+export function getSubagentConfig(type: BuiltinSubagentType): SubagentConfig {
+  const config = BUILTIN_SUBAGENT_CONFIGS[type];
   if (!config) {
-    throw new Error(`Unknown subagent type: ${type}`);
+    throw new Error(`Unknown built-in subagent type: ${type}`);
   }
   return config;
 }
 
 /**
- * Check if a subagent type is valid
+ * Check if a subagent type is a built-in type
  */
-export function isValidSubagentType(type: string): type is SubagentType {
-  return type in SUBAGENT_CONFIGS;
+export function isBuiltinSubagentType(type: string): type is BuiltinSubagentType {
+  return type in BUILTIN_SUBAGENT_CONFIGS;
 }
 
 /**
- * Get list of all available subagent types
+ * Check if a subagent type is valid (checks cache, may need getAllSubagentConfigs first)
+ * @deprecated Use getAllSubagentConfigs and check directly
  */
-export function getAvailableSubagentTypes(): SubagentType[] {
-  return Object.keys(SUBAGENT_CONFIGS) as SubagentType[];
+export function isValidSubagentType(type: string): boolean {
+  // Check built-in first
+  if (type in BUILTIN_SUBAGENT_CONFIGS) {
+    return true;
+  }
+  // Check cache if available
+  if (cachedConfigs) {
+    return type in cachedConfigs;
+  }
+  // Can't check custom subagents synchronously
+  return false;
+}
+
+/**
+ * Get list of built-in subagent types
+ */
+export function getBuiltinSubagentTypes(): BuiltinSubagentType[] {
+  return Object.keys(BUILTIN_SUBAGENT_CONFIGS) as BuiltinSubagentType[];
+}
+
+/**
+ * Get list of all available subagent types (requires async discovery)
+ */
+export async function getAvailableSubagentTypes(
+  workingDirectory?: string,
+): Promise<string[]> {
+  const configs = await getAllSubagentConfigs(workingDirectory);
+  return Object.keys(configs);
 }

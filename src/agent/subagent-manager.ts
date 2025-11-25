@@ -19,7 +19,7 @@ import { getClient } from "./client";
 import {
   type SubagentConfig,
   type SubagentType,
-  getSubagentConfig,
+  getAllSubagentConfigs,
 } from "./subagents";
 
 /**
@@ -119,16 +119,15 @@ export async function getConversationHistory(
 }
 
 /**
- * Create a subagent with specified type and configuration
+ * Create a subagent with specified configuration
  * Uses dynamic import to reuse createAgent while avoiding circular dependencies
  */
 async function createSubagent(
-  type: SubagentType,
+  type: string,
+  config: SubagentConfig,
   model: string,
   userPrompt: string,
 ): Promise<AgentResponse> {
-  const config = getSubagentConfig(type);
-
   // Inject user prompt into system prompt
   const systemPrompt = config.systemPrompt.replace(
     "{user_provided_prompt}",
@@ -153,11 +152,16 @@ async function createSubagent(
     systemPrompt, // custom system prompt for this subagent type
   );
 
-  // Unlink tools that aren't allowed for this subagent type
+  // Handle tool filtering
   const allTools = agent.tools || [];
-  const allowedToolNames = new Set(config.allowedTools);
+
+  // If allowedTools is "all", keep all tools
+  if (config.allowedTools === "all") {
+    return agent;
+  }
 
   // Filter to keep only allowed tools (and base tools like memory, web_search, etc.)
+  const allowedToolNames = new Set(config.allowedTools);
   const remainingTools = allTools.filter((tool) => {
     if (!tool.name) return true; // Keep tools without names (shouldn't happen)
     // Keep if it's an allowed tool OR a base Letta tool (memory, web_search, etc.)
@@ -441,19 +445,31 @@ function getBaseURL(): string {
  */
 export async function spawnSubagent(
   mainAgentId: string,
-  type: SubagentType,
+  type: string,
   prompt: string,
   description: string,
   model?: string,
 ): Promise<SubagentResult> {
-  const config = getSubagentConfig(type);
+  // Get all configs (built-in + custom)
+  const allConfigs = await getAllSubagentConfigs();
+  const config = allConfigs[type];
+
+  if (!config) {
+    return {
+      agentId: "",
+      report: "",
+      success: false,
+      error: `Unknown subagent type: ${type}`,
+    };
+  }
+
   const resolvedModel = await resolveSubagentModel(model, config);
 
   // Get conversation history from main agent
   const conversationHistory = await getConversationHistory(mainAgentId);
 
   // Create subagent with appropriate configuration
-  const subagent = await createSubagent(type, resolvedModel, prompt);
+  const subagent = await createSubagent(type, config, resolvedModel, prompt);
 
   // Build and print header lines
   const baseURL = getBaseURL();

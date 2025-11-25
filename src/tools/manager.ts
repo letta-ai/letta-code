@@ -4,6 +4,7 @@ import {
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+import { discoverCustomSubagents } from "../agent/custom-subagents";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -190,6 +191,9 @@ export async function analyzeToolApproval(
 export async function loadTools(): Promise<void> {
   const { toolFilter } = await import("./filter");
 
+  // Discover custom subagents to inject into Task description
+  const { subagents: customSubagents } = await discoverCustomSubagents();
+
   for (const name of TOOL_NAMES) {
     if (!toolFilter.isEnabled(name)) {
       continue;
@@ -205,9 +209,18 @@ export async function loadTools(): Promise<void> {
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
+      // For Task tool, inject custom subagent descriptions
+      let description = definition.description;
+      if (name === "Task" && customSubagents.length > 0) {
+        description = injectCustomSubagentsIntoTaskDescription(
+          description,
+          customSubagents,
+        );
+      }
+
       const toolSchema: ToolSchema = {
         name,
-        description: definition.description,
+        description,
         input_schema: definition.schema,
       };
 
@@ -223,6 +236,57 @@ export async function loadTools(): Promise<void> {
       );
     }
   }
+}
+
+/**
+ * Inject custom subagent descriptions into the Task tool description
+ */
+function injectCustomSubagentsIntoTaskDescription(
+  baseDescription: string,
+  customSubagents: Array<{
+    name: string;
+    description: string;
+    allowedTools: string[] | "all";
+    recommendedModel: string;
+  }>,
+): string {
+  // Build custom subagents section
+  const customSection = customSubagents
+    .map((agent) => {
+      const tools =
+        agent.allowedTools === "all"
+          ? "All tools"
+          : Array.isArray(agent.allowedTools)
+            ? agent.allowedTools.join(", ")
+            : "All tools";
+      return `### ${agent.name}
+- **Purpose**: ${agent.description}
+- **Tools**: ${tools}
+- **Recommended model**: ${agent.recommendedModel}`;
+    })
+    .join("\n\n");
+
+  // Insert after the "## Available agent types" section
+  // Find where to insert (after general-purpose section)
+  const insertMarker = "### general-purpose";
+  const insertIndex = baseDescription.indexOf(insertMarker);
+
+  if (insertIndex === -1) {
+    // Fallback: append at the end of the agent types section
+    return `${baseDescription}\n\n## Custom Subagents (project-specific)\n\n${customSection}`;
+  }
+
+  // Find the end of the general-purpose section (next ## or end)
+  const afterMarker = baseDescription.indexOf("## Usage");
+  if (afterMarker === -1) {
+    return `${baseDescription}\n\n## Custom Subagents (project-specific)\n\n${customSection}`;
+  }
+
+  // Insert custom subagents section before ## Usage
+  const before = baseDescription.slice(0, afterMarker);
+  const after = baseDescription.slice(afterMarker);
+
+  return `${before}## Custom Subagents (project-specific)\n\n${customSection}\n\n${after}`;
 }
 
 /**

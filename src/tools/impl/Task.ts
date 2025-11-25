@@ -2,13 +2,11 @@
  * Task tool implementation
  *
  * Spawns specialized subagents to handle complex, multi-step tasks autonomously.
+ * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
 import { getCurrentAgentId } from "../../agent/context";
-import {
-  type SubagentType,
-  isValidSubagentType,
-} from "../../agent/subagents";
+import { getAllSubagentConfigs } from "../../agent/subagents";
 import { resumeSubagent, spawnSubagent } from "../../agent/subagent-manager";
 import { validateRequiredParams } from "./validation";
 
@@ -28,9 +26,8 @@ function formatTaskArgs(args: TaskArgs): string {
   parts.push(`subagent_type="${args.subagent_type}"`);
   parts.push(`description="${args.description}"`);
   // Truncate prompt for display
-  const promptPreview = args.prompt.length > 20
-    ? args.prompt.slice(0, 17) + "..."
-    : args.prompt;
+  const promptPreview =
+    args.prompt.length > 20 ? args.prompt.slice(0, 17) + "..." : args.prompt;
   parts.push(`prompt="${promptPreview}"`);
   if (args.model) parts.push(`model="${args.model}"`);
   return parts.join(", ");
@@ -54,9 +51,13 @@ export async function task(args: TaskArgs): Promise<string> {
     return "Error: No agent context available. Task tool can only be called from within an agent.";
   }
 
+  // Get all available subagent configs (built-in + custom)
+  const allConfigs = await getAllSubagentConfigs();
+
   // Validate subagent type
-  if (!isValidSubagentType(subagent_type)) {
-    return `Error: Invalid subagent type: ${subagent_type}. Valid types are: Explore, Plan, general-purpose`;
+  if (!(subagent_type in allConfigs)) {
+    const available = Object.keys(allConfigs).join(", ");
+    return `Error: Invalid subagent type "${subagent_type}". Available types: ${available}`;
   }
 
   try {
@@ -68,7 +69,7 @@ export async function task(args: TaskArgs): Promise<string> {
     } else {
       result = await spawnSubagent(
         mainAgentId,
-        subagent_type as SubagentType,
+        subagent_type,
         prompt,
         description,
         model,

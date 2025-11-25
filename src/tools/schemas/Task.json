@@ -3,8 +3,7 @@
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task",
-      "enum": ["Explore", "Plan", "general-purpose"]
+      "description": "The type of specialized agent to use. Built-in types: Explore, Plan, general-purpose. Custom subagents can be defined in .letta/agents/"
     },
     "prompt": {
       "type": "string",
