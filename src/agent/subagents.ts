@@ -9,20 +9,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFrontmatter, generateFrontmatter } from "../utils/frontmatter";
-import type { ToolName } from "../tools/toolDefinitions";
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
-
-/**
- * Permission modes for subagents
- */
-export type PermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "bypassPermissions"
-  | "plan";
 
 /** Subagent type is just a string (the name from the .md file) */
 export type SubagentType = string;
@@ -37,12 +27,12 @@ export interface SubagentConfig {
   description: string;
   /** System prompt for the subagent */
   systemPrompt: string;
-  /** Allowed tools - specific list or "all" */
-  allowedTools: ToolName[] | "all";
-  /** Recommended model (sonnet/opus/haiku/inherit) */
+  /** Allowed tools - specific list or "all" (invalid names are ignored at runtime) */
+  allowedTools: string[] | "all";
+  /** Recommended model - any model ID from models.json or full handle */
   recommendedModel: string;
-  /** Permission mode for the subagent */
-  permissionMode: PermissionMode;
+  /** Permission mode for the subagent (unknown values default to "default") */
+  permissionMode: string;
   /** Skills to auto-load */
   skills: string[];
   /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
@@ -65,40 +55,6 @@ export interface SubagentDiscoveryResult {
 export const AGENTS_DIR = ".letta/agents";
 
 /**
- * Valid tool names for validation
- */
-const VALID_TOOLS: Set<string> = new Set([
-  "Bash",
-  "BashOutput",
-  "Edit",
-  "ExitPlanMode",
-  "Glob",
-  "Grep",
-  "KillBash",
-  "LS",
-  "MultiEdit",
-  "Read",
-  "Task",
-  "TodoWrite",
-  "Write",
-]);
-
-/**
- * Valid model values
- */
-const VALID_MODELS = new Set(["sonnet", "opus", "haiku", "inherit", ""]);
-
-/**
- * Valid permission modes
- */
-const VALID_PERMISSION_MODES = new Set([
-  "default",
-  "acceptEdits",
-  "bypassPermissions",
-  "plan",
-]);
-
-/**
  * Valid memory block labels (derived from memory.ts)
  */
 const VALID_MEMORY_BLOCKS: Set<string> = new Set(MEMORY_BLOCK_LABELS);
@@ -111,21 +67,18 @@ function isValidName(name: string): boolean {
 }
 
 /**
- * Parse comma-separated tools string into validated tool names
+ * Parse comma-separated tools string
+ * Invalid tool names are kept - they'll be filtered out at runtime when matching against actual tools
  */
-function parseTools(toolsStr: string | undefined): ToolName[] | "all" {
+function parseTools(toolsStr: string | undefined): string[] | "all" {
   if (!toolsStr || toolsStr.trim() === "" || toolsStr.trim().toLowerCase() === "all") {
     return "all";
   }
 
-  const tools: ToolName[] = [];
-  const parts = toolsStr.split(",").map((t) => t.trim());
-
-  for (const part of parts) {
-    if (VALID_TOOLS.has(part)) {
-      tools.push(part as ToolName);
-    }
-  }
+  const tools = toolsStr
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
 
   return tools.length > 0 ? tools : "all";
 }
@@ -172,13 +125,14 @@ function parseMemoryBlocks(
 
 /**
  * Validate subagent frontmatter
+ * Only validates required fields - optional fields are validated at runtime where needed
  */
 function validateFrontmatter(
   frontmatter: Record<string, string | string[]>,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  // Check required fields
+  // Check required fields only
   const name = frontmatter.name;
   if (!name || typeof name !== "string") {
     errors.push("Missing required field: name");
@@ -193,24 +147,9 @@ function validateFrontmatter(
     errors.push("Missing required field: description");
   }
 
-  // Validate optional fields
-  const model = frontmatter.model;
-  if (model && typeof model === "string" && !VALID_MODELS.has(model)) {
-    errors.push(
-      `Invalid model "${model}": must be one of sonnet, opus, haiku, inherit`,
-    );
-  }
-
-  const permissionMode = frontmatter.permissionMode;
-  if (
-    permissionMode &&
-    typeof permissionMode === "string" &&
-    !VALID_PERMISSION_MODES.has(permissionMode)
-  ) {
-    errors.push(
-      `Invalid permissionMode "${permissionMode}": must be one of default, acceptEdits, bypassPermissions, plan`,
-    );
-  }
+  // Don't validate model or permissionMode here - they're handled at runtime:
+  // - model: resolveModel() returns null for invalid values, subagent-manager falls back
+  // - permissionMode: unknown values default to "default" behavior
 
   return { valid: errors.length === 0, errors };
 }
