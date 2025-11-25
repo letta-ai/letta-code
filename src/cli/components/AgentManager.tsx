@@ -1,24 +1,22 @@
 /**
- * AgentManager component for managing custom subagents
+ * AgentManager component for managing subagents
  *
  * Provides an interactive UI for:
- * - Listing all available subagents (built-in and custom)
- * - Creating new custom subagents
- * - Editing existing custom subagents
- * - Deleting custom subagents
+ * - Listing all available subagents
+ * - Creating new subagents
+ * - Editing existing subagents
+ * - Deleting subagents
  */
 
 import { Box, Text, useInput } from "ink";
 import { spawn } from "node:child_process";
 import { useEffect, useState } from "react";
 import {
-  createCustomSubagentFile,
-  deleteCustomSubagentFile,
-  getCustomSubagentPath,
-} from "../../agent/custom-subagents";
-import {
   clearSubagentConfigCache,
+  createSubagentFile,
+  deleteSubagentFile,
   getAllSubagentConfigs,
+  getSubagentPath,
   type SubagentConfig,
 } from "../../agent/subagents";
 import { colors } from "./colors";
@@ -75,12 +73,8 @@ export function AgentManager({ onClose }: AgentManagerProps) {
         name,
         config,
       }));
-      // Sort: built-in first, then custom alphabetically
-      items.sort((a, b) => {
-        if (a.config.isBuiltin && !b.config.isBuiltin) return -1;
-        if (!a.config.isBuiltin && b.config.isBuiltin) return 1;
-        return a.name.localeCompare(b.name);
-      });
+      // Sort alphabetically
+      items.sort((a, b) => a.name.localeCompare(b.name));
       setSubagents(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -94,7 +88,7 @@ export function AgentManager({ onClose }: AgentManagerProps) {
       const toolsValue = TOOL_OPTIONS[toolsIndex]?.value || "all";
       const modelValue = MODEL_OPTIONS[modelIndex]?.value || "inherit";
 
-      const filePath = await createCustomSubagentFile(
+      const filePath = await createSubagentFile(
         newName,
         newDescription,
         {
@@ -124,10 +118,10 @@ export function AgentManager({ onClose }: AgentManagerProps) {
 
   async function handleDelete() {
     const selected = subagents[selectedIndex];
-    if (!selected || selected.config.isBuiltin) return;
+    if (!selected) return;
 
     try {
-      await deleteCustomSubagentFile(selected.name);
+      await deleteSubagentFile(selected.name);
       await loadSubagents();
       setSelectedIndex(Math.max(0, selectedIndex - 1));
     } catch (err) {
@@ -138,9 +132,9 @@ export function AgentManager({ onClose }: AgentManagerProps) {
 
   async function handleEdit() {
     const selected = subagents[selectedIndex];
-    if (!selected || selected.config.isBuiltin) return;
+    if (!selected) return;
 
-    const filePath = getCustomSubagentPath(selected.name);
+    const filePath = getSubagentPath(selected.name);
     const editor = process.env.EDITOR || "vim";
     const child = spawn(editor, [filePath], {
       stdio: "inherit",
@@ -169,13 +163,11 @@ export function AgentManager({ onClose }: AgentManagerProps) {
       } else if (input === "c" || input === "C") {
         setMode("create-name");
       } else if (input === "e" || input === "E") {
-        const selected = subagents[selectedIndex];
-        if (selected && !selected.config.isBuiltin) {
+        if (subagents[selectedIndex]) {
           handleEdit();
         }
       } else if (input === "d" || input === "D") {
-        const selected = subagents[selectedIndex];
-        if (selected && !selected.config.isBuiltin) {
+        if (subagents[selectedIndex]) {
           setMode("confirm-delete");
         }
       }
@@ -265,7 +257,7 @@ export function AgentManager({ onClose }: AgentManagerProps) {
     return (
       <Box flexDirection="column" padding={1} gap={1}>
         <Text bold color={colors.selector.title}>
-          Create Custom Subagent
+          Create Subagent
         </Text>
 
         {mode === "create-name" && (
@@ -334,9 +326,6 @@ export function AgentManager({ onClose }: AgentManagerProps) {
   }
 
   // List mode
-  const builtInAgents = subagents.filter((s) => s.config.isBuiltin);
-  const customAgents = subagents.filter((s) => !s.config.isBuiltin);
-
   return (
     <Box flexDirection="column" padding={1} gap={1}>
       <Text bold color={colors.selector.title}>
@@ -347,38 +336,12 @@ export function AgentManager({ onClose }: AgentManagerProps) {
         <Text color={colors.status.error}>Error: {error}</Text>
       )}
 
-      {builtInAgents.length > 0 && (
-        <Box flexDirection="column">
-          <Text dimColor>Built-in:</Text>
-          {builtInAgents.map((item, _idx) => {
-            const globalIdx = subagents.indexOf(item);
-            const isSelected = globalIdx === selectedIndex;
-            return (
-              <Box key={item.name} gap={1}>
-                <Text color={isSelected ? colors.selector.itemHighlighted : undefined}>
-                  {isSelected ? ">" : " "}
-                </Text>
-                <Text
-                  bold={isSelected}
-                  color={isSelected ? colors.selector.itemHighlighted : undefined}
-                >
-                  {item.name}
-                </Text>
-                <Text dimColor>- {item.config.description.slice(0, 50)}</Text>
-              </Box>
-            );
-          })}
-        </Box>
-      )}
-
       <Box flexDirection="column">
-        <Text dimColor>Custom:</Text>
-        {customAgents.length === 0 ? (
-          <Text dimColor>  (none - press C to create)</Text>
+        {subagents.length === 0 ? (
+          <Text dimColor>No subagents found. Press C to create one.</Text>
         ) : (
-          customAgents.map((item) => {
-            const globalIdx = subagents.indexOf(item);
-            const isSelected = globalIdx === selectedIndex;
+          subagents.map((item, idx) => {
+            const isSelected = idx === selectedIndex;
             return (
               <Box key={item.name} gap={1}>
                 <Text color={isSelected ? colors.selector.itemHighlighted : undefined}>

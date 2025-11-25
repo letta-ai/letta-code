@@ -4,30 +4,12 @@ Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-## Available agent types and their capabilities:
-
-### Explore
-- **Purpose**: Fast agent specialized for exploring codebases
-- **Tools**: Glob, Grep, Read, LS, BashOutput (read-only)
-- **Use for**: Finding files by patterns, searching for keywords, answering questions about code structure
-- **Recommended model**: haiku (fast and efficient)
-
-### Plan
-- **Purpose**: Fast agent specialized for planning complex tasks
-- **Tools**: Glob, Grep, Read, LS, BashOutput (read-only)
-- **Use for**: Breaking down complex tasks into actionable steps, understanding dependencies
-- **Recommended model**: haiku (fast and efficient)
-
-### general-purpose
-- **Purpose**: Full-capability agent for research and implementation
-- **Tools**: All tools (Read, Write, Edit, Grep, Glob, Bash, etc.)
-- **Use for**: Complex multi-step tasks, research and implementation, autonomous coding
-- **Recommended model**: sonnet (more capable)
+Available agent types are defined in `.letta/agents/` as Markdown files. The agent descriptions below are dynamically loaded from those files.
 
 ## Usage
 
 When using the Task tool, you must specify:
-- **subagent_type**: Which specialized agent to use
+- **subagent_type**: Which specialized agent to use (see Available Agents section)
 - **prompt**: Detailed, self-contained instructions for the agent (agents cannot ask questions mid-execution)
 - **description**: Short 3-5 word summary for tracking
 
@@ -59,7 +41,7 @@ When using the Task tool, you must specify:
 ```typescript
 // Good - specific and actionable
 Task({
-  subagent_type: "Explore",
+  subagent_type: "explore",
   description: "Find authentication code",
   prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
 })
@@ -72,19 +54,19 @@ Task({
 })
 
 // Parallel execution - launch both at once
-Task({ subagent_type: "Explore", description: "Find frontend components", prompt: "..." })
-Task({ subagent_type: "Explore", description: "Find backend APIs", prompt: "..." })
+Task({ subagent_type: "explore", description: "Find frontend components", prompt: "..." })
+Task({ subagent_type: "explore", description: "Find backend APIs", prompt: "..." })
 
 // Bad - too simple, use Read tool instead
 Task({
-  subagent_type: "Explore",
+  subagent_type: "explore",
   prompt: "Read src/index.ts"
 })
 ```
 
 ## Concurrency and Safety:
 
-- **Safe**: Multiple read-only agents (Explore, Plan) running in parallel
+- **Safe**: Multiple read-only agents (explore, plan) running in parallel
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution

@@ -38,7 +38,7 @@ function formatTaskArgs(args: TaskArgs): string {
  */
 export async function task(args: TaskArgs): Promise<string> {
   // Validate required parameters
-  validateRequiredParams(args, ["subagent_type", "prompt", "description"]);
+  validateRequiredParams(args, ["subagent_type", "prompt", "description"], "Task");
 
   const { subagent_type, prompt, description, model, resume } = args;
 

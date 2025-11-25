@@ -10,11 +10,9 @@
  */
 
 import type {
-  AgentResponse,
-  AgentType,
+  AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./client";
 import {
   type SubagentConfig,
@@ -127,7 +125,7 @@ async function createSubagent(
   config: SubagentConfig,
   model: string,
   userPrompt: string,
-): Promise<AgentResponse> {
+): Promise<AgentState> {
   // Inject user prompt into system prompt
   const systemPrompt = config.systemPrompt.replace(
     "{user_provided_prompt}",
@@ -192,7 +190,7 @@ async function createSubagent(
  * Execute a subagent and collect its final report by spawning letta in headless mode
  */
 async function executeSubagent(
-  agent: AgentResponse,
+  agent: AgentState,
   conversationHistory: MessageCreate[],
   userPrompt: string,
 ): Promise<SubagentResult> {
@@ -381,7 +379,7 @@ async function executeSubagent(
     // Fallback: parse the last JSON line for result
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
     const lines = stdout.trim().split("\n");
-    const lastLine = lines[lines.length - 1];
+    const lastLine = lines[lines.length - 1] ?? "";
 
     try {
       const result = JSON.parse(lastLine);

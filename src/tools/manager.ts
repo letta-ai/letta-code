@@ -4,7 +4,7 @@ import {
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
-import { discoverCustomSubagents } from "../agent/custom-subagents";
+import { discoverSubagents } from "../agent/subagents";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -191,8 +191,8 @@ export async function analyzeToolApproval(
 export async function loadTools(): Promise<void> {
   const { toolFilter } = await import("./filter");
 
-  // Discover custom subagents to inject into Task description
-  const { subagents: customSubagents } = await discoverCustomSubagents();
+  // Discover all subagents to inject into Task description
+  const { subagents: discoveredSubagents } = await discoverSubagents();
 
   for (const name of TOOL_NAMES) {
     if (!toolFilter.isEnabled(name)) {
@@ -209,12 +209,12 @@ export async function loadTools(): Promise<void> {
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
-      // For Task tool, inject custom subagent descriptions
+      // For Task tool, inject discovered subagent descriptions
       let description = definition.description;
-      if (name === "Task" && customSubagents.length > 0) {
-        description = injectCustomSubagentsIntoTaskDescription(
+      if (name === "Task" && discoveredSubagents.length > 0) {
+        description = injectSubagentsIntoTaskDescription(
           description,
-          customSubagents,
+          discoveredSubagents,
         );
       }
 
@@ -239,19 +239,23 @@ export async function loadTools(): Promise<void> {
 }
 
 /**
- * Inject custom subagent descriptions into the Task tool description
+ * Inject discovered subagent descriptions into the Task tool description
  */
-function injectCustomSubagentsIntoTaskDescription(
+function injectSubagentsIntoTaskDescription(
   baseDescription: string,
-  customSubagents: Array<{
+  subagents: Array<{
     name: string;
     description: string;
     allowedTools: string[] | "all";
     recommendedModel: string;
   }>,
 ): string {
-  // Build custom subagents section
-  const customSection = customSubagents
+  if (subagents.length === 0) {
+    return baseDescription;
+  }
+
+  // Build subagents section
+  const agentsSection = subagents
     .map((agent) => {
       const tools =
         agent.allowedTools === "all"
@@ -266,27 +270,20 @@ function injectCustomSubagentsIntoTaskDescription(
     })
     .join("\n\n");
 
-  // Insert after the "## Available agent types" section
-  // Find where to insert (after general-purpose section)
-  const insertMarker = "### general-purpose";
-  const insertIndex = baseDescription.indexOf(insertMarker);
+  // Insert before ## Usage section
+  const usageMarker = "## Usage";
+  const usageIndex = baseDescription.indexOf(usageMarker);
 
-  if (insertIndex === -1) {
-    // Fallback: append at the end of the agent types section
-    return `${baseDescription}\n\n## Custom Subagents (project-specific)\n\n${customSection}`;
+  if (usageIndex === -1) {
+    // Fallback: append at the end
+    return `${baseDescription}\n\n## Available Agents\n\n${agentsSection}`;
   }
 
-  // Find the end of the general-purpose section (next ## or end)
-  const afterMarker = baseDescription.indexOf("## Usage");
-  if (afterMarker === -1) {
-    return `${baseDescription}\n\n## Custom Subagents (project-specific)\n\n${customSection}`;
-  }
+  // Insert agents section before ## Usage
+  const before = baseDescription.slice(0, usageIndex);
+  const after = baseDescription.slice(usageIndex);
 
-  // Insert custom subagents section before ## Usage
-  const before = baseDescription.slice(0, afterMarker);
-  const after = baseDescription.slice(afterMarker);
-
-  return `${before}## Custom Subagents (project-specific)\n\n${customSection}\n\n${after}`;
+  return `${before}## Available Agents\n\n${agentsSection}\n\n${after}`;
 }
 
 /**

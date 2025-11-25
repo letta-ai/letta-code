@@ -1,212 +1,329 @@
 /**
- * Subagent configuration and system prompts
+ * Subagent configuration, discovery, and management
  *
- * This module defines different subagent types that can be spawned via the Task tool.
- * Each subagent type has:
- * - A specialized system prompt
- * - A whitelist of allowed tools
- * - A recommended model
- * - A description of when to use it
- *
- * Custom subagents can be defined in .letta/agents/ as Markdown files.
+ * All subagents are defined as Markdown files with YAML frontmatter
+ * in the .letta/agents/ directory.
  */
 
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { parseFrontmatter, generateFrontmatter } from "../utils/frontmatter";
 import type { ToolName } from "../tools/toolDefinitions";
-import {
-  discoverCustomSubagents,
-  type CustomSubagentConfig,
-  type PermissionMode,
-  type MemoryBlockLabel,
-} from "./custom-subagents";
+import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
 
-/** Built-in subagent types */
-export type BuiltinSubagentType = "Explore" | "Plan" | "general-purpose";
+// Re-export for convenience
+export type { MemoryBlockLabel };
 
-/** All subagent types (built-in or custom) */
+/**
+ * Permission modes for subagents
+ */
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan";
+
+/** Subagent type is just a string (the name from the .md file) */
 export type SubagentType = string;
 
+/**
+ * Subagent configuration
+ */
 export interface SubagentConfig {
-  /** System prompt for this subagent type */
-  systemPrompt: string;
-  /** Tools this subagent type can access - list of tools or "all" */
-  allowedTools: ToolName[] | "all";
-  /** Recommended model for this subagent type */
-  recommendedModel: string;
-  /** Description of when to use this subagent type */
+  /** Unique identifier for the subagent */
+  name: string;
+  /** Description of when to use this subagent */
   description: string;
-  /** Permission mode for the subagent (custom subagents only) */
-  permissionMode?: PermissionMode;
-  /** Skills to auto-load (custom subagents only) */
-  skills?: string[];
-  /** Memory blocks the subagent has access to - list of labels, "all", or "none" */
-  memoryBlocks?: MemoryBlockLabel[] | "all" | "none";
-  /** Whether this is a built-in subagent */
-  isBuiltin?: boolean;
-  /** Path to the source file (custom subagents only) */
-  filePath?: string;
+  /** System prompt for the subagent */
+  systemPrompt: string;
+  /** Allowed tools - specific list or "all" */
+  allowedTools: ToolName[] | "all";
+  /** Recommended model (sonnet/opus/haiku/inherit) */
+  recommendedModel: string;
+  /** Permission mode for the subagent */
+  permissionMode: PermissionMode;
+  /** Skills to auto-load */
+  skills: string[];
+  /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
+  memoryBlocks: MemoryBlockLabel[] | "all" | "none";
+  /** Path to the source file */
+  filePath: string;
 }
 
 /**
- * System prompt for Explore subagent
- * Fast, efficient codebase exploration agent
+ * Result of subagent discovery
  */
-const EXPLORE_SYSTEM_PROMPT = `You are a fast, efficient codebase exploration agent.
-
-Your task: {user_provided_prompt}
-
-You are a specialized subagent launched via the Task tool. You run autonomously and return a single final report when done.
-You CANNOT ask questions mid-execution - all instructions are provided upfront.
-You DO have access to the full conversation history, so you can reference "the error mentioned earlier" or "the file discussed above".
-
-Instructions:
-- Use Glob to find files by patterns (e.g., "**/*.ts", "src/components/**/*.tsx")
-- Use Grep to search for keywords and code patterns
-- Use Read to examine specific files when needed
-- Use LS to explore directory structures
-- Be efficient with tool calls - parallelize when possible
-- Focus on answering the specific question asked
-- Return a concise summary with file paths and line numbers
-
-Output format:
-1. Direct answer to the question
-2. List of relevant files with paths
-3. Key findings with code references (file:line)
-
-Remember: You're exploring, not modifying. You have read-only access.`;
+export interface SubagentDiscoveryResult {
+  subagents: SubagentConfig[];
+  errors: Array<{ path: string; message: string }>;
+}
 
 /**
- * System prompt for Plan subagent
- * Planning agent that breaks down complex tasks
+ * Directory for subagent files
  */
-const PLAN_SYSTEM_PROMPT = `You are a planning agent that breaks down complex tasks into actionable steps.
-
-Your task: {user_provided_prompt}
-
-You are a specialized subagent launched via the Task tool. You run autonomously and return a single final report when done.
-You CANNOT ask questions mid-execution - all instructions are provided upfront.
-You DO have access to the full conversation history, so you can reference previous discussions.
-
-Instructions:
-- Use Glob and Grep to understand the codebase structure
-- Use Read to examine relevant files and understand patterns
-- Use LS to explore project organization
-- Break down the task into clear, sequential steps
-- Identify dependencies between steps
-- Note which files will need to be modified
-- Consider edge cases and testing requirements
-
-Output format:
-1. High-level approach (2-3 sentences)
-2. Numbered list of steps with:
-   - What to do
-   - Which files to modify
-   - Key considerations
-3. Potential challenges and how to address them
-
-Remember: You're planning, not implementing. Don't make changes, just create a roadmap.`;
+export const AGENTS_DIR = ".letta/agents";
 
 /**
- * System prompt for general-purpose subagent
- * Full-capability agent for research and implementation
+ * Valid tool names for validation
  */
-const GENERAL_PURPOSE_SYSTEM_PROMPT = `You are a general-purpose coding agent that can research, plan, and implement.
-
-Your task: {user_provided_prompt}
-
-You are a specialized subagent launched via the Task tool. You run autonomously and return a single final report when done.
-You CANNOT ask questions mid-execution - all instructions are provided upfront, so:
-- Make reasonable assumptions based on context
-- Use the conversation history to understand requirements
-- Document any assumptions you make
-
-You DO have access to the full conversation history before you were launched.
-
-Instructions:
-- You have access to all tools (Read, Write, Edit, Grep, Glob, Bash, TodoWrite, etc.)
-- Break down complex tasks into steps
-- Search the codebase to understand existing patterns
-- Follow existing code conventions and style
-- Test your changes if possible
-- Be thorough but efficient
-
-Output format:
-1. Summary of what you did
-2. Files modified with changes made
-3. Any assumptions or decisions you made
-4. Suggested next steps (if any)
-
-Remember: You are stateless and return ONE final report when done. Make changes confidently based on the context provided.`;
+const VALID_TOOLS: Set<string> = new Set([
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillBash",
+  "LS",
+  "MultiEdit",
+  "Read",
+  "Task",
+  "TodoWrite",
+  "Write",
+]);
 
 /**
- * Configuration for built-in subagent types
+ * Valid model values
  */
-export const BUILTIN_SUBAGENT_CONFIGS: Record<BuiltinSubagentType, SubagentConfig> = {
-  Explore: {
-    systemPrompt: EXPLORE_SYSTEM_PROMPT,
-    allowedTools: ["Glob", "Grep", "Read", "LS", "BashOutput"],
-    recommendedModel: "haiku", // Use model ID, will be resolved via model.ts
-    description:
-      "Fast agent for codebase exploration - finding files, searching code, understanding structure",
-    isBuiltin: true,
-  },
-  Plan: {
-    systemPrompt: PLAN_SYSTEM_PROMPT,
-    allowedTools: ["Glob", "Grep", "Read", "LS", "BashOutput"],
-    recommendedModel: "opus", // Use model ID, will be resolved via model.ts
-    description:
-      "Planning agent that breaks down complex tasks into actionable steps",
-    isBuiltin: true,
-  },
-  "general-purpose": {
-    systemPrompt: GENERAL_PURPOSE_SYSTEM_PROMPT,
-    allowedTools: [
-      "Bash",
-      "BashOutput",
-      "Edit",
-      "Glob",
-      "Grep",
-      "KillBash",
-      "LS",
-      "MultiEdit",
-      "Read",
-      "TodoWrite",
-      "Write",
-    ],
-    recommendedModel: "sonnet-4.5", // Use model ID, will be resolved via model.ts
-    description:
-      "Full-capability agent for research, planning, and implementation",
-    isBuiltin: true,
-  },
-};
-
-/** @deprecated Use BUILTIN_SUBAGENT_CONFIGS instead */
-export const SUBAGENT_CONFIGS = BUILTIN_SUBAGENT_CONFIGS;
+const VALID_MODELS = new Set(["sonnet", "opus", "haiku", "inherit", ""]);
 
 /**
- * Convert a CustomSubagentConfig to a SubagentConfig
+ * Valid permission modes
  */
-function customToSubagentConfig(custom: CustomSubagentConfig): SubagentConfig {
+const VALID_PERMISSION_MODES = new Set([
+  "default",
+  "acceptEdits",
+  "bypassPermissions",
+  "plan",
+]);
+
+/**
+ * Valid memory block labels (derived from memory.ts)
+ */
+const VALID_MEMORY_BLOCKS: Set<string> = new Set(MEMORY_BLOCK_LABELS);
+
+/**
+ * Validate a subagent name
+ */
+function isValidName(name: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(name);
+}
+
+/**
+ * Parse comma-separated tools string into validated tool names
+ */
+function parseTools(toolsStr: string | undefined): ToolName[] | "all" {
+  if (!toolsStr || toolsStr.trim() === "" || toolsStr.trim().toLowerCase() === "all") {
+    return "all";
+  }
+
+  const tools: ToolName[] = [];
+  const parts = toolsStr.split(",").map((t) => t.trim());
+
+  for (const part of parts) {
+    if (VALID_TOOLS.has(part)) {
+      tools.push(part as ToolName);
+    }
+  }
+
+  return tools.length > 0 ? tools : "all";
+}
+
+/**
+ * Parse comma-separated skills string
+ */
+function parseSkills(skillsStr: string | undefined): string[] {
+  if (!skillsStr || skillsStr.trim() === "") {
+    return [];
+  }
+
+  return skillsStr
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Parse comma-separated memory blocks string into validated block labels
+ */
+function parseMemoryBlocks(
+  blocksStr: string | undefined,
+): MemoryBlockLabel[] | "all" | "none" {
+  if (!blocksStr || blocksStr.trim() === "" || blocksStr.trim().toLowerCase() === "all") {
+    return "all";
+  }
+
+  if (blocksStr.trim().toLowerCase() === "none") {
+    return "none";
+  }
+
+  const blocks: MemoryBlockLabel[] = [];
+  const parts = blocksStr.split(",").map((b) => b.trim().toLowerCase());
+
+  for (const part of parts) {
+    if (VALID_MEMORY_BLOCKS.has(part)) {
+      blocks.push(part as MemoryBlockLabel);
+    }
+  }
+
+  return blocks.length > 0 ? blocks : "all";
+}
+
+/**
+ * Validate subagent frontmatter
+ */
+function validateFrontmatter(
+  frontmatter: Record<string, string | string[]>,
+): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  // Check required fields
+  const name = frontmatter.name;
+  if (!name || typeof name !== "string") {
+    errors.push("Missing required field: name");
+  } else if (!isValidName(name)) {
+    errors.push(
+      `Invalid name "${name}": must start with lowercase letter and contain only lowercase letters, numbers, and hyphens`,
+    );
+  }
+
+  const description = frontmatter.description;
+  if (!description || typeof description !== "string") {
+    errors.push("Missing required field: description");
+  }
+
+  // Validate optional fields
+  const model = frontmatter.model;
+  if (model && typeof model === "string" && !VALID_MODELS.has(model)) {
+    errors.push(
+      `Invalid model "${model}": must be one of sonnet, opus, haiku, inherit`,
+    );
+  }
+
+  const permissionMode = frontmatter.permissionMode;
+  if (
+    permissionMode &&
+    typeof permissionMode === "string" &&
+    !VALID_PERMISSION_MODES.has(permissionMode)
+  ) {
+    errors.push(
+      `Invalid permissionMode "${permissionMode}": must be one of default, acceptEdits, bypassPermissions, plan`,
+    );
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Parse a subagent file
+ */
+async function parseSubagentFile(filePath: string): Promise<SubagentConfig | null> {
+  const content = await readFile(filePath, "utf-8");
+  const { frontmatter, body } = parseFrontmatter(content);
+
+  // Validate frontmatter
+  const validation = validateFrontmatter(frontmatter);
+  if (!validation.valid) {
+    throw new Error(validation.errors.join("; "));
+  }
+
+  const name = frontmatter.name as string;
+  const description = frontmatter.description as string;
+  const toolsStr =
+    typeof frontmatter.tools === "string" ? frontmatter.tools : undefined;
+  const modelStr =
+    typeof frontmatter.model === "string" ? frontmatter.model : undefined;
+  const permissionModeStr =
+    typeof frontmatter.permissionMode === "string"
+      ? frontmatter.permissionMode
+      : undefined;
+  const skillsStr =
+    typeof frontmatter.skills === "string" ? frontmatter.skills : undefined;
+  const memoryBlocksStr =
+    typeof frontmatter.memoryBlocks === "string"
+      ? frontmatter.memoryBlocks
+      : undefined;
+
   return {
-    systemPrompt: custom.systemPrompt,
-    allowedTools: custom.allowedTools,
-    recommendedModel: custom.recommendedModel,
-    description: custom.description,
-    permissionMode: custom.permissionMode,
-    skills: custom.skills,
-    memoryBlocks: custom.memoryBlocks,
-    isBuiltin: false,
-    filePath: custom.filePath,
+    name,
+    description,
+    systemPrompt: body,
+    allowedTools: parseTools(toolsStr),
+    recommendedModel: modelStr || "inherit",
+    permissionMode: (permissionModeStr as PermissionMode) || "default",
+    skills: parseSkills(skillsStr),
+    memoryBlocks: parseMemoryBlocks(memoryBlocksStr),
+    filePath,
   };
 }
 
 /**
- * Cache for merged configs to avoid repeated discovery
+ * Discover subagents from .letta/agents/ directory
+ */
+export async function discoverSubagents(
+  workingDirectory: string = process.cwd(),
+): Promise<SubagentDiscoveryResult> {
+  const agentsDir = join(workingDirectory, AGENTS_DIR);
+  const errors: Array<{ path: string; message: string }> = [];
+  const subagents: SubagentConfig[] = [];
+  const seenNames = new Set<string>();
+
+  // Check if directory exists
+  if (!existsSync(agentsDir)) {
+    return { subagents: [], errors: [] };
+  }
+
+  try {
+    const entries = await readdir(agentsDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) {
+        continue;
+      }
+
+      const filePath = join(agentsDir, entry.name);
+
+      try {
+        const config = await parseSubagentFile(filePath);
+        if (config) {
+          // Check for duplicate names
+          if (seenNames.has(config.name)) {
+            errors.push({
+              path: filePath,
+              message: `Duplicate subagent name "${config.name}" - skipping`,
+            });
+            continue;
+          }
+
+          seenNames.add(config.name);
+          subagents.push(config);
+        }
+      } catch (error) {
+        errors.push({
+          path: filePath,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } catch (error) {
+    errors.push({
+      path: agentsDir,
+      message: `Failed to read agents directory: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
+  return { subagents, errors };
+}
+
+/**
+ * Cache for configs to avoid repeated discovery
  */
 let cachedConfigs: Record<string, SubagentConfig> | null = null;
 let cacheWorkingDir: string | null = null;
 
 /**
- * Get all subagent configurations (built-in + custom)
+ * Get all subagent configurations from .letta/agents/
  * Results are cached per working directory
  */
 export async function getAllSubagentConfigs(
@@ -217,28 +334,19 @@ export async function getAllSubagentConfigs(
     return cachedConfigs;
   }
 
-  // Start with built-in configs
-  const configs: Record<string, SubagentConfig> = {
-    ...BUILTIN_SUBAGENT_CONFIGS,
-  };
+  const configs: Record<string, SubagentConfig> = {};
 
-  // Discover and add custom subagents
-  const { subagents, errors } = await discoverCustomSubagents(workingDirectory);
+  // Discover all subagents from .letta/agents/
+  const { subagents, errors } = await discoverSubagents(workingDirectory);
 
   // Log any discovery errors
   for (const error of errors) {
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
   }
 
-  // Add custom subagents (they override built-ins if names conflict, but that shouldn't happen)
-  for (const custom of subagents) {
-    if (custom.name in configs) {
-      console.warn(
-        `[subagent] Warning: Custom subagent "${custom.name}" conflicts with built-in, skipping`,
-      );
-      continue;
-    }
-    configs[custom.name] = customToSubagentConfig(custom);
+  // Convert to map by name
+  for (const subagent of subagents) {
+    configs[subagent.name] = subagent;
   }
 
   // Cache results
@@ -257,54 +365,114 @@ export function clearSubagentConfigCache(): void {
 }
 
 /**
- * Get subagent configuration for a given type (built-in only, synchronous)
- * @deprecated Use getAllSubagentConfigs for custom subagent support
- */
-export function getSubagentConfig(type: BuiltinSubagentType): SubagentConfig {
-  const config = BUILTIN_SUBAGENT_CONFIGS[type];
-  if (!config) {
-    throw new Error(`Unknown built-in subagent type: ${type}`);
-  }
-  return config;
-}
-
-/**
- * Check if a subagent type is a built-in type
- */
-export function isBuiltinSubagentType(type: string): type is BuiltinSubagentType {
-  return type in BUILTIN_SUBAGENT_CONFIGS;
-}
-
-/**
- * Check if a subagent type is valid (checks cache, may need getAllSubagentConfigs first)
- * @deprecated Use getAllSubagentConfigs and check directly
- */
-export function isValidSubagentType(type: string): boolean {
-  // Check built-in first
-  if (type in BUILTIN_SUBAGENT_CONFIGS) {
-    return true;
-  }
-  // Check cache if available
-  if (cachedConfigs) {
-    return type in cachedConfigs;
-  }
-  // Can't check custom subagents synchronously
-  return false;
-}
-
-/**
- * Get list of built-in subagent types
- */
-export function getBuiltinSubagentTypes(): BuiltinSubagentType[] {
-  return Object.keys(BUILTIN_SUBAGENT_CONFIGS) as BuiltinSubagentType[];
-}
-
-/**
- * Get list of all available subagent types (requires async discovery)
+ * Get list of all available subagent types
  */
 export async function getAvailableSubagentTypes(
   workingDirectory?: string,
 ): Promise<string[]> {
   const configs = await getAllSubagentConfigs(workingDirectory);
   return Object.keys(configs);
+}
+
+/**
+ * Default system prompt template for new subagents
+ */
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a specialized agent.
+
+Your task: {user_provided_prompt}
+
+You are a specialized subagent launched via the Task tool. You run autonomously and return a single final report when done.
+You CANNOT ask questions mid-execution - all instructions are provided upfront.
+You DO have access to the full conversation history, so you can reference earlier context.
+
+## Instructions
+
+[Add your specific instructions here]
+
+## Output Format
+
+[Describe the expected output format]
+`;
+
+/**
+ * Create a new subagent file
+ */
+export async function createSubagentFile(
+  name: string,
+  description: string,
+  options: {
+    tools?: string;
+    model?: string;
+    permissionMode?: string;
+    skills?: string;
+    memoryBlocks?: string;
+    systemPrompt?: string;
+  } = {},
+  workingDirectory: string = process.cwd(),
+): Promise<string> {
+  // Validate name
+  if (!isValidName(name)) {
+    throw new Error(
+      `Invalid name "${name}": must start with lowercase letter and contain only lowercase letters, numbers, and hyphens`,
+    );
+  }
+
+  const agentsDir = join(workingDirectory, AGENTS_DIR);
+
+  // Ensure directory exists
+  if (!existsSync(agentsDir)) {
+    await mkdir(agentsDir, { recursive: true });
+  }
+
+  const filePath = join(agentsDir, `${name}.md`);
+
+  // Check if file already exists
+  if (existsSync(filePath)) {
+    throw new Error(`Subagent "${name}" already exists at ${filePath}`);
+  }
+
+  // Generate frontmatter
+  const frontmatterData: Record<string, string | undefined> = {
+    name,
+    description,
+    tools: options.tools,
+    model: options.model,
+    permissionMode: options.permissionMode,
+    skills: options.skills,
+  };
+
+  const frontmatter = generateFrontmatter(frontmatterData);
+  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const content = `${frontmatter}\n\n${systemPrompt}`;
+
+  await writeFile(filePath, content, "utf-8");
+
+  return filePath;
+}
+
+/**
+ * Delete a subagent file
+ */
+export async function deleteSubagentFile(
+  name: string,
+  workingDirectory: string = process.cwd(),
+): Promise<void> {
+  const agentsDir = join(workingDirectory, AGENTS_DIR);
+  const filePath = join(agentsDir, `${name}.md`);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`Subagent "${name}" not found at ${filePath}`);
+  }
+
+  await unlink(filePath);
+}
+
+/**
+ * Get the path to a subagent file
+ */
+export function getSubagentPath(
+  name: string,
+  workingDirectory: string = process.cwd(),
+): string {
+  return join(workingDirectory, AGENTS_DIR, `${name}.md`);
 }
