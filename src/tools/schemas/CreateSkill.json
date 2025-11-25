@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "description": "Task slug to create/import as a Skill (e.g., 'play-zork-easy')"
+    },
+    "source_repo_path": {
+      "type": "string",
+      "description": "Path to terminal-bench-skills repository (defaults to ./terminal-bench-skills if present)"
+    },
+    "dest_skills_path": {
+      "type": "string",
+      "description": "Destination skills directory (defaults to ./.skills)"
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Overwrite existing SKILL.MD if present (default: false)"
+    }
+  },
+  "required": ["task"],
+  "additionalProperties": false
+}

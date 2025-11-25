@@ -96,6 +96,17 @@ function getPlanModeReminder(): string {
   return PLAN_MODE_REMINDER;
 }
 
+// Get skill mode system reminder if in skill mode
+function getSkillModeReminder(): string {
+  if (permissionMode.getMode() !== "skill") {
+    return "";
+  }
+
+  // Use bundled reminder text for binary compatibility
+  const { SKILL_MODE_REMINDER } = require("../agent/promptAssets");
+  return SKILL_MODE_REMINDER;
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -1305,14 +1316,16 @@ export default function App({
       // Build message content from display value (handles placeholders for text/images)
       const contentParts = buildMessageContentFromDisplay(msg);
 
-      // Prepend plan mode reminder if in plan mode
+      // Prepend plan/skill mode reminder if in those modes
       const planModeReminder = getPlanModeReminder();
+      const skillModeReminder = getSkillModeReminder();
+      const combinedReminder = `${planModeReminder}${skillModeReminder}`;
       const messageContent =
-        planModeReminder && typeof contentParts === "string"
-          ? planModeReminder + contentParts
-          : Array.isArray(contentParts) && planModeReminder
+        combinedReminder && typeof contentParts === "string"
+          ? combinedReminder + contentParts
+          : Array.isArray(contentParts) && combinedReminder
             ? [
-                { type: "text" as const, text: planModeReminder },
+                { type: "text" as const, text: combinedReminder },
                 ...contentParts,
               ]
             : contentParts;

@@ -162,6 +162,7 @@ export function Input({
         "default",
         "acceptEdits",
         "plan",
+        "skill",
         "bypassPermissions",
       ];
       const currentIndex = modes.indexOf(currentMode);
@@ -402,6 +403,8 @@ export function Input({
         return { name: "accept edits", color: colors.status.processing };
       case "plan":
         return { name: "plan (read-only) mode", color: colors.status.success };
+      case "skill":
+        return { name: "skill mode (create skills)", color: colors.status.processing };
       case "bypassPermissions":
         return {
           name: "yolo (allow all) mode",

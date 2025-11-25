@@ -305,12 +305,15 @@ export async function handleHeadlessCommand(
   // Clear any pending approvals before starting a new turn
   await resolveAllPendingApprovals();
 
-  // Get plan mode reminder if in plan mode
+  // Get plan/skill mode reminder if in those modes
   const { permissionMode } = await import("./permissions/mode");
   let messageContent = prompt;
   if (permissionMode.getMode() === "plan") {
     const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
     messageContent = PLAN_MODE_REMINDER + prompt;
+  } else if (permissionMode.getMode() === "skill") {
+    const { SKILL_MODE_REMINDER } = await import("./agent/promptAssets");
+    messageContent = SKILL_MODE_REMINDER + prompt;
   }
 
   // Start with the user message

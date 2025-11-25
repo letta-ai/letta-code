@@ -308,6 +308,7 @@ $ letta -p "hi there" --output-format stream-json
 --disallowedTools "Bash(curl:*)"                 # Block specific patterns
 --permission-mode acceptEdits                    # Auto-allow Write/Edit tools
 --permission-mode plan                           # Read-only mode
+--permission-mode skill                          # Skill creation mode (injects guidance)
 --permission-mode bypassPermissions              # Allow all tools (use carefully!)
 --yolo                                           # Alias for --permission-mode bypassPermissions
 ```
@@ -316,6 +317,7 @@ Permission modes:
 - `default` - Standard behavior, prompts for approval
 - `acceptEdits` - Auto-allows Write/Edit/NotebookEdit
 - `plan` - Read-only, allows analysis but blocks modifications
+- `skill` - Injects a reminder to ask clarifying questions and then create a new skill
 - `bypassPermissions` - Auto-allows all tools (for trusted environments)
 
 Permissions are also configured in `.letta/settings.json`:

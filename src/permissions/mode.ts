@@ -1,10 +1,11 @@
 // src/permissions/mode.ts
-// Permission mode management (default, acceptEdits, plan, bypassPermissions)
+// Permission mode management (default, acceptEdits, plan, skill, bypassPermissions)
 
 export type PermissionMode =
   | "default"
   | "acceptEdits"
   | "plan"
+  | "skill"
   | "bypassPermissions";
 
 // Use globalThis to ensure singleton across bundle
@@ -105,6 +106,11 @@ class PermissionModeManager {
         if (deniedInPlan.includes(toolName)) {
           return "deny";
         }
+        return null;
+      }
+
+      case "skill": {
+        // Skill mode: behavioral prompt injection only; do not override permissions
         return null;
       }
 
