@@ -22,7 +22,14 @@
     "id": "opus",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
-    "description": "Anthropic's largest (and slowest) model",
+    "description": "Anthropic's previous version of Opus",
+    "updateArgs": { "context_window": 180000 }
+  },
+  {
+    "id": "opus-4.5",
+    "handle": "anthropic/claude-opus-4-5-20251101",
+    "label": "Claude Opus 4.5",
+    "description": "Anthropic's newest flagship Opus 4.5 model",
     "isFeatured": true,
     "updateArgs": { "context_window": 180000 }
   },
