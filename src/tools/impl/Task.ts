@@ -43,7 +43,7 @@ export async function task(args: TaskArgs): Promise<string> {
   const { subagent_type, prompt, description, model, resume } = args;
 
   // Print Task header FIRST so subagent output appears below it
-  console.log(`● Task(${formatTaskArgs(args)})`);
+  console.log(`\n● Task(${formatTaskArgs(args)})\n`);
 
   // Get current agent ID from context
   const mainAgentId = getCurrentAgentId();
