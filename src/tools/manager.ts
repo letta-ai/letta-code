@@ -58,6 +58,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "MultiEdit",
   "Read",
   "TodoWrite",
+  "CreateSkill",
   "Write",
 ];
 
@@ -69,6 +70,8 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "grep_files",
   "apply_patch",
   "update_plan",
+  // Make CreateSkill available across providers
+  "CreateSkill",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
@@ -81,6 +84,8 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "write_file_gemini",
   "write_todos",
   "read_many_files",
+  // Make CreateSkill available across providers
+  "CreateSkill",
 ];
 
 // Tool permissions configuration
@@ -96,6 +101,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
+  CreateSkill: { requiresApproval: true },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
   shell: { requiresApproval: true },

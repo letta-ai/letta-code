@@ -22,3 +22,4 @@
   "required": ["pattern"],
   "additionalProperties": false
 }
+

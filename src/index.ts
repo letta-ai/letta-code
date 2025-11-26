@@ -279,6 +279,7 @@ async function main() {
         "default",
         "acceptEdits",
         "plan",
+        "skill",
         "bypassPermissions",
       ] as const;
 
