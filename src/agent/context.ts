@@ -111,11 +111,3 @@ export async function initializeLoadedSkillsFlag(): Promise<void> {
   }
 }
 
-/**
- * Clear the agent context (useful for cleanup)
- */
-export function clearAgentContext(): void {
-  context.agentId = null;
-  context.skillsDirectory = null;
-  context.hasLoadedSkills = false;
-}

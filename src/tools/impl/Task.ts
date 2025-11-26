@@ -7,7 +7,7 @@
 
 import { getCurrentAgentId } from "../../agent/context";
 import { getAllSubagentConfigs } from "../../agent/subagents";
-import { resumeSubagent, spawnSubagent } from "../../agent/subagent-manager";
+import { spawnSubagent } from "../../agent/subagent-manager";
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {
@@ -15,7 +15,6 @@ interface TaskArgs {
   prompt: string;
   description: string;
   model?: string;
-  resume?: string;
 }
 
 /**
@@ -40,7 +39,7 @@ export async function task(args: TaskArgs): Promise<string> {
   // Validate required parameters
   validateRequiredParams(args, ["subagent_type", "prompt", "description"], "Task");
 
-  const { subagent_type, prompt, description, model, resume } = args;
+  const { subagent_type, prompt, description, model } = args;
 
   // Print Task header FIRST so subagent output appears below it
   console.log(`\n● Task(${formatTaskArgs(args)})\n`);
@@ -61,20 +60,13 @@ export async function task(args: TaskArgs): Promise<string> {
   }
 
   try {
-    let result;
-
-    // Handle resume vs new subagent
-    if (resume) {
-      result = await resumeSubagent(mainAgentId, resume, prompt);
-    } else {
-      result = await spawnSubagent(
-        mainAgentId,
-        subagent_type,
-        prompt,
-        description,
-        model,
-      );
-    }
+    const result = await spawnSubagent(
+      mainAgentId,
+      subagent_type,
+      prompt,
+      description,
+      model,
+    );
 
     if (!result.success) {
       return `Error: ${result.error || "Subagent execution failed"}`;

@@ -17,10 +17,6 @@
       "type": "string",
       "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type.",
       "enum": ["sonnet", "opus", "haiku"]
-    },
-    "resume": {
-      "type": "string",
-      "description": "Optional agent ID to resume from. If provided, the agent will continue from the previous execution."
     }
   },
   "required": ["subagent_type", "prompt", "description"],

@@ -1,7 +1,5 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { getCurrentAgentId } from "../../agent/context";
-import { hasFileChanged, updateFileHash } from "../file-tracker";
 import { validateRequiredParams } from "./validation.js";
 
 interface WriteArgs {
@@ -21,36 +19,18 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
     const dir = path.dirname(file_path);
     await fs.mkdir(dir, { recursive: true });
 
-    // Check if file exists and if agent has read it before
-    let fileExists = false;
+    // Check if path is a directory
     try {
       const stats = await fs.stat(file_path);
       if (stats.isDirectory())
         throw new Error(`Path is a directory, not a file: ${file_path}`);
-      fileExists = true;
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") throw err;
     }
 
-    // Check for conflicts if file exists and we're tracking this agent's files
-    const agentId = getCurrentAgentId();
-    if (agentId && fileExists) {
-      const fileChanged = await hasFileChanged(agentId, file_path);
-      if (fileChanged) {
-        throw new Error(
-          `File has been modified since read, either by the user, another subagent, or by a linter. ` +
-            `Read it again before attempting to write it.`,
-        );
-      }
-    }
-
     await fs.writeFile(file_path, content, "utf-8");
 
-    // Update file hash after successful write
-    if (agentId) {
-      await updateFileHash(agentId, file_path);
-    }
     return {
       message: `Successfully wrote ${content.length} characters to ${file_path}`,
     };

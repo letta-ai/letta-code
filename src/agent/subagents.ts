@@ -20,9 +20,6 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
 // Re-export for convenience
 export type { MemoryBlockLabel };
 
-/** Subagent type is just a string (the name from the .md file) */
-export type SubagentType = string;
-
 /**
  * Subagent configuration
  */
@@ -276,16 +273,6 @@ export async function getAllSubagentConfigs(
 export function clearSubagentConfigCache(): void {
   cachedConfigs = null;
   cacheWorkingDir = null;
-}
-
-/**
- * Get list of all available subagent types
- */
-export async function getAvailableSubagentTypes(
-  workingDirectory?: string,
-): Promise<string[]> {
-  const configs = await getAllSubagentConfigs(workingDirectory);
-  return Object.keys(configs);
 }
 
 /**
