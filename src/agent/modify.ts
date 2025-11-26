@@ -3,6 +3,7 @@
 
 import type {
   AnthropicModelSettings,
+  GoogleAIModelSettings,
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
@@ -12,6 +13,7 @@ import { getClient } from "./client";
 type ModelSettings =
   | OpenAIModelSettings
   | AnthropicModelSettings
+  | GoogleAIModelSettings
   | Record<string, unknown>;
 
 /**
@@ -20,38 +22,39 @@ type ModelSettings =
 function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  currentParallel?: boolean,
 ): ModelSettings | undefined {
   const settings: ModelSettings = {};
 
-  if (currentParallel !== undefined) {
-    settings.parallel_tool_calls = currentParallel;
-  }
-
   const isOpenAI = modelHandle.startsWith("openai/");
   const isAnthropic = modelHandle.startsWith("anthropic/");
+  const isGoogleAI = modelHandle.startsWith("google_ai/");
 
-  if (isOpenAI) {
+  if (isOpenAI && updateArgs?.reasoning_effort) {
     const openaiSettings = settings as OpenAIModelSettings;
     openaiSettings.provider_type = "openai";
-
-    if (updateArgs?.reasoning_effort) {
-      openaiSettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high",
-      };
-    }
-  } else if (isAnthropic) {
+    openaiSettings.reasoning = {
+      reasoning_effort: updateArgs.reasoning_effort as
+        | "none"
+        | "minimal"
+        | "low"
+        | "medium"
+        | "high",
+    };
+    openaiSettings.parallel_tool_calls = true;
+  } else if (isAnthropic && updateArgs?.enable_reasoner !== undefined) {
     const anthropicSettings = settings as AnthropicModelSettings;
     anthropicSettings.provider_type = "anthropic";
-
-    if (updateArgs?.enable_reasoner !== undefined) {
-      anthropicSettings.thinking = {
-        type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+    anthropicSettings.thinking = {
+      type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+    };
+    anthropicSettings.parallel_tool_calls = true;
+  } else if (isGoogleAI) {
+    const googleSettings = settings as GoogleAIModelSettings;
+    googleSettings.provider_type = "google_ai";
+    googleSettings.parallel_tool_calls = true;
+    if (updateArgs?.thinking_budget !== undefined) {
+      googleSettings.thinking_config = {
+        thinking_budget: updateArgs.thinking_budget as number,
       };
     }
   }
@@ -78,28 +81,19 @@ export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  const currentAgent = await client.agents.retrieve(agentId);
-  const currentParallel = preserveParallelToolCalls
-    ? (currentAgent.llm_config?.parallel_tool_calls ?? undefined)
-    : undefined;
-
-  const modelSettings = buildModelSettings(
-    modelHandle,
-    updateArgs,
-    currentParallel,
-  );
-
+  const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const contextWindow = updateArgs?.context_window as number | undefined;
 
-  await client.agents.update(agentId, {
-    model: modelHandle,
-    ...(modelSettings && { model_settings: modelSettings }),
-    ...(contextWindow && { context_window_limit: contextWindow }),
-  });
+  if (modelSettings || contextWindow) {
+    await client.agents.update(agentId, {
+      model: modelHandle,
+      ...(modelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
+    });
+  }
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
