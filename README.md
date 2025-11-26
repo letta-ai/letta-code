@@ -152,7 +152,7 @@ letta -p "Use the custom skills" --skills ~/my-skills
 letta                    # Auto-resume project agent (or create new if first time)
 letta --new              # Create new agent with new memory blocks
 letta --agent <id>       # Use specific agent ID
-letta --model <model>    # Specify model (e.g., claude-sonnet-4.5, gpt-4o)
+letta --model <model>    # Specify model (e.g., claude-opus-4.5, claude-sonnet-4.5, gpt-4o)
 letta -m <model>         # Short form of --model
 letta --continue         # Resume global last agent (deprecated, use project-based)
 

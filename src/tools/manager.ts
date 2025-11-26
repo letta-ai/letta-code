@@ -295,23 +295,29 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
       continue;
     }
 
-    const definition = TOOL_DEFINITIONS[name as ToolName];
+    // Map server-facing name to our internal tool name
+    const internalName = getInternalToolName(name);
+
+    const definition = TOOL_DEFINITIONS[internalName as ToolName];
     if (!definition) {
-      console.warn(`Tool ${name} not found in definitions, skipping`);
+      console.warn(
+        `Tool ${name} (internal: ${internalName}) not found in definitions, skipping`,
+      );
       continue;
     }
 
     if (!definition.impl) {
-      throw new Error(`Tool implementation not found for ${name}`);
+      throw new Error(`Tool implementation not found for ${internalName}`);
     }
 
     const toolSchema: ToolSchema = {
-      name,
+      name: internalName,
       description: definition.description,
       input_schema: definition.schema,
     };
 
-    toolRegistry.set(name, {
+    // Register under the internal name so later lookups using mapping succeed
+    toolRegistry.set(internalName, {
       schema: toolSchema,
       fn: definition.impl,
     });
@@ -736,7 +742,9 @@ export function getToolSchemas(): ToolSchema[] {
  * @returns The tool schema or undefined if not found
  */
 export function getToolSchema(name: string): ToolSchema | undefined {
-  return toolRegistry.get(name)?.schema;
+  // Accept either server-facing or internal names
+  const internalName = getInternalToolName(name);
+  return toolRegistry.get(internalName)?.schema;
 }
 
 /**
