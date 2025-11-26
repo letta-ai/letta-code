@@ -19,7 +19,7 @@ import type {
 /**
  * Tools that don't require approval within working directory
  */
-const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep", "LS"];
+const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
 
 /**
  * Check permission for a tool execution.
