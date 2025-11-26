@@ -59,6 +59,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "MultiEdit",
   "Read",
   "Skill",
+  "Task",
   "TodoWrite",
   "Write",
 ];
@@ -72,6 +73,7 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "apply_patch",
   "update_plan",
   "Skill",
+  "Task",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
@@ -85,6 +87,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "write_todos",
   "read_many_files",
   "Skill",
+  "Task",
 ];
 
 // Tool permissions configuration

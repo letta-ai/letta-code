@@ -14,11 +14,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { getErrorMessage } from "../utils/error";
 import { getClient } from "./client";
-import {
-  type SubagentConfig,
-  type SubagentType,
-  getAllSubagentConfigs,
-} from "./subagents";
+import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
 
 // ============================================================================
 // Constants
@@ -46,20 +42,6 @@ export interface SubagentResult {
   success: boolean;
   error?: string;
 }
-
-/**
- * Stored subagent information for resume functionality
- */
-interface SubagentInfo {
-  agentId: string;
-  type: SubagentType;
-  createdAt: Date;
-}
-
-/**
- * Global registry of spawned subagents for resume functionality
- */
-const subagentRegistry = new Map<string, SubagentInfo>();
 
 /**
  * Resolve model string to full model identifier
@@ -193,7 +175,7 @@ async function createSubagent(
 
   // Update agent with filtered tools
   if (remainingToolIds.length !== allTools.length) {
-    await client.agents.modify(agent.id, {
+    await client.agents.update(agent.id, {
       tool_ids: remainingToolIds,
     });
   }
@@ -212,6 +194,7 @@ async function executeSubagent(
   try {
     // First, send conversation history to the subagent
     const { sendMessageStream } = await import("./message");
+
     const stream = await sendMessageStream(agent.id, conversationHistory);
 
     // Drain the stream (just need to populate the agent's message history)
@@ -248,10 +231,11 @@ async function executeSubagent(
     // Accumulate tool call info from message chunks (name + args may come separately)
     const pendingToolCalls = new Map<string, { name: string; args: string }>();
     let finalResult: string | null = null;
+    let finalError: string | null = null;
     let resultStats: { durationMs: number; totalTokens: number } | null = null;
 
     // Helper to format tool arguments for display
-    function formatToolArgs(toolName: string, argsStr: string): string {
+    function formatToolArgs(argsStr: string): string {
       try {
         const args = JSON.parse(argsStr);
         // Show only the most important arguments, limit length
@@ -280,7 +264,7 @@ async function executeSubagent(
       if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
       displayedToolCalls.add(toolCallId);
 
-      const formattedArgs = formatToolArgs(toolName, toolArgs);
+      const formattedArgs = formatToolArgs(toolArgs);
       if (formattedArgs) {
         console.log(`${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`);
       } else {
@@ -290,7 +274,7 @@ async function executeSubagent(
 
     // Parse each line as a JSON event
     rl.on("line", (line: string) => {
-      // Also collect for final parsing
+      // Collect for final parsing
       stdoutChunks.push(Buffer.from(line + "\n"));
 
       try {
@@ -332,24 +316,34 @@ async function executeSubagent(
             totalTokens: event.usage?.total_tokens || 0,
           };
 
-          // Display any pending tool calls that weren't auto-approved
-          for (const [id, { name, args }] of pendingToolCalls.entries()) {
-            if (name && !displayedToolCalls.has(id)) {
-              displayToolCall(id, name, args || "{}");
+          // Check if result indicates an error
+          if (event.is_error) {
+            finalError = event.result || "Unknown error";
+          } else {
+            // Display any pending tool calls that weren't auto-approved
+            for (const [id, { name, args }] of pendingToolCalls.entries()) {
+              if (name && !displayedToolCalls.has(id)) {
+                displayToolCall(id, name, args || "{}");
+              }
             }
+
+            // Display completion stats
+            const toolCount = displayedToolCalls.size;
+            const tokenStr = resultStats.totalTokens >= 1000
+              ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
+              : String(resultStats.totalTokens);
+            const durationSec = resultStats.durationMs / 1000;
+            const durationStr = durationSec >= 60
+              ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
+              : `${durationSec.toFixed(1)}s`;
+
+            console.log(`${ANSI_DIM}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
           }
+        }
 
-          // Display completion stats
-          const toolCount = displayedToolCalls.size;
-          const tokenStr = resultStats.totalTokens >= 1000
-            ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
-            : String(resultStats.totalTokens);
-          const durationSec = resultStats.durationMs / 1000;
-          const durationStr = durationSec >= 60
-            ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
-            : `${durationSec.toFixed(1)}s`;
-
-          console.log(`${ANSI_DIM}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
+        // Handle error events
+        if (event.type === "error") {
+          finalError = event.error || event.message || "Unknown error";
         }
       } catch {
         // Not valid JSON, ignore
@@ -362,7 +356,9 @@ async function executeSubagent(
 
     // Wait for process to complete
     const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on("close", (code) => resolve(code));
+      proc.on("close", (code) => {
+        resolve(code);
+      });
       proc.on("error", () => resolve(null));
     });
 
@@ -383,7 +379,18 @@ async function executeSubagent(
       return {
         agentId: agent.id,
         report: finalResult,
-        success: true,
+        success: !finalError,
+        error: finalError || undefined,
+      };
+    }
+
+    // If we captured an error but no result
+    if (finalError) {
+      return {
+        agentId: agent.id,
+        report: "",
+        success: false,
+        error: finalError,
       };
     }
 
@@ -488,13 +495,6 @@ export async function spawnSubagent(
   console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
   console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
 
-  // Register subagent for potential resume
-  subagentRegistry.set(subagent.id, {
-    agentId: subagent.id,
-    type,
-    createdAt: new Date(),
-  });
-
   // Execute subagent and collect final report
   const result = await executeSubagent(subagent, conversationHistory, prompt);
 
@@ -502,49 +502,9 @@ export async function spawnSubagent(
   try {
     const client = await getClient();
     await client.agents.delete(subagent.id);
-  } catch (error) {
+  } catch {
     // Silently ignore cleanup errors
   }
 
   return result;
-}
-
-/**
- * Resume a previously spawned subagent
- */
-export async function resumeSubagent(
-  mainAgentId: string,
-  subagentId: string,
-  prompt: string,
-): Promise<SubagentResult> {
-  const subagentInfo = subagentRegistry.get(subagentId);
-
-  if (!subagentInfo) {
-    return {
-      agentId: subagentId,
-      report: "",
-      success: false,
-      error: `Subagent ${subagentId} not found in registry`,
-    };
-  }
-
-  const client = await getClient();
-
-  try {
-    // Check if subagent still exists
-    const subagent = await client.agents.retrieve(subagentId);
-
-    // Get fresh conversation history
-    const conversationHistory = await getConversationHistory(mainAgentId);
-
-    // Execute subagent with new prompt
-    return await executeSubagent(subagent, conversationHistory, prompt);
-  } catch (error) {
-    return {
-      agentId: subagentId,
-      report: "",
-      success: false,
-      error: `Failed to resume subagent: ${getErrorMessage(error)}`,
-    };
-  }
 }
