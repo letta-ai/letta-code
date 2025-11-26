@@ -102,6 +102,14 @@ export function checkPermission(
     }
   }
 
+  // Always allow Skill tool (read-only operation that loads skills from potentially external directories)
+  if (toolName === "Skill") {
+    return {
+      decision: "allow",
+      reason: "Skill tool is always allowed (read-only)",
+    };
+  }
+
   // After checking CLI overrides, check if Read/Glob/Grep within working directory
   if (WORKING_DIRECTORY_TOOLS.includes(toolName)) {
     const filePath = extractFilePath(toolArgs);
