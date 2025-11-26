@@ -1,16 +1,12 @@
 /**
  * Agent context module - provides global access to current agent state
- * This allows tools to access the current agent ID and client
+ * This allows tools to access the current agent ID without threading it through params.
  */
-
-import type Letta from "@letta-ai/letta-client";
 
 interface AgentContext {
   agentId: string | null;
-  client: Letta | null;
   skillsDirectory: string | null;
   hasLoadedSkills: boolean;
-  workingDirectory: string;
 }
 
 // Use globalThis to ensure singleton across bundle
@@ -26,10 +22,8 @@ function getContext(): AgentContext {
   if (!global[CONTEXT_KEY]) {
     global[CONTEXT_KEY] = {
       agentId: null,
-      client: null,
       skillsDirectory: null,
       hasLoadedSkills: false,
-      workingDirectory: process.cwd(),
     };
   }
   return global[CONTEXT_KEY];
@@ -40,16 +34,13 @@ const context = getContext();
 /**
  * Set the current agent context
  * @param agentId - The agent ID
- * @param client - The Letta client instance
  * @param skillsDirectory - Optional skills directory path
  */
 export function setAgentContext(
   agentId: string,
-  client: Letta,
   skillsDirectory?: string,
 ): void {
   context.agentId = agentId;
-  context.client = client;
   context.skillsDirectory = skillsDirectory || null;
 }
 
@@ -69,17 +60,6 @@ export function getCurrentAgentId(): string {
     throw new Error("No agent context set. Agent ID is required.");
   }
   return context.agentId;
-}
-
-/**
- * Get the current Letta client
- * @throws Error if no agent context is set
- */
-export function getCurrentClient(): Letta {
-  if (!context.client) {
-    throw new Error("No agent context set. Client is required.");
-  }
-  return context.client;
 }
 
 /**
@@ -111,12 +91,14 @@ export function setHasLoadedSkills(loaded: boolean): void {
  * Should be called after setAgentContext to sync the cached state
  */
 export async function initializeLoadedSkillsFlag(): Promise<void> {
-  if (!context.client || !context.agentId) {
+  if (!context.agentId) {
     return;
   }
 
   try {
-    const loadedSkillsBlock = await context.client.agents.blocks.retrieve(
+    const { getClient } = await import("./client");
+    const client = await getClient();
+    const loadedSkillsBlock = await client.agents.blocks.retrieve(
       "loaded_skills",
       { agent_id: context.agentId },
     );
@@ -130,25 +112,10 @@ export async function initializeLoadedSkillsFlag(): Promise<void> {
 }
 
 /**
- * Set the working directory in context
- */
-export function setWorkingDirectory(directory: string): void {
-  context.workingDirectory = directory;
-}
-
-/**
- * Get the working directory from context
- */
-export function getWorkingDirectory(): string {
-  return context.workingDirectory;
-}
-
-/**
  * Clear the agent context (useful for cleanup)
  */
 export function clearAgentContext(): void {
   context.agentId = null;
-  context.client = null;
   context.skillsDirectory = null;
   context.hasLoadedSkills = false;
 }

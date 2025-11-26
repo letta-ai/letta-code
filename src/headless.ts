@@ -157,7 +157,7 @@ export async function handleHeadlessCommand(
   settingsManager.updateSettings({ lastAgent: agent.id });
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, client, skillsDirectory);
+  setAgentContext(agent.id, skillsDirectory);
   await initializeLoadedSkillsFlag();
 
   // Validate output format
