@@ -212,6 +212,7 @@ async function executeSubagent(
       "letta",
       ["--agent", agent.id, "-p", userPrompt, "--output-format", "stream-json"],
       {
+        cwd: process.cwd(),
         env: process.env,
       }
     );
@@ -497,14 +498,6 @@ export async function spawnSubagent(
 
   // Execute subagent and collect final report
   const result = await executeSubagent(subagent, conversationHistory, prompt);
-
-  // Clean up subagent after execution
-  try {
-    const client = await getClient();
-    await client.agents.delete(subagent.id);
-  } catch {
-    // Silently ignore cleanup errors
-  }
 
   return result;
 }
