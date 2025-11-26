@@ -92,6 +92,13 @@ export const commands: Record<string, Command> = {
       return "Downloading agent file...";
     },
   },
+  "/agents": {
+    desc: "Manage custom subagents",
+    handler: () => {
+      // Handled specially in App.tsx to open AgentManager component
+      return "Opening agent manager...";
+    },
+  },
 };
 
 /**
