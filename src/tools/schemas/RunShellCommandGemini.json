@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Exact bash command to execute as `bash -c <command>`"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of the command for the user. Be specific and concise. Ideally a single sentence. Can be up to 3 sentences for clarity. No line breaks."
+    },
+    "dir_path": {
+      "type": "string",
+      "description": "(OPTIONAL) The path of the directory to run the command in. If not provided, the project root directory is used. Must be a directory within the workspace and must already exist."
+    }
+  },
+  "required": ["command"],
+  "additionalProperties": false
+}

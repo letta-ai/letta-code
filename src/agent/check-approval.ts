@@ -3,7 +3,7 @@
 
 import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaMessageUnion } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 
 // Number of recent messages to backfill when resuming a session
@@ -12,7 +12,7 @@ const MESSAGE_HISTORY_LIMIT = 15;
 export interface ResumeData {
   pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
   pendingApprovals: ApprovalRequest[];
-  messageHistory: LettaMessageUnion[];
+  messageHistory: Message[];
 }
 
 /**
@@ -100,7 +100,7 @@ export async function getResumeData(
 
     if (messageToCheck.message_type === "approval_request_message") {
       // Cast to access tool_calls with proper typing
-      const approvalMsg = messageToCheck as LettaMessageUnion & {
+      const approvalMsg = messageToCheck as Message & {
         tool_calls?: Array<{
           tool_call_id?: string;
           name?: string;
@@ -123,12 +123,17 @@ export async function getResumeData(
       // Extract ALL tool calls for parallel approval support
       // Include ALL tool_call_ids, even those with incomplete name/arguments
       // Incomplete entries will be denied at the business logic layer
+      type ToolCallEntry = {
+        tool_call_id?: string;
+        name?: string;
+        arguments?: string;
+      };
       pendingApprovals = toolCalls
         .filter(
-          (tc): tc is typeof tc & { tool_call_id: string } =>
+          (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
             !!tc && !!tc.tool_call_id,
         )
-        .map((tc) => ({
+        .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
           toolCallId: tc.tool_call_id,
           toolName: tc.name || "",
           toolArgs: tc.arguments || "",

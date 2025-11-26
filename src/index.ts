@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
+import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -30,12 +31,14 @@ OPTIONS
   --fresh-blocks        Force create all new memory blocks (isolate from other agents)
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
-  -m, --model <id>      Model ID or handle (e.g., "opus" or "anthropic/claude-opus-4-1-20250805")
+  -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
+  --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
+
 
 BEHAVIOR
   By default, letta auto-resumes the last agent used in the current directory
@@ -69,6 +72,29 @@ EXAMPLES
   console.log(usage);
 }
 
+/**
+ * Helper to determine which model identifier to pass to loadTools()
+ * based on user's model and/or toolset preferences.
+ */
+function getModelForToolLoading(
+  specifiedModel?: string,
+  specifiedToolset?: "codex" | "default" | "gemini",
+): string | undefined {
+  // If toolset is explicitly specified, use a dummy model from that provider
+  // to trigger the correct toolset loading logic
+  if (specifiedToolset === "codex") {
+    return "openai/gpt-4";
+  }
+  if (specifiedToolset === "gemini") {
+    return "google/gemini-3-pro";
+  }
+  if (specifiedToolset === "default") {
+    return "anthropic/claude-sonnet-4";
+  }
+  // Otherwise, use the specified model (or undefined for auto-detection)
+  return specifiedModel;
+}
+
 async function main() {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
@@ -96,6 +122,7 @@ async function main() {
         "fresh-blocks": { type: "boolean" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
+        toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
         tools: { type: "string" },
@@ -150,9 +177,23 @@ async function main() {
   const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
+  const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // Validate toolset if provided
+  if (
+    specifiedToolset &&
+    specifiedToolset !== "codex" &&
+    specifiedToolset !== "default" &&
+    specifiedToolset !== "gemini"
+  ) {
+    console.error(
+      `Error: Invalid toolset "${specifiedToolset}". Must be "codex", "default", or "gemini".`,
+    );
+    process.exit(1);
+  }
 
   // Check if API key is configured
   const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
@@ -269,8 +310,12 @@ async function main() {
   }
 
   if (isHeadless) {
-    // For headless mode, load tools synchronously
-    await loadTools();
+    // For headless mode, load tools synchronously (respecting model/toolset when provided)
+    const modelForTools = getModelForToolLoading(
+      specifiedModel,
+      specifiedToolset as "codex" | "default" | undefined,
+    );
+    await loadTools(modelForTools);
     const client = await getClient();
     await upsertToolsToServer(client);
 
@@ -292,6 +337,7 @@ async function main() {
     freshBlocks,
     agentIdArg,
     model,
+    toolset,
     skillsDirectory,
   }: {
     continueSession: boolean;
@@ -299,6 +345,7 @@ async function main() {
     freshBlocks: boolean;
     agentIdArg: string | null;
     model?: string;
+    toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
@@ -318,10 +365,77 @@ async function main() {
     useEffect(() => {
       async function init() {
         setLoadingState("assembling");
-        await loadTools();
+        const client = await getClient();
+
+        // Determine which agent we'll be using (before loading tools)
+        let resumingAgentId: string | null = null;
+
+        // Priority 1: --agent flag
+        if (agentIdArg) {
+          try {
+            await client.agents.retrieve(agentIdArg);
+            resumingAgentId = agentIdArg;
+          } catch {
+            // Agent doesn't exist, will create new later
+          }
+        }
+
+        // Priority 2: Skip resume if --new flag
+        if (!resumingAgentId && !forceNew) {
+          // Priority 3: Try project settings
+          await settingsManager.loadLocalProjectSettings();
+          const localProjectSettings =
+            settingsManager.getLocalProjectSettings();
+          if (localProjectSettings?.lastAgent) {
+            try {
+              await client.agents.retrieve(localProjectSettings.lastAgent);
+              resumingAgentId = localProjectSettings.lastAgent;
+            } catch {
+              // Agent no longer exists
+            }
+          }
+
+          // Priority 4: Try global settings if --continue flag
+          if (!resumingAgentId && continueSession && settings.lastAgent) {
+            try {
+              await client.agents.retrieve(settings.lastAgent);
+              resumingAgentId = settings.lastAgent;
+            } catch {
+              // Agent no longer exists
+            }
+          }
+        }
+
+        // If resuming an existing agent, load the exact tools attached to it
+        // Otherwise, load a full toolset based on model/toolset preference
+        if (resumingAgentId && !toolset) {
+          try {
+            const { getAttachedLettaTools } = await import("./tools/toolset");
+            const { loadSpecificTools } = await import("./tools/manager");
+            const attachedTools = await getAttachedLettaTools(
+              client,
+              resumingAgentId,
+            );
+            if (attachedTools.length > 0) {
+              // Load only the specific tools attached to this agent
+              await loadSpecificTools(attachedTools);
+            } else {
+              // No Letta Code tools attached, load default based on model
+              const modelForTools = getModelForToolLoading(model, undefined);
+              await loadTools(modelForTools);
+            }
+          } catch {
+            // Detection failed, use model-based default
+            const modelForTools = getModelForToolLoading(model, undefined);
+            await loadTools(modelForTools);
+          }
+        } else {
+          // Creating new agent or explicit toolset specified - load full toolset
+          const modelForTools = getModelForToolLoading(model, toolset);
+          await loadTools(modelForTools);
+        }
 
         setLoadingState("upserting");
-        const client = await getClient();
         await upsertToolsToServer(client);
 
         // Handle --link/--unlink after upserting tools
@@ -443,6 +557,10 @@ async function main() {
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
 
+        // Set agent context for tools that need it (e.g., Skill tool)
+        setAgentContext(agent.id, client, skillsDirectory);
+        await initializeLoadedSkillsFlag();
+
         // Check if we're resuming an existing agent
         const localProjectSettings = settingsManager.getLocalProjectSettings();
         const isResumingProject =
@@ -498,6 +616,7 @@ async function main() {
       freshBlocks: freshBlocks,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
+      toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
     }),
     {

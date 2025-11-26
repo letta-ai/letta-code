@@ -1,8 +1,7 @@
 // src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
-
 import type {
-  ApprovalCreate,
+  ApprovalReturn,
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
@@ -14,7 +13,7 @@ export type ApprovalDecision =
   | { type: "deny"; approval: ApprovalRequest; reason: string };
 
 // Align result type with the SDK's expected union for approvals payloads
-export type ApprovalResult = ToolReturn | ApprovalCreate.ApprovalReturn;
+export type ApprovalResult = ToolReturn | ApprovalReturn;
 
 /**
  * Execute a batch of approval decisions and format results for the backend.
@@ -33,10 +32,34 @@ export type ApprovalResult = ToolReturn | ApprovalCreate.ApprovalReturn;
 export async function executeApprovalBatch(
   decisions: ApprovalDecision[],
   onChunk?: (chunk: ToolReturnMessage) => void,
+  options?: { abortSignal?: AbortSignal },
 ): Promise<ApprovalResult[]> {
   const results: ApprovalResult[] = [];
 
   for (const decision of decisions) {
+    // If aborted before starting this decision, record an interrupted result
+    if (options?.abortSignal?.aborted) {
+      // Emit an interrupted chunk for visibility if callback provided
+      if (onChunk) {
+        onChunk({
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: "User interrupted tool execution",
+          status: "error",
+        });
+      }
+
+      results.push({
+        type: "tool",
+        tool_call_id: decision.approval.toolCallId,
+        tool_return: "User interrupted tool execution",
+        status: "error",
+      });
+      continue;
+    }
+
     if (decision.type === "approve") {
       // Execute the approved tool
       try {
@@ -48,6 +71,7 @@ export async function executeApprovalBatch(
         const toolResult = await executeTool(
           decision.approval.toolName,
           parsedArgs,
+          { signal: options?.abortSignal },
         );
 
         // Update UI if callback provided (interactive mode)
@@ -73,9 +97,15 @@ export async function executeApprovalBatch(
           stderr: toolResult.stderr,
         });
       } catch (e) {
-        // Still need to send error result to backend for this tool
-        const errorMessage = `Error executing tool: ${String(e)}`;
+        const isAbortError =
+          e instanceof Error &&
+          (e.name === "AbortError" ||
+            e.message === "The operation was aborted");
+        const errorMessage = isAbortError
+          ? "User interrupted tool execution"
+          : `Error executing tool: ${String(e)}`;
 
+        // Still need to send error result to backend for this tool
         // Update UI if callback provided
         if (onChunk) {
           onChunk({

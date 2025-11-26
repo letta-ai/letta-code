@@ -8,7 +8,7 @@ A self-improving, stateful coding agent that can learn from experience and impro
 
 ## What is Letta Code?
 
-Letta Code is a command-line harness around the stateful Letta [Agents API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
+Letta Code is a command-line harness around the stateful [Letta API](https://docs.letta.com/api-reference/overview). You can use Letta Code to create and connect with any Letta agent (even non-coding agents!) - Letta Code simply gives your agents the ability to interact with your local dev environment, directly in your terminal.
 
 Letta Code is model agnostic, and supports Sonnet 4.5, GPT-5, Gemini 2.5, GLM-4.6, and more.
 
@@ -152,7 +152,7 @@ letta -p "Use the custom skills" --skills ~/my-skills
 letta                    # Auto-resume project agent (or create new if first time)
 letta --new              # Create new agent with new memory blocks
 letta --agent <id>       # Use specific agent ID
-letta --model <model>    # Specify model (e.g., claude-sonnet-4.5, gpt-4o)
+letta --model <model>    # Specify model (e.g., claude-opus-4.5, claude-sonnet-4.5, gpt-4o)
 letta -m <model>         # Short form of --model
 letta --continue         # Resume global last agent (deprecated, use project-based)
 
@@ -168,6 +168,7 @@ letta --agent <id> --unlink    # Remove Letta Code tools from agent, then start 
 While in a session, you can use these commands:
 - `/agent` - Show current agent link
 - `/model` - Switch models
+- `/toolset` - Switch toolsets (codex/default)
 - `/rename` - Rename the current agent
 - `/stream` - Toggle token streaming on/off
 - `/link` - Attach Letta Code tools to current agent (enables Read, Write, Edit, Bash, etc.)
@@ -194,34 +195,37 @@ letta --agent <id> --unlink   # Remove Letta Code tools
 
 When you attach tools with `/link` or `--link`, they are added to the agent with approval rules enabled (human-in-the-loop). This means the agent can use these tools, but you'll be prompted to approve each tool call. Use permission modes to control approval behavior (see Permissions section below).
 
-#### Available Tools
+### Toolsets
 
-Letta Code provides the following tools for filesystem and shell operations:
+Letta Code includes different toolsets optimized for different model providers:
 
-**File Operations:**
-- **Read** - Read files from the filesystem, supports offset/limit for large files
-- **Write** - Write or overwrite files, creates directories automatically
-- **Edit** - Perform exact string replacements in files (single edit)
-- **MultiEdit** - Perform multiple find-and-replace operations in a single file efficiently
-- **LS** - List files and directories, supports ignore patterns
+1. **Default Toolset** (Anthropic-optimized, best for Claude models)
+2. **Codex Toolset** (OpenAI-optimized, best for GPT models)
+3. **Gemini Toolset** (Google-optimized, best for Gemini models)
 
-**Search & Discovery:**
-- **Glob** - Fast file pattern matching with glob patterns (`**/*.js`, `src/**/*.ts`)
-- **Grep** - Powerful search using ripgrep, supports regex and various output modes
+**Automatic Selection:**
+When you specify a model, Letta Code automatically selects the appropriate toolset:
+```bash
+letta --model haiku           # Loads default toolset
+letta --model gpt-5-codex     # Loads codex toolset
+letta --model gemini-3-pro    # Loads gemini toolset
+```
 
-**Shell Operations:**
-- **Bash** - Execute shell commands in a persistent session with timeout support
-- **BashOutput** - Retrieve output from background bash shells
-- **KillBash** - Terminate running background bash shells
+**Manual Override:**
+You can force a specific toolset regardless of model:
+```bash
+# CLI flag (at startup)
+letta --model haiku --toolset codex           # Use Codex-style tools with Claude Haiku
+letta --model gpt-5-codex --toolset gemini    # Use Gemini-style tools with GPT-5-Codex
+letta --toolset gemini                        # Use Gemini tools with default model
 
-**Task Management:**
-- **TodoWrite** - Create and manage structured task lists for tracking progress
-- **ExitPlanMode** - Signal completion of planning phase and readiness to implement
-- **Task** - Launch specialized subagents to handle complex, multi-step tasks autonomously
+# Interactive command (during session)
+/toolset                                      # Opens toolset selector
+```
 
-All tools support approval rules and permission modes for safe execution. See the Permissions section for details on controlling tool access.
+The `/model` command automatically switches toolsets when you change models. Use `/toolset` if you want to manually override the automatic selection.
 
-#### Subagents
+### Subagents
 
 The **Task** tool allows the main agent to spawn specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools:
 

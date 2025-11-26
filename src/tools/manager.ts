@@ -3,10 +3,89 @@ import {
   AuthenticationError,
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
+import { getModelInfo } from "../agent/model";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 import { discoverSubagents } from "../agent/subagents";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+
+// Maps internal tool names to server/model-facing tool names
+// This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
+// that map to the same server tool name since only one toolset is active at a time
+const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
+  // Gemini tools - map to their original Gemini CLI names
+  glob_gemini: "glob",
+  write_todos: "write_todos",
+  write_file_gemini: "write_file",
+  replace: "replace",
+  search_file_content: "search_file_content",
+  read_many_files: "read_many_files",
+  read_file_gemini: "read_file",
+  list_directory: "list_directory",
+  run_shell_command: "run_shell_command",
+};
+
+/**
+ * Get the server-facing name for a tool (maps internal names to what the model sees)
+ */
+export function getServerToolName(internalName: string): string {
+  return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
+}
+
+/**
+ * Get the internal tool name from a server-facing name
+ * Used when the server sends back tool calls/approvals with server names
+ */
+export function getInternalToolName(serverName: string): string {
+  // Build reverse mapping
+  for (const [internal, server] of Object.entries(TOOL_NAME_MAPPINGS)) {
+    if (server === serverName) {
+      return internal;
+    }
+  }
+  // If not in mapping, the server name is the internal name
+  return serverName;
+}
+
+export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillBash",
+  "LS",
+  "MultiEdit",
+  "Read",
+  "Skill",
+  "TodoWrite",
+  "Write",
+];
+
+export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
+  "shell_command",
+  "shell",
+  "read_file",
+  "list_dir",
+  "grep_files",
+  "apply_patch",
+  "update_plan",
+  "Skill",
+];
+
+export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
+  "run_shell_command",
+  "read_file_gemini",
+  "list_directory",
+  "glob_gemini",
+  "search_file_content",
+  "replace",
+  "write_file_gemini",
+  "write_todos",
+  "read_many_files",
+  "Skill",
+];
 
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
@@ -20,9 +99,27 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  shell_command: { requiresApproval: true },
+  shell: { requiresApproval: true },
+  read_file: { requiresApproval: false },
+  list_dir: { requiresApproval: false },
+  grep_files: { requiresApproval: false },
+  apply_patch: { requiresApproval: true },
+  update_plan: { requiresApproval: false },
+  // Gemini toolset
+  glob_gemini: { requiresApproval: false },
+  list_directory: { requiresApproval: false },
+  read_file_gemini: { requiresApproval: false },
+  read_many_files: { requiresApproval: false },
+  replace: { requiresApproval: true },
+  run_shell_command: { requiresApproval: true },
+  search_file_content: { requiresApproval: false },
+  write_todos: { requiresApproval: false },
+  write_file_gemini: { requiresApproval: true },
 };
 
 interface JsonSchema {
@@ -83,13 +180,16 @@ function generatePythonStub(
   const params = (schema.properties ?? {}) as Record<string, JsonSchema>;
   const required = schema.required ?? [];
 
-  // Generate function parameters
-  const paramList = Object.keys(params)
-    .map((key) => {
-      const isRequired = required.includes(key);
-      return isRequired ? key : `${key}=None`;
-    })
-    .join(", ");
+  // Split parameters into required and optional
+  const allKeys = Object.keys(params);
+  const requiredParams = allKeys.filter((key) => required.includes(key));
+  const optionalParams = allKeys.filter((key) => !required.includes(key));
+
+  // Generate function parameters: required first, then optional with defaults
+  const paramList = [
+    ...requiredParams,
+    ...optionalParams.map((key) => `${key}=None`),
+  ].join(", ");
 
   return `def ${name}(${paramList}):
     """Stub method. This tool is executed client-side via the approval flow.
@@ -182,19 +282,79 @@ export async function analyzeToolApproval(
 }
 
 /**
+ * Loads specific tools by name into the registry.
+ * Used when resuming an agent to load only the tools attached to that agent.
+ *
+ * @param toolNames - Array of specific tool names to load
+ */
+export async function loadSpecificTools(toolNames: string[]): Promise<void> {
+  for (const name of toolNames) {
+    // Skip if tool filter is active and this tool is not enabled
+    const { toolFilter } = await import("./filter");
+    if (!toolFilter.isEnabled(name)) {
+      continue;
+    }
+
+    // Map server-facing name to our internal tool name
+    const internalName = getInternalToolName(name);
+
+    const definition = TOOL_DEFINITIONS[internalName as ToolName];
+    if (!definition) {
+      console.warn(
+        `Tool ${name} (internal: ${internalName}) not found in definitions, skipping`,
+      );
+      continue;
+    }
+
+    if (!definition.impl) {
+      throw new Error(`Tool implementation not found for ${internalName}`);
+    }
+
+    const toolSchema: ToolSchema = {
+      name: internalName,
+      description: definition.description,
+      input_schema: definition.schema,
+    };
+
+    // Register under the internal name so later lookups using mapping succeed
+    toolRegistry.set(internalName, {
+      schema: toolSchema,
+      fn: definition.impl,
+    });
+  }
+}
+
+/**
  * Loads all tools defined in TOOL_NAMES and constructs their full schemas + function references.
  * This should be called on program startup.
  * Will error if any expected tool files are missing.
  *
  * @returns Promise that resolves when all tools are loaded
  */
-export async function loadTools(): Promise<void> {
+export async function loadTools(modelIdentifier?: string): Promise<void> {
   const { toolFilter } = await import("./filter");
 
   // Discover all subagents to inject into Task description
   const { subagents: discoveredSubagents } = await discoverSubagents();
+  const filterActive = toolFilter.isActive();
 
-  for (const name of TOOL_NAMES) {
+  let baseToolNames: ToolName[];
+  if (!filterActive && modelIdentifier && isGeminiModel(modelIdentifier)) {
+    baseToolNames = GEMINI_DEFAULT_TOOLS;
+  } else if (
+    !filterActive &&
+    modelIdentifier &&
+    isOpenAIModel(modelIdentifier)
+  ) {
+    baseToolNames = OPENAI_DEFAULT_TOOLS;
+  } else if (!filterActive) {
+    baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
+  } else {
+    // When user explicitly sets --tools, respect that and allow any tool name
+    baseToolNames = TOOL_NAMES;
+  }
+
+  for (const name of baseToolNames) {
     if (!toolFilter.isEnabled(name)) {
       continue;
     }
@@ -236,6 +396,29 @@ export async function loadTools(): Promise<void> {
       );
     }
   }
+}
+
+export function isOpenAIModel(modelIdentifier: string): boolean {
+  const info = getModelInfo(modelIdentifier);
+  if (info?.handle && typeof info.handle === "string") {
+    return info.handle.startsWith("openai/");
+  }
+  // Fallback: treat raw handle-style identifiers as OpenAI if they start with openai/
+  return modelIdentifier.startsWith("openai/");
+}
+
+export function isGeminiModel(modelIdentifier: string): boolean {
+  const info = getModelInfo(modelIdentifier);
+  if (info?.handle && typeof info.handle === "string") {
+    return (
+      info.handle.startsWith("google/") || info.handle.startsWith("google_ai/")
+    );
+  }
+  // Fallback: treat raw handle-style identifiers as Gemini
+  return (
+    modelIdentifier.startsWith("google/") ||
+    modelIdentifier.startsWith("google_ai/")
+  );
 }
 
 /**
@@ -325,15 +508,18 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       // Race the upsert against the timeout
       const upsertPromise = Promise.all(
         Array.from(toolRegistry.entries()).map(async ([name, tool]) => {
+          // Get the server-facing tool name (may differ from internal name)
+          const serverName = TOOL_NAME_MAPPINGS[name as ToolName] || name;
+
           const pythonStub = generatePythonStub(
-            name,
+            serverName,
             tool.schema.description,
             tool.schema.input_schema,
           );
 
           // Construct the full JSON schema in Letta's expected format
           const fullJsonSchema = {
-            name,
+            name: serverName,
             description: tool.schema.description,
             parameters: tool.schema.input_schema,
           };
@@ -521,8 +707,11 @@ function flattenToolResponse(result: unknown): string {
 export async function executeTool(
   name: string,
   args: ToolArgs,
+  options?: { signal?: AbortSignal },
 ): Promise<ToolExecutionResult> {
-  const tool = toolRegistry.get(name);
+  // Map server name to internal name for registry lookup
+  const internalName = getInternalToolName(name);
+  const tool = toolRegistry.get(internalName);
 
   if (!tool) {
     return {
@@ -532,7 +721,13 @@ export async function executeTool(
   }
 
   try {
-    const result = await tool.fn(args);
+    // Inject abort signal for tools that support it (currently Bash) without altering schemas
+    const argsWithSignal =
+      name === "Bash" && options?.signal
+        ? { ...args, signal: options.signal }
+        : args;
+
+    const result = await tool.fn(argsWithSignal);
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;
@@ -540,7 +735,6 @@ export async function executeTool(
     const stderrValue = recordResult?.stderr;
     const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
     const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
-
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
@@ -552,6 +746,20 @@ export async function executeTool(
       ...(stderr && { stderr }),
     };
   } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" ||
+        error.message === "The operation was aborted" ||
+        // node:child_process AbortError may include code/message variants
+        ("code" in error && error.code === "ABORT_ERR"));
+
+    if (isAbort) {
+      return {
+        toolReturn: "User interrupted tool execution",
+        status: "error",
+      };
+    }
+
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
     return {
@@ -571,6 +779,14 @@ export function getToolNames(): string[] {
 }
 
 /**
+ * Returns all Letta Code tool names known to this build, regardless of what is currently loaded.
+ * Useful for unlinking/removing tools when switching providers/models.
+ */
+export function getAllLettaToolNames(): string[] {
+  return [...TOOL_NAMES];
+}
+
+/**
  * Gets all loaded tool schemas (for inspection/debugging).
  *
  * @returns Array of tool schemas
@@ -586,7 +802,9 @@ export function getToolSchemas(): ToolSchema[] {
  * @returns The tool schema or undefined if not found
  */
 export function getToolSchema(name: string): ToolSchema | undefined {
-  return toolRegistry.get(name)?.schema;
+  // Accept either server-facing or internal names
+  const internalName = getInternalToolName(name);
+  return toolRegistry.get(internalName)?.schema;
 }
 
 /**

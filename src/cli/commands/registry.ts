@@ -78,6 +78,20 @@ export const commands: Record<string, Command> = {
       return "Swapping agent...";
     },
   },
+  "/toolset": {
+    desc: "Switch toolset (codex/default)",
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Opening toolset selector...";
+    },
+  },
+  "/download": {
+    desc: "Download agent file locally",
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Downloading agent file...";
+    },
+  },
   "/agents": {
     desc: "Manage custom subagents",
     handler: () => {

@@ -5,6 +5,7 @@ import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { PlanRenderer } from "./PlanRenderer.js";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 type ToolCallLine = {
@@ -55,6 +56,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
   // Apply tool name remapping from old codebase
   let displayName = rawName;
+  // Anthropic toolset
   if (displayName === "write") displayName = "Write";
   else if (displayName === "edit" || displayName === "multi_edit")
     displayName = "Edit";
@@ -66,6 +68,20 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "todo_write") displayName = "TODO";
   else if (displayName === "TodoWrite") displayName = "TODO";
   else if (displayName === "ExitPlanMode") displayName = "Planning";
+  // Codex toolset
+  else if (displayName === "update_plan") displayName = "Plan";
+  else if (displayName === "shell_command") displayName = "Shell";
+  else if (displayName === "shell") displayName = "Shell";
+  else if (displayName === "read_file") displayName = "Read";
+  else if (displayName === "list_dir") displayName = "LS";
+  else if (displayName === "grep_files") displayName = "Grep";
+  else if (displayName === "apply_patch") displayName = "Patch";
+  // Gemini toolset (uses server names)
+  else if (displayName === "run_shell_command") displayName = "Shell";
+  else if (displayName === "list_directory") displayName = "LS";
+  else if (displayName === "search_file_content") displayName = "Grep";
+  else if (displayName === "write_todos") displayName = "TODO";
+  else if (displayName === "read_many_files") displayName = "Read Multiple";
 
   // Format arguments for display using the old formatting logic
   const formatted = formatArgsDisplay(argsText);
@@ -137,8 +153,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       "",
     );
 
+    // Helper to check if a value is a record
+    const isRecord = (v: unknown): v is Record<string, unknown> =>
+      typeof v === "object" && v !== null;
+
     // Check if this is a todo_write tool with successful result
-    // Check both the raw name and the display name
     const isTodoTool =
       rawName === "todo_write" ||
       rawName === "TodoWrite" ||
@@ -148,10 +167,6 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
-          // Helper to check if a value is a record
-          const isRecord = (v: unknown): v is Record<string, unknown> =>
-            typeof v === "object" && v !== null;
-
           // Convert todos to safe format for TodoRenderer
           const safeTodos = parsedArgs.todos.map((t: unknown, i: number) => {
             const rec = isRecord(t) ? t : {};
@@ -177,6 +192,40 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
           // Return TodoRenderer directly - it has its own prefix
           return <TodoRenderer todos={safeTodos} />;
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
+    // Check if this is an update_plan tool with successful result
+    const isPlanTool = rawName === "update_plan" || displayName === "Plan";
+
+    if (isPlanTool && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        if (parsedArgs.plan && Array.isArray(parsedArgs.plan)) {
+          // Convert plan items to safe format for PlanRenderer
+          const safePlan = parsedArgs.plan.map((item: unknown) => {
+            const rec = isRecord(item) ? item : {};
+            const status: "pending" | "in_progress" | "completed" =
+              rec.status === "completed"
+                ? "completed"
+                : rec.status === "in_progress"
+                  ? "in_progress"
+                  : "pending";
+            const step =
+              typeof rec.step === "string" ? rec.step : JSON.stringify(item);
+            return { step, status };
+          });
+
+          const explanation =
+            typeof parsedArgs.explanation === "string"
+              ? parsedArgs.explanation
+              : undefined;
+
+          // Return PlanRenderer directly - it has its own prefix
+          return <PlanRenderer plan={safePlan} explanation={explanation} />;
         }
       } catch {
         // If parsing fails, fall through to regular handling
