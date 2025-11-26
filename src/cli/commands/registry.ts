@@ -85,6 +85,13 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/download": {
+    desc: "Download agent file locally",
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Downloading agent file...";
+    },
+  },
 };
 
 /**
