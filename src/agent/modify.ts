@@ -1,19 +1,76 @@
 // src/agent/modify.ts
 // Utilities for modifying agent configuration
 
+import type {
+  AnthropicModelSettings,
+  OpenAIModelSettings,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
+type ModelSettings =
+  | OpenAIModelSettings
+  | AnthropicModelSettings
+  | Record<string, unknown>;
+
 /**
- * Updates an agent's model and LLM configuration.
+ * Builds model_settings from updateArgs based on provider type.
+ */
+function buildModelSettings(
+  modelHandle: string,
+  updateArgs?: Record<string, unknown>,
+  currentParallel?: boolean,
+): ModelSettings | undefined {
+  const settings: ModelSettings = {};
+
+  if (currentParallel !== undefined) {
+    settings.parallel_tool_calls = currentParallel;
+  }
+
+  const isOpenAI = modelHandle.startsWith("openai/");
+  const isAnthropic = modelHandle.startsWith("anthropic/");
+
+  if (isOpenAI) {
+    const openaiSettings = settings as OpenAIModelSettings;
+    openaiSettings.provider_type = "openai";
+
+    if (updateArgs?.reasoning_effort) {
+      openaiSettings.reasoning = {
+        reasoning_effort: updateArgs.reasoning_effort as
+          | "none"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high",
+      };
+    }
+  } else if (isAnthropic) {
+    const anthropicSettings = settings as AnthropicModelSettings;
+    anthropicSettings.provider_type = "anthropic";
+
+    if (updateArgs?.enable_reasoner !== undefined) {
+      anthropicSettings.thinking = {
+        type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+      };
+    }
+  }
+
+  if (Object.keys(settings).length === 0) {
+    return undefined;
+  }
+
+  return settings;
+}
+
+/**
+ * Updates an agent's model and model settings.
  *
- * Note: Currently requires two PATCH calls due to SDK limitation.
- * Once SDK is fixed to allow contextWindow on PATCH, simplify this code to a single call.
+ * Uses the new model_settings field instead of deprecated llm_config.
  *
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
- * @param updateArgs - Additional LLM config args (contextWindow, reasoningEffort, verbosity, etc.)
+ * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
  * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
  * @returns The updated LLM configuration from the server
  */
@@ -25,35 +82,24 @@ export async function updateAgentLLMConfig(
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  // Step 1: change model (preserve parallel_tool_calls if requested)
   const currentAgent = await client.agents.retrieve(agentId);
   const currentParallel = preserveParallelToolCalls
-    ? currentAgent.llm_config?.parallel_tool_calls
+    ? (currentAgent.llm_config?.parallel_tool_calls ?? undefined)
     : undefined;
+
+  const modelSettings = buildModelSettings(
+    modelHandle,
+    updateArgs,
+    currentParallel,
+  );
+
+  const contextWindow = updateArgs?.context_window as number | undefined;
 
   await client.agents.update(agentId, {
     model: modelHandle,
-    parallel_tool_calls: currentParallel,
+    ...(modelSettings && { model_settings: modelSettings }),
+    ...(contextWindow && { context_window_limit: contextWindow }),
   });
-
-  // Step 2: if there are llm_config overrides, apply them using fresh state
-  if (updateArgs && Object.keys(updateArgs).length > 0) {
-    const refreshed = await client.agents.retrieve(agentId);
-    const refreshedConfig = (refreshed.llm_config || {}) as LlmConfig;
-
-    const mergedLlmConfig: LlmConfig = {
-      ...refreshedConfig,
-      ...(updateArgs as Record<string, unknown>),
-      ...(currentParallel !== undefined && {
-        parallel_tool_calls: currentParallel,
-      }),
-    } as LlmConfig;
-
-    await client.agents.update(agentId, {
-      llm_config: mergedLlmConfig,
-      parallel_tool_calls: currentParallel,
-    });
-  }
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
