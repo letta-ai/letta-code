@@ -8,6 +8,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
+import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
@@ -154,6 +155,10 @@ export async function handleHeadlessCommand(
   await settingsManager.loadLocalProjectSettings();
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
+
+  // Set agent context for tools that need it (e.g., Skill tool)
+  setAgentContext(agent.id, client, skillsDirectory);
+  await initializeLoadedSkillsFlag();
 
   // Validate output format
   const outputFormat =
@@ -305,13 +310,25 @@ export async function handleHeadlessCommand(
   // Clear any pending approvals before starting a new turn
   await resolveAllPendingApprovals();
 
-  // Get plan mode reminder if in plan mode
+  // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
-  let messageContent = prompt;
+  const { hasLoadedSkills } = await import("./agent/context");
+  let messageContent = "";
+
+  // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {
     const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
-    messageContent = PLAN_MODE_REMINDER + prompt;
+    messageContent += PLAN_MODE_REMINDER;
   }
+
+  // Add skill unload reminder if skills are loaded (using cached flag)
+  if (hasLoadedSkills()) {
+    const { SKILL_UNLOAD_REMINDER } = await import("./agent/promptAssets");
+    messageContent += SKILL_UNLOAD_REMINDER;
+  }
+
+  // Add user prompt
+  messageContent += prompt;
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [

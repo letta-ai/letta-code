@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "skill": {
+      "type": "string",
+      "description": "The skill name/id (e.g., \"data-analysis\", \"web-scraper\")"
+    }
+  },
+  "required": ["skill"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

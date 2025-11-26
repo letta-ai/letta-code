@@ -22,6 +22,7 @@ import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemi
 import SearchFileContentGeminiDescription from "./descriptions/SearchFileContentGemini.md";
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
+import SkillDescription from "./descriptions/Skill.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import WriteDescription from "./descriptions/Write.md";
@@ -51,6 +52,7 @@ import { run_shell_command } from "./impl/RunShellCommandGemini";
 import { search_file_content } from "./impl/SearchFileContentGemini";
 import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
+import { skill } from "./impl/Skill";
 import { todo_write } from "./impl/TodoWrite";
 import { update_plan } from "./impl/UpdatePlan";
 import { write } from "./impl/Write";
@@ -80,6 +82,7 @@ import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
 import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.json";
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
+import SkillSchema from "./schemas/Skill.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import WriteSchema from "./schemas/Write.json";
@@ -144,6 +147,11 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read as unknown as ToolImplementation,
+  },
+  Skill: {
+    schema: SkillSchema,
+    description: SkillDescription.trim(),
+    impl: skill as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,
