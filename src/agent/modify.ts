@@ -1,19 +1,79 @@
 // src/agent/modify.ts
 // Utilities for modifying agent configuration
 
+import type {
+  AnthropicModelSettings,
+  GoogleAIModelSettings,
+  OpenAIModelSettings,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
+type ModelSettings =
+  | OpenAIModelSettings
+  | AnthropicModelSettings
+  | GoogleAIModelSettings
+  | Record<string, unknown>;
+
 /**
- * Updates an agent's model and LLM configuration.
+ * Builds model_settings from updateArgs based on provider type.
+ */
+function buildModelSettings(
+  modelHandle: string,
+  updateArgs?: Record<string, unknown>,
+): ModelSettings | undefined {
+  const settings: ModelSettings = {};
+
+  const isOpenAI = modelHandle.startsWith("openai/");
+  const isAnthropic = modelHandle.startsWith("anthropic/");
+  const isGoogleAI = modelHandle.startsWith("google_ai/");
+
+  if (isOpenAI && updateArgs?.reasoning_effort) {
+    const openaiSettings = settings as OpenAIModelSettings;
+    openaiSettings.provider_type = "openai";
+    openaiSettings.reasoning = {
+      reasoning_effort: updateArgs.reasoning_effort as
+        | "none"
+        | "minimal"
+        | "low"
+        | "medium"
+        | "high",
+    };
+    openaiSettings.parallel_tool_calls = true;
+  } else if (isAnthropic && updateArgs?.enable_reasoner !== undefined) {
+    const anthropicSettings = settings as AnthropicModelSettings;
+    anthropicSettings.provider_type = "anthropic";
+    anthropicSettings.thinking = {
+      type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+    };
+    anthropicSettings.parallel_tool_calls = true;
+  } else if (isGoogleAI) {
+    const googleSettings = settings as GoogleAIModelSettings;
+    googleSettings.provider_type = "google_ai";
+    googleSettings.parallel_tool_calls = true;
+    if (updateArgs?.thinking_budget !== undefined) {
+      googleSettings.thinking_config = {
+        thinking_budget: updateArgs.thinking_budget as number,
+      };
+    }
+  }
+
+  if (Object.keys(settings).length === 0) {
+    return undefined;
+  }
+
+  return settings;
+}
+
+/**
+ * Updates an agent's model and model settings.
  *
- * Note: Currently requires two PATCH calls due to SDK limitation.
- * Once SDK is fixed to allow contextWindow on PATCH, simplify this code to a single call.
+ * Uses the new model_settings field instead of deprecated llm_config.
  *
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
- * @param updateArgs - Additional LLM config args (contextWindow, reasoningEffort, verbosity, etc.)
+ * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
  * @param preserveParallelToolCalls - If true, preserves the parallel_tool_calls setting when updating the model
  * @returns The updated LLM configuration from the server
  */
@@ -21,37 +81,17 @@ export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  preserveParallelToolCalls?: boolean,
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  // Step 1: change model (preserve parallel_tool_calls if requested)
-  const currentAgent = await client.agents.retrieve(agentId);
-  const currentParallel = preserveParallelToolCalls
-    ? currentAgent.llm_config?.parallel_tool_calls
-    : undefined;
+  const modelSettings = buildModelSettings(modelHandle, updateArgs);
+  const contextWindow = updateArgs?.context_window as number | undefined;
 
-  await client.agents.update(agentId, {
-    model: modelHandle,
-    parallel_tool_calls: currentParallel,
-  });
-
-  // Step 2: if there are llm_config overrides, apply them using fresh state
-  if (updateArgs && Object.keys(updateArgs).length > 0) {
-    const refreshed = await client.agents.retrieve(agentId);
-    const refreshedConfig = (refreshed.llm_config || {}) as LlmConfig;
-
-    const mergedLlmConfig: LlmConfig = {
-      ...refreshedConfig,
-      ...(updateArgs as Record<string, unknown>),
-      ...(currentParallel !== undefined && {
-        parallel_tool_calls: currentParallel,
-      }),
-    } as LlmConfig;
-
+  if (modelSettings || contextWindow) {
     await client.agents.update(agentId, {
-      llm_config: mergedLlmConfig,
-      parallel_tool_calls: currentParallel,
+      model: modelHandle,
+      ...(modelSettings && { model_settings: modelSettings }),
+      ...(contextWindow && { context_window_limit: contextWindow }),
     });
   }
 
