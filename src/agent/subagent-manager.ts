@@ -3,15 +3,11 @@
  *
  * This module handles:
  * - Creating separate Letta agent instances for each subagent type
- * - Passing conversation history to subagents
  * - Executing subagents and collecting final reports
  * - Managing parallel subagent execution
  */
 
-import type {
-  AgentState,
-  MessageCreate,
-} from "@letta-ai/letta-client/resources/agents/agents";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getErrorMessage } from "../utils/error";
 import { getClient } from "./client";
 import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
@@ -23,9 +19,6 @@ import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
 /** ANSI escape codes for console output */
 const ANSI_DIM = "\x1b[2m";
 const ANSI_RESET = "\x1b[0m";
-
-/** Maximum number of messages to fetch for conversation history */
-const CONVERSATION_HISTORY_LIMIT = 100;
 
 /** Default embedding model for subagents */
 const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
@@ -74,45 +67,6 @@ async function resolveSubagentModel(
   }
 
   return resolved;
-}
-
-/**
- * Extract conversation history from main agent
- */
-async function getConversationHistory(
-  agentId: string,
-): Promise<MessageCreate[]> {
-  const client = await getClient();
-
-  // Get the agent's message history
-  const messagesPage = await client.agents.messages.list(agentId, {
-    limit: CONVERSATION_HISTORY_LIMIT,
-  });
-  const messages = messagesPage.items;
-
-  // Convert message history to MessageCreate format for sending to new agent
-  const history: MessageCreate[] = [];
-
-  for (const msg of messages) {
-    if (msg.message_type === "user_message") {
-      history.push({
-        role: "user" as const,
-        content: msg.content || "",
-      });
-    } else if (msg.message_type === "assistant_message") {
-      history.push({
-        role: "assistant" as const,
-        content: msg.content || "",
-      });
-    } else if (msg.message_type === "system_message") {
-      history.push({
-        role: "system" as const,
-        content: msg.content || "",
-      });
-    }
-  }
-
-  return history;
 }
 
 /**
@@ -188,21 +142,10 @@ async function createSubagent(
  */
 async function executeSubagent(
   agent: AgentState,
-  conversationHistory: MessageCreate[],
   userPrompt: string,
 ): Promise<SubagentResult> {
   try {
-    // First, send conversation history to the subagent
-    const { sendMessageStream } = await import("./message");
-
-    const stream = await sendMessageStream(agent.id, conversationHistory);
-
-    // Drain the stream (just need to populate the agent's message history)
-    for await (const _chunk of stream) {
-      // No-op, just consuming the stream to populate history
-    }
-
-    // Now run letta in headless mode with the user prompt
+    // Run letta in headless mode with the user prompt
     // This reuses ALL the existing headless logic (tool execution, approvals, etc.)
     const { spawn } = await import("node:child_process");
     const { createInterface } = await import("node:readline");
@@ -357,9 +300,7 @@ async function executeSubagent(
 
     // Wait for process to complete
     const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on("close", (code) => {
-        resolve(code);
-      });
+      proc.on("close", resolve);
       proc.on("error", () => resolve(null));
     });
 
@@ -461,7 +402,6 @@ async function getBaseURL(): Promise<string> {
  * Spawn a subagent and execute it autonomously
  */
 export async function spawnSubagent(
-  mainAgentId: string,
   type: string,
   prompt: string,
   description: string,
@@ -480,13 +420,30 @@ export async function spawnSubagent(
     };
   }
 
-  const resolvedModel = await resolveSubagentModel(model, config);
-
-  // Get conversation history from main agent
-  const conversationHistory = await getConversationHistory(mainAgentId);
+  let resolvedModel: string;
+  try {
+    resolvedModel = await resolveSubagentModel(model, config);
+  } catch (error) {
+    return {
+      agentId: "",
+      report: "",
+      success: false,
+      error: `Failed to resolve model: ${getErrorMessage(error)}`,
+    };
+  }
 
   // Create subagent with appropriate configuration
-  const subagent = await createSubagent(type, config, resolvedModel, prompt);
+  let subagent: AgentState;
+  try {
+    subagent = await createSubagent(type, config, resolvedModel, prompt);
+  } catch (error) {
+    return {
+      agentId: "",
+      report: "",
+      success: false,
+      error: `Failed to create subagent: ${getErrorMessage(error)}`,
+    };
+  }
 
   // Build and print header lines
   const baseURL = await getBaseURL();
@@ -497,7 +454,7 @@ export async function spawnSubagent(
   console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
 
   // Execute subagent and collect final report
-  const result = await executeSubagent(subagent, conversationHistory, prompt);
+  const result = await executeSubagent(subagent, prompt);
 
   return result;
 }

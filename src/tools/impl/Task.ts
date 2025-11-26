@@ -5,7 +5,6 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { getCurrentAgentId } from "../../agent/context";
 import { getAllSubagentConfigs } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagent-manager";
 import { validateRequiredParams } from "./validation";
@@ -44,12 +43,6 @@ export async function task(args: TaskArgs): Promise<string> {
   // Print Task header FIRST so subagent output appears below it
   console.log(`\n● Task(${formatTaskArgs(args)})\n`);
 
-  // Get current agent ID from context
-  const mainAgentId = getCurrentAgentId();
-  if (!mainAgentId) {
-    return "Error: No agent context available. Task tool can only be called from within an agent.";
-  }
-
   // Get all available subagent configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
 
@@ -61,7 +54,6 @@ export async function task(args: TaskArgs): Promise<string> {
 
   try {
     const result = await spawnSubagent(
-      mainAgentId,
       subagent_type,
       prompt,
       description,
