@@ -1255,6 +1255,52 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /download command - download agent file
+        if (msg.trim() === "/download") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Downloading agent file...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            const fileContent = await client.agents.exportFile(agentId);
+            const fileName = `${agentId}.af`;
+            await Bun.write(fileName, JSON.stringify(fileContent, null, 2));
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `AgentFile downloaded to ${fileName}`,
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
