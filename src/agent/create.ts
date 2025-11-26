@@ -235,12 +235,7 @@ export async function createAgent(
     const otherArgs = { ...updateArgs } as Record<string, unknown>;
     delete (otherArgs as Record<string, unknown>).context_window;
     if (Object.keys(otherArgs).length > 0) {
-      await updateAgentLLMConfig(
-        agent.id,
-        modelHandle,
-        otherArgs,
-        true, // preserve parallel_tool_calls
-      );
+      await updateAgentLLMConfig(agent.id, modelHandle, otherArgs);
     }
   }
 
