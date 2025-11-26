@@ -30,3 +30,4 @@ export async function grep_files(
 
   return grep(grepArgs);
 }
+

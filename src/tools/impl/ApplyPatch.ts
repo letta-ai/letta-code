@@ -267,3 +267,4 @@ function buildOldNewChunks(lines: string[]): {
     newChunk: newParts.join(""),
   };
 }
+

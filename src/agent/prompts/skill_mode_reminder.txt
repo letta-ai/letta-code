@@ -10,15 +10,12 @@ Before writing or editing any files, guide the user through a short requirements
 - Edge cases, constraints, and performance considerations
 - How success will be validated (tests, example invocations)
 
-If a local repository named `terminal-bench-skills` is present, inspect it to leverage past trajectories and any curated SKILL.md files:
-- Look for curated skills under `terminal-bench-skills/skills/**/<task>/SKILL.md`
-- If appropriate, use the CreateSkill tool to import them into `.skills/<task>/SKILL.MD`
-- If a curated file is not found, summarize key patterns from the most relevant trajectory and initialize a minimal SKILL.MD via CreateSkill, then refine it
+If relevant prior art or curated SKILL.md files exist in your workspace or referenced repositories, consider reusing them. Otherwise, initialize a minimal SKILL.MD and refine it iteratively based on clarified requirements.
 
 Once you have answers, propose a concise skill spec the user can confirm, including:
 - File(s) to add/modify, public API, and examples
 - Minimal tests or validation steps
 
-After explicit confirmation, implement step‑by‑step using the appropriate tools. Prefer using the CreateSkill tool to place `SKILL.MD` files into `.skills/`. If anything is ambiguous, ask before proceeding.
+After explicit confirmation, implement step‑by‑step using the appropriate tools. Create or update `SKILL.MD` files under `.skills/` (you can use the CreateSkill tool or standard file editing tools). If anything is ambiguous, ask before proceeding.
 
 Keep your questions and proposals brief and actionable.
