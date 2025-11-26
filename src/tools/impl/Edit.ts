@@ -49,7 +49,6 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       replacements = 1;
     }
     await fs.writeFile(file_path, newContent, "utf-8");
-
     return {
       message: `Successfully replaced ${replacements} occurrence${replacements !== 1 ? "s" : ""} in ${file_path}`,
       replacements,

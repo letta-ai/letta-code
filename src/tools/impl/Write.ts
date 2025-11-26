@@ -18,8 +18,6 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
   try {
     const dir = path.dirname(file_path);
     await fs.mkdir(dir, { recursive: true });
-
-    // Check if path is a directory
     try {
       const stats = await fs.stat(file_path);
       if (stats.isDirectory())
@@ -28,9 +26,7 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") throw err;
     }
-
     await fs.writeFile(file_path, content, "utf-8");
-
     return {
       message: `Successfully wrote ${content.length} characters to ${file_path}`,
     };

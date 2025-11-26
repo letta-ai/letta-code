@@ -134,7 +134,6 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
       throw new Error(`Cannot read binary file: ${file_path}`);
     const content = await fs.readFile(file_path, "utf-8");
     const formattedContent = formatWithLineNumbers(content, offset, limit);
-
     return { content: formattedContent };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
