@@ -65,6 +65,7 @@ describeOrSkip("createAgent init-blocks filtering", () => {
         false,
         undefined,
         ["persona", "skills"],
+        undefined,
       );
       createdAgentId = agent.id;
 

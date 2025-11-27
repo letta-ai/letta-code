@@ -53,6 +53,7 @@ export async function handleHeadlessCommand(
       unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
+      "base-tools": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -86,6 +87,7 @@ export async function handleHeadlessCommand(
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
+  const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
 
   if (initBlocksRaw && !forceNew) {
@@ -102,6 +104,26 @@ export async function handleHeadlessCommand(
       initBlocks = [];
     } else {
       initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
+
+  if (baseToolsRaw && !forceNew) {
+    console.error(
+      "Error: --base-tools can only be used together with --new to control initial base tools.",
+    );
+    process.exit(1);
+  }
+
+  let baseTools: string[] | undefined;
+  if (baseToolsRaw !== undefined) {
+    const trimmed = baseToolsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      baseTools = [];
+    } else {
+      baseTools = trimmed
         .split(",")
         .map((name) => name.trim())
         .filter((name) => name.length > 0);
@@ -131,6 +153,7 @@ export async function handleHeadlessCommand(
       sleeptimeFlag ?? settings.enableSleeptime,
       undefined,
       initBlocks,
+      baseTools,
     );
   }
 
@@ -172,6 +195,7 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      undefined,
       undefined,
       undefined,
     );

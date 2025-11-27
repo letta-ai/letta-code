@@ -33,6 +33,7 @@ export async function createAgent(
   enableSleeptime = false,
   systemPromptId?: string,
   initBlocks?: string[],
+  baseTools?: string[],
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -60,13 +61,14 @@ export async function createAgent(
     getServerToolName(name),
   );
 
-  const toolNames = [
-    ...serverToolNames,
+  const defaultBaseTools = baseTools ?? [
     "memory",
     "web_search",
     "conversation_search",
     "fetch_webpage",
   ];
+
+  const toolNames = [...serverToolNames, ...defaultBaseTools];
 
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks =
