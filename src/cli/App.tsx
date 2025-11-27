@@ -1796,15 +1796,29 @@ export default function App({
         );
         setLlmConfig(updatedConfig);
 
-        // After switching models, reload tools for the selected provider and relink
-        const { switchToolsetForModel } = await import("../tools/toolset");
-        const toolsetName = await switchToolsetForModel(
-          selectedModel.handle ?? "",
-          agentId,
+        // After switching models, only switch toolset if it actually changes
+        const { isOpenAIModel, isGeminiModel } = await import(
+          "../tools/manager"
         );
-        setCurrentToolset(toolsetName);
+        const targetToolset: "codex" | "default" | "gemini" = isOpenAIModel(
+          selectedModel.handle ?? "",
+        )
+          ? "codex"
+          : isGeminiModel(selectedModel.handle ?? "")
+            ? "gemini"
+            : "default";
 
-        // Update the same command with final result (include toolset info)
+        let toolsetName: "codex" | "default" | "gemini" | null = null;
+        if (currentToolset !== targetToolset) {
+          const { switchToolsetForModel } = await import("../tools/toolset");
+          toolsetName = await switchToolsetForModel(
+            selectedModel.handle ?? "",
+            agentId,
+          );
+          setCurrentToolset(toolsetName);
+        }
+
+        // Update the same command with final result (include toolset info only if changed)
         const autoToolsetLine = toolsetName
           ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
           : null;
@@ -1840,7 +1854,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [agentId, refreshDerived],
+    [agentId, refreshDerived, currentToolset],
   );
 
   const handleToolsetSelect = useCallback(
