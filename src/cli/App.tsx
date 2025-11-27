@@ -43,6 +43,7 @@ import { PlanModeDialog } from "./components/PlanModeDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { SystemPromptSelector } from "./components/SystemPromptSelector";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -216,6 +217,11 @@ export default function App({
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
+  const [systemPromptSelectorOpen, setSystemPromptSelectorOpen] =
+    useState(false);
+  const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
+    string | null
+  >("default");
   const [currentToolset, setCurrentToolset] = useState<
     "codex" | "default" | "gemini" | null
   >(null);
@@ -813,6 +819,12 @@ export default function App({
         // Special handling for /toolset command - opens selector
         if (msg.trim() === "/toolset") {
           setToolsetSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /system command - opens system prompt selector
+        if (msg.trim() === "/system") {
+          setSystemPromptSelectorOpen(true);
           return { submitted: true };
         }
 
@@ -1820,7 +1832,7 @@ export default function App({
 
         // Update the same command with final result (include toolset info only if changed)
         const autoToolsetLine = toolsetName
-          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
+          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
           : null;
         const outputLines = [
           `Switched to ${selectedModel.label}`,
@@ -1855,6 +1867,90 @@ export default function App({
       }
     },
     [agentId, refreshDerived, currentToolset],
+  );
+
+  const handleSystemPromptSelect = useCallback(
+    async (promptId: string) => {
+      setSystemPromptSelectorOpen(false);
+
+      const cmdId = uid("cmd");
+
+      try {
+        // Find the selected prompt
+        const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+        const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
+
+        if (!selectedPrompt) {
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: `System prompt not found: ${promptId}`,
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return;
+        }
+
+        // Immediately add command to transcript with "running" phase
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/system ${promptId}`,
+          output: `Switching system prompt to ${selectedPrompt.label}...`,
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Lock input during async operation
+        setCommandRunning(true);
+
+        // Update the agent's system prompt
+        const { updateAgentSystemPrompt } = await import("../agent/modify");
+        const result = await updateAgentSystemPrompt(
+          agentId,
+          selectedPrompt.content,
+        );
+
+        if (result.success) {
+          setCurrentSystemPromptId(promptId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: `Switched system prompt to ${selectedPrompt.label}`,
+            phase: "finished",
+            success: true,
+          });
+        } else {
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: result.message,
+            phase: "finished",
+            success: false,
+          });
+        }
+        refreshDerived();
+      } catch (error) {
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/system ${promptId}`,
+          output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [agentId, refreshDerived],
   );
 
   const handleToolsetSelect = useCallback(
@@ -2229,6 +2325,7 @@ export default function App({
                 pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
                 !toolsetSelectorOpen &&
+                !systemPromptSelectorOpen &&
                 !agentSelectorOpen &&
                 !planApprovalPending
               }
@@ -2261,6 +2358,15 @@ export default function App({
                 currentToolset={currentToolset ?? undefined}
                 onSelect={handleToolsetSelect}
                 onCancel={() => setToolsetSelectorOpen(false)}
+              />
+            )}
+
+            {/* System Prompt Selector - conditionally mounted as overlay */}
+            {systemPromptSelectorOpen && (
+              <SystemPromptSelector
+                currentPromptId={currentSystemPromptId ?? undefined}
+                onSelect={handleSystemPromptSelect}
+                onCancel={() => setSystemPromptSelectorOpen(false)}
               />
             )}
 

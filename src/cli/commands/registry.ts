@@ -85,6 +85,13 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/system": {
+    desc: "Switch system prompt",
+    handler: () => {
+      // Handled specially in App.tsx to open system prompt selector
+      return "Opening system prompt selector...";
+    },
+  },
   "/download": {
     desc: "Download agent file locally",
     handler: () => {
