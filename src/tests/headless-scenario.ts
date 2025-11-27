@@ -52,9 +52,9 @@ function scenarioPrompt(): string {
     "I want to test your tool calling abilities (do not ask for any clarifications, this is an automated test suite inside a CI runner, there is no human to assist you). " +
     "First, call a single web_search to get the weather in SF. " +
     "Then, try calling two web_searches in parallel. " +
-    "Then, try calling the bash tool to output an echo. " +
-    "Then, try calling three copies of the bash tool in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
-    "Then finally, try calling 2 bash tools and 1 web_search, in parallel, so three parallel tools. " +
+    "Then, try running a shell command to output an echo (use whatever shell/bash tool is available). " +
+    "Then, try running three shell commands in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
+    "Then finally, try running 2 shell commands and 1 web_search, in parallel, so three parallel tools. " +
     "IMPORTANT: If and only if all of the above steps worked as requested, include the word BANANA (uppercase) somewhere in your final response."
   );
 }

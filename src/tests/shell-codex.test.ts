@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { shell } from "../tools/impl/Shell.js";
 
+const isWindows = process.platform === "win32";
+
 describe("shell codex tool", () => {
   let tempDir: string;
 
@@ -42,7 +44,7 @@ describe("shell codex tool", () => {
     expect(result.output).toBe("hello world foo bar");
   });
 
-  test("respects workdir parameter", async () => {
+  test.skipIf(isWindows)("respects workdir parameter", async () => {
     const dir = await setupTempDir();
     // Resolve symlinks (macOS /var -> /private/var)
     const resolvedDir = await fs.realpath(dir);
@@ -55,7 +57,7 @@ describe("shell codex tool", () => {
     expect(result.output).toBe(resolvedDir);
   });
 
-  test("captures stderr output", async () => {
+  test.skipIf(isWindows)("captures stderr output", async () => {
     const result = await shell({
       command: ["bash", "-c", "echo 'error message' >&2"],
     });
@@ -63,7 +65,7 @@ describe("shell codex tool", () => {
     expect(result.stderr).toContain("error message");
   });
 
-  test("handles non-zero exit codes", async () => {
+  test.skipIf(isWindows)("handles non-zero exit codes", async () => {
     const result = await shell({
       command: ["bash", "-c", "exit 1"],
     });
@@ -72,16 +74,19 @@ describe("shell codex tool", () => {
     expect(result).toBeDefined();
   });
 
-  test("handles command with output in both stdout and stderr", async () => {
-    const result = await shell({
-      command: ["bash", "-c", "echo 'stdout'; echo 'stderr' >&2"],
-    });
+  test.skipIf(isWindows)(
+    "handles command with output in both stdout and stderr",
+    async () => {
+      const result = await shell({
+        command: ["bash", "-c", "echo 'stdout'; echo 'stderr' >&2"],
+      });
 
-    expect(result.stdout).toContain("stdout");
-    expect(result.stderr).toContain("stderr");
-    expect(result.output).toContain("stdout");
-    expect(result.output).toContain("stderr");
-  });
+      expect(result.stdout).toContain("stdout");
+      expect(result.stderr).toContain("stderr");
+      expect(result.output).toContain("stdout");
+      expect(result.output).toContain("stderr");
+    },
+  );
 
   test("times out long-running commands", async () => {
     await expect(
@@ -103,7 +108,7 @@ describe("shell codex tool", () => {
     await expect(shell({})).rejects.toThrow();
   });
 
-  test("handles relative workdir", async () => {
+  test.skipIf(isWindows)("handles relative workdir", async () => {
     // Set USER_CWD to a known location
     const originalCwd = process.env.USER_CWD;
     const dir = await setupTempDir();
@@ -131,16 +136,19 @@ describe("shell codex tool", () => {
     }
   });
 
-  test("handles command that produces multi-line output", async () => {
-    const result = await shell({
-      command: ["bash", "-c", "echo 'line1'; echo 'line2'; echo 'line3'"],
-    });
+  test.skipIf(isWindows)(
+    "handles command that produces multi-line output",
+    async () => {
+      const result = await shell({
+        command: ["bash", "-c", "echo 'line1'; echo 'line2'; echo 'line3'"],
+      });
 
-    expect(result.stdout).toContain("line1");
-    expect(result.stdout).toContain("line2");
-    expect(result.stdout).toContain("line3");
-    expect(result.stdout.length).toBe(3);
-  });
+      expect(result.stdout).toContain("line1");
+      expect(result.stdout).toContain("line2");
+      expect(result.stdout).toContain("line3");
+      expect(result.stdout.length).toBe(3);
+    },
+  );
 
   test("handles special characters in arguments", async () => {
     const result = await shell({
@@ -154,7 +162,7 @@ describe("shell codex tool", () => {
     expect(result.output).toContain("`date`");
   });
 
-  test("handles file operations with bash -lc", async () => {
+  test.skipIf(isWindows)("handles file operations with bash -lc", async () => {
     const dir = await setupTempDir();
     const testFile = path.join(dir, "test-output.txt");
 

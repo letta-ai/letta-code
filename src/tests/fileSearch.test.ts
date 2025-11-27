@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { searchFiles } from "../cli/helpers/fileSearch";
 
+const isWindows = process.platform === "win32";
 const TEST_DIR = join(process.cwd(), ".test-filesearch");
 
 beforeEach(() => {
@@ -145,49 +146,58 @@ test("searchFiles handles relative path queries", async () => {
   expect(results.some((r) => r.path.includes("App.tsx"))).toBe(true);
 });
 
-test("searchFiles supports partial path matching (deep)", async () => {
-  const originalCwd = process.cwd();
-  process.chdir(TEST_DIR);
+test.skipIf(isWindows)(
+  "searchFiles supports partial path matching (deep)",
+  async () => {
+    const originalCwd = process.cwd();
+    process.chdir(TEST_DIR);
 
-  // Search for "components/Button" should match "src/components/Button.tsx"
-  const results = await searchFiles("components/Button", true);
+    // Search for "components/Button" should match "src/components/Button.tsx"
+    const results = await searchFiles("components/Button", true);
 
-  process.chdir(originalCwd);
+    process.chdir(originalCwd);
 
-  expect(results.length).toBeGreaterThanOrEqual(1);
-  expect(results.some((r) => r.path.includes("components/Button.tsx"))).toBe(
-    true,
-  );
-});
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.some((r) => r.path.includes("components/Button.tsx"))).toBe(
+      true,
+    );
+  },
+);
 
-test("searchFiles supports partial directory path matching (deep)", async () => {
-  const originalCwd = process.cwd();
-  process.chdir(TEST_DIR);
+test.skipIf(isWindows)(
+  "searchFiles supports partial directory path matching (deep)",
+  async () => {
+    const originalCwd = process.cwd();
+    process.chdir(TEST_DIR);
 
-  // Search for "src/components" should match the directory
-  const results = await searchFiles("src/components", true);
+    // Search for "src/components" should match the directory
+    const results = await searchFiles("src/components", true);
 
-  process.chdir(originalCwd);
+    process.chdir(originalCwd);
 
-  expect(results.length).toBeGreaterThanOrEqual(1);
-  expect(
-    results.some((r) => r.path === "src/components" && r.type === "dir"),
-  ).toBe(true);
-});
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(
+      results.some((r) => r.path === "src/components" && r.type === "dir"),
+    ).toBe(true);
+  },
+);
 
-test("searchFiles partial path matching works with subdirectories", async () => {
-  const originalCwd = process.cwd();
-  process.chdir(TEST_DIR);
+test.skipIf(isWindows)(
+  "searchFiles partial path matching works with subdirectories",
+  async () => {
+    const originalCwd = process.cwd();
+    process.chdir(TEST_DIR);
 
-  // Create nested directory
-  mkdirSync(join(TEST_DIR, "ab/cd/ef"), { recursive: true });
-  writeFileSync(join(TEST_DIR, "ab/cd/ef/test.txt"), "test");
+    // Create nested directory
+    mkdirSync(join(TEST_DIR, "ab/cd/ef"), { recursive: true });
+    writeFileSync(join(TEST_DIR, "ab/cd/ef/test.txt"), "test");
 
-  // Search for "cd/ef" should match "ab/cd/ef"
-  const results = await searchFiles("cd/ef", true);
+    // Search for "cd/ef" should match "ab/cd/ef"
+    const results = await searchFiles("cd/ef", true);
 
-  process.chdir(originalCwd);
+    process.chdir(originalCwd);
 
-  expect(results.length).toBeGreaterThanOrEqual(1);
-  expect(results.some((r) => r.path.includes("cd/ef"))).toBe(true);
-});
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.some((r) => r.path.includes("cd/ef"))).toBe(true);
+  },
+);
