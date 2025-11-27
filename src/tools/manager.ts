@@ -676,7 +676,13 @@ export async function executeTool(
     };
   }
 
-  const tool = toolRegistry.get(internalName)!;
+  const tool = toolRegistry.get(internalName);
+  if (!tool) {
+    return {
+      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(toolRegistry.keys()).join(", ")}`,
+      status: "error",
+    };
+  }
 
   try {
     // Inject abort signal for tools that support it (currently Bash) without altering schemas
