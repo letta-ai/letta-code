@@ -3,8 +3,7 @@
   "type": "object",
   "properties": {
     "explanation": {
-      "type": "string",
-      "description": "Optional explanation of the plan or changes being made"
+      "type": "string"
     },
     "plan": {
       "type": "array",
@@ -13,8 +12,7 @@
         "type": "object",
         "properties": {
           "step": {
-            "type": "string",
-            "description": "Description of the step"
+            "type": "string"
           },
           "status": {
             "type": "string",

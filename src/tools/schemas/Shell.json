@@ -7,19 +7,19 @@
       "items": {
         "type": "string"
       },
-      "description": "The command to execute as an array of shell arguments."
+      "description": "The command to execute"
     },
     "workdir": {
       "type": "string",
-      "description": "The working directory to execute the command in."
+      "description": "The working directory to execute the command in"
     },
     "timeout_ms": {
       "type": "number",
-      "description": "The timeout for the command in milliseconds."
+      "description": "The timeout for the command in milliseconds"
     },
     "with_escalated_permissions": {
       "type": "boolean",
-      "description": "Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions."
+      "description": "Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions"
     },
     "justification": {
       "type": "string",
