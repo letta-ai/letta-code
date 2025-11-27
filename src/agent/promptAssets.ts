@@ -1,4 +1,9 @@
+// Additional system prompts for /system command
+
 import humanPrompt from "./prompts/human.mdx";
+import lettaAnthropicPrompt from "./prompts/letta_anthropic.md";
+import lettaCodexPrompt from "./prompts/letta_codex.md";
+import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -22,3 +27,45 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "style.mdx": stylePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
 };
+
+// System prompt options for /system command
+export interface SystemPromptOption {
+  id: string;
+  label: string;
+  description: string;
+  content: string;
+  isDefault?: boolean;
+  isFeatured?: boolean;
+}
+
+export const SYSTEM_PROMPTS: SystemPromptOption[] = [
+  {
+    id: "default",
+    label: "Default",
+    description: "Standard Letta Code system prompt",
+    content: systemPrompt,
+    isDefault: true,
+    isFeatured: true,
+  },
+  {
+    id: "letta-anthropic",
+    label: "Claude",
+    description: "For Claude models",
+    content: lettaAnthropicPrompt,
+    isFeatured: true,
+  },
+  {
+    id: "letta-codex",
+    label: "Codex",
+    description: "For Codex models",
+    content: lettaCodexPrompt,
+    isFeatured: true,
+  },
+  {
+    id: "letta-gemini",
+    label: "Gemini",
+    description: "For Gemini models",
+    content: lettaGeminiPrompt,
+    isFeatured: true,
+  },
+];

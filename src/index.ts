@@ -32,6 +32,7 @@ OPTIONS
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
+  -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
@@ -122,6 +123,7 @@ async function main() {
         "fresh-blocks": { type: "boolean" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
+        system: { type: "string", short: "s" },
         toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
@@ -177,6 +179,7 @@ async function main() {
   const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
+  const specifiedSystem = (values.system as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -193,6 +196,18 @@ async function main() {
       `Error: Invalid toolset "${specifiedToolset}". Must be "codex", "default", or "gemini".`,
     );
     process.exit(1);
+  }
+
+  // Validate system prompt if provided (dynamically from SYSTEM_PROMPTS)
+  if (specifiedSystem) {
+    const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+    const validSystemPrompts = SYSTEM_PROMPTS.map((p) => p.id);
+    if (!validSystemPrompts.includes(specifiedSystem)) {
+      console.error(
+        `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${validSystemPrompts.join(", ")}.`,
+      );
+      process.exit(1);
+    }
   }
 
   // Check if API key is configured
@@ -337,6 +352,7 @@ async function main() {
     freshBlocks,
     agentIdArg,
     model,
+    system,
     toolset,
     skillsDirectory,
   }: {
@@ -345,6 +361,7 @@ async function main() {
     freshBlocks: boolean;
     agentIdArg: string | null;
     model?: string;
+    system?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
   }) {
@@ -496,6 +513,7 @@ async function main() {
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
+            system,
           );
         }
 
@@ -542,6 +560,7 @@ async function main() {
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
+            system,
           );
         }
 
@@ -583,7 +602,7 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, freshBlocks, agentIdArg, model]);
+    }, [continueSession, forceNew, freshBlocks, agentIdArg, model, system]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -616,6 +635,7 @@ async function main() {
       freshBlocks: freshBlocks,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
+      system: specifiedSystem,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
     }),
