@@ -32,6 +32,7 @@ export async function createAgent(
   parallelToolCalls = true,
   enableSleeptime = false,
   systemPromptId?: string,
+  initBlocks?: string[],
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -70,6 +71,30 @@ export async function createAgent(
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
 
+  // Optional filter: only initialize a subset of memory blocks on creation
+  const allowedBlockLabels = initBlocks
+    ? new Set(
+        initBlocks.map((name) => name.trim()).filter((name) => name.length > 0),
+      )
+    : undefined;
+
+  if (allowedBlockLabels && allowedBlockLabels.size > 0) {
+    const knownLabels = new Set(defaultMemoryBlocks.map((b) => b.label));
+    for (const label of Array.from(allowedBlockLabels)) {
+      if (!knownLabels.has(label)) {
+        console.warn(
+          `Ignoring unknown init block "${label}". Valid blocks: ${Array.from(knownLabels).join(", ")}`,
+        );
+        allowedBlockLabels.delete(label);
+      }
+    }
+  }
+
+  const filteredMemoryBlocks =
+    allowedBlockLabels && allowedBlockLabels.size > 0
+      ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
+      : defaultMemoryBlocks;
+
   // Resolve absolute path for skills directory
   const resolvedSkillsDirectory =
     skillsDirectory || join(process.cwd(), SKILLS_DIR);
@@ -87,7 +112,7 @@ export async function createAgent(
     }
 
     // Find and update the skills memory block with discovered skills
-    const skillsBlock = defaultMemoryBlocks.find((b) => b.label === "skills");
+    const skillsBlock = filteredMemoryBlocks.find((b) => b.label === "skills");
     if (skillsBlock) {
       skillsBlock.value = formatSkillsForMemory(
         skills,
@@ -116,6 +141,9 @@ export async function createAgent(
   if (!forceNewBlocks) {
     // Load global blocks (persona, human)
     for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
+      if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
+        continue;
+      }
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
@@ -129,6 +157,9 @@ export async function createAgent(
 
     // Load local blocks (style)
     for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
+      if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
+        continue;
+      }
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
@@ -145,7 +176,7 @@ export async function createAgent(
   const blockIds: string[] = [];
   const blocksToCreate: Array<{ block: CreateBlock; label: string }> = [];
 
-  for (const defaultBlock of defaultMemoryBlocks) {
+  for (const defaultBlock of filteredMemoryBlocks) {
     const existingBlock = existingBlocks.get(defaultBlock.label);
     if (existingBlock?.id) {
       // Reuse existing global shared block

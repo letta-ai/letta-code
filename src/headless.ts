@@ -52,6 +52,7 @@ export async function handleHeadlessCommand(
       link: { type: "boolean" },
       unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
+      "init-blocks": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -84,7 +85,21 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const initBlocksRaw = values["init-blocks"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+
+  if (initBlocksRaw && !forceNew) {
+    console.error(
+      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
+    );
+    process.exit(1);
+  }
+
+  const initBlocks =
+    initBlocksRaw
+      ?.split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0) ?? undefined;
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
@@ -107,6 +122,8 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      undefined,
+      initBlocks,
     );
   }
 
@@ -148,6 +165,8 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      undefined,
+      undefined,
     );
   }
 
