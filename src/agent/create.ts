@@ -18,7 +18,7 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { SYSTEM_PROMPT } from "./promptAssets";
+import { SYSTEM_PROMPT, SYSTEM_PROMPTS } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
@@ -31,6 +31,7 @@ export async function createAgent(
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
+  systemPromptId?: string,
 ) {
   // Resolve model identifier to handle
   let modelHandle: string;
@@ -209,10 +210,16 @@ export async function createAgent(
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
   const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
 
+  // Resolve system prompt (use specified ID or default)
+  const systemPrompt = systemPromptId
+    ? (SYSTEM_PROMPTS.find((p) => p.id === systemPromptId)?.content ??
+      SYSTEM_PROMPT)
+    : SYSTEM_PROMPT;
+
   // Create agent with all block IDs (existing + newly created)
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     name,
     embedding: embeddingModel,
     model: modelHandle,

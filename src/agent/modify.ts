@@ -262,3 +262,38 @@ export async function unlinkToolsFromAgent(
     };
   }
 }
+
+export interface SystemPromptUpdateResult {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Updates an agent's system prompt.
+ *
+ * @param agentId - The agent ID
+ * @param systemPrompt - The new system prompt content
+ * @returns Result with success status and message
+ */
+export async function updateAgentSystemPrompt(
+  agentId: string,
+  systemPrompt: string,
+): Promise<SystemPromptUpdateResult> {
+  try {
+    const client = await getClient();
+
+    await client.agents.update(agentId, {
+      system: systemPrompt,
+    });
+
+    return {
+      success: true,
+      message: "System prompt updated successfully",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to update system prompt: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
