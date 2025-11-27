@@ -196,11 +196,19 @@ async function main() {
     process.exit(1);
   }
 
-  const initBlocks =
-    initBlocksRaw
-      ?.split(",")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0) ?? undefined;
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      // Explicitly requested zero blocks
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Validate toolset if provided
   if (

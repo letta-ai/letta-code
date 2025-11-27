@@ -95,11 +95,18 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  const initBlocks =
-    initBlocksRaw
-      ?.split(",")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0) ?? undefined;
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {

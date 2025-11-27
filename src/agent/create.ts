@@ -69,7 +69,8 @@ export async function createAgent(
   ];
 
   // Load memory blocks from .mdx files
-  const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+  const defaultMemoryBlocks =
+    initBlocks && initBlocks.length === 0 ? [] : await getDefaultMemoryBlocks();
 
   // Optional filter: only initialize a subset of memory blocks on creation
   const allowedBlockLabels = initBlocks
