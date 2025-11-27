@@ -52,6 +52,8 @@ export async function handleHeadlessCommand(
       link: { type: "boolean" },
       unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
+      "init-blocks": { type: "string" },
+      "base-tools": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -84,7 +86,49 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const initBlocksRaw = values["init-blocks"] as string | undefined;
+  const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+
+  if (initBlocksRaw && !forceNew) {
+    console.error(
+      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
+    );
+    process.exit(1);
+  }
+
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
+
+  if (baseToolsRaw && !forceNew) {
+    console.error(
+      "Error: --base-tools can only be used together with --new to control initial base tools.",
+    );
+    process.exit(1);
+  }
+
+  let baseTools: string[] | undefined;
+  if (baseToolsRaw !== undefined) {
+    const trimmed = baseToolsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      baseTools = [];
+    } else {
+      baseTools = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
@@ -107,6 +151,9 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      undefined,
+      initBlocks,
+      baseTools,
     );
   }
 
@@ -148,6 +195,9 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      undefined,
+      undefined,
+      undefined,
     );
   }
 

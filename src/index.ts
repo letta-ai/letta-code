@@ -29,6 +29,8 @@ OPTIONS
   -v, --version         Print version and exit
   --new                 Create new agent (reuses global blocks like persona/human)
   --fresh-blocks        Force create all new memory blocks (isolate from other agents)
+  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
+  --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
@@ -121,6 +123,8 @@ async function main() {
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
         "fresh-blocks": { type: "boolean" },
+        "init-blocks": { type: "string" },
+        "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
         system: { type: "string", short: "s" },
@@ -177,6 +181,8 @@ async function main() {
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
   const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
+  const initBlocksRaw = values["init-blocks"] as string | undefined;
+  const baseToolsRaw = values["base-tools"] as string | undefined;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const specifiedSystem = (values.system as string | undefined) ?? undefined;
@@ -184,6 +190,49 @@ async function main() {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // --init-blocks only makes sense when creating a brand new agent
+  if (initBlocksRaw && !forceNew) {
+    console.error(
+      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
+    );
+    process.exit(1);
+  }
+
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      // Explicitly requested zero blocks
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
+
+  // --base-tools only makes sense when creating a brand new agent
+  if (baseToolsRaw && !forceNew) {
+    console.error(
+      "Error: --base-tools can only be used together with --new to control initial base tools.",
+    );
+    process.exit(1);
+  }
+
+  let baseTools: string[] | undefined;
+  if (baseToolsRaw !== undefined) {
+    const trimmed = baseToolsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      baseTools = [];
+    } else {
+      baseTools = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Validate toolset if provided
   if (
@@ -350,6 +399,8 @@ async function main() {
     continueSession,
     forceNew,
     freshBlocks,
+    initBlocks,
+    baseTools,
     agentIdArg,
     model,
     system,
@@ -359,6 +410,8 @@ async function main() {
     continueSession: boolean;
     forceNew: boolean;
     freshBlocks: boolean;
+    initBlocks?: string[];
+    baseTools?: string[];
     agentIdArg: string | null;
     model?: string;
     system?: string;
@@ -514,6 +567,8 @@ async function main() {
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
+            initBlocks,
+            baseTools,
           );
         }
 
@@ -561,6 +616,8 @@ async function main() {
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
+            undefined,
+            undefined,
           );
         }
 
@@ -633,6 +690,8 @@ async function main() {
       continueSession: shouldContinue,
       forceNew: forceNew,
       freshBlocks: freshBlocks,
+      initBlocks: initBlocks,
+      baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
       system: specifiedSystem,
