@@ -99,7 +99,8 @@ describe("shell codex tool", () => {
   });
 
   test("throws error for missing command", async () => {
-    await expect(shell({} as any)).rejects.toThrow();
+    // @ts-expect-error Testing invalid input
+    await expect(shell({})).rejects.toThrow();
   });
 
   test("handles relative workdir", async () => {

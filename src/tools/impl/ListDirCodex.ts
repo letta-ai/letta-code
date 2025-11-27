@@ -111,7 +111,8 @@ async function collectEntries(
   ];
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (!current) break;
     const { absPath, prefix, depth } = current;
 
     const dirEntries: Array<{
@@ -213,8 +214,8 @@ function formatEntryLine(entry: DirEntry): string {
     case "other":
       name += "?";
       break;
-    case "file":
     default:
+      // "file" type has no suffix
       break;
   }
 

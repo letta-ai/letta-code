@@ -11,7 +11,7 @@ import {
   upsertToolsToServer,
 } from "../tools/manager";
 import { switchToolsetForModel } from "../tools/toolset";
-import { BASE_TOOL_NAMES } from "../tools/utils";
+import { BASE_TOOL_NAMES } from "../tools/utils.js";
 
 // Skip these integration tests if LETTA_API_KEY is not set
 const shouldSkip = !process.env.LETTA_API_KEY;
