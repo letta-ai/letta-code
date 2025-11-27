@@ -4,7 +4,7 @@
   "properties": {
     "input": {
       "type": "string",
-      "description": "Patch content in the ApplyPatch tool format, starting with '*** Begin Patch' and ending with '*** End Patch'."
+      "description": "The entire contents of the apply_patch command"
     }
   },
   "required": ["input"],

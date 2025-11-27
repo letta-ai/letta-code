@@ -4,7 +4,7 @@
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute path to the file."
+      "description": "Absolute path to the file"
     },
     "offset": {
       "type": "number",

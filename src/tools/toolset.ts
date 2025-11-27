@@ -19,6 +19,9 @@ const ANTHROPIC_TOOLS = ANTHROPIC_DEFAULT_TOOLS;
 const CODEX_TOOLS = OPENAI_DEFAULT_TOOLS;
 const GEMINI_TOOLS = GEMINI_DEFAULT_TOOLS;
 
+// Server-side/base tools that should stay attached regardless of Letta toolset
+export const BASE_TOOL_NAMES = ["memory", "web_search"];
+
 /**
  * Gets the list of Letta Code tools currently attached to an agent.
  * Returns the tool names that are both attached to the agent AND in our tool definitions.
