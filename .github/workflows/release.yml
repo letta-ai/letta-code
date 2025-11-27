@@ -32,6 +32,14 @@ jobs:
         with:
           bun-version: 1.3.0
 
+      - name: Setup Node (for npm OIDC publishing)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Upgrade npm for OIDC support
+        run: npm install -g npm@latest
+
       - name: Bump version
         id: version
         run: |
@@ -109,4 +117,4 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Publish to npm
-        run: bun publish --access public --no-git-checks
+        run: npm publish --access public
