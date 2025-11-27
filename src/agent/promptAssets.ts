@@ -1,10 +1,9 @@
-import gpt51Prompt from "./prompts/gpt_5_1_prompt.md";
-import gpt5CodexPrompt from "./prompts/gpt_5_codex_prompt.md";
 // Additional system prompts for /system command
-import gptPrompt from "./prompts/gpt_prompt.md";
-import gptReviewPrompt from "./prompts/gpt_review_prompt.md";
-import gpt51CodexMaxPrompt from "./prompts/gpt-5.1-codex-max_prompt.md";
+
 import humanPrompt from "./prompts/human.mdx";
+import lettaAnthropicPrompt from "./prompts/letta_anthropic.md";
+import lettaCodexPrompt from "./prompts/letta_codex.md";
+import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -49,35 +48,24 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     isFeatured: true,
   },
   {
-    id: "gpt",
-    label: "GPT",
-    description: "For gpt-4.x, gpt-5, o3, o4 models",
-    content: gptPrompt,
-  },
-  {
-    id: "gpt-5.1",
-    label: "GPT-5.1",
-    description: "For gpt-5.1 (non-codex) models",
-    content: gpt51Prompt,
-  },
-  {
-    id: "gpt-5-codex",
-    label: "GPT-5 Codex",
-    description: "For gpt-5-codex, gpt-5.1-codex, codex-* models",
-    content: gpt5CodexPrompt,
+    id: "letta-anthropic",
+    label: "Claude",
+    description: "For Claude models",
+    content: lettaAnthropicPrompt,
     isFeatured: true,
   },
   {
-    id: "gpt-5.1-codex-max",
-    label: "GPT-5.1 Codex Max",
-    description: "For gpt-5.1-codex-max (latest)",
-    content: gpt51CodexMaxPrompt,
+    id: "letta-codex",
+    label: "Codex",
+    description: "For Codex models",
+    content: lettaCodexPrompt,
     isFeatured: true,
   },
   {
-    id: "gpt-review",
-    label: "GPT Review",
-    description: "Code review focused prompt",
-    content: gptReviewPrompt,
+    id: "letta-gemini",
+    label: "Gemini",
+    description: "For Gemini models",
+    content: lettaGeminiPrompt,
+    isFeatured: true,
   },
 ];

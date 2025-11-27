@@ -29,9 +29,10 @@ export function SystemPromptSelector({
     return SYSTEM_PROMPTS.slice(0, 3);
   }, [featuredPrompts, showAll]);
 
-  const totalItems = showAll
-    ? visiblePrompts.length
-    : visiblePrompts.length + 1;
+  const hasHiddenPrompts = visiblePrompts.length < SYSTEM_PROMPTS.length;
+  const hasShowAllOption = !showAll && hasHiddenPrompts;
+
+  const totalItems = visiblePrompts.length + (hasShowAllOption ? 1 : 0);
 
   useInput((_input, key) => {
     if (key.upArrow) {
@@ -39,7 +40,7 @@ export function SystemPromptSelector({
     } else if (key.downArrow) {
       setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
     } else if (key.return) {
-      if (!showAll && selectedIndex === visiblePrompts.length) {
+      if (hasShowAllOption && selectedIndex === visiblePrompts.length) {
         setShowAll(true);
         setSelectedIndex(0);
       } else {
@@ -90,7 +91,7 @@ export function SystemPromptSelector({
             </Box>
           );
         })}
-        {!showAll && (
+        {hasShowAllOption && (
           <Box flexDirection="row" gap={1}>
             <Text
               color={
