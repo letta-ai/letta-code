@@ -2346,7 +2346,11 @@ export default function App({
             {/* Model Selector - conditionally mounted as overlay */}
             {modelSelectorOpen && (
               <ModelSelector
-                currentModel={llmConfig?.model}
+                currentModel={
+                  llmConfig?.model_endpoint_type && llmConfig?.model
+                    ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+                    : undefined
+                }
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
               />
