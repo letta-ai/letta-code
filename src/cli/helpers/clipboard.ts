@@ -24,6 +24,11 @@ function countLines(text: string): number {
 }
 
 // Translate various image paste formats into [Image #N] placeholders
+// Supports:
+// 1) iTerm2 OSC 1337 protocol
+// 2) Kitty graphics protocol
+// 3) Data URLs (data:image/png;base64,...)
+// 4) File paths (local files or file:// URLs)
 export function translatePasteForImages(paste: string): string {
   let s = paste || "";
 
@@ -49,7 +54,48 @@ export function translatePasteForImages(paste: string): string {
     });
   } catch {}
 
-  // 2) Data URL images
+  // 2) Kitty graphics protocol: ESC _G<params>;<base64>ESC\
+  // Format: ESC _Ga=T,f=100;<base64-data>ESC\
+  // where a=T means direct transmission, f=format (100=PNG, 32=RGBA, 24=RGB)
+  try {
+    const ESC = "\u001B";
+
+    // Match Kitty graphics protocol: ESC _G...;base64ESC\
+    const KITTY_PATTERN = new RegExp(
+      `${ESC.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}_G([^;]*);([\\s\\S]*?)${ESC.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\\\`,
+      "g",
+    );
+
+    s = s.replace(KITTY_PATTERN, (_m, paramsStr: string, base64: string) => {
+      // Parse key=value parameters
+      const params: Record<string, string> = {};
+      for (const pair of String(paramsStr || "").split(",")) {
+        const [k, v] = pair.split("=");
+        if (k && v) params[k.trim()] = v.trim();
+      }
+
+      // Only process direct transmissions (a=T or a=t)
+      if (params.a !== "T" && params.a !== "t") {
+        return _m; // Return original if not a direct transmission
+      }
+
+      // Determine media type from format parameter
+      const format = params.f || "100"; // Default to PNG
+      const mt =
+        format === "100"
+          ? "image/png"
+          : format === "32"
+            ? "image/png" // RGBA can be treated as PNG
+            : format === "24"
+              ? "image/png" // RGB can be treated as PNG
+              : "image/png";
+
+      const id = allocateImage({ data: base64.trim(), mediaType: mt });
+      return `[Image #${id}]`;
+    });
+  } catch {}
+
+  // 3) Data URL images
   try {
     const DATA_URL = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
     s = s.replace(DATA_URL, (_m, subtype: string, b64: string) => {
@@ -59,7 +105,7 @@ export function translatePasteForImages(paste: string): string {
     });
   } catch {}
 
-  // 3) Single image file path paste
+  // 4) Single image file path paste
   try {
     const trimmed = s.trim();
     const singleLine = countLines(trimmed) <= 1;
