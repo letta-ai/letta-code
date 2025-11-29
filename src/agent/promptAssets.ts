@@ -1,7 +1,7 @@
 // Additional system prompts for /system command
 
 import humanPrompt from "./prompts/human.mdx";
-import lettaAnthropicPrompt from "./prompts/letta_anthropic.md";
+import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
