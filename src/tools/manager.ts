@@ -86,6 +86,31 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "Skill",
 ];
 
+// PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
+export const OPENAI_PASCAL_TOOLS: ToolName[] = [
+  "ShellCommand",
+  "Shell",
+  "ReadFile",
+  "ListDir",
+  "GrepFiles",
+  "ApplyPatch",
+  "UpdatePlan",
+  "Skill",
+];
+
+export const GEMINI_PASCAL_TOOLS: ToolName[] = [
+  "RunShellCommand",
+  "ReadFileGemini",
+  "ListDirectory",
+  "GlobGemini",
+  "SearchFileContent",
+  "Replace",
+  "WriteFileGemini",
+  "WriteTodos",
+  "ReadManyFiles",
+  "Skill",
+];
+
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Bash: { requiresApproval: true },
@@ -118,6 +143,24 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   search_file_content: { requiresApproval: false },
   write_todos: { requiresApproval: false },
   write_file_gemini: { requiresApproval: true },
+  // Codex-2 toolset (PascalCase)
+  ShellCommand: { requiresApproval: true },
+  Shell: { requiresApproval: true },
+  ReadFile: { requiresApproval: false },
+  ListDir: { requiresApproval: false },
+  GrepFiles: { requiresApproval: false },
+  ApplyPatch: { requiresApproval: true },
+  UpdatePlan: { requiresApproval: false },
+  // Gemini-2 toolset (PascalCase)
+  RunShellCommand: { requiresApproval: true },
+  ReadFileGemini: { requiresApproval: false },
+  ListDirectory: { requiresApproval: false },
+  GlobGemini: { requiresApproval: false },
+  SearchFileContent: { requiresApproval: false },
+  Replace: { requiresApproval: true },
+  WriteFileGemini: { requiresApproval: true },
+  WriteTodos: { requiresApproval: false },
+  ReadManyFiles: { requiresApproval: false },
 };
 
 interface JsonSchema {

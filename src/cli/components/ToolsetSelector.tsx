@@ -3,8 +3,15 @@ import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 import { colors } from "./colors";
 
+type ToolsetId =
+  | "codex"
+  | "codex_snake"
+  | "default"
+  | "gemini"
+  | "gemini_snake";
+
 interface ToolsetOption {
-  id: "codex" | "default" | "gemini";
+  id: ToolsetId;
   label: string;
   description: string;
   tools: string[];
@@ -31,7 +38,21 @@ const toolsets: ToolsetOption[] = [
   {
     id: "codex",
     label: "Codex Tools",
-    description: "OpenAI-style tools optimized for GPT models",
+    description: "OpenAI-style tools with PascalCase naming",
+    tools: [
+      "ShellCommand",
+      "Shell",
+      "ReadFile",
+      "ListDir",
+      "GrepFiles",
+      "ApplyPatch",
+      "UpdatePlan",
+    ],
+  },
+  {
+    id: "codex_snake",
+    label: "Codex Tools (snake_case)",
+    description: "OpenAI-style tools with snake_case naming",
     tools: [
       "shell_command",
       "shell",
@@ -45,7 +66,23 @@ const toolsets: ToolsetOption[] = [
   {
     id: "gemini",
     label: "Gemini Tools",
-    description: "Google-style tools optimized for Gemini models",
+    description: "Google-style tools with PascalCase naming",
+    tools: [
+      "RunShellCommand",
+      "ReadFileGemini",
+      "ListDirectory",
+      "GlobGemini",
+      "SearchFileContent",
+      "Replace",
+      "WriteFileGemini",
+      "WriteTodos",
+      "ReadManyFiles",
+    ],
+  },
+  {
+    id: "gemini_snake",
+    label: "Gemini Tools (snake_case)",
+    description: "Google-style tools with snake_case naming",
     tools: [
       "run_shell_command",
       "read_file_gemini",
@@ -61,8 +98,8 @@ const toolsets: ToolsetOption[] = [
 ];
 
 interface ToolsetSelectorProps {
-  currentToolset?: "codex" | "default" | "gemini";
-  onSelect: (toolsetId: "codex" | "default" | "gemini") => void;
+  currentToolset?: ToolsetId;
+  onSelect: (toolsetId: ToolsetId) => void;
   onCancel: () => void;
 }
 

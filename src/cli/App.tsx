@@ -223,7 +223,7 @@ export default function App({
     string | null
   >("default");
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "default" | "gemini" | null
+    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
@@ -1812,15 +1812,24 @@ export default function App({
         const { isOpenAIModel, isGeminiModel } = await import(
           "../tools/manager"
         );
-        const targetToolset: "codex" | "default" | "gemini" = isOpenAIModel(
-          selectedModel.handle ?? "",
-        )
+        const targetToolset:
+          | "codex"
+          | "codex_snake"
+          | "default"
+          | "gemini"
+          | "gemini_snake" = isOpenAIModel(selectedModel.handle ?? "")
           ? "codex"
           : isGeminiModel(selectedModel.handle ?? "")
             ? "gemini"
             : "default";
 
-        let toolsetName: "codex" | "default" | "gemini" | null = null;
+        let toolsetName:
+          | "codex"
+          | "codex_snake"
+          | "default"
+          | "gemini"
+          | "gemini_snake"
+          | null = null;
         if (currentToolset !== targetToolset) {
           const { switchToolsetForModel } = await import("../tools/toolset");
           toolsetName = await switchToolsetForModel(
@@ -1954,7 +1963,14 @@ export default function App({
   );
 
   const handleToolsetSelect = useCallback(
-    async (toolsetId: "codex" | "default" | "gemini") => {
+    async (
+      toolsetId:
+        | "codex"
+        | "codex_snake"
+        | "default"
+        | "gemini"
+        | "gemini_snake",
+    ) => {
       setToolsetSelectorOpen(false);
 
       const cmdId = uid("cmd");
