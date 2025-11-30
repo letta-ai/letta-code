@@ -133,6 +133,11 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
     if (await isBinaryFile(file_path))
       throw new Error(`Cannot read binary file: ${file_path}`);
     const content = await fs.readFile(file_path, "utf-8");
+    if (content.trim() === "") {
+      return {
+        content: `<system-reminder>\nThe file ${file_path} exists but has empty contents.\n</system-reminder>`,
+      };
+    }
     const formattedContent = formatWithLineNumbers(content, offset, limit);
     return { content: formattedContent };
   } catch (error) {
