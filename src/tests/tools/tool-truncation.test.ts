@@ -139,6 +139,7 @@ describe("tool truncation integration tests", () => {
         pattern: "match",
         path: testDir,
         output_mode: "content",
+        head_limit: 0, // Disable head_limit to test truncation
       });
 
       expect(result.output.length).toBeLessThanOrEqual(15000); // 10K + notice
