@@ -40,6 +40,7 @@ import { ErrorMessage } from "./components/ErrorMessageRich";
 import { Input } from "./components/InputRich";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
+import { QuestionDialog } from "./components/QuestionDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
@@ -214,6 +215,17 @@ export default function App({
     toolArgs: string;
   } | null>(null);
 
+  // If we have a question approval request, show the question dialog
+  const [questionApprovalPending, setQuestionApprovalPending] = useState<{
+    questions: Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description: string }>;
+      multiSelect: boolean;
+    }>;
+    toolCallId: string;
+  } | null>(null);
+
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
@@ -376,31 +388,58 @@ export default function App({
           toolCallId: planApproval.toolCallId,
           toolArgs: planApproval.toolArgs,
         });
-      } else {
-        // Regular tool approvals (may be multiple for parallel tools)
-        setPendingApprovals(approvals);
-
-        // Analyze approval contexts for all restored approvals
-        const analyzeStartupApprovals = async () => {
-          try {
-            const contexts = await Promise.all(
-              approvals.map(async (approval) => {
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
-                  {},
-                );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
-              }),
-            );
-            setApprovalContexts(contexts);
-          } catch (error) {
-            // If analysis fails, leave context as null (will show basic options)
-            console.error("Failed to analyze startup approvals:", error);
-          }
-        };
-
-        analyzeStartupApprovals();
+        return;
       }
+
+      // Check if this is an AskUserQuestion approval - route to question dialog
+      const questionApproval = approvals.find(
+        (a) => a.toolName === "AskUserQuestion",
+      );
+      if (questionApproval) {
+        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+          questionApproval.toolArgs,
+          {},
+        );
+        const questions =
+          (parsedArgs.questions as Array<{
+            question: string;
+            header: string;
+            options: Array<{ label: string; description: string }>;
+            multiSelect: boolean;
+          }>) || [];
+
+        if (questions.length > 0) {
+          setQuestionApprovalPending({
+            questions,
+            toolCallId: questionApproval.toolCallId,
+          });
+          return;
+        }
+      }
+
+      // Regular tool approvals (may be multiple for parallel tools)
+      setPendingApprovals(approvals);
+
+      // Analyze approval contexts for all restored approvals
+      const analyzeStartupApprovals = async () => {
+        try {
+          const contexts = await Promise.all(
+            approvals.map(async (approval) => {
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                approval.toolArgs,
+                {},
+              );
+              return await analyzeToolApproval(approval.toolName, parsedArgs);
+            }),
+          );
+          setApprovalContexts(contexts);
+        } catch (error) {
+          // If analysis fails, leave context as null (will show basic options)
+          console.error("Failed to analyze startup approvals:", error);
+        }
+      };
+
+      analyzeStartupApprovals();
     }
   }, [loadingState, startupApproval, startupApprovals]);
 
@@ -566,6 +605,33 @@ export default function App({
               });
               setStreaming(false);
               return;
+            }
+
+            // Check each approval for AskUserQuestion special case
+            const questionApproval = approvalsToProcess.find(
+              (a) => a.toolName === "AskUserQuestion",
+            );
+            if (questionApproval) {
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                questionApproval.toolArgs,
+                {},
+              );
+              const questions =
+                (parsedArgs.questions as Array<{
+                  question: string;
+                  header: string;
+                  options: Array<{ label: string; description: string }>;
+                  multiSelect: boolean;
+                }>) || [];
+
+              if (questions.length > 0) {
+                setQuestionApprovalPending({
+                  questions,
+                  toolCallId: questionApproval.toolCallId,
+                });
+                setStreaming(false);
+                return;
+              }
             }
 
             // Check permissions for all approvals
@@ -2250,6 +2316,61 @@ export default function App({
     [planApprovalPending, processConversation, appendError],
   );
 
+  const handleQuestionSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      if (!questionApprovalPending) return;
+
+      const { toolCallId, questions } = questionApprovalPending;
+      setQuestionApprovalPending(null);
+
+      try {
+        // Format the answer string like Claude Code does
+        const answerParts = questions.map((q) => {
+          const answer = answers[q.question] || "";
+          return `"${q.question}"="${answer}"`;
+        });
+        const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
+
+        // Update buffers with tool return
+        onChunk(buffersRef.current, {
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: toolCallId,
+          tool_return: toolReturn,
+          status: "success",
+          stdout: null,
+          stderr: null,
+        });
+
+        // Rotate to a new thinking message
+        setThinkingMessage(getRandomThinkingMessage());
+        refreshDerived();
+
+        // Restart conversation loop with the answer
+        await processConversation([
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "tool",
+                tool_call_id: toolCallId,
+                tool_return: toolReturn,
+                status: "success",
+                stdout: null,
+                stderr: null,
+              },
+            ],
+          },
+        ]);
+      } catch (e) {
+        appendError(String(e));
+        setStreaming(false);
+      }
+    },
+    [questionApprovalPending, processConversation, appendError, refreshDerived],
+  );
+
   // Live area shows only in-progress items
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
@@ -2380,7 +2501,8 @@ export default function App({
                 !toolsetSelectorOpen &&
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen &&
-                !planApprovalPending
+                !planApprovalPending &&
+                !questionApprovalPending
               }
               streaming={streaming}
               commandRunning={commandRunning}
@@ -2445,6 +2567,17 @@ export default function App({
                   onApprove={() => handlePlanApprove(false)}
                   onApproveAndAcceptEdits={() => handlePlanApprove(true)}
                   onKeepPlanning={handlePlanKeepPlanning}
+                />
+              </>
+            )}
+
+            {/* Question Dialog - for AskUserQuestion tool */}
+            {questionApprovalPending && (
+              <>
+                <Box height={1} />
+                <QuestionDialog
+                  questions={questionApprovalPending.questions}
+                  onSubmit={handleQuestionSubmit}
                 />
               </>
             )}

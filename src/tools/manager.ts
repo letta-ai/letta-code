@@ -47,6 +47,7 @@ export function getInternalToolName(serverName: string): string {
 }
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+  "AskUserQuestion",
   "Bash",
   "BashOutput",
   "Edit",
@@ -112,6 +113,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
 
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
+  AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   Edit: { requiresApproval: true },
