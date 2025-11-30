@@ -1277,6 +1277,43 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /bashes command - show background shell processes
+        if (msg.trim() === "/bashes") {
+          const { backgroundProcesses } = await import(
+            "../tools/impl/process_manager"
+          );
+          const cmdId = uid("cmd");
+
+          let output: string;
+          if (backgroundProcesses.size === 0) {
+            output = "No background processes running";
+          } else {
+            const lines = ["Background processes:"];
+            for (const [id, proc] of backgroundProcesses) {
+              const status =
+                proc.status === "running"
+                  ? "running"
+                  : proc.status === "completed"
+                    ? `completed (exit ${proc.exitCode})`
+                    : `failed (exit ${proc.exitCode})`;
+              lines.push(`  ${id}: ${proc.command} [${status}]`);
+            }
+            output = lines.join("\n");
+          }
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output,
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
         // Special handling for /download command - download agent file
         if (msg.trim() === "/download") {
           const cmdId = uid("cmd");

@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "bash_id": {
+    "shell_id": {
       "type": "string",
       "description": "The ID of the background shell to retrieve output from"
     },
@@ -10,7 +10,7 @@
       "description": "Optional regular expression to filter the output lines. Only lines matching this regex will be included in the result. Any lines that do not match will no longer be available to read."
     }
   },
-  "required": ["bash_id"],
+  "required": ["shell_id"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

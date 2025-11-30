@@ -23,7 +23,7 @@ describe("Bash background tools", () => {
       run_in_background: true,
     });
 
-    // Extract bash_id from the response text
+    // Extract shell_id from the response text
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     expect(match).toBeDefined();
     const bashId = `bash_${match?.[1]}`;
@@ -32,13 +32,13 @@ describe("Bash background tools", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Retrieve output
-    const outputResult = await bash_output({ bash_id: bashId });
+    const outputResult = await bash_output({ shell_id: bashId });
 
     expect(outputResult.message).toContain("background output");
   });
 
-  test("BashOutput handles non-existent bash_id gracefully", async () => {
-    const result = await bash_output({ bash_id: "nonexistent" });
+  test("BashOutput handles non-existent shell_id gracefully", async () => {
+    const result = await bash_output({ shell_id: "nonexistent" });
 
     expect(result.message).toContain("No background process found");
   });
