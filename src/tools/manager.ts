@@ -399,13 +399,13 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
 
   let baseToolNames: ToolName[];
   if (!filterActive && modelIdentifier && isGeminiModel(modelIdentifier)) {
-    baseToolNames = GEMINI_DEFAULT_TOOLS;
+    baseToolNames = GEMINI_PASCAL_TOOLS;
   } else if (
     !filterActive &&
     modelIdentifier &&
     isOpenAIModel(modelIdentifier)
   ) {
-    baseToolNames = OPENAI_DEFAULT_TOOLS;
+    baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!filterActive) {
     baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
   } else {
