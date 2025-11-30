@@ -3,8 +3,7 @@ import { validateRequiredParams } from "./validation.js";
 interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed";
-  id: string;
-  priority?: "high" | "medium" | "low";
+  activeForm: string;
 }
 interface TodoWriteArgs {
   todos: TodoItem[];
@@ -29,10 +28,8 @@ export async function todo_write(
       throw new Error(
         "Each todo must have a valid status (pending, in_progress, or completed)",
       );
-    if (!todo.id || typeof todo.id !== "string")
-      throw new Error("Each todo must have an id string");
-    if (todo.priority && !["high", "medium", "low"].includes(todo.priority))
-      throw new Error("If provided, priority must be high, medium, or low");
+    if (!todo.activeForm || typeof todo.activeForm !== "string")
+      throw new Error("Each todo must have an activeForm string");
   }
   return {
     message:

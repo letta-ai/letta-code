@@ -62,6 +62,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "ls") displayName = "LS";
   else if (displayName === "todo_write") displayName = "TODO";
   else if (displayName === "TodoWrite") displayName = "TODO";
+  else if (displayName === "EnterPlanMode") displayName = "Planning";
   else if (displayName === "ExitPlanMode") displayName = "Planning";
   // Codex toolset
   else if (displayName === "update_plan") displayName = "Plan";

@@ -99,6 +99,13 @@ export const commands: Record<string, Command> = {
       return "Downloading agent file...";
     },
   },
+  "/bashes": {
+    desc: "Show background shell processes",
+    handler: () => {
+      // Handled specially in App.tsx to show background processes
+      return "Showing background processes...";
+    },
+  },
 };
 
 /**

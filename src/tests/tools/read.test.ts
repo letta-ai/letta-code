@@ -108,4 +108,24 @@ export default box;
       /missing required parameter.*file_path/,
     );
   });
+
+  test("returns system reminder for empty files", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("empty.txt", "");
+
+    const result = await read({ file_path: file });
+
+    expect(result.content).toContain("<system-reminder>");
+    expect(result.content).toContain("empty contents");
+  });
+
+  test("returns system reminder for whitespace-only files", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("whitespace.txt", "   \n\n  \t  ");
+
+    const result = await read({ file_path: file });
+
+    expect(result.content).toContain("<system-reminder>");
+    expect(result.content).toContain("empty contents");
+  });
 });

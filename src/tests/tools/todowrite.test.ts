@@ -5,8 +5,12 @@ describe("TodoWrite tool", () => {
   test("accepts valid todos with all required fields", async () => {
     const result = await todo_write({
       todos: [
-        { id: "1", content: "Task 1", status: "pending" },
-        { id: "2", content: "Task 2", status: "in_progress" },
+        {
+          content: "Run tests",
+          status: "pending",
+          activeForm: "Running tests",
+        },
+        { content: "Fix bug", status: "in_progress", activeForm: "Fixing bug" },
       ],
     });
 
@@ -14,15 +18,15 @@ describe("TodoWrite tool", () => {
     expect(result.message).toContain("modified successfully");
   });
 
-  test("requires id field", async () => {
+  test("requires activeForm field", async () => {
     await expect(
       todo_write({
         todos: [
           // @ts-expect-error - testing invalid input
-          { content: "Missing id", status: "pending" },
+          { content: "Missing activeForm", status: "pending" },
         ],
       }),
-    ).rejects.toThrow(/id string/);
+    ).rejects.toThrow(/activeForm string/);
   });
 
   test("requires content field", async () => {
@@ -30,7 +34,7 @@ describe("TodoWrite tool", () => {
       todo_write({
         todos: [
           // @ts-expect-error - testing invalid input
-          { id: "1", status: "pending" },
+          { activeForm: "Testing", status: "pending" },
         ],
       }),
     ).rejects.toThrow(/content string/);
@@ -41,7 +45,7 @@ describe("TodoWrite tool", () => {
       todo_write({
         todos: [
           // @ts-expect-error - testing invalid input
-          { id: "1", content: "Test" },
+          { content: "Test", activeForm: "Testing" },
         ],
       }),
     ).rejects.toThrow(/valid status/);
@@ -52,7 +56,7 @@ describe("TodoWrite tool", () => {
       todo_write({
         todos: [
           // @ts-expect-error - testing invalid status
-          { id: "1", content: "Test", status: "invalid" },
+          { content: "Test", status: "invalid", activeForm: "Testing" },
         ],
       }),
     ).rejects.toThrow(/valid status/);
@@ -62,37 +66,5 @@ describe("TodoWrite tool", () => {
     const result = await todo_write({ todos: [] });
 
     expect(result.message).toBeDefined();
-  });
-
-  test("accepts optional priority field", async () => {
-    const result = await todo_write({
-      todos: [
-        {
-          id: "1",
-          content: "High priority task",
-          status: "pending",
-          priority: "high",
-        },
-        {
-          id: "2",
-          content: "Low priority task",
-          status: "pending",
-          priority: "low",
-        },
-      ],
-    });
-
-    expect(result.message).toContain("modified successfully");
-  });
-
-  test("validates priority values", async () => {
-    await expect(
-      todo_write({
-        todos: [
-          // @ts-expect-error - testing invalid priority
-          { id: "1", content: "Test", status: "pending", priority: "urgent" },
-        ],
-      }),
-    ).rejects.toThrow(/priority must be/);
   });
 });
