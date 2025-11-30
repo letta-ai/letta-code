@@ -3,6 +3,7 @@ import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
 import EditDescription from "./descriptions/Edit.md";
+import EnterPlanModeDescription from "./descriptions/EnterPlanMode.md";
 import ExitPlanModeDescription from "./descriptions/ExitPlanMode.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -34,6 +35,7 @@ import { ask_user_question } from "./impl/AskUserQuestion";
 import { bash } from "./impl/Bash";
 import { bash_output } from "./impl/BashOutput";
 import { edit } from "./impl/Edit";
+import { enter_plan_mode } from "./impl/EnterPlanMode";
 import { exit_plan_mode } from "./impl/ExitPlanMode";
 import { glob } from "./impl/Glob";
 // Gemini toolset
@@ -65,6 +67,7 @@ import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
+import EnterPlanModeSchema from "./schemas/EnterPlanMode.json";
 import ExitPlanModeSchema from "./schemas/ExitPlanMode.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -120,6 +123,11 @@ const toolDefinitions = {
     schema: EditSchema,
     description: EditDescription.trim(),
     impl: edit as unknown as ToolImplementation,
+  },
+  EnterPlanMode: {
+    schema: EnterPlanModeSchema,
+    description: EnterPlanModeDescription.trim(),
+    impl: enter_plan_mode as unknown as ToolImplementation,
   },
   ExitPlanMode: {
     schema: ExitPlanModeSchema,

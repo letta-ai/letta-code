@@ -34,6 +34,7 @@ import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
+import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 // import { ErrorMessage } from "./components/ErrorMessage";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
@@ -64,6 +65,7 @@ import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
+import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
@@ -93,9 +95,56 @@ function getPlanModeReminder(): string {
     return "";
   }
 
-  // Use bundled reminder text for binary compatibility
-  const { PLAN_MODE_REMINDER } = require("../agent/promptAssets");
-  return PLAN_MODE_REMINDER;
+  const planFilePath = permissionMode.getPlanFilePath();
+
+  // Generate dynamic reminder with plan file path
+  return `<system-reminder>
+Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
+
+## Plan File Info:
+${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using the Write tool.` : "No plan file path assigned."}
+
+You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
+
+**Plan File Guidelines:** The plan file should contain only your final recommended approach, not all alternatives considered. Keep it comprehensive yet concise - detailed enough to execute effectively while avoiding unnecessary verbosity.
+
+## Enhanced Planning Workflow
+
+### Phase 1: Initial Understanding
+Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions.
+
+1. Understand the user's request thoroughly
+2. Explore the codebase to understand existing patterns and relevant code
+3. Use AskUserQuestion tool to clarify ambiguities in the user request up front.
+
+### Phase 2: Planning
+Goal: Come up with an approach to solve the problem identified in phase 1.
+
+- Provide any background context that may help with the task without prescribing the exact design itself
+- Create a detailed plan
+
+### Phase 3: Synthesis
+Goal: Synthesize the perspectives from Phase 2, and ensure that it aligns with the user's intentions by asking them questions.
+
+1. Collect all findings from exploration
+2. Keep track of critical files that should be read before implementing the plan
+3. Use AskUserQuestion to ask the user questions about trade offs.
+
+### Phase 4: Final Plan
+Once you have all the information you need, ensure that the plan file has been updated with your synthesized recommendation including:
+
+- Recommended approach with rationale
+- Key insights from different perspectives
+- Critical files that need modification
+
+### Phase 5: Call ExitPlanMode
+At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call ExitPlanMode to indicate to the user that you are done planning.
+
+This is critical - your turn should only end with either asking the user a question or calling ExitPlanMode. Do not stop unless it's for these 2 reasons.
+
+NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+</system-reminder>
+`;
 }
 
 // Get skill unload reminder if skills are loaded (using cached flag)
@@ -225,6 +274,12 @@ export default function App({
     }>;
     toolCallId: string;
   } | null>(null);
+
+  // If we have an EnterPlanMode approval request, show the dialog
+  const [enterPlanModeApprovalPending, setEnterPlanModeApprovalPending] =
+    useState<{
+      toolCallId: string;
+    } | null>(null);
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
@@ -415,6 +470,17 @@ export default function App({
           });
           return;
         }
+      }
+
+      // Check if this is an EnterPlanMode approval - route to enter plan mode dialog
+      const enterPlanModeApproval = approvals.find(
+        (a) => a.toolName === "EnterPlanMode",
+      );
+      if (enterPlanModeApproval) {
+        setEnterPlanModeApprovalPending({
+          toolCallId: enterPlanModeApproval.toolCallId,
+        });
+        return;
       }
 
       // Regular tool approvals (may be multiple for parallel tools)
@@ -634,6 +700,18 @@ export default function App({
               }
             }
 
+            // Check each approval for EnterPlanMode special case
+            const enterPlanModeApproval = approvalsToProcess.find(
+              (a) => a.toolName === "EnterPlanMode",
+            );
+            if (enterPlanModeApproval) {
+              setEnterPlanModeApprovalPending({
+                toolCallId: enterPlanModeApproval.toolCallId,
+              });
+              setStreaming(false);
+              return;
+            }
+
             // Check permissions for all approvals
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -708,14 +786,30 @@ export default function App({
               }),
             );
 
-            // Create denial results for auto-denied tools
-            const autoDeniedResults = autoDenied.map((ac) => ({
-              approval: ac.approval,
-              reason:
+            // Create denial results for auto-denied tools and update buffers
+            const autoDeniedResults = autoDenied.map((ac) => {
+              const reason =
                 "matchedRule" in ac.permission && ac.permission.matchedRule
                   ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`,
-            }));
+                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`;
+
+              // Update buffers with tool rejection for UI
+              onChunk(buffersRef.current, {
+                message_type: "tool_return_message",
+                id: "dummy",
+                date: new Date().toISOString(),
+                tool_call_id: ac.approval.toolCallId,
+                tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                status: "error",
+                stdout: null,
+                stderr: null,
+              });
+
+              return {
+                approval: ac.approval,
+                reason,
+              };
+            });
 
             // If all are auto-handled, continue immediately without showing dialog
             if (needsUserInput.length === 0) {
@@ -2371,6 +2465,125 @@ export default function App({
     [questionApprovalPending, processConversation, appendError, refreshDerived],
   );
 
+  const handleEnterPlanModeApprove = useCallback(async () => {
+    if (!enterPlanModeApprovalPending) return;
+
+    const { toolCallId } = enterPlanModeApprovalPending;
+    setEnterPlanModeApprovalPending(null);
+
+    // Generate plan file path
+    const planFilePath = generatePlanFilePath();
+
+    // Toggle plan mode on and store plan file path
+    permissionMode.setMode("plan");
+    permissionMode.setPlanFilePath(planFilePath);
+    setUiPermissionMode("plan");
+
+    // Get the tool return message from the implementation
+    const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use AskUserQuestion if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. When ready, use ExitPlanMode to present your plan for approval
+
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
+
+Plan file path: ${planFilePath}`;
+
+    try {
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
+
+      // Rotate to a new thinking message
+      setThinkingMessage(getRandomThinkingMessage());
+      refreshDerived();
+
+      // Restart conversation loop with approval
+      await processConversation([
+        {
+          type: "approval",
+          approvals: [
+            {
+              type: "tool",
+              tool_call_id: toolCallId,
+              tool_return: toolReturn,
+              status: "success",
+              stdout: null,
+              stderr: null,
+            },
+          ],
+        },
+      ]);
+    } catch (e) {
+      appendError(String(e));
+      setStreaming(false);
+    }
+  }, [
+    enterPlanModeApprovalPending,
+    processConversation,
+    appendError,
+    refreshDerived,
+  ]);
+
+  const handleEnterPlanModeReject = useCallback(async () => {
+    if (!enterPlanModeApprovalPending) return;
+
+    const { toolCallId } = enterPlanModeApprovalPending;
+    setEnterPlanModeApprovalPending(null);
+
+    const rejectionReason =
+      "User chose to skip plan mode and start implementing directly.";
+
+    try {
+      // Update buffers with tool rejection (format matches what harness sends)
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: toolCallId,
+        tool_return: `Error: request to call tool denied. User reason: ${rejectionReason}`,
+        status: "error",
+        stdout: null,
+        stderr: null,
+      });
+
+      // Rotate to a new thinking message
+      setThinkingMessage(getRandomThinkingMessage());
+      refreshDerived();
+
+      // Restart conversation loop with rejection
+      await processConversation([
+        {
+          type: "approval",
+          approval_request_id: toolCallId,
+          approve: false,
+          reason: rejectionReason,
+        },
+      ]);
+    } catch (e) {
+      appendError(String(e));
+      setStreaming(false);
+    }
+  }, [
+    enterPlanModeApprovalPending,
+    processConversation,
+    appendError,
+    refreshDerived,
+  ]);
+
   // Live area shows only in-progress items
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
@@ -2502,7 +2715,8 @@ export default function App({
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen &&
                 !planApprovalPending &&
-                !questionApprovalPending
+                !questionApprovalPending &&
+                !enterPlanModeApprovalPending
               }
               streaming={streaming}
               commandRunning={commandRunning}
@@ -2578,6 +2792,17 @@ export default function App({
                 <QuestionDialog
                   questions={questionApprovalPending.questions}
                   onSubmit={handleQuestionSubmit}
+                />
+              </>
+            )}
+
+            {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}
+            {enterPlanModeApprovalPending && (
+              <>
+                <Box height={1} />
+                <EnterPlanModeDialog
+                  onApprove={handleEnterPlanModeApprove}
+                  onReject={handleEnterPlanModeReject}
                 />
               </>
             )}
