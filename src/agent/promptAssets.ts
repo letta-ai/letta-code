@@ -1,5 +1,8 @@
 // Additional system prompts for /system command
 
+import anthropicPrompt from "./prompts/claude.md";
+import codexPrompt from "./prompts/codex.md";
+import geminiPrompt from "./prompts/gemini.md";
 import humanPrompt from "./prompts/human.mdx";
 import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
@@ -67,5 +70,23 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     description: "For Gemini models",
     content: lettaGeminiPrompt,
     isFeatured: true,
+  },
+  {
+    id: "anthropic",
+    label: "Claude (basic)",
+    description: "For Claude models (no skills/memory instructions)",
+    content: anthropicPrompt,
+  },
+  {
+    id: "codex",
+    label: "Codex (basic)",
+    description: "For Codex models (no skills/memory instructions)",
+    content: codexPrompt,
+  },
+  {
+    id: "gemini",
+    label: "Gemini (basic)",
+    description: "For Gemini models (no skills/memory instructions)",
+    content: geminiPrompt,
   },
 ];
