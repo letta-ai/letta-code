@@ -14,15 +14,12 @@
             "type": "string",
             "enum": ["pending", "in_progress", "completed"]
           },
-          "priority": {
+          "activeForm": {
             "type": "string",
-            "enum": ["high", "medium", "low"]
-          },
-          "id": {
-            "type": "string"
+            "minLength": 1
           }
         },
-        "required": ["content", "status", "id"],
+        "required": ["content", "status", "activeForm"],
         "additionalProperties": false
       },
       "description": "The updated todo list"

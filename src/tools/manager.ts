@@ -54,7 +54,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Glob",
   "Grep",
   "KillBash",
-  "LS",
   "MultiEdit",
   "Read",
   "Skill",
