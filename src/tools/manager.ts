@@ -56,11 +56,12 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Glob",
   "Grep",
   "KillBash",
-  "MultiEdit",
+  // "MultiEdit",
+  // "LS",
   "Read",
-  "Skill",
   "TodoWrite",
   "Write",
+  "Skill",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
