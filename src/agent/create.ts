@@ -98,6 +98,9 @@ export async function createAgent(
       ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
       : defaultMemoryBlocks;
 
+  // Cache the formatted skills block value so we can update an existing block
+  let skillsBlockValue: string | undefined;
+
   // Resolve absolute path for skills directory
   const resolvedSkillsDirectory =
     skillsDirectory || join(process.cwd(), SKILLS_DIR);
@@ -117,10 +120,9 @@ export async function createAgent(
     // Find and update the skills memory block with discovered skills
     const skillsBlock = filteredMemoryBlocks.find((b) => b.label === "skills");
     if (skillsBlock) {
-      skillsBlock.value = formatSkillsForMemory(
-        skills,
-        resolvedSkillsDirectory,
-      );
+      const formatted = formatSkillsForMemory(skills, resolvedSkillsDirectory);
+      skillsBlock.value = formatted;
+      skillsBlockValue = formatted;
     }
   } catch (error) {
     console.warn(
@@ -182,7 +184,19 @@ export async function createAgent(
   for (const defaultBlock of filteredMemoryBlocks) {
     const existingBlock = existingBlocks.get(defaultBlock.label);
     if (existingBlock?.id) {
-      // Reuse existing global shared block
+      // Reuse existing global/shared block, but refresh skills content if it changed
+      if (defaultBlock.label === "skills" && skillsBlockValue !== undefined) {
+        try {
+          await client.blocks.update(existingBlock.id, {
+            value: skillsBlockValue,
+          });
+        } catch (error) {
+          console.warn(
+            `Failed to update skills block ${existingBlock.id}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
       blockIds.push(existingBlock.id);
     } else {
       // Need to create this block
