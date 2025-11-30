@@ -1,5 +1,6 @@
 // src/cli/App.tsx
 
+import { existsSync, readFileSync } from "node:fs";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -145,6 +146,22 @@ This is critical - your turn should only end with either asking the user a quest
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
 </system-reminder>
 `;
+}
+
+// Read plan content from the plan file
+function readPlanFile(): string {
+  const planFilePath = permissionMode.getPlanFilePath();
+  if (!planFilePath) {
+    return "No plan file path set.";
+  }
+  if (!existsSync(planFilePath)) {
+    return `Plan file not found at ${planFilePath}`;
+  }
+  try {
+    return readFileSync(planFilePath, "utf-8");
+  } catch {
+    return `Failed to read plan file at ${planFilePath}`;
+  }
 }
 
 // Get skill unload reminder if skills are loaded (using cached flag)
@@ -432,11 +449,8 @@ export default function App({
       // Check if this is an ExitPlanMode approval - route to plan dialog
       const planApproval = approvals.find((a) => a.toolName === "ExitPlanMode");
       if (planApproval) {
-        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          planApproval.toolArgs,
-          {},
-        );
-        const plan = (parsedArgs.plan as string) || "No plan provided";
+        // Read plan from the plan file (not from toolArgs)
+        const plan = readPlanFile();
 
         setPlanApprovalPending({
           plan,
@@ -658,11 +672,8 @@ export default function App({
               (a) => a.toolName === "ExitPlanMode",
             );
             if (planApproval) {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                planApproval.toolArgs,
-                {},
-              );
-              const plan = (parsedArgs.plan as string) || "No plan provided";
+              // Read plan from the plan file (not from toolArgs)
+              const plan = readPlanFile();
 
               setPlanApprovalPending({
                 plan,
