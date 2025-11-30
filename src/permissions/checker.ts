@@ -80,7 +80,7 @@ export function checkPermission(
   }
 
   // Check permission mode (applies before CLI allow rules but after deny rules)
-  const modeOverride = permissionMode.checkModeOverride(toolName);
+  const modeOverride = permissionMode.checkModeOverride(toolName, toolArgs);
   if (modeOverride) {
     const currentMode = permissionMode.getMode();
     return {

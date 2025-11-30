@@ -1,22 +1,11 @@
 /**
  * ExitPlanMode tool implementation
- * Exits plan mode by presenting the plan to the user for approval
+ * Exits plan mode - the plan is read from the plan file by the UI
  */
 
-import { validateRequiredParams } from "./validation.js";
-
-interface ExitPlanModeArgs {
-  plan: string;
-}
-
-export async function exit_plan_mode(
-  args: ExitPlanModeArgs,
-): Promise<{ message: string }> {
-  validateRequiredParams(args, ["plan"], "ExitPlanMode");
-  const { plan: _plan } = args;
-
+export async function exit_plan_mode(): Promise<{ message: string }> {
   // Return confirmation message that plan was approved
-  // Note: The plan itself should be displayed by the UI/system before this return is shown
+  // Note: The plan is read from the plan file by the UI before this return is shown
   return {
     message:
       "User has approved your plan. You can now start coding.\nStart with updating your todo list if applicable",

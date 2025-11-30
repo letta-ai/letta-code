@@ -21,6 +21,18 @@ function getRipgrepPath(): string {
 
 const rgPath = getRipgrepPath();
 
+function applyOffsetAndLimit<T>(
+  items: T[],
+  offset: number,
+  limit: number,
+): T[] {
+  const sliced = items.slice(offset);
+  if (limit > 0) {
+    return sliced.slice(0, limit);
+  }
+  return sliced; // 0 = unlimited
+}
+
 export interface GrepArgs {
   pattern: string;
   path?: string;
@@ -32,6 +44,8 @@ export interface GrepArgs {
   "-n"?: boolean;
   "-i"?: boolean;
   type?: string;
+  head_limit?: number;
+  offset?: number;
   multiline?: boolean;
 }
 
@@ -51,9 +65,11 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
     "-B": before,
     "-A": after,
     "-C": context,
-    "-n": lineNumbers,
+    "-n": lineNumbers = true,
     "-i": ignoreCase,
     type: fileType,
+    head_limit = 100,
+    offset = 0,
     multiline,
   } = args;
 
@@ -88,12 +104,14 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       cwd: userCwd,
     });
     if (output_mode === "files_with_matches") {
-      const files = stdout.trim().split("\n").filter(Boolean);
+      const allFiles = stdout.trim().split("\n").filter(Boolean);
+      const files = applyOffsetAndLimit(allFiles, offset, head_limit);
       const fileCount = files.length;
-      if (fileCount === 0) return { output: "No files found", files: 0 };
+      const totalCount = allFiles.length;
+      if (totalCount === 0) return { output: "No files found", files: 0 };
 
       const fileList = files.join("\n");
-      const fullOutput = `Found ${fileCount} file${fileCount !== 1 ? "s" : ""}\n${fileList}`;
+      const fullOutput = `Found ${totalCount} file${totalCount !== 1 ? "s" : ""}${fileCount < totalCount ? ` (showing ${fileCount})` : ""}\n${fileList}`;
 
       // Apply character limit to prevent large file lists
       const { content: truncatedOutput } = truncateByChars(
@@ -104,13 +122,14 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
 
       return {
         output: truncatedOutput,
-        files: fileCount,
+        files: totalCount,
       };
     } else if (output_mode === "count") {
-      const lines = stdout.trim().split("\n").filter(Boolean);
+      const allLines = stdout.trim().split("\n").filter(Boolean);
+      const lines = applyOffsetAndLimit(allLines, offset, head_limit);
       let totalMatches = 0;
       let filesWithMatches = 0;
-      for (const line of lines) {
+      for (const line of allLines) {
         const parts = line.split(":");
         if (parts.length >= 2) {
           const lastPart = parts[parts.length - 1];
@@ -138,16 +157,20 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       if (!stdout || stdout.trim() === "")
         return { output: "No matches found", matches: 0 };
 
+      const allLines = stdout.split("\n");
+      const lines = applyOffsetAndLimit(allLines, offset, head_limit);
+      const content = lines.join("\n");
+
       // Apply character limit to content output
       const { content: truncatedOutput } = truncateByChars(
-        stdout,
+        content,
         LIMITS.GREP_OUTPUT_CHARS,
         "Grep",
       );
 
       return {
         output: truncatedOutput,
-        matches: stdout.split("\n").filter(Boolean).length,
+        matches: allLines.filter(Boolean).length,
       };
     }
   } catch (error) {

@@ -110,6 +110,7 @@ export function Input({
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
+    if (!visible) return;
     if (key.escape) {
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
@@ -138,6 +139,7 @@ export function Input({
 
   // Handle CTRL-C for double-ctrl-c-to-exit
   useInput((input, key) => {
+    if (!visible) return;
     if (input === "c" && key.ctrl) {
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
@@ -156,6 +158,7 @@ export function Input({
 
   // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
+    if (!visible) return;
     if (key.shift && key.tab) {
       // Cycle through permission modes
       const modes: PermissionMode[] = [
@@ -181,6 +184,7 @@ export function Input({
 
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
+    if (!visible) return;
     // Don't interfere with autocomplete navigation
     if (isAutocompleteActive) {
       return;

@@ -63,7 +63,9 @@ export async function getResumeData(
       cursorLastMessage.id !== inContextLastMessageId
     ) {
       console.warn(
-        `[check-approval] Desync detected - cursor last: ${cursorLastMessage.id}, in-context last: ${inContextLastMessageId}`,
+        `[check-approval] Desync detected:\n` +
+          `  cursor last: ${cursorLastMessage.id} (type: ${cursorLastMessage.message_type})\n` +
+          `  in-context last: ${inContextLastMessageId} (type: unknown until found)`,
       );
 
       // Search for the in-context message in the fetched messages
@@ -82,6 +84,12 @@ export async function getResumeData(
         const inContextMessage = approvalMessage ?? lastMessage;
 
         if (inContextMessage) {
+          console.warn(
+            `[check-approval] Found in-context message (type: ${inContextMessage.message_type})` +
+              (matchingMessages.length > 1
+                ? ` - had ${matchingMessages.length} duplicates`
+                : ""),
+          );
           messageToCheck = inContextMessage;
         }
       } else {
@@ -97,6 +105,18 @@ export async function getResumeData(
     // Check for pending approval(s) using SDK types
     let pendingApproval: ApprovalRequest | null = null;
     let pendingApprovals: ApprovalRequest[] = [];
+
+    // Log the agent's last_stop_reason for debugging
+    const lastStopReason = (agent as { last_stop_reason?: string })
+      .last_stop_reason;
+    if (lastStopReason === "requires_approval") {
+      console.warn(
+        `[check-approval] Agent last_stop_reason: ${lastStopReason}`,
+      );
+      console.warn(
+        `[check-approval] Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
+      );
+    }
 
     if (messageToCheck.message_type === "approval_request_message") {
       // Cast to access tool_calls with proper typing
@@ -142,6 +162,9 @@ export async function getResumeData(
       // Set legacy singular field for backward compatibility (first approval only)
       if (pendingApprovals.length > 0) {
         pendingApproval = pendingApprovals[0] || null;
+        console.warn(
+          `[check-approval] Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
+        );
       }
     }
 
