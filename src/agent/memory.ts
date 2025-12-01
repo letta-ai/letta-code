@@ -44,7 +44,7 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   const memoryBlocks: CreateBlock[] = [];
 
   const mdxFiles = [
-    "persona.mdx",
+    "persona_empty.mdx",
     "human.mdx",
     "project.mdx",
     "skills.mdx",

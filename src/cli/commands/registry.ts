@@ -106,6 +106,13 @@ export const commands: Record<string, Command> = {
       return "Showing background processes...";
     },
   },
+  "/init": {
+    desc: "Initialize agent memory for this project",
+    handler: () => {
+      // Handled specially in App.tsx to send initialization prompt
+      return "Initializing memory...";
+    },
+  },
 };
 
 /**
