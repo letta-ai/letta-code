@@ -1531,6 +1531,65 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /init command - initialize agent memory
+        if (msg.trim() === "/init") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Sending initialization prompt to agent...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the initialization prompt
+            const { INITIALIZE_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Initialization prompt sent",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Send initialization prompt as a system reminder to the agent
+            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n</system-reminder>`;
+
+            // Process conversation with the init prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: initMessage,
+              },
+            ]);
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
