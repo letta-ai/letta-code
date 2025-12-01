@@ -1538,7 +1538,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Sending initialization prompt to agent...",
+            output: "Gathering project context...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -1552,19 +1552,78 @@ export default function App({
               "../agent/promptAssets.js"
             );
 
+            // Gather git context if available
+            let gitContext = "";
+            try {
+              const { execSync } = await import("node:child_process");
+              const cwd = process.cwd();
+
+              // Check if we're in a git repo
+              try {
+                execSync("git rev-parse --git-dir", {
+                  cwd,
+                  stdio: "pipe",
+                });
+
+                // Gather git info
+                const branch = execSync("git branch --show-current", {
+                  cwd,
+                  encoding: "utf-8",
+                }).trim();
+                const mainBranch = execSync(
+                  "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo 'main'",
+                  { cwd, encoding: "utf-8", shell: "/bin/bash" },
+                ).trim();
+                const status = execSync("git status --short", {
+                  cwd,
+                  encoding: "utf-8",
+                }).trim();
+                const recentCommits = execSync(
+                  "git log --oneline -10 2>/dev/null || echo 'No commits yet'",
+                  { cwd, encoding: "utf-8" },
+                ).trim();
+
+                gitContext = `
+## Current Project Context
+
+**Working directory**: ${cwd}
+
+### Git Status
+- **Current branch**: ${branch}
+- **Main branch**: ${mainBranch}
+- **Status**:
+${status || "(clean working tree)"}
+
+### Recent Commits
+${recentCommits}
+`;
+              } catch {
+                // Not a git repo, just include working directory
+                gitContext = `
+## Current Project Context
+
+**Working directory**: ${cwd}
+**Git**: Not a git repository
+`;
+              }
+            } catch {
+              // execSync import failed, skip git context
+            }
+
             // Mark command as finished before sending message
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Initialization prompt sent",
+              output:
+                "Assimilating project context and defragmenting memories...",
               phase: "finished",
               success: true,
             });
             refreshDerived();
 
-            // Send initialization prompt as a system reminder to the agent
-            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n</system-reminder>`;
+            // Send initialization prompt with git context as a system reminder
+            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n${gitContext}\n</system-reminder>`;
 
             // Process conversation with the init prompt
             await processConversation([

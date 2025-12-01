@@ -122,15 +122,88 @@ The reasoning you have *right now* about why you're creating a block will be los
 
 Think of memory block descriptions as documentation for your future self. The better you write them now, the more effective you'll be in future sessions.
 
+## Research Depth
+
+You can ask the user if they want a standard or deep research initialization:
+
+**Standard initialization** (~3-5 minutes):
+- Inspect existing memory blocks
+- Scan README, package.json/config files, AGENTS.md, CLAUDE.md
+- Review git status and recent commits (from context below)
+- Explore key directories and understand project structure
+- Create/update project memory block with essential info
+- Only ask questions if genuinely uncertain about something important
+
+**Deep research initialization** (~10-20+ minutes):
+- Everything in standard initialization, plus:
+- Use your TODO or Plan tool to create a systematic research plan
+- Deep dive into git history for patterns, conventions, and context
+- Analyze commit message conventions and branching strategy
+- Explore multiple directories and understand architecture thoroughly
+- Search for and read key source files to understand patterns
+- Create multiple specialized memory blocks
+- May involve multiple rounds of exploration
+
+**What deep research can uncover:**
+- **Contributors & team dynamics**: Who works on what areas? Who are the main contributors? (`git shortlog -sn`)
+- **Coding habits**: When do people commit? (time patterns) What's the typical commit size?
+- **Writing & commit style**: How verbose are commit messages? What conventions are followed?
+- **Code evolution**: How has the architecture changed? What major refactors happened?
+- **Review patterns**: Are there PR templates? What gets reviewed carefully vs rubber-stamped?
+- **Pain points**: What areas have lots of bug fixes? What code gets touched frequently?
+- **Related repositories**: Ask the user if there are other repos you should know about (e.g., a backend monorepo, shared libraries, documentation repos). These relationships can be crucial context.
+
+This kind of deep context can make you significantly more effective as a long-term collaborator on the project.
+
+If the user says "take as long as you need" or explicitly wants deep research, use your TODO or Plan tool to orchestrate a thorough, multi-step research process.
+
+## Research Techniques
+
+**File-based research:**
+- README.md, CONTRIBUTING.md, AGENTS.md, CLAUDE.md
+- Package manifests (package.json, Cargo.toml, pyproject.toml, go.mod)
+- Config files (.eslintrc, tsconfig.json, .prettierrc)
+- CI/CD configs (.github/workflows/, .gitlab-ci.yml)
+
+**Git-based research** (if in a git repo):
+- `git log --oneline -20` - Recent commit history and patterns
+- `git branch -a` - Branching strategy
+- `git log --format="%s" -50 | head -20` - Commit message conventions
+- `git shortlog -sn --all | head -10` - Main contributors
+- Recent PRs or merge commits for context on ongoing work
+
+## On Asking Questions
+
+**Ask the important questions upfront, then be autonomous during execution.**
+
+**DO ask about:**
+- Research depth preference (standard vs deep) - this is important to know before starting
+- Workflow preferences that can't be determined from code (see examples below)
+- Specific rules they want you to follow
+- Clarification if you genuinely can't determine something important from the codebase
+
+**DON'T ask about:**
+- Things you can easily figure out by reading files ("What's your test framework?" - just look at package.json)
+- "What kind of work do you do?" - most devs do everything (features, bugs, refactoring), and you can see from git log anyway
+- Permission to do obvious things ("Should I read the README?" - just read it)
+- Things one at a time - bundle related questions together
+
+**Good follow-up questions** (after initial research, if human block is empty/sparse):
+- **Workflow preferences**: "How should I handle commits?" (proactive vs ask-first)
+- **Communication style**: "What level of detail do you prefer?" (terse vs detailed)
+- **Specific rules**: "Any rules I should always follow?" (e.g., "never push to main", "always run tests")
+
+These are genuinely useful because they can't be determined from the codebase and meaningfully affect how you work.
+
+**During execution**, default to action. Make reasonable choices and proceed. You can always adjust based on feedback later.
+
 ## Your Task
 
-1. **Inspect existing memory**: Use the `memory` tool to see what blocks already exist
-2. **Explore the project**: Read README, config files, AGENTS.md/CLAUDE.md if they exist
-3. **Ask questions**: Use AskUserQuestion to understand:
-   - What kind of work they typically do with you
-   - Any specific rules or preferences they want you to remember
-   - Whether this is a fresh setup or a reorganization
-4. **Create/update blocks**: Set up a memory structure that will serve you well long-term
-5. **Explain your choices**: Tell the user what you've set up and why
+1. **Ask about depth first**: Use AskUserQuestion to ask if they want standard or deep research initialization. This is a key decision - don't skip it.
+2. **Inspect existing memory**: Use the `memory` tool to see what blocks already exist
+3. **Review the project context**: Check the git info provided below, then explore files
+4. **Do the research**: Explore thoroughly based on chosen depth, being autonomous during this phase
+5. **Create/update blocks**: Set up a memory structure that will serve you well long-term
+6. **Summarize**: Briefly tell the user what you've learned and set up
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
