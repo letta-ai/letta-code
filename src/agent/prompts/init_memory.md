@@ -174,36 +174,84 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 
 ## On Asking Questions
 
-**Ask the important questions upfront, then be autonomous during execution.**
+**Ask important questions upfront, then be autonomous during execution.**
 
-**DO ask about:**
-- Research depth preference (standard vs deep) - this is important to know before starting
-- Workflow preferences that can't be determined from code (see examples below)
-- Specific rules they want you to follow
-- Clarification if you genuinely can't determine something important from the codebase
+### Recommended Upfront Questions
 
-**DON'T ask about:**
-- Things you can easily figure out by reading files ("What's your test framework?" - just look at package.json)
-- "What kind of work do you do?" - most devs do everything (features, bugs, refactoring), and you can see from git log anyway
-- Permission to do obvious things ("Should I read the README?" - just read it)
-- Things one at a time - bundle related questions together
+You should ask these questions at the start (bundle them together in one AskUserQuestion call):
 
-**Good follow-up questions** (after initial research, if human block is empty/sparse):
-- **Workflow preferences**: "How should I handle commits?" (proactive vs ask-first)
-- **Communication style**: "What level of detail do you prefer?" (terse vs detailed)
-- **Specific rules**: "Any rules I should always follow?" (e.g., "never push to main", "always run tests")
+1. **Research depth**: "Standard (~5 min) or deep research (~15-20 min)?"
+2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
+3. **Related repos**: "Are there other repositories I should know about?" (e.g., backend monorepo, shared libraries)
+4. **Workflow style**: "How proactive should I be?" (auto-commit vs ask-first)
+5. **Communication style**: "Terse or detailed responses?"
+6. **Any specific rules**: "Rules I should always follow?"
 
-These are genuinely useful because they can't be determined from the codebase and meaningfully affect how you work.
+**Why these matter:**
+- Identity lets you correlate git history to the user (their commits, PRs, coding style)
+- Related repos provide crucial context (many projects span multiple repos)
+- Workflow/communication style should be stored in the `human` block
+- Rules go in `persona` block
 
-**During execution**, default to action. Make reasonable choices and proceed. You can always adjust based on feedback later.
+### What NOT to ask
+
+- Things you can find by reading files ("What's your test framework?")
+- "What kind of work do you do? Reviewing PRs vs writing code?" - obvious from git log, most devs do everything
+- Permission for obvious actions - just do them
+- Questions one at a time - bundle them (but don't exhaust the user with too many questions at once)
+
+**During execution**, be autonomous. Make reasonable choices and proceed.
+
+## Memory Block Strategy
+
+### Split Large Blocks
+
+**Don't create monolithic blocks.** If a block is getting long (>50-100 lines), split it:
+
+Instead of one huge `project` block, consider:
+- `project-overview`: High-level description, tech stack, repo links
+- `project-commands`: Build, test, lint, dev commands
+- `project-conventions`: Commit style, PR process, code style
+- `project-architecture`: Directory structure, key modules
+- `project-gotchas`: Footguns, things to watch out for
+
+This makes memory more scannable and easier to update and share with other agents.
+
+### Update Memory Incrementally
+
+**For deep research: Update memory as you go, not all at once at the end.**
+
+Why this matters:
+- Deep research can take many turns and millions of tokens
+- Context windows overflow and trigger rolling summaries
+- If you wait until the end to write memory, you may lose important details
+- Write findings to memory blocks as you discover them
+
+Good pattern:
+1. Create block structure early (even with placeholder content)
+2. Update blocks after each research phase
+3. Refine and consolidate at the end
+
+Remember, your memory tool allows you to easily add, edit, and remove blocks. There's no reason to wait until you "know everything" to write memory. Treat your memory blocks as a living scratchpad.
+
+### Initialize ALL Relevant Blocks
+
+Don't just update a single memory block. Based on your upfront questions, also update:
+
+- **`human`**: Store the user's identity, workflow preferences, communication style
+- **`persona`**: Store rules the user wants you to follow, behavioral adaptations
+- **`project-*`**: Split project info across multiple focused blocks
+
+And add memory blocks that you think make sense to add (e.g., `project-architecture`, `project-conventions`, `project-gotchas`, etc, or even splitting the `human` block into more focused blocks, or even multiple blocks for multiple users).
 
 ## Your Task
 
-1. **Ask about depth first**: Use AskUserQuestion to ask if they want standard or deep research initialization. This is a key decision - don't skip it.
-2. **Inspect existing memory**: Use the `memory` tool to see what blocks already exist
-3. **Review the project context**: Check the git info provided below, then explore files
-4. **Do the research**: Explore thoroughly based on chosen depth, being autonomous during this phase
-5. **Create/update blocks**: Set up a memory structure that will serve you well long-term
-6. **Summarize**: Briefly tell the user what you've learned and set up
+1. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it.
+2. **Inspect existing memory**: You may already have some memory blocks initialized. See what already exists, and analyze how it is or is not insuffucient or incomplete.
+3. **Identify the user**: From git logs and their answer, figure out who they are and store in `human` block. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
+4. **Update human/persona early**: Based on answers, update your memory blocks eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
+5. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
+6. **Create/update project blocks incrementally**: Don't wait until the end - write findings as you go.
+7. **Summarize**: Briefly tell the user what you've learned and how you've decided to configure your memory.
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
