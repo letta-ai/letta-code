@@ -28,6 +28,11 @@ function countLines(text: string): number {
   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
 }
 
+/** Replace newlines with visual indicator for display */
+function sanitizeForDisplay(text: string): string {
+  return text.replace(/\r\n|\r|\n/g, "↵");
+}
+
 export function PasteAwareTextInput({
   value,
   onChange,
@@ -110,14 +115,15 @@ export function PasteAwareTextInput({
             setNudgeCursorOffset(nextCaret);
             caretOffsetRef.current = nextCaret;
           } else {
+            const displayText = sanitizeForDisplay(translated);
             const newDisplay =
-              displayValue.slice(0, at) + translated + displayValue.slice(at);
+              displayValue.slice(0, at) + displayText + displayValue.slice(at);
             const newActual =
               actualValue.slice(0, at) + translated + actualValue.slice(at);
             setDisplayValue(newDisplay);
             setActualValue(newActual);
             onChange(newDisplay);
-            const nextCaret = at + translated.length;
+            const nextCaret = at + displayText.length;
             setNudgeCursorOffset(nextCaret);
             caretOffsetRef.current = nextCaret;
           }
@@ -211,9 +217,10 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // Otherwise, insert the translated text inline
+      // Otherwise, insert the translated text inline (sanitize newlines for display)
+      const displayText = sanitizeForDisplay(translated);
       const newDisplayValue =
-        a.slice(0, lcp) + translated + a.slice(a.length - lcs);
+        a.slice(0, lcp) + displayText + a.slice(a.length - lcs);
       const newActualValue =
         actualValue.slice(0, lcp) +
         translated +
@@ -222,7 +229,7 @@ export function PasteAwareTextInput({
       setDisplayValue(newDisplayValue);
       setActualValue(newActualValue);
       onChange(newDisplayValue);
-      const nextCaret = lcp + translated.length;
+      const nextCaret = lcp + displayText.length;
       setNudgeCursorOffset(nextCaret);
       caretOffsetRef.current = nextCaret;
       return;
