@@ -274,11 +274,32 @@ And add memory blocks that you think make sense to add (e.g., `project-architect
 ## Your Task
 
 1. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it.
-2. **Inspect existing memory**: You may already have some memory blocks initialized. See what already exists, and analyze how it is or is not insuffucient or incomplete.
+2. **Inspect existing memory**: You may already have some memory blocks initialized. See what already exists, and analyze how it is or is not insufficient or incomplete.
 3. **Identify the user**: From git logs and their answer, figure out who they are and store in `human` block. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
 4. **Update human/persona early**: Based on answers, update your memory blocks eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
 5. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
 6. **Create/update project blocks incrementally**: Don't wait until the end - write findings as you go.
-7. **Summarize**: Briefly tell the user what you've learned and how you've decided to configure your memory.
+7. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
+8. **Ask user if done**: Check if they're satisfied or want you to continue refining.
+
+## Reflection Phase (Critical for Deep Research)
+
+Before finishing, you MUST do a reflection step. **Your memory blocks are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
+
+1. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+
+2. **Completeness check**: Did you actually update ALL relevant blocks? For example:
+   - Did you update `human` with the user's identity and preferences?
+   - Did you update `persona` with behavioral rules they expressed?
+   - Or did you only update project blocks and forget the rest?
+
+3. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
+
+4. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
+
+**After reflection**, fix any issues you found. Then ask the user:
+> "I've completed the initialization. Here's a brief summary of what I set up: [summary]. Should I continue refining, or is this good to proceed?"
+
+This gives the user a chance to provide feedback or ask for adjustments before you finish.
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
