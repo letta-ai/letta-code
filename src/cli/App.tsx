@@ -2916,13 +2916,10 @@ Plan file path: ${planFilePath}`;
 
             {/* Question Dialog - for AskUserQuestion tool */}
             {questionApprovalPending && (
-              <>
-                <Box height={1} />
-                <QuestionDialog
-                  questions={questionApprovalPending.questions}
-                  onSubmit={handleQuestionSubmit}
-                />
-              </>
+              <QuestionDialog
+                questions={questionApprovalPending.questions}
+                onSubmit={handleQuestionSubmit}
+              />
             )}
 
             {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}

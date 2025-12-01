@@ -135,7 +135,7 @@ export const QuestionDialog = memo(({ questions, onSubmit }: Props) => {
   if (!currentQuestion) return null;
 
   return (
-    <Box flexDirection="column" paddingY={1}>
+    <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text color={colors.approval.header}>
           <Text bold>[{currentQuestion.header}]</Text>{" "}

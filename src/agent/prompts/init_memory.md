@@ -207,9 +207,9 @@ The goal isn't to produce a report - it's to genuinely understand the project an
 
 You should ask these questions at the start (bundle them together in one AskUserQuestion call):
 
-1. **Research depth**: "Standard (~5 min) or deep research (~15-20 min)?"
+1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
-3. **Related repos**: "Are there other repositories I should know about?" (e.g., backend monorepo, shared libraries)
+3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
 4. **Workflow style**: "How proactive should I be?" (auto-commit vs ask-first)
 5. **Communication style**: "Terse or detailed responses?"
 6. **Any specific rules**: "Rules I should always follow?"
