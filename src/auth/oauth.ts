@@ -201,7 +201,11 @@ export async function validateCredentials(
 ): Promise<boolean> {
   try {
     // Create a temporary client to test authentication
-    const client = new Letta({ apiKey, baseURL: baseUrl });
+    const client = new Letta({
+      apiKey,
+      baseURL: baseUrl,
+      defaultHeaders: { "X-Letta-Source": "letta-code" },
+    });
 
     // Try to list agents - this requires valid authentication
     await client.agents.list({ limit: 1 });
