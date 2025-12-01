@@ -126,15 +126,14 @@ Think of memory block descriptions as documentation for your future self. The be
 
 You can ask the user if they want a standard or deep research initialization:
 
-**Standard initialization** (~3-5 minutes):
+**Standard initialization** (~5-20 tool calls):
 - Inspect existing memory blocks
 - Scan README, package.json/config files, AGENTS.md, CLAUDE.md
 - Review git status and recent commits (from context below)
 - Explore key directories and understand project structure
-- Create/update project memory block with essential info
-- Only ask questions if genuinely uncertain about something important
+- Create/update your memory block structure to contain the essential information you need to know about the user, your behavior (learned preferences), the project you're working in, and any other information that will help you be an effective collaborator.
 
-**Deep research initialization** (~10-20+ minutes):
+**Deep research initialization** (~100+ tool calls):
 - Everything in standard initialization, plus:
 - Use your TODO or Plan tool to create a systematic research plan
 - Deep dive into git history for patterns, conventions, and context
@@ -170,7 +169,35 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 - `git branch -a` - Branching strategy
 - `git log --format="%s" -50 | head -20` - Commit message conventions
 - `git shortlog -sn --all | head -10` - Main contributors
+- `git log --format="%an <%ae>" | sort -u` - Contributors with emails (more reliable for deduplication)
 - Recent PRs or merge commits for context on ongoing work
+
+**Important: Deduplicate contributors!** Git groups by exact author string, so the same person may appear multiple times with different names (e.g., "jsmith" and "John Smith" are likely the same person). Use emails to deduplicate, and apply common sense - usernames often match parts of full names.
+
+## How to Do Thorough Research
+
+**Don't just collect data - analyze and cross-reference it.**
+
+Shallow research (bad):
+- Run commands, copy output
+- Take everything at face value
+- List facts without understanding
+
+Thorough research (good):
+- **Cross-reference findings**: If two pieces of data seem inconsistent, dig deeper
+- **Resolve ambiguities**: Don't leave questions unanswered (e.g., "are these two contributors the same person?")
+- **Read actual content**: Don't just list file names - read key files to understand them
+- **Look for patterns**: What do the commit messages tell you about workflow? What do file structures tell you about architecture?
+- **Form hypotheses and verify**: "I think this team uses feature branches" → check git branch patterns to confirm
+- **Think like a new team member**: What would you want to know on your first day?
+
+**Questions to ask yourself during research:**
+- Does this make sense? (e.g., why would there be two contributors with similar names?)
+- What's missing? (e.g., no tests directory - is testing not done, or done differently?)
+- What can I infer? (e.g., lots of "fix:" commits in one area → that area is buggy or complex)
+- Am I just listing facts, or do I understand the project?
+
+The goal isn't to produce a report - it's to genuinely understand the project and how this human(s) works so you can be an effective collaborator.
 
 ## On Asking Questions
 
