@@ -12,7 +12,7 @@ async function main() {
 
   // Create agent
   console.log("\nCreating test agent...");
-  const agent = await createAgent("image-test-agent");
+  const { agent } = await createAgent("image-test-agent");
   console.log("Agent created:", agent.id);
 
   // Read image

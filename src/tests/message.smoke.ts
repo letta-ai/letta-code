@@ -14,7 +14,7 @@ async function main() {
   }
 
   console.log("🧠  Creating test agent...");
-  const agent = await createAgent("smoke-agent", "openai/gpt-4.1");
+  const { agent } = await createAgent("smoke-agent", "openai/gpt-4.1");
   console.log(`✅  Agent created: ${agent.id}`);
 
   console.log("💬  Sending test message...");

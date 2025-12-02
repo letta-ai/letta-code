@@ -3,7 +3,10 @@
  **/
 
 import { join } from "node:path";
-import type { AgentType } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  AgentType,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   BlockResponse,
   CreateBlock,
@@ -21,6 +24,31 @@ import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT, SYSTEM_PROMPTS } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
+
+/**
+ * Describes where a memory block came from
+ */
+export interface BlockProvenance {
+  label: string;
+  source: "global" | "project" | "new";
+}
+
+/**
+ * Provenance info for an agent creation
+ */
+export interface AgentProvenance {
+  isNew: true;
+  freshBlocks: boolean;
+  blocks: BlockProvenance[];
+}
+
+/**
+ * Result from createAgent including provenance info
+ */
+export interface CreateAgentResult {
+  agent: AgentState;
+  provenance: AgentProvenance;
+}
 
 export async function createAgent(
   name = "letta-cli-agent",
@@ -139,6 +167,10 @@ export async function createAgent(
 
   // Retrieve existing blocks (both global and local) and match them with defaults
   const existingBlocks = new Map<string, BlockResponse>();
+  // Track provenance: which blocks came from which source
+  const blockProvenance: BlockProvenance[] = [];
+  const globalBlockLabels = new Set<string>();
+  const projectBlockLabels = new Set<string>();
 
   // Only load existing blocks if we're not forcing new blocks
   if (!forceNewBlocks) {
@@ -150,6 +182,7 @@ export async function createAgent(
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
+        globalBlockLabels.add(label);
       } catch {
         // Block no longer exists, will create new one
         console.warn(
@@ -158,7 +191,7 @@ export async function createAgent(
       }
     }
 
-    // Load local blocks (style)
+    // Load local blocks (project, skills)
     for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
       if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
         continue;
@@ -166,6 +199,7 @@ export async function createAgent(
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
+        projectBlockLabels.add(label);
       } catch {
         // Block no longer exists, will create new one
         console.warn(
@@ -182,8 +216,14 @@ export async function createAgent(
   for (const defaultBlock of filteredMemoryBlocks) {
     const existingBlock = existingBlocks.get(defaultBlock.label);
     if (existingBlock?.id) {
-      // Reuse existing global shared block
+      // Reuse existing shared block
       blockIds.push(existingBlock.id);
+      // Record provenance based on where it came from
+      if (globalBlockLabels.has(defaultBlock.label)) {
+        blockProvenance.push({ label: defaultBlock.label, source: "global" });
+      } else if (projectBlockLabels.has(defaultBlock.label)) {
+        blockProvenance.push({ label: defaultBlock.label, source: "project" });
+      }
     } else {
       // Need to create this block
       blocksToCreate.push({
@@ -211,6 +251,9 @@ export async function createAgent(
       } else {
         newGlobalBlockIds[label] = createdBlock.id;
       }
+
+      // Record as newly created
+      blockProvenance.push({ label, source: "new" });
     } catch (error) {
       console.error(`Failed to create block ${label}:`, error);
       throw error;
@@ -310,5 +353,12 @@ export async function createAgent(
     }
   }
 
-  return fullAgent;
+  // Build provenance info
+  const provenance: AgentProvenance = {
+    isNew: true,
+    freshBlocks: forceNewBlocks,
+    blocks: blockProvenance,
+  };
+
+  return { agent: fullAgent, provenance };
 }

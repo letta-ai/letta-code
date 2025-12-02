@@ -54,7 +54,7 @@ describeOrSkip("createAgent init-blocks filtering", () => {
   test(
     "only requested memory blocks are created/registered",
     async () => {
-      const agent = await createAgent(
+      const { agent } = await createAgent(
         "init-blocks-test",
         undefined,
         "openai/text-embedding-3-small",
