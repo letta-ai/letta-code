@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
+import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -14,6 +15,7 @@ import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
+const appVersion = getVersion();
 
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
@@ -32,6 +34,7 @@ export function Input({
   interruptRequested = false,
   agentId,
   agentName,
+  currentModel,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -46,6 +49,7 @@ export function Input({
   interruptRequested?: boolean;
   agentId?: string;
   agentName?: string | null;
+  currentModel?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -504,7 +508,9 @@ export function Input({
           ) : (
             <Text dimColor>Press / for commands or @ for files</Text>
           )}
-          <Text dimColor>https://discord.gg/letta</Text>
+          <Text dimColor>
+            {`Letta Code v${appVersion} [${currentModel ?? "unknown"}]`}
+          </Text>
         </Box>
       </Box>
     </Box>
