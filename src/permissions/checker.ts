@@ -311,17 +311,26 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "BashOutput",
     "ExitPlanMode",
     "LS",
-    // Codex toolset - tools that don't require approval
+    // Codex toolset (snake_case) - tools that don't require approval
     "read_file",
     "list_dir",
     "grep_files",
     "update_plan",
-    // Gemini toolset - tools that don't require approval (using server names)
+    // Codex toolset (PascalCase) - tools that don't require approval
+    "ReadFile",
+    "ListDir",
+    "GrepFiles",
+    "UpdatePlan",
+    // Gemini toolset (snake_case) - tools that don't require approval
     "list_directory",
     "search_file_content",
     "write_todos",
     "read_many_files",
-    // Note: read_file, glob already covered above (shared across toolsets)
+    // Gemini toolset (PascalCase) - tools that don't require approval
+    "ListDirectory",
+    "SearchFileContent",
+    "WriteTodos",
+    "ReadManyFiles",
   ];
 
   if (autoAllowTools.includes(toolName)) {
