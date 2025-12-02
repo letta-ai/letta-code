@@ -116,16 +116,45 @@ class PermissionModeManager {
         return null;
 
       case "plan": {
-        // Read-only mode: allow analysis tools, deny modification tools
+        // Read-only mode: allow analysis tools, deny everything else
         const allowedInPlan = [
+          // Anthropic toolset
           "Read",
           "Glob",
           "Grep",
           "NotebookRead",
           "TodoWrite",
+          // Codex toolset (snake_case)
+          "read_file",
+          "list_dir",
+          "grep_files",
+          "update_plan",
+          // Codex toolset (PascalCase)
+          "ReadFile",
+          "ListDir",
+          "GrepFiles",
+          "UpdatePlan",
+          // Gemini toolset (snake_case)
+          "list_directory",
+          "search_file_content",
+          "write_todos",
+          "read_many_files",
+          // Gemini toolset (PascalCase)
+          "ListDirectory",
+          "SearchFileContent",
+          "WriteTodos",
+          "ReadManyFiles",
         ];
-        const writeTools = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
-        const deniedInPlan = ["Bash", "WebFetch"];
+        const writeTools = [
+          // Anthropic toolset
+          "Write",
+          "Edit",
+          "MultiEdit",
+          "NotebookEdit",
+          // Codex toolset
+          "apply_patch",
+          "ApplyPatch",
+        ];
 
         if (allowedInPlan.includes(toolName)) {
           return "allow";
@@ -140,13 +169,10 @@ class PermissionModeManager {
           if (planFilePath && targetPath && targetPath === planFilePath) {
             return "allow";
           }
-          return "deny";
         }
 
-        if (deniedInPlan.includes(toolName)) {
-          return "deny";
-        }
-        return null;
+        // Everything else denied in plan mode
+        return "deny";
       }
 
       case "default":
