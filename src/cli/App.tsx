@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
@@ -46,6 +47,7 @@ import { QuestionDialog } from "./components/QuestionDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { StatusMessage } from "./components/StatusMessage";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
@@ -199,6 +201,74 @@ function getSkillUnloadReminder(): string {
   return "";
 }
 
+// Generate status lines based on agent provenance
+function generateStatusLines(
+  continueSession: boolean,
+  agentProvenance: AgentProvenance | null,
+  agentState?: AgentState | null,
+): string[] {
+  const lines: string[] = [];
+
+  // For resumed agents
+  if (continueSession) {
+    lines.push(`Resumed existing agent (${agentState?.id})`);
+
+    // Show attached blocks if available
+    if (agentState?.memory?.blocks) {
+      const labels = agentState.memory.blocks
+        .map((b) => b.label)
+        .filter(Boolean)
+        .join(", ");
+      if (labels) {
+        lines.push(`  → Memory blocks: ${labels}`);
+      }
+    }
+
+    lines.push("  → To create a new agent, use --new");
+    return lines;
+  }
+
+  // For new agents with provenance
+  if (agentProvenance) {
+    if (agentProvenance.freshBlocks) {
+      lines.push(`Created new agent (${agentState?.id})`);
+      const allLabels = agentProvenance.blocks.map((b) => b.label).join(", ");
+      if (allLabels) {
+        lines.push(`  → Created new memory blocks: ${allLabels}`);
+      }
+    } else {
+      lines.push(`Created new agent (${agentState?.id})`);
+
+      // Group blocks by source
+      const globalBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "global")
+        .map((b) => b.label);
+      const projectBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "project")
+        .map((b) => b.label);
+      const newBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "new")
+        .map((b) => b.label);
+
+      if (globalBlocks.length > 0) {
+        lines.push(
+          `  → Reusing from global (~/.letta/): ${globalBlocks.join(", ")}`,
+        );
+      }
+      if (projectBlocks.length > 0) {
+        lines.push(
+          `  → Reusing from project (.letta/): ${projectBlocks.join(", ")}`,
+        );
+      }
+      if (newBlocks.length > 0) {
+        lines.push(`  → Created new blocks: ${newBlocks.join(", ")}`);
+      }
+    }
+  }
+
+  return lines;
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -221,6 +291,7 @@ export default function App({
   startupApprovals = [],
   messageHistory = [],
   tokenStreaming = true,
+  agentProvenance = null,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -237,6 +308,7 @@ export default function App({
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
   tokenStreaming?: boolean;
+  agentProvenance?: AgentProvenance | null;
 }) {
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
@@ -386,7 +458,7 @@ export default function App({
       const ln = b.byId.get(id);
       if (!ln) continue;
       // console.log(`[COMMIT] Checking ${id}: kind=${ln.kind}, phase=${(ln as any).phase}`);
-      if (ln.kind === "user" || ln.kind === "error") {
+      if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         // console.log(`[COMMIT] Committed ${id} (${ln.kind})`);
@@ -511,6 +583,23 @@ export default function App({
       }
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
+
+      // Inject status line at the end of the backfilled history
+      const statusLines = generateStatusLines(
+        continueSession,
+        agentProvenance,
+        agentState,
+      );
+      if (statusLines.length > 0) {
+        const statusId = `status-${Date.now().toString(36)}`;
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: statusLines,
+        });
+        buffersRef.current.order.push(statusId);
+      }
+
       refreshDerived();
       commitEligibleLines(buffersRef.current);
     }
@@ -522,6 +611,7 @@ export default function App({
     continueSession,
     columns,
     agentState,
+    agentProvenance,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -2715,13 +2805,32 @@ Plan file path: ${planFilePath}`;
           },
         },
       ]);
+
+      // Inject status line for fresh sessions
+      const statusLines = generateStatusLines(
+        continueSession,
+        agentProvenance,
+        agentState,
+      );
+      if (statusLines.length > 0) {
+        const statusId = `status-${Date.now().toString(36)}`;
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: statusLines,
+        });
+        buffersRef.current.order.push(statusId);
+        refreshDerived();
+      }
     }
   }, [
     loadingState,
     continueSession,
     messageHistory.length,
     columns,
+    agentProvenance,
     agentState,
+    refreshDerived,
   ]);
 
   return (
@@ -2745,9 +2854,11 @@ Plan file path: ${planFilePath}`;
               <ToolCallMessage line={item} />
             ) : item.kind === "error" ? (
               <ErrorMessage line={item} />
-            ) : (
+            ) : item.kind === "status" ? (
+              <StatusMessage line={item} />
+            ) : item.kind === "command" ? (
               <CommandMessage line={item} />
-            )}
+            ) : null}
           </Box>
         )}
       </Static>
@@ -2779,9 +2890,11 @@ Plan file path: ${planFilePath}`;
                       <ToolCallMessage line={ln} />
                     ) : ln.kind === "error" ? (
                       <ErrorMessage line={ln} />
-                    ) : (
+                    ) : ln.kind === "status" ? (
+                      <StatusMessage line={ln} />
+                    ) : ln.kind === "command" ? (
                       <CommandMessage line={ln} />
-                    )}
+                    ) : null}
                   </Box>
                 ))}
               </Box>

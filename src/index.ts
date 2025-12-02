@@ -4,6 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import type { AgentProvenance } from "./agent/create";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -431,6 +432,8 @@ async function main() {
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [agentProvenance, setAgentProvenance] =
+      useState<AgentProvenance | null>(null);
 
     useEffect(() => {
       async function init() {
@@ -557,7 +560,7 @@ async function main() {
         if (!agent && forceNew) {
           // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -570,6 +573,8 @@ async function main() {
             initBlocks,
             baseTools,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -606,7 +611,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -619,6 +624,8 @@ async function main() {
             undefined,
             undefined,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Ensure local project settings are loaded before updating
@@ -705,6 +712,7 @@ async function main() {
         startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
         tokenStreaming: settings.tokenStreaming,
+        agentProvenance,
       });
     }
 
@@ -717,6 +725,7 @@ async function main() {
       startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
       tokenStreaming: settings.tokenStreaming,
+      agentProvenance,
     });
   }
 

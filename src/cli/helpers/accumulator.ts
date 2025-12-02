@@ -44,6 +44,11 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
+    }
+  | {
+      kind: "status";
+      id: string;
+      lines: string[]; // Multi-line status message with arrow formatting
     };
 
 // Top-level state object for all streaming events
