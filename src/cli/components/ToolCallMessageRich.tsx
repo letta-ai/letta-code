@@ -66,7 +66,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "ExitPlanMode") displayName = "Planning";
   else if (displayName === "AskUserQuestion") displayName = "Question";
   // Codex toolset (snake_case)
-  else if (displayName === "update_plan") displayName = "Plan";
+  else if (displayName === "update_plan") displayName = "Planning";
   else if (displayName === "shell_command") displayName = "Shell";
   else if (displayName === "shell") displayName = "Shell";
   else if (displayName === "read_file") displayName = "Read";
@@ -74,7 +74,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "grep_files") displayName = "Grep";
   else if (displayName === "apply_patch") displayName = "Patch";
   // Codex toolset (PascalCase)
-  else if (displayName === "UpdatePlan") displayName = "Plan";
+  else if (displayName === "UpdatePlan") displayName = "Planning";
   else if (displayName === "ShellCommand") displayName = "Shell";
   else if (displayName === "Shell") displayName = "Shell";
   else if (displayName === "ReadFile") displayName = "Read";
@@ -172,6 +172,8 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     const isTodoTool =
       rawName === "todo_write" ||
       rawName === "TodoWrite" ||
+      rawName === "write_todos" ||
+      rawName === "WriteTodos" ||
       displayName === "TODO";
 
     if (isTodoTool && line.resultOk !== false && line.argsText) {
@@ -210,7 +212,10 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     }
 
     // Check if this is an update_plan tool with successful result
-    const isPlanTool = rawName === "update_plan" || displayName === "Plan";
+    const isPlanTool =
+      rawName === "update_plan" ||
+      rawName === "UpdatePlan" ||
+      displayName === "Planning";
 
     if (isPlanTool && line.resultOk !== false && line.argsText) {
       try {
