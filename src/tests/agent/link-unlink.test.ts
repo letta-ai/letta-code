@@ -23,7 +23,10 @@ describeOrSkip("Link/Unlink Tools", () => {
       throw new Error("LETTA_API_KEY required for tests");
     }
 
-    client = new Letta({ apiKey });
+    client = new Letta({
+      apiKey,
+      defaultHeaders: { "X-Letta-Source": "letta-code" },
+    });
 
     const agent = await client.agents.create({
       model: "openai/gpt-4o-mini",

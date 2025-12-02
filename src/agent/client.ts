@@ -59,5 +59,9 @@ export async function getClient() {
     settingsManager.updateSettings({ env: updatedEnv });
   }
 
-  return new Letta({ apiKey, baseURL });
+  return new Letta({
+    apiKey,
+    baseURL,
+    defaultHeaders: { "X-Letta-Source": "letta-code" },
+  });
 }
