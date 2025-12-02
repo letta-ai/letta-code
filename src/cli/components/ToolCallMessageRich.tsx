@@ -64,7 +64,8 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "TodoWrite") displayName = "TODO";
   else if (displayName === "EnterPlanMode") displayName = "Planning";
   else if (displayName === "ExitPlanMode") displayName = "Planning";
-  // Codex toolset
+  else if (displayName === "AskUserQuestion") displayName = "Question";
+  // Codex toolset (snake_case)
   else if (displayName === "update_plan") displayName = "Plan";
   else if (displayName === "shell_command") displayName = "Shell";
   else if (displayName === "shell") displayName = "Shell";
@@ -72,12 +73,26 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "list_dir") displayName = "LS";
   else if (displayName === "grep_files") displayName = "Grep";
   else if (displayName === "apply_patch") displayName = "Patch";
-  // Gemini toolset (uses server names)
+  // Codex toolset (PascalCase)
+  else if (displayName === "UpdatePlan") displayName = "Plan";
+  else if (displayName === "ShellCommand") displayName = "Shell";
+  else if (displayName === "Shell") displayName = "Shell";
+  else if (displayName === "ReadFile") displayName = "Read";
+  else if (displayName === "ListDir") displayName = "LS";
+  else if (displayName === "GrepFiles") displayName = "Grep";
+  else if (displayName === "ApplyPatch") displayName = "Patch";
+  // Gemini toolset (snake_case)
   else if (displayName === "run_shell_command") displayName = "Shell";
   else if (displayName === "list_directory") displayName = "LS";
   else if (displayName === "search_file_content") displayName = "Grep";
   else if (displayName === "write_todos") displayName = "TODO";
   else if (displayName === "read_many_files") displayName = "Read Multiple";
+  // Gemini toolset (PascalCase)
+  else if (displayName === "RunShellCommand") displayName = "Shell";
+  else if (displayName === "ListDirectory") displayName = "LS";
+  else if (displayName === "SearchFileContent") displayName = "Grep";
+  else if (displayName === "WriteTodos") displayName = "TODO";
+  else if (displayName === "ReadManyFiles") displayName = "Read Multiple";
 
   // Format arguments for display using the old formatting logic
   const formatted = formatArgsDisplay(argsText);
