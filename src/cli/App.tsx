@@ -164,6 +164,31 @@ function readPlanFile(): string {
   }
 }
 
+// Fancy UI tools require specialized dialogs instead of the standard ApprovalDialog
+function isFancyUITool(name: string): boolean {
+  return (
+    name === "AskUserQuestion" ||
+    name === "EnterPlanMode" ||
+    name === "ExitPlanMode"
+  );
+}
+
+// Extract questions from AskUserQuestion tool args
+function getQuestionsFromApproval(approval: ApprovalRequest) {
+  const parsed = safeJsonParseOr<Record<string, unknown>>(
+    approval.toolArgs,
+    {},
+  );
+  return (
+    (parsed.questions as Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description: string }>;
+      multiSelect: boolean;
+    }>) || []
+  );
+}
+
 // Get skill unload reminder if skills are loaded (using cached flag)
 function getSkillUnloadReminder(): string {
   const { hasLoadedSkills } = require("../agent/context");
@@ -274,29 +299,9 @@ export default function App({
     }>
   >([]);
 
-  // If we have a plan approval request, show the plan dialog
-  const [planApprovalPending, setPlanApprovalPending] = useState<{
-    plan: string;
-    toolCallId: string;
-    toolArgs: string;
-  } | null>(null);
-
-  // If we have a question approval request, show the question dialog
-  const [questionApprovalPending, setQuestionApprovalPending] = useState<{
-    questions: Array<{
-      question: string;
-      header: string;
-      options: Array<{ label: string; description: string }>;
-      multiSelect: boolean;
-    }>;
-    toolCallId: string;
-  } | null>(null);
-
-  // If we have an EnterPlanMode approval request, show the dialog
-  const [enterPlanModeApprovalPending, setEnterPlanModeApprovalPending] =
-    useState<{
-      toolCallId: string;
-    } | null>(null);
+  // Derive current approval from pending approvals and results
+  // This is the approval currently being shown to the user
+  const currentApproval = pendingApprovals[approvalResults.length];
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
@@ -436,6 +441,8 @@ export default function App({
   }, [refreshDerived]);
 
   // Restore pending approval from startup when ready
+  // All approvals (including fancy UI tools) go through pendingApprovals
+  // The render logic determines which UI to show based on tool name
   useEffect(() => {
     // Use new plural field if available, otherwise wrap singular in array for backward compat
     const approvals =
@@ -446,58 +453,7 @@ export default function App({
           : [];
 
     if (loadingState === "ready" && approvals.length > 0) {
-      // Check if this is an ExitPlanMode approval - route to plan dialog
-      const planApproval = approvals.find((a) => a.toolName === "ExitPlanMode");
-      if (planApproval) {
-        // Read plan from the plan file (not from toolArgs)
-        const plan = readPlanFile();
-
-        setPlanApprovalPending({
-          plan,
-          toolCallId: planApproval.toolCallId,
-          toolArgs: planApproval.toolArgs,
-        });
-        return;
-      }
-
-      // Check if this is an AskUserQuestion approval - route to question dialog
-      const questionApproval = approvals.find(
-        (a) => a.toolName === "AskUserQuestion",
-      );
-      if (questionApproval) {
-        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          questionApproval.toolArgs,
-          {},
-        );
-        const questions =
-          (parsedArgs.questions as Array<{
-            question: string;
-            header: string;
-            options: Array<{ label: string; description: string }>;
-            multiSelect: boolean;
-          }>) || [];
-
-        if (questions.length > 0) {
-          setQuestionApprovalPending({
-            questions,
-            toolCallId: questionApproval.toolCallId,
-          });
-          return;
-        }
-      }
-
-      // Check if this is an EnterPlanMode approval - route to enter plan mode dialog
-      const enterPlanModeApproval = approvals.find(
-        (a) => a.toolName === "EnterPlanMode",
-      );
-      if (enterPlanModeApproval) {
-        setEnterPlanModeApprovalPending({
-          toolCallId: enterPlanModeApproval.toolCallId,
-        });
-        return;
-      }
-
-      // Regular tool approvals (may be multiple for parallel tools)
+      // All approvals go through the same flow - UI rendering decides which dialog to show
       setPendingApprovals(approvals);
 
       // Analyze approval contexts for all restored approvals
@@ -667,63 +623,7 @@ export default function App({
               return;
             }
 
-            // Check each approval for ExitPlanMode special case
-            const planApproval = approvalsToProcess.find(
-              (a) => a.toolName === "ExitPlanMode",
-            );
-            if (planApproval) {
-              // Read plan from the plan file (not from toolArgs)
-              const plan = readPlanFile();
-
-              setPlanApprovalPending({
-                plan,
-                toolCallId: planApproval.toolCallId,
-                toolArgs: planApproval.toolArgs,
-              });
-              setStreaming(false);
-              return;
-            }
-
-            // Check each approval for AskUserQuestion special case
-            const questionApproval = approvalsToProcess.find(
-              (a) => a.toolName === "AskUserQuestion",
-            );
-            if (questionApproval) {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                questionApproval.toolArgs,
-                {},
-              );
-              const questions =
-                (parsedArgs.questions as Array<{
-                  question: string;
-                  header: string;
-                  options: Array<{ label: string; description: string }>;
-                  multiSelect: boolean;
-                }>) || [];
-
-              if (questions.length > 0) {
-                setQuestionApprovalPending({
-                  questions,
-                  toolCallId: questionApproval.toolCallId,
-                });
-                setStreaming(false);
-                return;
-              }
-            }
-
-            // Check each approval for EnterPlanMode special case
-            const enterPlanModeApproval = approvalsToProcess.find(
-              (a) => a.toolName === "EnterPlanMode",
-            );
-            if (enterPlanModeApproval) {
-              setEnterPlanModeApprovalPending({
-                toolCallId: enterPlanModeApproval.toolCallId,
-              });
-              setStreaming(false);
-              return;
-            }
-
-            // Check permissions for all approvals
+            // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
                 // Check if approval is incomplete (missing name or arguments)
@@ -756,15 +656,30 @@ export default function App({
             );
 
             // Categorize approvals by permission decision
-            const needsUserInput = approvalResults.filter(
-              (ac) => ac.permission.decision === "ask",
-            );
-            const autoDenied = approvalResults.filter(
-              (ac) => ac.permission.decision === "deny",
-            );
-            const autoAllowed = approvalResults.filter(
-              (ac) => ac.permission.decision === "allow",
-            );
+            // Fancy UI tools should always go through their dialog, even if auto-allowed
+            const needsUserInput: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
+
+              // Fancy tools should always go through a UI dialog in interactive mode,
+              // even if a rule says "allow". Deny rules are still respected.
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                // decision === "allow"
+                autoAllowed.push(ac);
+              }
+            }
 
             // Execute auto-allowed tools
             const autoAllowedResults = await Promise.all(
@@ -2528,10 +2443,11 @@ ${recentCommits}
 
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
-      if (!planApprovalPending) return;
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-      const { toolCallId, toolArgs } = planApprovalPending;
-      setPlanApprovalPending(null);
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
       // Exit plan mode
       const newMode = acceptEdits ? "acceptEdits" : "default";
@@ -2539,9 +2455,9 @@ ${recentCommits}
       setUiPermissionMode(newMode);
 
       try {
-        // Execute ExitPlanMode tool
+        // Execute ExitPlanMode tool to get the result
         const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          toolArgs,
+          approval.toolArgs,
           {},
         );
         const toolResult = await executeTool("ExitPlanMode", parsedArgs);
@@ -2551,132 +2467,131 @@ ${recentCommits}
           message_type: "tool_return_message",
           id: "dummy",
           date: new Date().toISOString(),
-          tool_call_id: toolCallId,
+          tool_call_id: approval.toolCallId,
           tool_return: toolResult.toolReturn,
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
         });
 
-        // Rotate to a new thinking message
         setThinkingMessage(getRandomThinkingMessage());
         refreshDerived();
 
-        // Restart conversation loop with approval response
-        await processConversation([
-          {
-            type: "approval",
-            approvals: [
-              {
-                type: "tool",
-                tool_call_id: toolCallId,
-                tool_return: toolResult.toolReturn,
-                status: toolResult.status,
-                stdout: toolResult.stdout,
-                stderr: toolResult.stderr,
-              },
-            ],
-          },
-        ]);
+        const decision = {
+          type: "approve" as const,
+          approval,
+          precomputedResult: toolResult,
+        };
+
+        if (isLast) {
+          setIsExecutingTool(true);
+          await sendAllResults(decision);
+        } else {
+          setApprovalResults((prev) => [...prev, decision]);
+        }
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
       }
     },
-    [planApprovalPending, processConversation, appendError, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      appendError,
+      refreshDerived,
+    ],
   );
 
   const handlePlanKeepPlanning = useCallback(
     async (reason: string) => {
-      if (!planApprovalPending) return;
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-      const { toolCallId } = planApprovalPending;
-      setPlanApprovalPending(null);
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-      // Stay in plan mode - send denial with user's feedback to agent
-      try {
-        // Rotate to a new thinking message for this continuation
-        setThinkingMessage(getRandomThinkingMessage());
+      // Stay in plan mode
+      const denialReason =
+        reason ||
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
 
-        // Restart conversation loop with denial response
-        await processConversation([
-          {
-            type: "approval",
-            approval_request_id: toolCallId,
-            approve: false,
-            reason:
-              reason ||
-              "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
-          },
-        ]);
-      } catch (e) {
-        appendError(String(e));
-        setStreaming(false);
+      const decision = {
+        type: "deny" as const,
+        approval,
+        reason: denialReason,
+      };
+
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [planApprovalPending, processConversation, appendError],
+    [pendingApprovals, approvalResults, sendAllResults],
   );
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
-      if (!questionApprovalPending) return;
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-      const { toolCallId, questions } = questionApprovalPending;
-      setQuestionApprovalPending(null);
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-      try {
-        // Format the answer string like Claude Code does
-        const answerParts = questions.map((q) => {
-          const answer = answers[q.question] || "";
-          return `"${q.question}"="${answer}"`;
-        });
-        const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
+      // Get questions from approval args
+      const questions = getQuestionsFromApproval(approval);
 
-        // Update buffers with tool return
-        onChunk(buffersRef.current, {
-          message_type: "tool_return_message",
-          id: "dummy",
-          date: new Date().toISOString(),
-          tool_call_id: toolCallId,
-          tool_return: toolReturn,
-          status: "success",
-          stdout: null,
-          stderr: null,
-        });
+      // Format the answer string like Claude Code does
+      const answerParts = questions.map((q) => {
+        const answer = answers[q.question] || "";
+        return `"${q.question}"="${answer}"`;
+      });
+      const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
 
-        // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage());
-        refreshDerived();
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
 
-        // Restart conversation loop with the answer
-        await processConversation([
-          {
-            type: "approval",
-            approvals: [
-              {
-                type: "tool",
-                tool_call_id: toolCallId,
-                tool_return: toolReturn,
-                status: "success",
-                stdout: null,
-                stderr: null,
-              },
-            ],
-          },
-        ]);
-      } catch (e) {
-        appendError(String(e));
-        setStreaming(false);
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
+
+      setThinkingMessage(getRandomThinkingMessage());
+      refreshDerived();
+
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
+
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [questionApprovalPending, processConversation, appendError, refreshDerived],
+    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
-    if (!enterPlanModeApprovalPending) return;
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (!approval) return;
 
-    const { toolCallId } = enterPlanModeApprovalPending;
-    setEnterPlanModeApprovalPending(null);
+    const isLast = currentIndex + 1 >= pendingApprovals.length;
 
     // Generate plan file path
     const planFilePath = generatePlanFilePath();
@@ -2701,95 +2616,63 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 
 Plan file path: ${planFilePath}`;
 
-    try {
-      // Update buffers with tool return
-      onChunk(buffersRef.current, {
-        message_type: "tool_return_message",
-        id: "dummy",
-        date: new Date().toISOString(),
-        tool_call_id: toolCallId,
-        tool_return: toolReturn,
-        status: "success",
-        stdout: null,
-        stderr: null,
-      });
+    const precomputedResult: ToolExecutionResult = {
+      toolReturn,
+      status: "success",
+    };
 
-      // Rotate to a new thinking message
-      setThinkingMessage(getRandomThinkingMessage());
-      refreshDerived();
+    // Update buffers with tool return
+    onChunk(buffersRef.current, {
+      message_type: "tool_return_message",
+      id: "dummy",
+      date: new Date().toISOString(),
+      tool_call_id: approval.toolCallId,
+      tool_return: toolReturn,
+      status: "success",
+      stdout: null,
+      stderr: null,
+    });
 
-      // Restart conversation loop with approval
-      await processConversation([
-        {
-          type: "approval",
-          approvals: [
-            {
-              type: "tool",
-              tool_call_id: toolCallId,
-              tool_return: toolReturn,
-              status: "success",
-              stdout: null,
-              stderr: null,
-            },
-          ],
-        },
-      ]);
-    } catch (e) {
-      appendError(String(e));
-      setStreaming(false);
+    setThinkingMessage(getRandomThinkingMessage());
+    refreshDerived();
+
+    const decision = {
+      type: "approve" as const,
+      approval,
+      precomputedResult,
+    };
+
+    if (isLast) {
+      setIsExecutingTool(true);
+      await sendAllResults(decision);
+    } else {
+      setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [
-    enterPlanModeApprovalPending,
-    processConversation,
-    appendError,
-    refreshDerived,
-  ]);
+  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
-    if (!enterPlanModeApprovalPending) return;
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (!approval) return;
 
-    const { toolCallId } = enterPlanModeApprovalPending;
-    setEnterPlanModeApprovalPending(null);
+    const isLast = currentIndex + 1 >= pendingApprovals.length;
 
     const rejectionReason =
       "User chose to skip plan mode and start implementing directly.";
 
-    try {
-      // Update buffers with tool rejection (format matches what harness sends)
-      onChunk(buffersRef.current, {
-        message_type: "tool_return_message",
-        id: "dummy",
-        date: new Date().toISOString(),
-        tool_call_id: toolCallId,
-        tool_return: `Error: request to call tool denied. User reason: ${rejectionReason}`,
-        status: "error",
-        stdout: null,
-        stderr: null,
-      });
+    const decision = {
+      type: "deny" as const,
+      approval,
+      reason: rejectionReason,
+    };
 
-      // Rotate to a new thinking message
-      setThinkingMessage(getRandomThinkingMessage());
-      refreshDerived();
-
-      // Restart conversation loop with rejection
-      await processConversation([
-        {
-          type: "approval",
-          approval_request_id: toolCallId,
-          approve: false,
-          reason: rejectionReason,
-        },
-      ]);
-    } catch (e) {
-      appendError(String(e));
-      setStreaming(false);
+    if (isLast) {
+      setIsExecutingTool(true);
+      await sendAllResults(decision);
+    } else {
+      setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [
-    enterPlanModeApprovalPending,
-    processConversation,
-    appendError,
-    refreshDerived,
-  ]);
+  }, [pendingApprovals, approvalResults, sendAllResults]);
 
   // Live area shows only in-progress items
   const liveItems = useMemo(() => {
@@ -2877,29 +2760,27 @@ Plan file path: ${planFilePath}`;
         {loadingState === "ready" && (
           <>
             {/* Transcript */}
-            {liveItems.length > 0 &&
-              pendingApprovals.length === 0 &&
-              !planApprovalPending && (
-                <Box flexDirection="column">
-                  {liveItems.map((ln) => (
-                    <Box key={ln.id} marginTop={1}>
-                      {ln.kind === "user" ? (
-                        <UserMessage line={ln} />
-                      ) : ln.kind === "reasoning" ? (
-                        <ReasoningMessage line={ln} />
-                      ) : ln.kind === "assistant" ? (
-                        <AssistantMessage line={ln} />
-                      ) : ln.kind === "tool_call" ? (
-                        <ToolCallMessage line={ln} />
-                      ) : ln.kind === "error" ? (
-                        <ErrorMessage line={ln} />
-                      ) : (
-                        <CommandMessage line={ln} />
-                      )}
-                    </Box>
-                  ))}
-                </Box>
-              )}
+            {liveItems.length > 0 && pendingApprovals.length === 0 && (
+              <Box flexDirection="column">
+                {liveItems.map((ln) => (
+                  <Box key={ln.id} marginTop={1}>
+                    {ln.kind === "user" ? (
+                      <UserMessage line={ln} />
+                    ) : ln.kind === "reasoning" ? (
+                      <ReasoningMessage line={ln} />
+                    ) : ln.kind === "assistant" ? (
+                      <AssistantMessage line={ln} />
+                    ) : ln.kind === "tool_call" ? (
+                      <ToolCallMessage line={ln} />
+                    ) : ln.kind === "error" ? (
+                      <ErrorMessage line={ln} />
+                    ) : (
+                      <CommandMessage line={ln} />
+                    )}
+                  </Box>
+                ))}
+              </Box>
+            )}
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
@@ -2920,10 +2801,7 @@ Plan file path: ${planFilePath}`;
                 !modelSelectorOpen &&
                 !toolsetSelectorOpen &&
                 !systemPromptSelectorOpen &&
-                !agentSelectorOpen &&
-                !planApprovalPending &&
-                !questionApprovalPending &&
-                !enterPlanModeApprovalPending
+                !agentSelectorOpen
               }
               streaming={streaming}
               commandRunning={commandRunning}
@@ -2979,12 +2857,12 @@ Plan file path: ${planFilePath}`;
               />
             )}
 
-            {/* Plan Mode Dialog - below live items */}
-            {planApprovalPending && (
+            {/* Plan Mode Dialog - for ExitPlanMode tool */}
+            {currentApproval?.toolName === "ExitPlanMode" && (
               <>
                 <Box height={1} />
                 <PlanModeDialog
-                  plan={planApprovalPending.plan}
+                  plan={readPlanFile()}
                   onApprove={() => handlePlanApprove(false)}
                   onApproveAndAcceptEdits={() => handlePlanApprove(true)}
                   onKeepPlanning={handlePlanKeepPlanning}
@@ -2993,15 +2871,18 @@ Plan file path: ${planFilePath}`;
             )}
 
             {/* Question Dialog - for AskUserQuestion tool */}
-            {questionApprovalPending && (
-              <QuestionDialog
-                questions={questionApprovalPending.questions}
-                onSubmit={handleQuestionSubmit}
-              />
+            {currentApproval?.toolName === "AskUserQuestion" && (
+              <>
+                <Box height={1} />
+                <QuestionDialog
+                  questions={getQuestionsFromApproval(currentApproval)}
+                  onSubmit={handleQuestionSubmit}
+                />
+              </>
             )}
 
             {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}
-            {enterPlanModeApprovalPending && (
+            {currentApproval?.toolName === "EnterPlanMode" && (
               <>
                 <Box height={1} />
                 <EnterPlanModeDialog
@@ -3011,27 +2892,19 @@ Plan file path: ${planFilePath}`;
               </>
             )}
 
-            {/* Approval Dialog - below live items */}
-            {pendingApprovals.length > 0 && (
+            {/* Approval Dialog - for standard tools (not fancy UI tools) */}
+            {currentApproval && !isFancyUITool(currentApproval.toolName) && (
               <>
                 <Box height={1} />
                 <ApprovalDialog
-                  approvals={
-                    pendingApprovals[approvalResults.length]
-                      ? ([
-                          pendingApprovals[
-                            approvalResults.length
-                          ] as ApprovalRequest,
-                        ] as ApprovalRequest[])
-                      : []
-                  }
+                  approvals={[currentApproval]}
                   approvalContexts={
                     approvalContexts[approvalResults.length]
-                      ? ([
+                      ? [
                           approvalContexts[
                             approvalResults.length
                           ] as ApprovalContext,
-                        ] as ApprovalContext[])
+                        ]
                       : []
                   }
                   progress={{
