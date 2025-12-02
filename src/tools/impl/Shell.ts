@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import * as path from "node:path";
+import { getShellEnv } from "./shellEnv.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellArgs {
@@ -50,7 +51,7 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
 
     const child = spawn(executable, execArgs, {
       cwd,
-      env: process.env,
+      env: getShellEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
