@@ -193,7 +193,6 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 
     return (
       <Box flexDirection="column" paddingLeft={2}>
-        <Text>Apply patch:</Text>
         <Text dimColor>{patchPreview}</Text>
       </Box>
     );
