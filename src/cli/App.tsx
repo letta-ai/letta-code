@@ -320,6 +320,7 @@ export default function App({
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
+  const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
 
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
@@ -2741,7 +2742,7 @@ Plan file path: ${planFilePath}`;
               interruptRequested={interruptRequested}
               agentId={agentId}
               agentName={agentName}
-              currentModel={currentModelLabel}
+              currentModel={currentModelDisplay}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
