@@ -232,20 +232,20 @@ test("Allow rule for file outside working directory", () => {
 
 test("Allow rule for Bash command", () => {
   const permissions: PermissionRules = {
-    allow: ["Bash(git diff:*)"],
+    allow: ["Bash(npm run:*)"],
     deny: [],
     ask: [],
   };
 
   const result = checkPermission(
     "Bash",
-    { command: "git diff HEAD" },
+    { command: "npm run build" },
     permissions,
     "/Users/test/project",
   );
 
   expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("Bash(git diff:*)");
+  expect(result.matchedRule).toBe("Bash(npm run:*)");
 });
 
 test("Allow exact Bash command", () => {
@@ -330,7 +330,7 @@ test("Read defaults to allow", () => {
 test("Bash defaults to ask", () => {
   const result = checkPermission(
     "Bash",
-    { command: "ls -la" },
+    { command: "curl http://example.com" }, // Use non-read-only command
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
