@@ -1,18 +1,18 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Claude's capabilities with specialized knowledge, workflows, or tool integrations.
+description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations.
 license: Complete terms in LICENSE.txt
 ---
 
 # Skill Creator
 
-This skill provides guidance for creating effective skills.
+This skill provides guidance for creating effective skills in Letta Code.
 
 ## About Skills
 
-Skills are modular, self-contained packages that extend Claude's capabilities by providing
+Skills are modular, self-contained packages that extend Letta Code's capabilities by providing
 specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform Claude from a general-purpose agent into a specialized agent
+domains or tasks—they transform a Letta Code agent from a general-purpose agent into a specialized agent
 equipped with procedural knowledge that no model can fully possess.
 
 ### What Skills Provide
@@ -26,9 +26,9 @@ equipped with procedural knowledge that no model can fully possess.
 
 ### Concise is Key
 
-The context window is a public good. Skills share the context window with everything else Claude needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
+The context window is a public good. Skills share the context window with everything else the Letta Code agent needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
 
-**Default assumption: Claude is already very smart.** Only add context Claude doesn't already have. Challenge each piece of information: "Does Claude really need this explanation?" and "Does this paragraph justify its token cost?"
+**Default assumption: the Letta Code agent is already very capable.** Only add context the Letta Code agent doesn't already have. Challenge each piece of information: "Does the Letta Code agent really need this explanation?" and "Does this paragraph justify its token cost?"
 
 Prefer concise examples over verbose explanations.
 
@@ -63,9 +63,9 @@ skill-name/
 
 #### SKILL.md (required)
 
-Every SKILL.md consists of:
+Every SKILL.md in Letta Code consists of:
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that Claude reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
+- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that the Letta Code agent reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -81,12 +81,12 @@ Executable code (Python/Bash/etc.) for tasks that require deterministic reliabil
 
 ##### References (`references/`)
 
-Documentation and reference material intended to be loaded as needed into context to inform Claude's process and thinking.
+Documentation and reference material intended to be loaded as needed into context to inform the Letta Code agent's process and thinking.
 
 - **When to include**: For documentation that Claude should reference while working
 - **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
 - **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when Claude determines it's needed
+- **Benefits**: Keeps SKILL.md lean, loaded only when the Letta Code agent determines it's needed
 - **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
 - **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
 
@@ -117,7 +117,7 @@ Skills use a three-level loading system to manage context efficiently:
 
 1. **Metadata (name + description)** - Always in context (~100 words)
 2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by Claude (Unlimited because scripts can be executed without reading into context window)
+3. **Bundled resources** - As needed by the Letta Code agent (Unlimited because scripts can be executed without reading into context window)
 
 #### Progressive Disclosure Patterns
 
@@ -278,7 +278,7 @@ After initialization, customize or remove the generated SKILL.md and example fil
 
 ### Step 4: Edit the Skill
 
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Claude to use. Include information that would be beneficial and non-obvious to Claude. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Claude instance execute these tasks more effectively.
+When editing the (newly-generated or existing) skill, remember that the skill is being created for another Letta Code agent instance to use. Include information that would be beneficial and non-obvious to the Letta Code agent. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Letta Code agent instance execute these tasks more effectively.
 
 #### Learn Proven Design Patterns
 
@@ -306,10 +306,10 @@ Any example files and directories not needed for the skill should be deleted. Th
 Write the YAML frontmatter with `name` and `description`:
 
 - `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps Claude understand when to use the skill.
+- `description`: This is the primary triggering mechanism for your skill, and helps the Letta Code agent understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Claude.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to the Letta Code agent.
+  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when the Letta Code agent needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
 Do not include any other fields in YAML frontmatter.
 
