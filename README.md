@@ -169,11 +169,17 @@ While in a session, you can use these commands:
 - `/agent` - Show current agent link
 - `/model` - Switch models
 - `/toolset` - Switch toolsets (codex/default)
+- `/system` - Switch system prompt
 - `/rename` - Rename the current agent
+- `/swap` - Switch to a different agent
 - `/stream` - Toggle token streaming on/off
 - `/link` - Attach Letta Code tools to current agent (enables Read, Write, Edit, Bash, etc.)
 - `/unlink` - Remove Letta Code tools from current agent
 - `/clear` - Clear conversation history
+- `/download` - Download agent file locally
+- `/bashes` - Show background shell processes
+- `/init` - Initialize agent memory for this project
+- `/skill` - Enter skill creation mode (optionally: `/skill <description>`)
 - `/exit` - Exit and show session stats
 - `/logout` - Clear credentials and exit
 
