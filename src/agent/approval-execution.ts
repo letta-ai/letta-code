@@ -6,10 +6,15 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
-import { executeTool } from "../tools/manager";
+import { executeTool, type ToolExecutionResult } from "../tools/manager";
 
 export type ApprovalDecision =
-  | { type: "approve"; approval: ApprovalRequest }
+  | {
+      type: "approve";
+      approval: ApprovalRequest;
+      // If set, skip executeTool and use this result (for fancy UI tools)
+      precomputedResult?: ToolExecutionResult;
+    }
   | { type: "deny"; approval: ApprovalRequest; reason: string };
 
 // Align result type with the SDK's expected union for approvals payloads
@@ -61,6 +66,20 @@ export async function executeApprovalBatch(
     }
 
     if (decision.type === "approve") {
+      // If fancy UI already computed the result, use it directly
+      if (decision.precomputedResult) {
+        // Don't call onChunk - UI was already updated in the fancy UI handler
+        results.push({
+          type: "tool",
+          tool_call_id: decision.approval.toolCallId,
+          tool_return: decision.precomputedResult.toolReturn,
+          status: decision.precomputedResult.status,
+          stdout: decision.precomputedResult.stdout,
+          stderr: decision.precomputedResult.stderr,
+        });
+        continue;
+      }
+
       // Execute the approved tool
       try {
         const parsedArgs =
