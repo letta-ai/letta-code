@@ -142,7 +142,7 @@ export async function handleHeadlessCommand(
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -155,6 +155,7 @@ export async function handleHeadlessCommand(
       initBlocks,
       baseTools,
     );
+    agent = result.agent;
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -186,7 +187,7 @@ export async function handleHeadlessCommand(
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -199,6 +200,7 @@ export async function handleHeadlessCommand(
       undefined,
       undefined,
     );
+    agent = result.agent;
   }
 
   // Save agent ID to both project and global settings
