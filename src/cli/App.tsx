@@ -316,6 +316,10 @@ export default function App({
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const currentModelLabel =
+    llmConfig?.model_endpoint_type && llmConfig?.model
+      ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+      : (llmConfig?.model ?? null);
 
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
@@ -2737,6 +2741,7 @@ Plan file path: ${planFilePath}`;
               interruptRequested={interruptRequested}
               agentId={agentId}
               agentName={agentName}
+              currentModel={currentModelLabel}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
