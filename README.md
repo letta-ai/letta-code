@@ -166,22 +166,81 @@ letta --agent <id> --unlink    # Remove Letta Code tools from agent, then start 
 #### Interactive Commands
 
 While in a session, you can use these commands:
+
+**Agent Management:**
 - `/agent` - Show current agent link
-- `/model` - Switch models
-- `/toolset` - Switch toolsets (codex/default)
-- `/system` - Switch system prompt
+- `/swap` - Switch to a different agent (prompts with agent selector)
 - `/rename` - Rename the current agent
-- `/swap` - Switch to a different agent
+- `/download` - Download agent file locally (exports agent configuration as JSON)
+
+**Configuration:**
+- `/model` - Switch models (prompts with model selector)
+- `/toolset` - Switch toolsets (codex/default/gemini)
+- `/system` - Switch system prompt (change agent behavior preset)
 - `/stream` - Toggle token streaming on/off
+
+**Tools & Memory:**
 - `/link` - Attach Letta Code tools to current agent (enables Read, Write, Edit, Bash, etc.)
 - `/unlink` - Remove Letta Code tools from current agent
-- `/clear` - Clear conversation history
-- `/download` - Download agent file locally
-- `/bashes` - Show background shell processes
-- `/init` - Initialize agent memory for this project
+- `/init` - Initialize agent memory for this project (guides agent to organize memory blocks based on current context)
+
+**Skills:**
 - `/skill` - Enter skill creation mode (optionally: `/skill <description>`)
+
+**Background Processes:**
+- `/bashes` - Show background shell processes (displays shells started with `run_in_background=true`)
+
+**Session Management:**
+- `/clear` - Clear conversation history
 - `/exit` - Exit and show session stats
 - `/logout` - Clear credentials and exit
+
+#### Background Shell Processes
+
+When running long-running commands (like dev servers, test watchers, or builds), the agent can use `run_in_background=true` with the Bash tool. Use `/bashes` to view all background processes:
+
+```bash
+/bashes     # Shows running background shells with their IDs and commands
+```
+
+The agent can monitor background process output using the `BashOutput` tool and terminate them with `KillBash`.
+
+#### Memory Initialization
+
+The `/init` command helps the agent organize its memory blocks based on your project context:
+
+```bash
+/init       # Guides agent to analyze project and structure its memory
+```
+
+This is useful when:
+- Starting fresh in a new project
+- Reorganizing an existing agent's memory structure
+- After sharing project documentation (like AGENTS.md or README)
+
+The agent will analyze available context and create/update memory blocks like:
+- **`project`** - Build commands, architecture, conventions
+- **`human`** - Your coding preferences and communication style  
+- **`ticket`/`context`** - Current task or debugging context
+
+See [Memory Configuration](#memory-configuration) for more details on memory blocks.
+
+#### Skill Creation
+
+The `/skill` command enters an interactive mode for creating new skills:
+
+```bash
+/skill                          # Enter skill creation mode
+/skill "Python testing helper"  # Start with a description
+```
+
+Skills are modular packages that extend Letta Code with specialized knowledge or workflows. The agent will guide you through:
+1. Defining the skill's purpose and scope
+2. Creating the skill structure (SKILL.md + optional resources)
+3. Writing effective instructions and bundled scripts
+4. Validating and packaging the skill
+
+Created skills are saved to your `.skills` directory and automatically discovered on next session.
 
 #### Managing Letta Code Tools
 
