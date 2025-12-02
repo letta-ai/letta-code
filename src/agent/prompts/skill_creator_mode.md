@@ -47,10 +47,7 @@ Keep the initial question set small (3–6 questions) and focused. Examples:
 1. Purpose and scope:
    - “What is the main purpose of this skill?”
    - “Is this skill meant for a specific project or to be reused across many projects?”
-2. Example usage:
-   - “Can you give 2–3 example requests a user might say that should trigger this skill?”
-   - “Are there any things this skill should explicitly *not* do?”
-3. Implementation details:
+2. Implementation details:
    - “Do you want this skill to be mostly guidance (instructions) or to include reusable scripts/templates?”
    - “Where should the skill live? (e.g. `.skills/your-skill-id` in this repo)”
 
@@ -84,9 +81,10 @@ Validate this design with the user before you start writing files. If something 
 
 Once the design is agreed upon:
 
-1. Determine the target directory for the skill (default assumption):
-   - Use a local `.skills/<skill-id>/` directory in the current project root, unless the user specifies a different path.
-   - If the `skills` memory block indicates a different skills directory for this project, respect that instead.
+1. Determine the target directory for the skill (in this order):
+   - First, check whether the host environment or CLI has configured a default skills directory for this agent (for example via a `--skills` flag or project settings). If such a directory is provided, use it as the base directory for the new skill unless the user explicitly requests a different path.
+   - If no explicit skills directory is configured, check the `skills` memory block for a `Skills Directory: <path>` line and use that as the base directory.
+   - If neither is available, default to a local `.skills/<skill-id>/` directory in the current project root (or another path the user has requested).
 2. Create or update:
    - `.skills/<skill-id>/SKILL.md` – the main entry point for the skill
    - Optional: `.skills/<skill-id>/scripts/` – reusable scripts
