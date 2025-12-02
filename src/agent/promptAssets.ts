@@ -14,6 +14,7 @@ import personaEmptyPrompt from "./prompts/persona_empty.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
+import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
 import skillUnloadReminder from "./prompts/skill_unload_reminder.txt";
 import skillsPrompt from "./prompts/skills.mdx";
 import stylePrompt from "./prompts/style.mdx";
@@ -23,6 +24,7 @@ export const SYSTEM_PROMPT = systemPrompt;
 export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
 export const INITIALIZE_PROMPT = initializePrompt;
+export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,

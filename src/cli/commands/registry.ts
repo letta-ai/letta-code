@@ -113,6 +113,13 @@ export const commands: Record<string, Command> = {
       return "Initializing memory...";
     },
   },
+  "/skill": {
+    desc: "Enter skill creation mode (optionally: /skill <description>)",
+    handler: () => {
+      // Handled specially in App.tsx to trigger skill-creation workflow
+      return "Starting skill creation...";
+    },
+  },
 };
 
 /**

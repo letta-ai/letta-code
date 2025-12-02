@@ -981,26 +981,28 @@ export default function App({
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
+        const trimmed = msg.trim();
+
         // Special handling for /model command - opens selector
-        if (msg.trim() === "/model") {
+        if (trimmed === "/model") {
           setModelSelectorOpen(true);
           return { submitted: true };
         }
 
         // Special handling for /toolset command - opens selector
-        if (msg.trim() === "/toolset") {
+        if (trimmed === "/toolset") {
           setToolsetSelectorOpen(true);
           return { submitted: true };
         }
 
         // Special handling for /system command - opens system prompt selector
-        if (msg.trim() === "/system") {
+        if (trimmed === "/system") {
           setSystemPromptSelectorOpen(true);
           return { submitted: true };
         }
 
         // Special handling for /agent command - show agent link
-        if (msg.trim() === "/agent") {
+        if (trimmed === "/agent") {
           const cmdId = uid("cmd");
           const agentUrl = `https://app.letta.com/projects/default-project/agents/${agentId}`;
           buffersRef.current.byId.set(cmdId, {
@@ -1017,13 +1019,13 @@ export default function App({
         }
 
         // Special handling for /exit command - show stats and exit
-        if (msg.trim() === "/exit") {
+        if (trimmed === "/exit") {
           handleExit();
           return { submitted: true };
         }
 
         // Special handling for /logout command - clear credentials and exit
-        if (msg.trim() === "/logout") {
+        if (trimmed === "/logout") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -1531,8 +1533,84 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /skill command - enter skill creation mode
+        if (trimmed.startsWith("/skill")) {
+          const cmdId = uid("cmd");
+
+          // Extract optional description after `/skill`
+          const [, ...rest] = trimmed.split(/\s+/);
+          const description = rest.join(" ").trim();
+
+          const initialOutput = description
+            ? `Starting skill creation for: ${description}`
+            : "Starting skill creation. I’ll load the skill-creator skill and ask a few questions about the skill you want to build...";
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: initialOutput,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the skill-creation prompt
+            const { SKILL_CREATOR_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Build system-reminder content for skill creation
+            const userDescriptionLine = description
+              ? `\n\nUser-provided skill description:\n${description}`
+              : "\n\nThe user did not provide a description with /skill. Ask what kind of skill they want to create before proceeding.";
+
+            const skillMessage = `<system-reminder>\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n</system-reminder>`;
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "Entered skill creation mode. Answer the assistant’s questions to design your new skill.",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Process conversation with the skill-creation prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: skillMessage,
+              },
+            ]);
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /init command - initialize agent memory
-        if (msg.trim() === "/init") {
+        if (trimmed === "/init") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
