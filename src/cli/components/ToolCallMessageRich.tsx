@@ -93,6 +93,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   else if (displayName === "SearchFileContent") displayName = "Grep";
   else if (displayName === "WriteTodos") displayName = "TODO";
   else if (displayName === "ReadManyFiles") displayName = "Read Multiple";
+  // Additional tools
+  else if (displayName === "Replace" || displayName === "replace")
+    displayName = "Edit";
+  else if (displayName === "WriteFile" || displayName === "write_file")
+    displayName = "Write";
+  else if (displayName === "KillBash") displayName = "Kill Shell";
+  else if (displayName === "BashOutput") displayName = "Shell Output";
+  else if (displayName === "MultiEdit") displayName = "Edit";
 
   // Format arguments for display using the old formatting logic
   const formatted = formatArgsDisplay(argsText);
