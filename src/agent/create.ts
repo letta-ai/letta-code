@@ -105,12 +105,15 @@ export async function createAgent(
   if (toolNames.includes("memory_apply_patch")) {
     try {
       const resp = await client.tools.list({ name: "memory_apply_patch" });
-      const hasMemoryApplyPatch = Array.isArray(resp.items) && resp.items.length > 0;
+      const hasMemoryApplyPatch =
+        Array.isArray(resp.items) && resp.items.length > 0;
       if (!hasMemoryApplyPatch) {
         console.warn(
           "memory_apply_patch tool not found on server; falling back to 'memory' tool",
         );
-        toolNames = toolNames.map((n) => (n === "memory_apply_patch" ? "memory" : n));
+        toolNames = toolNames.map((n) =>
+          n === "memory_apply_patch" ? "memory" : n,
+        );
       }
     } catch (err) {
       // If the capability check fails for any reason, conservatively fall back to 'memory'
@@ -119,7 +122,9 @@ export async function createAgent(
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      toolNames = toolNames.map((n) => (n === "memory_apply_patch" ? "memory" : n));
+      toolNames = toolNames.map((n) =>
+        n === "memory_apply_patch" ? "memory" : n,
+      );
     }
   }
 
@@ -319,7 +324,7 @@ export async function createAgent(
     : SYSTEM_PROMPT;
 
   // Create agent with all block IDs (existing + newly created)
-  let agent = await client.agents.create({
+  const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPrompt,
     name,
