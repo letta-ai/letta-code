@@ -161,8 +161,10 @@ export async function forceToolsetSwitch(
     const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
 
     // Determine which memory tool we want based on toolset
-    const desiredMemoryTool = toolsetName === "default" ? "memory" : "memory_apply_patch";
-    const otherMemoryTool = desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
+    const desiredMemoryTool =
+      toolsetName === "default" ? "memory" : "memory_apply_patch";
+    const otherMemoryTool =
+      desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
 
     // Ensure desired memory tool is attached
     let desiredId = mapByName.get(desiredMemoryTool);
@@ -192,7 +194,9 @@ export async function forceToolsetSwitch(
 
     // Update tool_rules: rewrite any rules targeting the other tool to the desired tool
     const updatedRules = (agent.tool_rules || []).map((r) =>
-      r.tool_name === otherMemoryTool ? { ...r, tool_name: desiredMemoryTool } : r,
+      r.tool_name === otherMemoryTool
+        ? { ...r, tool_name: desiredMemoryTool }
+        : r,
     );
 
     await client.agents.update(agentId, {
@@ -262,7 +266,8 @@ export async function switchToolsetForModel(
       : (await import("./manager")).isGeminiModel(resolvedModel)
         ? "memory_apply_patch"
         : "memory";
-    const otherMemoryTool = desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
+    const otherMemoryTool =
+      desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
 
     // Ensure desired memory tool attached
     let desiredId = mapByName.get(desiredMemoryTool);
@@ -288,7 +293,9 @@ export async function switchToolsetForModel(
     }
 
     const updatedRules = (agentWithTools.tool_rules || []).map((r) =>
-      r.tool_name === otherMemoryTool ? { ...r, tool_name: desiredMemoryTool } : r,
+      r.tool_name === otherMemoryTool
+        ? { ...r, tool_name: desiredMemoryTool }
+        : r,
     );
 
     await client.agents.update(agentId, {
