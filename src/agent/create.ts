@@ -99,7 +99,29 @@ export async function createAgent(
     "fetch_webpage",
   ];
 
-  const toolNames = [...serverToolNames, ...defaultBaseTools];
+  let toolNames = [...serverToolNames, ...defaultBaseTools];
+
+  // Fallback: if server doesn't have memory_apply_patch, use legacy memory tool
+  if (toolNames.includes("memory_apply_patch")) {
+    try {
+      const resp = await client.tools.list({ name: "memory_apply_patch" });
+      const hasMemoryApplyPatch = Array.isArray(resp.items) && resp.items.length > 0;
+      if (!hasMemoryApplyPatch) {
+        console.warn(
+          "memory_apply_patch tool not found on server; falling back to 'memory' tool",
+        );
+        toolNames = toolNames.map((n) => (n === "memory_apply_patch" ? "memory" : n));
+      }
+    } catch (err) {
+      // If the capability check fails for any reason, conservatively fall back to 'memory'
+      console.warn(
+        `Unable to verify memory_apply_patch availability (falling back to 'memory'): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      toolNames = toolNames.map((n) => (n === "memory_apply_patch" ? "memory" : n));
+    }
+  }
 
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks =
@@ -297,7 +319,7 @@ export async function createAgent(
     : SYSTEM_PROMPT;
 
   // Create agent with all block IDs (existing + newly created)
-  const agent = await client.agents.create({
+  let agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPrompt,
     name,
@@ -314,6 +336,8 @@ export async function createAgent(
     parallel_tool_calls: parallelToolCalls,
     enable_sleeptime: enableSleeptime,
   });
+
+  // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
   // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
   // Skip if updateArgs only contains context_window (already set in create)
