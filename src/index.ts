@@ -4,6 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import type { AgentProvenance } from "./agent/create";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -431,6 +432,8 @@ async function main() {
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [agentProvenance, setAgentProvenance] =
+      useState<AgentProvenance | null>(null);
 
     useEffect(() => {
       async function init() {
@@ -557,7 +560,7 @@ async function main() {
         if (!agent && forceNew) {
           // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -570,6 +573,8 @@ async function main() {
             initBlocks,
             baseTools,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -606,7 +611,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -619,6 +624,8 @@ async function main() {
             undefined,
             undefined,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Ensure local project settings are loaded before updating
@@ -636,6 +643,41 @@ async function main() {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, client, skillsDirectory);
         await initializeLoadedSkillsFlag();
+
+        // Re-discover skills and update the skills memory block
+        // This ensures new skills added after agent creation are available
+        try {
+          const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } =
+            await import("./agent/skills");
+          const { join } = await import("node:path");
+
+          const resolvedSkillsDirectory =
+            skillsDirectory || join(process.cwd(), SKILLS_DIR);
+          const { skills, errors } = await discoverSkills(
+            resolvedSkillsDirectory,
+          );
+
+          if (errors.length > 0) {
+            console.warn("Errors encountered during skill discovery:");
+            for (const error of errors) {
+              console.warn(`  ${error.path}: ${error.message}`);
+            }
+          }
+
+          // Update the skills memory block with freshly discovered skills
+          const formattedSkills = formatSkillsForMemory(
+            skills,
+            resolvedSkillsDirectory,
+          );
+          await client.agents.blocks.update("skills", {
+            agent_id: agent.id,
+            value: formattedSkills,
+          });
+        } catch (error) {
+          console.warn(
+            `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
 
         // Check if we're resuming an existing agent
         const localProjectSettings = settingsManager.getLocalProjectSettings();
@@ -670,6 +712,7 @@ async function main() {
         startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
         tokenStreaming: settings.tokenStreaming,
+        agentProvenance,
       });
     }
 
@@ -682,6 +725,7 @@ async function main() {
       startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
       tokenStreaming: settings.tokenStreaming,
+      agentProvenance,
     });
   }
 

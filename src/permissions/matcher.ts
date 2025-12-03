@@ -94,6 +94,30 @@ export function matchesFilePattern(
  * @param query - The bash query to check (e.g., "Bash(git diff HEAD)")
  * @param pattern - The permission pattern (e.g., "Bash(git diff:*)")
  */
+/**
+ * Extract the "actual" command from a compound command by stripping cd prefixes.
+ * e.g., "cd /path && bun run check" → "bun run check"
+ */
+function extractActualCommand(command: string): string {
+  // If command contains &&, |, or ;, split and find the actual command (skip cd)
+  if (
+    command.includes("&&") ||
+    command.includes("|") ||
+    command.includes(";")
+  ) {
+    const segments = command.split(/\s*(?:&&|\||;)\s*/);
+    for (const segment of segments) {
+      const trimmed = segment.trim();
+      const firstToken = trimmed.split(/\s+/)[0];
+      // Skip cd commands - we want the actual command
+      if (firstToken !== "cd") {
+        return trimmed;
+      }
+    }
+  }
+  return command;
+}
+
 export function matchesBashPattern(query: string, pattern: string): boolean {
   // Extract the command from query
   // Format: "Bash(actual command)" or "Bash()"
@@ -101,7 +125,9 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
   if (!queryMatch || queryMatch[1] === undefined) {
     return false;
   }
-  const command = queryMatch[1];
+  const rawCommand = queryMatch[1];
+  // Extract actual command by stripping cd prefixes from compound commands
+  const command = extractActualCommand(rawCommand);
 
   // Extract the command pattern from permission rule
   // Format: "Bash(command pattern)" or "Bash()"
@@ -115,11 +141,12 @@ export function matchesBashPattern(query: string, pattern: string): boolean {
   if (commandPattern.endsWith(":*")) {
     // Prefix match: command must start with pattern (minus :*)
     const prefix = commandPattern.slice(0, -2);
-    return command.startsWith(prefix);
+    // Try matching against both raw and extracted command
+    return command.startsWith(prefix) || rawCommand.startsWith(prefix);
   }
 
-  // Exact match
-  return command === commandPattern;
+  // Exact match (try both raw and extracted)
+  return command === commandPattern || rawCommand === commandPattern;
 }
 
 /**

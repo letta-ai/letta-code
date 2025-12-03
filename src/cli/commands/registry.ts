@@ -99,6 +99,27 @@ export const commands: Record<string, Command> = {
       return "Downloading agent file...";
     },
   },
+  "/bashes": {
+    desc: "Show background shell processes",
+    handler: () => {
+      // Handled specially in App.tsx to show background processes
+      return "Showing background processes...";
+    },
+  },
+  "/init": {
+    desc: "Initialize agent memory for this project",
+    handler: () => {
+      // Handled specially in App.tsx to send initialization prompt
+      return "Initializing memory...";
+    },
+  },
+  "/skill": {
+    desc: "Enter skill creation mode (optionally: /skill <description>)",
+    handler: () => {
+      // Handled specially in App.tsx to trigger skill-creation workflow
+      return "Starting skill creation...";
+    },
+  },
 };
 
 /**

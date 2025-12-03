@@ -9,6 +9,7 @@ import {
   matchesToolPattern,
 } from "./matcher";
 import { permissionMode } from "./mode";
+import { isReadOnlyShellCommand } from "./readOnlyShell";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,
@@ -20,6 +21,15 @@ import type {
  * Tools that don't require approval within working directory
  */
 const WORKING_DIRECTORY_TOOLS = ["Read", "Glob", "Grep"];
+const READ_ONLY_SHELL_TOOLS = new Set([
+  "Bash",
+  "shell",
+  "Shell",
+  "shell_command",
+  "ShellCommand",
+  "run_shell_command",
+  "RunShellCommand",
+]);
 
 /**
  * Check permission for a tool execution.
@@ -80,7 +90,7 @@ export function checkPermission(
   }
 
   // Check permission mode (applies before CLI allow rules but after deny rules)
-  const modeOverride = permissionMode.checkModeOverride(toolName);
+  const modeOverride = permissionMode.checkModeOverride(toolName, toolArgs);
   if (modeOverride) {
     const currentMode = permissionMode.getMode();
     return {
@@ -108,6 +118,16 @@ export function checkPermission(
       decision: "allow",
       reason: "Skill tool is always allowed (read-only)",
     };
+  }
+
+  if (READ_ONLY_SHELL_TOOLS.has(toolName)) {
+    const shellCommand = extractShellCommand(toolArgs);
+    if (shellCommand && isReadOnlyShellCommand(shellCommand)) {
+      return {
+        decision: "allow",
+        reason: "Read-only shell command",
+      };
+    }
   }
 
   // After checking CLI overrides, check if Read/Glob/Grep within working directory
@@ -258,6 +278,14 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   }
 }
 
+function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
+  const command = toolArgs.command;
+  if (typeof command === "string" || Array.isArray(command)) {
+    return command;
+  }
+  return null;
+}
+
 /**
  * Check if query matches a permission pattern
  */
@@ -311,17 +339,26 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "BashOutput",
     "ExitPlanMode",
     "LS",
-    // Codex toolset - tools that don't require approval
+    // Codex toolset (snake_case) - tools that don't require approval
     "read_file",
     "list_dir",
     "grep_files",
     "update_plan",
-    // Gemini toolset - tools that don't require approval (using server names)
+    // Codex toolset (PascalCase) - tools that don't require approval
+    "ReadFile",
+    "ListDir",
+    "GrepFiles",
+    "UpdatePlan",
+    // Gemini toolset (snake_case) - tools that don't require approval
     "list_directory",
     "search_file_content",
     "write_todos",
     "read_many_files",
-    // Note: read_file, glob already covered above (shared across toolsets)
+    // Gemini toolset (PascalCase) - tools that don't require approval
+    "ListDirectory",
+    "SearchFileContent",
+    "WriteTodos",
+    "ReadManyFiles",
   ];
 
   if (autoAllowTools.includes(toolName)) {

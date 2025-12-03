@@ -374,7 +374,7 @@ test("Precedence: CLI allowedTools > settings allow", () => {
   cliPermissions.setAllowedTools("Bash(npm install)");
 
   const permissions: PermissionRules = {
-    allow: ["Bash(git:*)"],
+    allow: ["Bash(docker:*)"],
     deny: [],
     ask: [],
   };
@@ -389,13 +389,13 @@ test("Precedence: CLI allowedTools > settings allow", () => {
   expect(npmResult.decision).toBe("allow");
   expect(npmResult.matchedRule).toBe("Bash(npm install) (CLI)");
 
-  // Settings should match for git
-  const gitResult = checkPermission(
+  // Settings should match for docker (non-read-only command)
+  const dockerResult = checkPermission(
     "Bash",
-    { command: "git status" },
+    { command: "docker build ." },
     permissions,
     "/Users/test/project",
   );
-  expect(gitResult.decision).toBe("allow");
-  expect(gitResult.matchedRule).toBe("Bash(git:*)");
+  expect(dockerResult.decision).toBe("allow");
+  expect(dockerResult.matchedRule).toBe("Bash(docker:*)");
 });

@@ -142,7 +142,7 @@ export async function handleHeadlessCommand(
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -155,6 +155,7 @@ export async function handleHeadlessCommand(
       initBlocks,
       baseTools,
     );
+    agent = result.agent;
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -186,7 +187,7 @@ export async function handleHeadlessCommand(
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -199,6 +200,7 @@ export async function handleHeadlessCommand(
       undefined,
       undefined,
     );
+    agent = result.agent;
   }
 
   // Save agent ID to both project and global settings
@@ -209,6 +211,40 @@ export async function handleHeadlessCommand(
   // Set agent context for tools that need it (e.g., Skill tool)
   setAgentContext(agent.id, client, skillsDirectory);
   await initializeLoadedSkillsFlag();
+
+  // Re-discover skills and update the skills memory block
+  // This ensures new skills added after agent creation are available
+  try {
+    const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } = await import(
+      "./agent/skills"
+    );
+    const { join } = await import("node:path");
+
+    const resolvedSkillsDirectory =
+      skillsDirectory || join(process.cwd(), SKILLS_DIR);
+    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
+
+    if (errors.length > 0) {
+      console.warn("Errors encountered during skill discovery:");
+      for (const error of errors) {
+        console.warn(`  ${error.path}: ${error.message}`);
+      }
+    }
+
+    // Update the skills memory block with freshly discovered skills
+    const formattedSkills = formatSkillsForMemory(
+      skills,
+      resolvedSkillsDirectory,
+    );
+    await client.agents.blocks.update("skills", {
+      agent_id: agent.id,
+      value: formattedSkills,
+    });
+  } catch (error) {
+    console.warn(
+      `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   // Validate output format
   const outputFormat =

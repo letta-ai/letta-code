@@ -3,7 +3,10 @@
  **/
 
 import { join } from "node:path";
-import type { AgentType } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentState,
+  AgentType,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   BlockResponse,
   CreateBlock,
@@ -21,6 +24,31 @@ import { updateAgentLLMConfig } from "./modify";
 import { SYSTEM_PROMPT, SYSTEM_PROMPTS } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
+
+/**
+ * Describes where a memory block came from
+ */
+export interface BlockProvenance {
+  label: string;
+  source: "global" | "project" | "new";
+}
+
+/**
+ * Provenance info for an agent creation
+ */
+export interface AgentProvenance {
+  isNew: true;
+  freshBlocks: boolean;
+  blocks: BlockProvenance[];
+}
+
+/**
+ * Result from createAgent including provenance info
+ */
+export interface CreateAgentResult {
+  agent: AgentState;
+  provenance: AgentProvenance;
+}
 
 export async function createAgent(
   name = "letta-cli-agent",
@@ -61,14 +89,44 @@ export async function createAgent(
     getServerToolName(name),
   );
 
+  const baseMemoryTool = modelHandle.startsWith("anthropic/")
+    ? "memory"
+    : "memory_apply_patch";
   const defaultBaseTools = baseTools ?? [
-    "memory",
+    baseMemoryTool,
     "web_search",
     "conversation_search",
     "fetch_webpage",
   ];
 
-  const toolNames = [...serverToolNames, ...defaultBaseTools];
+  let toolNames = [...serverToolNames, ...defaultBaseTools];
+
+  // Fallback: if server doesn't have memory_apply_patch, use legacy memory tool
+  if (toolNames.includes("memory_apply_patch")) {
+    try {
+      const resp = await client.tools.list({ name: "memory_apply_patch" });
+      const hasMemoryApplyPatch =
+        Array.isArray(resp.items) && resp.items.length > 0;
+      if (!hasMemoryApplyPatch) {
+        console.warn(
+          "memory_apply_patch tool not found on server; falling back to 'memory' tool",
+        );
+        toolNames = toolNames.map((n) =>
+          n === "memory_apply_patch" ? "memory" : n,
+        );
+      }
+    } catch (err) {
+      // If the capability check fails for any reason, conservatively fall back to 'memory'
+      console.warn(
+        `Unable to verify memory_apply_patch availability (falling back to 'memory'): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      toolNames = toolNames.map((n) =>
+        n === "memory_apply_patch" ? "memory" : n,
+      );
+    }
+  }
 
   // Load memory blocks from .mdx files
   const defaultMemoryBlocks =
@@ -141,6 +199,10 @@ export async function createAgent(
 
   // Retrieve existing blocks (both global and local) and match them with defaults
   const existingBlocks = new Map<string, BlockResponse>();
+  // Track provenance: which blocks came from which source
+  const blockProvenance: BlockProvenance[] = [];
+  const globalBlockLabels = new Set<string>();
+  const projectBlockLabels = new Set<string>();
 
   // Only load existing blocks if we're not forcing new blocks
   if (!forceNewBlocks) {
@@ -152,6 +214,7 @@ export async function createAgent(
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
+        globalBlockLabels.add(label);
       } catch {
         // Block no longer exists, will create new one
         console.warn(
@@ -160,7 +223,7 @@ export async function createAgent(
       }
     }
 
-    // Load local blocks (style)
+    // Load local blocks (project, skills)
     for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
       if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
         continue;
@@ -168,6 +231,7 @@ export async function createAgent(
       try {
         const block = await client.blocks.retrieve(blockId);
         existingBlocks.set(label, block);
+        projectBlockLabels.add(label);
       } catch {
         // Block no longer exists, will create new one
         console.warn(
@@ -198,6 +262,12 @@ export async function createAgent(
         }
       }
       blockIds.push(existingBlock.id);
+      // Record provenance based on where it came from
+      if (globalBlockLabels.has(defaultBlock.label)) {
+        blockProvenance.push({ label: defaultBlock.label, source: "global" });
+      } else if (projectBlockLabels.has(defaultBlock.label)) {
+        blockProvenance.push({ label: defaultBlock.label, source: "project" });
+      }
     } else {
       // Need to create this block
       blocksToCreate.push({
@@ -225,6 +295,9 @@ export async function createAgent(
       } else {
         newGlobalBlockIds[label] = createdBlock.id;
       }
+
+      // Record as newly created
+      blockProvenance.push({ label, source: "new" });
     } catch (error) {
       console.error(`Failed to create block ${label}:`, error);
       throw error;
@@ -283,6 +356,8 @@ export async function createAgent(
     enable_sleeptime: enableSleeptime,
   });
 
+  // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
+
   // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
   // Skip if updateArgs only contains context_window (already set in create)
   if (updateArgs && Object.keys(updateArgs).length > 0) {
@@ -324,5 +399,12 @@ export async function createAgent(
     }
   }
 
-  return fullAgent;
+  // Build provenance info
+  const provenance: AgentProvenance = {
+    isNew: true,
+    freshBlocks: forceNewBlocks,
+    blocks: blockProvenance,
+  };
+
+  return { agent: fullAgent, provenance };
 }

@@ -1,7 +1,9 @@
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
+import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
 import BashOutputDescription from "./descriptions/BashOutput.md";
 import EditDescription from "./descriptions/Edit.md";
+import EnterPlanModeDescription from "./descriptions/EnterPlanMode.md";
 import ExitPlanModeDescription from "./descriptions/ExitPlanMode.md";
 import GlobDescription from "./descriptions/Glob.md";
 // Gemini toolset
@@ -29,9 +31,11 @@ import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import { apply_patch } from "./impl/ApplyPatch";
+import { ask_user_question } from "./impl/AskUserQuestion";
 import { bash } from "./impl/Bash";
 import { bash_output } from "./impl/BashOutput";
 import { edit } from "./impl/Edit";
+import { enter_plan_mode } from "./impl/EnterPlanMode";
 import { exit_plan_mode } from "./impl/ExitPlanMode";
 import { glob } from "./impl/Glob";
 // Gemini toolset
@@ -59,9 +63,11 @@ import { write } from "./impl/Write";
 import { write_file_gemini } from "./impl/WriteFileGemini";
 import { write_todos } from "./impl/WriteTodosGemini";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
+import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
 import BashOutputSchema from "./schemas/BashOutput.json";
 import EditSchema from "./schemas/Edit.json";
+import EnterPlanModeSchema from "./schemas/EnterPlanMode.json";
 import ExitPlanModeSchema from "./schemas/ExitPlanMode.json";
 import GlobSchema from "./schemas/Glob.json";
 // Gemini toolset
@@ -98,6 +104,11 @@ interface ToolAssets {
 }
 
 const toolDefinitions = {
+  AskUserQuestion: {
+    schema: AskUserQuestionSchema,
+    description: AskUserQuestionDescription.trim(),
+    impl: ask_user_question as unknown as ToolImplementation,
+  },
   Bash: {
     schema: BashSchema,
     description: BashDescription.trim(),
@@ -112,6 +123,11 @@ const toolDefinitions = {
     schema: EditSchema,
     description: EditDescription.trim(),
     impl: edit as unknown as ToolImplementation,
+  },
+  EnterPlanMode: {
+    schema: EnterPlanModeSchema,
+    description: EnterPlanModeDescription.trim(),
+    impl: enter_plan_mode as unknown as ToolImplementation,
   },
   ExitPlanMode: {
     schema: ExitPlanModeSchema,
@@ -243,6 +259,88 @@ const toolDefinitions = {
     schema: WriteFileGeminiSchema,
     description: WriteFileGeminiDescription.trim(),
     impl: write_file_gemini as unknown as ToolImplementation,
+  },
+  // Codex-2 toolset (PascalCase aliases for OpenAI tools)
+  ShellCommand: {
+    schema: ShellCommandSchema,
+    description: ShellCommandDescription.trim(),
+    impl: shell_command as unknown as ToolImplementation,
+  },
+  Shell: {
+    schema: ShellSchema,
+    description: ShellDescription.trim(),
+    impl: shell as unknown as ToolImplementation,
+  },
+  ReadFile: {
+    schema: ReadFileCodexSchema,
+    description: ReadFileCodexDescription.trim(),
+    impl: read_file as unknown as ToolImplementation,
+  },
+  ListDir: {
+    schema: ListDirCodexSchema,
+    description: ListDirCodexDescription.trim(),
+    impl: list_dir as unknown as ToolImplementation,
+  },
+  GrepFiles: {
+    schema: GrepFilesSchema,
+    description: GrepFilesDescription.trim(),
+    impl: grep_files as unknown as ToolImplementation,
+  },
+  ApplyPatch: {
+    schema: ApplyPatchSchema,
+    description: ApplyPatchDescription.trim(),
+    impl: apply_patch as unknown as ToolImplementation,
+  },
+  UpdatePlan: {
+    schema: UpdatePlanSchema,
+    description: UpdatePlanDescription.trim(),
+    impl: update_plan as unknown as ToolImplementation,
+  },
+  // Gemini-2 toolset (PascalCase aliases for Gemini tools)
+  RunShellCommand: {
+    schema: RunShellCommandGeminiSchema,
+    description: RunShellCommandGeminiDescription.trim(),
+    impl: run_shell_command as unknown as ToolImplementation,
+  },
+  ReadFileGemini: {
+    schema: ReadFileGeminiSchema,
+    description: ReadFileGeminiDescription.trim(),
+    impl: read_file_gemini as unknown as ToolImplementation,
+  },
+  ListDirectory: {
+    schema: ListDirectoryGeminiSchema,
+    description: ListDirectoryGeminiDescription.trim(),
+    impl: list_directory as unknown as ToolImplementation,
+  },
+  GlobGemini: {
+    schema: GlobGeminiSchema,
+    description: GlobGeminiDescription.trim(),
+    impl: glob_gemini as unknown as ToolImplementation,
+  },
+  SearchFileContent: {
+    schema: SearchFileContentGeminiSchema,
+    description: SearchFileContentGeminiDescription.trim(),
+    impl: search_file_content as unknown as ToolImplementation,
+  },
+  Replace: {
+    schema: ReplaceGeminiSchema,
+    description: ReplaceGeminiDescription.trim(),
+    impl: replace as unknown as ToolImplementation,
+  },
+  WriteFileGemini: {
+    schema: WriteFileGeminiSchema,
+    description: WriteFileGeminiDescription.trim(),
+    impl: write_file_gemini as unknown as ToolImplementation,
+  },
+  WriteTodos: {
+    schema: WriteTodosGeminiSchema,
+    description: WriteTodosGeminiDescription.trim(),
+    impl: write_todos as unknown as ToolImplementation,
+  },
+  ReadManyFiles: {
+    schema: ReadManyFilesGeminiSchema,
+    description: ReadManyFilesGeminiDescription.trim(),
+    impl: read_many_files as unknown as ToolImplementation,
   },
 } as const satisfies Record<string, ToolAssets>;
 

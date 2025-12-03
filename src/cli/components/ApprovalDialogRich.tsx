@@ -71,7 +71,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 }) => {
   const t = toolName.toLowerCase();
 
-  if (t === "bash" || t === "shell_command" || t === "run_shell_command") {
+  if (
+    t === "bash" ||
+    t === "shell_command" ||
+    t === "shellcommand" ||
+    t === "run_shell_command" ||
+    t === "runshellcommand"
+  ) {
     const cmdVal = parsedArgs?.command;
     const cmd =
       typeof cmdVal === "string" ? cmdVal : toolArgs || "(no arguments)";
@@ -105,7 +111,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "ls" || t === "list_dir" || t === "list_directory") {
+  if (
+    t === "ls" ||
+    t === "list_dir" ||
+    t === "listdir" ||
+    t === "list_directory" ||
+    t === "listdirectory"
+  ) {
     const pathVal =
       parsedArgs?.path || parsedArgs?.target_directory || parsedArgs?.dir_path;
     const path = typeof pathVal === "string" ? pathVal : "(current directory)";
@@ -123,7 +135,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "read" || t === "read_file") {
+  if (t === "read" || t === "read_file" || t === "readfile") {
     const pathVal = parsedArgs?.file_path || parsedArgs?.target_file;
     const path = typeof pathVal === "string" ? pathVal : "(no file specified)";
     const offsetVal = parsedArgs?.offset;
@@ -143,7 +155,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "grep" || t === "grep_files" || t === "search_file_content") {
+  if (
+    t === "grep" ||
+    t === "grep_files" ||
+    t === "grepfiles" ||
+    t === "search_file_content" ||
+    t === "searchfilecontent"
+  ) {
     const patternVal = parsedArgs?.pattern;
     const pattern =
       typeof patternVal === "string" ? patternVal : "(no pattern)";
@@ -164,7 +182,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  if (t === "apply_patch") {
+  if (t === "apply_patch" || t === "applypatch") {
     const inputVal = parsedArgs?.input;
     const patchPreview =
       typeof inputVal === "string" && inputVal.length > 100
@@ -175,13 +193,12 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 
     return (
       <Box flexDirection="column" paddingLeft={2}>
-        <Text>Apply patch:</Text>
         <Text dimColor>{patchPreview}</Text>
       </Box>
     );
   }
 
-  if (t === "update_plan") {
+  if (t === "update_plan" || t === "updateplan") {
     const planVal = parsedArgs?.plan;
     const explanationVal = parsedArgs?.explanation;
 
@@ -240,7 +257,8 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       t === "edit" ||
       t === "multiedit" ||
       t === "replace" ||
-      t === "write_file") &&
+      t === "write_file" ||
+      t === "writefile") &&
     parsedArgs
   ) {
     try {
@@ -250,7 +268,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       if (precomputedDiff) {
         return (
           <Box flexDirection="column" paddingLeft={2}>
-            {t === "write" || t === "write_file" ? (
+            {t === "write" || t === "write_file" || t === "writefile" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="write"
@@ -288,7 +306,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       }
 
       // Fallback to non-precomputed rendering
-      if (t === "write" || t === "write_file") {
+      if (t === "write" || t === "write_file" || t === "writefile") {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -628,7 +646,7 @@ function getHeaderLabel(toolName: string): string {
   if (t === "grep") return "Search in Files";
   if (t === "glob") return "Find Files";
   if (t === "todo_write" || t === "todowrite") return "Update Todos";
-  // Codex toolset
+  // Codex toolset (snake_case)
   if (t === "shell_command") return "Shell command";
   if (t === "shell") return "Shell script";
   if (t === "read_file") return "Read File";
@@ -636,16 +654,29 @@ function getHeaderLabel(toolName: string): string {
   if (t === "grep_files") return "Search in Files";
   if (t === "apply_patch") return "Apply Patch";
   if (t === "update_plan") return "Plan update";
-  // Gemini toolset (uses server names)
+  // Codex toolset (PascalCase → lowercased)
+  if (t === "shellcommand") return "Shell command";
+  if (t === "readfile") return "Read File";
+  if (t === "listdir") return "List Files";
+  if (t === "grepfiles") return "Search in Files";
+  if (t === "applypatch") return "Apply Patch";
+  if (t === "updateplan") return "Plan update";
+  // Gemini toolset (snake_case)
   if (t === "run_shell_command") return "Shell command";
   if (t === "list_directory") return "List Directory";
   if (t === "search_file_content") return "Search in Files";
   if (t === "write_todos") return "Update Todos";
   if (t === "read_many_files") return "Read Multiple Files";
-  // Shared names between toolsets - these get overwritten based on active toolset
-  if (t === "read_file") return "Read File";
-  if (t === "glob") return "Find Files";
+  // Gemini toolset (PascalCase → lowercased)
+  if (t === "runshellcommand") return "Shell command";
+  if (t === "listdirectory") return "List Directory";
+  if (t === "searchfilecontent") return "Search in Files";
+  if (t === "writetodos") return "Update Todos";
+  if (t === "readmanyfiles") return "Read Multiple Files";
+  // Shared/additional tools
   if (t === "replace") return "Edit File";
-  if (t === "write_file") return "Write File";
+  if (t === "write_file" || t === "writefile") return "Write File";
+  if (t === "killbash") return "Kill Shell";
+  if (t === "bashoutput") return "Shell Output";
   return toolName;
 }

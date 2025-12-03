@@ -32,7 +32,7 @@ test("Read outside working directory requires approval", () => {
 test("Bash commands require approval by default", () => {
   const result = checkPermission(
     "Bash",
-    { command: "ls -la" },
+    { command: "curl http://example.com" }, // Use non-read-only command
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
@@ -42,20 +42,20 @@ test("Bash commands require approval by default", () => {
 
 test("Allow rule matches Bash prefix pattern", () => {
   const permissions: PermissionRules = {
-    allow: ["Bash(git diff:*)"],
+    allow: ["Bash(npm run:*)"],
     deny: [],
     ask: [],
   };
 
   const result = checkPermission(
     "Bash",
-    { command: "git diff HEAD" },
+    { command: "npm run build" },
     permissions,
     "/Users/test/project",
   );
 
   expect(result.decision).toBe("allow");
-  expect(result.matchedRule).toBe("Bash(git diff:*)");
+  expect(result.matchedRule).toBe("Bash(npm run:*)");
 });
 
 test("Deny rule blocks file access", () => {

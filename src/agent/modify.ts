@@ -18,52 +18,62 @@ type ModelSettings =
 
 /**
  * Builds model_settings from updateArgs based on provider type.
+ * Always ensures parallel_tool_calls is enabled.
  */
 function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-): ModelSettings | undefined {
-  const settings: ModelSettings = {};
-
+): ModelSettings {
   const isOpenAI = modelHandle.startsWith("openai/");
   const isAnthropic = modelHandle.startsWith("anthropic/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
 
-  if (isOpenAI && updateArgs?.reasoning_effort) {
-    const openaiSettings = settings as OpenAIModelSettings;
-    openaiSettings.provider_type = "openai";
-    openaiSettings.reasoning = {
-      reasoning_effort: updateArgs.reasoning_effort as
-        | "none"
-        | "minimal"
-        | "low"
-        | "medium"
-        | "high",
+  if (isOpenAI) {
+    const openaiSettings: OpenAIModelSettings = {
+      provider_type: "openai",
+      parallel_tool_calls: true,
     };
-    openaiSettings.parallel_tool_calls = true;
-  } else if (isAnthropic && updateArgs?.enable_reasoner !== undefined) {
-    const anthropicSettings = settings as AnthropicModelSettings;
-    anthropicSettings.provider_type = "anthropic";
-    anthropicSettings.thinking = {
-      type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+    if (updateArgs?.reasoning_effort) {
+      openaiSettings.reasoning = {
+        reasoning_effort: updateArgs.reasoning_effort as
+          | "none"
+          | "minimal"
+          | "low"
+          | "medium"
+          | "high",
+      };
+    }
+    return openaiSettings;
+  }
+
+  if (isAnthropic) {
+    const anthropicSettings: AnthropicModelSettings = {
+      provider_type: "anthropic",
+      parallel_tool_calls: true,
     };
-    anthropicSettings.parallel_tool_calls = true;
-  } else if (isGoogleAI) {
-    const googleSettings = settings as GoogleAIModelSettings;
-    googleSettings.provider_type = "google_ai";
-    googleSettings.parallel_tool_calls = true;
+    if (updateArgs?.enable_reasoner !== undefined) {
+      anthropicSettings.thinking = {
+        type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+      };
+    }
+    return anthropicSettings;
+  }
+
+  if (isGoogleAI) {
+    const googleSettings: GoogleAIModelSettings = {
+      provider_type: "google_ai",
+      parallel_tool_calls: true,
+    };
     if (updateArgs?.thinking_budget !== undefined) {
       googleSettings.thinking_config = {
         thinking_budget: updateArgs.thinking_budget as number,
       };
     }
+    return googleSettings;
   }
 
-  if (Object.keys(settings).length === 0) {
-    return undefined;
-  }
-
-  return settings;
+  // For unknown providers (e.g., openrouter), return generic settings with parallel_tool_calls
+  return { parallel_tool_calls: true };
 }
 
 /**
