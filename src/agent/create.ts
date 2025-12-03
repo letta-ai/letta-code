@@ -89,8 +89,11 @@ export async function createAgent(
     getServerToolName(name),
   );
 
+  const baseMemoryTool = modelHandle.startsWith("anthropic/")
+    ? "memory"
+    : "memory_apply_patch";
   const defaultBaseTools = baseTools ?? [
-    "memory",
+    baseMemoryTool,
     "web_search",
     "conversation_search",
     "fetch_webpage",

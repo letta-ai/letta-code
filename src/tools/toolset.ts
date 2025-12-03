@@ -149,6 +149,61 @@ export async function forceToolsetSwitch(
   // Remove old Letta tools and add new ones
   await unlinkToolsFromAgent(agentId);
   await linkToolsToAgent(agentId);
+
+  // Ensure base memory tool uses memory_apply_patch instead of legacy memory
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
+
+    const currentTools = agent.tools || [];
+    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
+
+    // Determine which memory tool we want based on toolset
+    const desiredMemoryTool = toolsetName === "default" ? "memory" : "memory_apply_patch";
+    const otherMemoryTool = desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
+
+    // Ensure desired memory tool is attached
+    let desiredId = mapByName.get(desiredMemoryTool);
+    if (!desiredId) {
+      const resp = await client.tools.list({ name: desiredMemoryTool });
+      desiredId = resp.items[0]?.id;
+    }
+    if (!desiredId) {
+      console.warn(
+        `Could not find tool id for ${desiredMemoryTool}. Keeping existing memory tool if present.`,
+      );
+    }
+
+    const otherId = mapByName.get(otherMemoryTool);
+
+    // Build new tool_ids: add desired memory tool, remove the other if present
+    const currentIds = currentTools
+      .map((t) => t.id)
+      .filter((id): id is string => typeof id === "string");
+    const newIds = new Set(currentIds);
+
+    // Only swap if we have a valid desired tool id; otherwise keep existing
+    if (desiredId) {
+      if (otherId) newIds.delete(otherId);
+      newIds.add(desiredId);
+    }
+
+    // Update tool_rules: rewrite any rules targeting the other tool to the desired tool
+    const updatedRules = (agent.tool_rules || []).map((r) =>
+      r.tool_name === otherMemoryTool ? { ...r, tool_name: desiredMemoryTool } : r,
+    );
+
+    await client.agents.update(agentId, {
+      tool_ids: Array.from(newIds),
+      tool_rules: updatedRules,
+    });
+  } catch (err) {
+    console.warn(
+      `Warning: Failed to enforce memory_apply_patch base tool: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /**
@@ -192,6 +247,59 @@ export async function switchToolsetForModel(
   // Remove old Letta tools and add new ones
   await unlinkToolsFromAgent(agentId);
   await linkToolsToAgent(agentId);
+
+  // Ensure base memory tool uses memory_apply_patch instead of legacy memory
+  try {
+    const agentWithTools = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
+    const currentTools = agentWithTools.tools || [];
+    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
+
+    // Determine which memory tool we want based on provider
+    const desiredMemoryTool = isOpenAIModel(resolvedModel)
+      ? "memory_apply_patch"
+      : (await import("./manager")).isGeminiModel(resolvedModel)
+        ? "memory_apply_patch"
+        : "memory";
+    const otherMemoryTool = desiredMemoryTool === "memory" ? "memory_apply_patch" : "memory";
+
+    // Ensure desired memory tool attached
+    let desiredId = mapByName.get(desiredMemoryTool);
+    if (!desiredId) {
+      const resp = await client.tools.list({ name: desiredMemoryTool });
+      desiredId = resp.items[0]?.id;
+    }
+    if (!desiredId) {
+      console.warn(
+        `Could not find tool id for ${desiredMemoryTool}. Keeping existing memory tool if present.`,
+      );
+    }
+
+    const otherId = mapByName.get(otherMemoryTool);
+
+    const currentIds = currentTools
+      .map((t) => t.id)
+      .filter((id): id is string => typeof id === "string");
+    const newIds = new Set(currentIds);
+    if (desiredId) {
+      if (otherId) newIds.delete(otherId);
+      newIds.add(desiredId);
+    }
+
+    const updatedRules = (agentWithTools.tool_rules || []).map((r) =>
+      r.tool_name === otherMemoryTool ? { ...r, tool_name: desiredMemoryTool } : r,
+    );
+
+    await client.agents.update(agentId, {
+      tool_ids: Array.from(newIds),
+      tool_rules: updatedRules,
+    });
+  } catch (err) {
+    console.warn(
+      `Warning: Failed to enforce memory_apply_patch base tool: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   const { isGeminiModel } = await import("./manager");
   const toolsetName = isOpenAIModel(resolvedModel)
