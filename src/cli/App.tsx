@@ -680,10 +680,16 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       const currentInput = initialInput;
+      // Track lastRunId outside the while loop so it's available in catch block
+      let lastKnownRunId: string | null = null;
 
       try {
         setStreaming(true);
         abortControllerRef.current = new AbortController();
+
+        // Clear any stale pending tool calls from previous turns
+        // If we're sending a new message, old pending state is no longer relevant
+        markIncompleteToolsAsCancelled(buffersRef.current);
 
         while (true) {
           // Stream one turn
@@ -695,6 +701,11 @@ export default function App({
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
             );
+
+          // Update lastKnownRunId for error handling in catch block
+          if (lastRunId) {
+            lastKnownRunId = lastRunId;
+          }
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -902,8 +913,13 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
+          // Build run info suffix for debugging
+          const runInfoSuffix = lastRunId
+            ? `\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
+            : `\n(stop_reason: ${stopReason})`;
+
           // Fetch error details from the run if available
-          let errorDetails = `Unexpected stop reason: ${stopReason}`;
+          let errorDetails = `An error occurred during agent execution`;
           if (lastRunId) {
             try {
               const client = await getClient();
@@ -924,31 +940,43 @@ export default function App({
             } catch (_e) {
               // If we can't fetch error details, let user know
               appendError(
-                `${errorDetails}\n(Unable to fetch additional error details from server)`,
+                `${errorDetails}${runInfoSuffix}\n(Unable to fetch additional error details from server)`,
               );
               return;
             }
           }
 
-          appendError(errorDetails);
+          appendError(`${errorDetails}${runInfoSuffix}`);
 
           setStreaming(false);
           refreshDerived();
           return;
         }
       } catch (e) {
+        // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
+        markIncompleteToolsAsCancelled(buffersRef.current);
+
+        // Build error message with run_id for debugging
+        const runIdSuffix = lastKnownRunId
+          ? `\n(run_id: ${lastKnownRunId}, stop_reason: error)`
+          : "";
+
         // Handle APIError from streaming (event: error)
         if (e instanceof APIError && e.error?.error) {
           const { type, message, detail } = e.error.error;
           const errorType = type ? `[${type}] ` : "";
           const errorMessage = message || "An error occurred";
           const errorDetail = detail ? `:\n${detail}` : "";
-          appendError(`${errorType}${errorMessage}${errorDetail}`);
+          appendError(
+            `${errorType}${errorMessage}${errorDetail}${runIdSuffix}`,
+          );
         } else {
           // Fallback for non-API errors
-          appendError(e instanceof Error ? e.message : String(e));
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          appendError(`${errorMessage}${runIdSuffix}`);
         }
         setStreaming(false);
+        refreshDerived();
       } finally {
         abortControllerRef.current = null;
       }
