@@ -13,7 +13,11 @@ import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
-import { createBuffers, toLines } from "./cli/helpers/accumulator";
+import {
+  createBuffers,
+  markIncompleteToolsAsCancelled,
+  toLines,
+} from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
@@ -424,6 +428,9 @@ export async function handleHeadlessCommand(
     },
   ];
 
+  // Track lastRunId outside the while loop so it's available in catch block
+  let lastKnownRunId: string | null = null;
+
   try {
     while (true) {
       const stream = await sendMessageStream(agent.id, currentInput);
@@ -643,6 +650,7 @@ export async function handleHeadlessCommand(
         apiDurationMs = performance.now() - startTime;
         // Use the last run_id we saw (if any)
         lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
+        if (lastRunId) lastKnownRunId = lastRunId;
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -660,6 +668,7 @@ export async function handleHeadlessCommand(
         approvals = result.approvals || [];
         apiDurationMs = result.apiDurationMs;
         lastRunId = result.lastRunId || null;
+        if (lastRunId) lastKnownRunId = lastRunId;
       }
 
       // Track API duration for this stream
@@ -772,6 +781,9 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
+      // Mark incomplete tool calls as cancelled to prevent stuck state
+      markIncompleteToolsAsCancelled(buffers);
+
       // Extract error details from buffers if available
       const errorLines = toLines(buffers).filter(
         (line) => line.kind === "error",
@@ -813,24 +825,39 @@ export async function handleHeadlessCommand(
             type: "error",
             message: errorMessage,
             stop_reason: stopReason,
+            run_id: lastRunId,
           }),
         );
       } else {
-        console.error(errorMessage);
+        // Include run_id and stop_reason for debugging
+        const runInfoSuffix = lastRunId
+          ? ` (run_id: ${lastRunId}, stop_reason: ${stopReason})`
+          : ` (stop_reason: ${stopReason})`;
+        console.error(`${errorMessage}${runInfoSuffix}`);
       }
       process.exit(1);
     }
   } catch (error) {
+    // Mark incomplete tool calls as cancelled
+    markIncompleteToolsAsCancelled(buffers);
+
+    // Build run info suffix for debugging
+    const runInfoSuffix = lastKnownRunId
+      ? ` (run_id: ${lastKnownRunId}, stop_reason: error)`
+      : "";
+
     // Handle APIError from streaming (event: error)
     if (error instanceof APIError && error.error?.error) {
       const { type, message, detail } = error.error.error;
       const errorType = type ? `[${type}] ` : "";
       const errorMessage = message || "An error occurred";
       const errorDetail = detail ? `: ${detail}` : "";
-      console.error(`Error: ${errorType}${errorMessage}${errorDetail}`);
+      console.error(
+        `Error: ${errorType}${errorMessage}${errorDetail}${runInfoSuffix}`,
+      );
     } else {
       // Fallback for non-API errors
-      console.error(`Error: ${error}`);
+      console.error(`Error: ${error}${runInfoSuffix}`);
     }
     process.exit(1);
   }
