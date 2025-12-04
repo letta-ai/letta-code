@@ -40,6 +40,7 @@ export async function handleHeadlessCommand(
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
+      system: { type: "string", short: "s" },
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
@@ -90,6 +91,7 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const specifiedSystem = values.system as string | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -155,7 +157,7 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
-      undefined,
+      specifiedSystem,
       initBlocks,
       baseTools,
     );
@@ -200,7 +202,7 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
-      undefined,
+      specifiedSystem,
       undefined,
       undefined,
     );
