@@ -584,7 +584,27 @@ export default function App({
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
 
-      // Inject status line at the end of the backfilled history
+      // Inject "showing N messages" status at the START of backfilled history
+      const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
+      const messageCount = messageHistory.length;
+      const agentUrl = agentState?.id
+        ? `https://app.letta.com/agents/${agentState.id}`
+        : null;
+      const backfillLines = [
+        `Showing ${messageCount} most recent message${messageCount !== 1 ? "s" : ""}`,
+        agentUrl
+          ? `  → View full history in ADE: ${agentUrl}`
+          : "  → View full history in ADE",
+      ];
+      buffersRef.current.byId.set(backfillStatusId, {
+        kind: "status",
+        id: backfillStatusId,
+        lines: backfillLines,
+      });
+      // Insert at the beginning of the order array
+      buffersRef.current.order.unshift(backfillStatusId);
+
+      // Inject provenance status line at the END of the backfilled history
       const statusLines = generateStatusLines(
         continueSession,
         agentProvenance,
