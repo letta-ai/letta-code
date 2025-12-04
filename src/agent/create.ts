@@ -89,9 +89,9 @@ export async function createAgent(
     getServerToolName(name),
   );
 
-  const baseMemoryTool = modelHandle.startsWith("anthropic/")
-    ? "memory"
-    : "memory_apply_patch";
+  const baseMemoryTool = modelHandle.startsWith("openai/gpt-5")
+    ? "memory_apply_patch"
+    : "memory";
   const defaultBaseTools = baseTools ?? [
     baseMemoryTool,
     "web_search",
