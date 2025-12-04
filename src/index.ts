@@ -479,6 +479,9 @@ async function main() {
           }
         }
 
+        // Set resuming state early so loading messages are accurate
+        setIsResumingSession(!!resumingAgentId);
+
         // If resuming an existing agent, load the exact tools attached to it
         // Otherwise, load a full toolset based on model/toolset preference
         if (resumingAgentId && !toolset) {
