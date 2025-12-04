@@ -687,6 +687,10 @@ export default function App({
         setStreaming(true);
         abortControllerRef.current = new AbortController();
 
+        // Clear any stale pending tool calls from previous turns
+        // If we're sending a new message, old pending state is no longer relevant
+        markIncompleteToolsAsCancelled(buffersRef.current);
+
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);

@@ -13,7 +13,11 @@ import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
-import { createBuffers, toLines } from "./cli/helpers/accumulator";
+import {
+  createBuffers,
+  markIncompleteToolsAsCancelled,
+  toLines,
+} from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
@@ -778,9 +782,6 @@ export async function handleHeadlessCommand(
 
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Mark incomplete tool calls as cancelled to prevent stuck state
-      const { markIncompleteToolsAsCancelled } = await import(
-        "./cli/helpers/accumulator"
-      );
       markIncompleteToolsAsCancelled(buffers);
 
       // Extract error details from buffers if available
@@ -838,9 +839,6 @@ export async function handleHeadlessCommand(
     }
   } catch (error) {
     // Mark incomplete tool calls as cancelled
-    const { markIncompleteToolsAsCancelled } = await import(
-      "./cli/helpers/accumulator"
-    );
     markIncompleteToolsAsCancelled(buffers);
 
     // Build run info suffix for debugging
