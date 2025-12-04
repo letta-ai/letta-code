@@ -48,20 +48,23 @@ export function getInternalToolName(serverName: string): string {
 }
 
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
+  "AskUserQuestion",
   "Bash",
   "BashOutput",
   "Edit",
+  "EnterPlanMode",
   "ExitPlanMode",
   "Glob",
   "Grep",
   "KillBash",
-  "LS",
-  "MultiEdit",
+  // "MultiEdit",
+  // "LS",
   "Read",
   "Skill",
   "Task",
   "TodoWrite",
   "Write",
+  "Skill",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
@@ -90,11 +93,38 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "Task",
 ];
 
+// PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
+export const OPENAI_PASCAL_TOOLS: ToolName[] = [
+  "ShellCommand",
+  "Shell",
+  "ReadFile",
+  "ListDir",
+  "GrepFiles",
+  "ApplyPatch",
+  "UpdatePlan",
+  "Skill",
+];
+
+export const GEMINI_PASCAL_TOOLS: ToolName[] = [
+  "RunShellCommand",
+  "ReadFileGemini",
+  "ListDirectory",
+  "GlobGemini",
+  "SearchFileContent",
+  "Replace",
+  "WriteFileGemini",
+  "WriteTodos",
+  "ReadManyFiles",
+  "Skill",
+];
+
 // Tool permissions configuration
 const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
+  AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   Edit: { requiresApproval: true },
+  EnterPlanMode: { requiresApproval: true },
   ExitPlanMode: { requiresApproval: false },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
@@ -123,6 +153,24 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   search_file_content: { requiresApproval: false },
   write_todos: { requiresApproval: false },
   write_file_gemini: { requiresApproval: true },
+  // Codex-2 toolset (PascalCase)
+  ShellCommand: { requiresApproval: true },
+  Shell: { requiresApproval: true },
+  ReadFile: { requiresApproval: false },
+  ListDir: { requiresApproval: false },
+  GrepFiles: { requiresApproval: false },
+  ApplyPatch: { requiresApproval: true },
+  UpdatePlan: { requiresApproval: false },
+  // Gemini-2 toolset (PascalCase)
+  RunShellCommand: { requiresApproval: true },
+  ReadFileGemini: { requiresApproval: false },
+  ListDirectory: { requiresApproval: false },
+  GlobGemini: { requiresApproval: false },
+  SearchFileContent: { requiresApproval: false },
+  Replace: { requiresApproval: true },
+  WriteFileGemini: { requiresApproval: true },
+  WriteTodos: { requiresApproval: false },
+  ReadManyFiles: { requiresApproval: false },
 };
 
 interface JsonSchema {
@@ -170,6 +218,27 @@ function getRegistry(): ToolRegistry {
 }
 
 const toolRegistry = getRegistry();
+
+/**
+ * Resolve a server/visible tool name to an internal tool name
+ * based on the currently loaded toolset.
+ *
+ * - If a tool with the exact name is loaded, prefer that.
+ * - Otherwise, fall back to the alias mapping used for Gemini tools.
+ * - Returns undefined if no matching tool is loaded.
+ */
+function resolveInternalToolName(name: string): string | undefined {
+  if (toolRegistry.has(name)) {
+    return name;
+  }
+
+  const internalName = getInternalToolName(name);
+  if (toolRegistry.has(internalName)) {
+    return internalName;
+  }
+
+  return undefined;
+}
 
 /**
  * Generates a Python stub for a tool that will be executed client-side.
@@ -343,13 +412,13 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
 
   let baseToolNames: ToolName[];
   if (!filterActive && modelIdentifier && isGeminiModel(modelIdentifier)) {
-    baseToolNames = GEMINI_DEFAULT_TOOLS;
+    baseToolNames = GEMINI_PASCAL_TOOLS;
   } else if (
     !filterActive &&
     modelIdentifier &&
     isOpenAIModel(modelIdentifier)
   ) {
-    baseToolNames = OPENAI_DEFAULT_TOOLS;
+    baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!filterActive) {
     baseToolNames = ANTHROPIC_DEFAULT_TOOLS;
   } else {
@@ -712,10 +781,15 @@ export async function executeTool(
   args: ToolArgs,
   options?: { signal?: AbortSignal },
 ): Promise<ToolExecutionResult> {
-  // Map server name to internal name for registry lookup
-  const internalName = getInternalToolName(name);
-  const tool = toolRegistry.get(internalName);
+  const internalName = resolveInternalToolName(name);
+  if (!internalName) {
+    return {
+      toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(toolRegistry.keys()).join(", ")}`,
+      status: "error",
+    };
+  }
 
+  const tool = toolRegistry.get(internalName);
   if (!tool) {
     return {
       toolReturn: `Tool not found: ${name}. Available tools: ${Array.from(toolRegistry.keys()).join(", ")}`,
@@ -726,7 +800,7 @@ export async function executeTool(
   try {
     // Inject abort signal for tools that support it (currently Bash) without altering schemas
     const argsWithSignal =
-      name === "Bash" && options?.signal
+      internalName === "Bash" && options?.signal
         ? { ...args, signal: options.signal }
         : args;
 
@@ -805,8 +879,8 @@ export function getToolSchemas(): ToolSchema[] {
  * @returns The tool schema or undefined if not found
  */
 export function getToolSchema(name: string): ToolSchema | undefined {
-  // Accept either server-facing or internal names
-  const internalName = getInternalToolName(name);
+  const internalName = resolveInternalToolName(name);
+  if (!internalName) return undefined;
   return toolRegistry.get(internalName)?.schema;
 }
 

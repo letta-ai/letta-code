@@ -2,6 +2,7 @@ import type { ExecOptions } from "node:child_process";
 import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
+import { getShellEnv } from "./shellEnv.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -60,7 +61,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     const childProcess = spawn(command, [], {
       shell: true,
       cwd: userCwd,
-      env: { ...process.env },
+      env: getShellEnv(),
     });
     backgroundProcesses.set(bashId, {
       process: childProcess,
@@ -118,7 +119,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       timeout: effectiveTimeout,
       maxBuffer: 10 * 1024 * 1024,
       cwd: userCwd,
-      env: { ...process.env },
+      env: getShellEnv(),
       signal,
     };
     const { stdout, stderr } = await execAsync(command, options);

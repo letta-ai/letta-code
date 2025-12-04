@@ -89,11 +89,27 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       skillsDir = join(process.cwd(), SKILLS_DIR);
     }
 
-    // Construct path to SKILL.md
-    const skillPath = join(skillsDir, skillId, "SKILL.md");
+    // Construct path to SKILL.md in the primary skills directory
+    let skillPath = join(skillsDir, skillId, "SKILL.md");
 
-    // Read the skill file directly
-    const skillContent = await readFile(skillPath, "utf-8");
+    // Read the skill file directly, with a fallback to bundled skills if not found
+    let skillContent: string;
+    try {
+      skillContent = await readFile(skillPath, "utf-8");
+    } catch (primaryError) {
+      // Fallback: check for bundled skills in a repo-level skills directory
+      try {
+        const bundledSkillsDir = join(process.cwd(), "skills", "skills");
+        const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
+        skillContent = await readFile(bundledSkillPath, "utf-8");
+        // Update path and directory to reflect bundled location for this invocation
+        skillsDir = bundledSkillsDir;
+        skillPath = bundledSkillPath;
+      } catch {
+        // If bundled fallback also fails, rethrow the original error
+        throw primaryError;
+      }
+    }
 
     // Parse current loaded_skills block value
     let currentValue = loadedSkillsBlock.value?.trim() || "";

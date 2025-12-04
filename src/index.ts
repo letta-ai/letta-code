@@ -4,6 +4,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import type { AgentProvenance } from "./agent/create";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { loadTools, upsertToolsToServer } from "./tools/manager";
@@ -29,9 +30,12 @@ OPTIONS
   -v, --version         Print version and exit
   --new                 Create new agent (reuses global blocks like persona/human)
   --fresh-blocks        Force create all new memory blocks (isolate from other agents)
+  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
+  --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
   -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
+  -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
@@ -120,8 +124,11 @@ async function main() {
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
         "fresh-blocks": { type: "boolean" },
+        "init-blocks": { type: "string" },
+        "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
         model: { type: "string", short: "m" },
+        system: { type: "string", short: "s" },
         toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
@@ -175,12 +182,58 @@ async function main() {
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
   const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
+  const initBlocksRaw = values["init-blocks"] as string | undefined;
+  const baseToolsRaw = values["base-tools"] as string | undefined;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
+  const specifiedSystem = (values.system as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // --init-blocks only makes sense when creating a brand new agent
+  if (initBlocksRaw && !forceNew) {
+    console.error(
+      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
+    );
+    process.exit(1);
+  }
+
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      // Explicitly requested zero blocks
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
+
+  // --base-tools only makes sense when creating a brand new agent
+  if (baseToolsRaw && !forceNew) {
+    console.error(
+      "Error: --base-tools can only be used together with --new to control initial base tools.",
+    );
+    process.exit(1);
+  }
+
+  let baseTools: string[] | undefined;
+  if (baseToolsRaw !== undefined) {
+    const trimmed = baseToolsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      baseTools = [];
+    } else {
+      baseTools = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Validate toolset if provided
   if (
@@ -193,6 +246,18 @@ async function main() {
       `Error: Invalid toolset "${specifiedToolset}". Must be "codex", "default", or "gemini".`,
     );
     process.exit(1);
+  }
+
+  // Validate system prompt if provided (dynamically from SYSTEM_PROMPTS)
+  if (specifiedSystem) {
+    const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+    const validSystemPrompts = SYSTEM_PROMPTS.map((p) => p.id);
+    if (!validSystemPrompts.includes(specifiedSystem)) {
+      console.error(
+        `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${validSystemPrompts.join(", ")}.`,
+      );
+      process.exit(1);
+    }
   }
 
   // Check if API key is configured
@@ -335,16 +400,22 @@ async function main() {
     continueSession,
     forceNew,
     freshBlocks,
+    initBlocks,
+    baseTools,
     agentIdArg,
     model,
+    system,
     toolset,
     skillsDirectory,
   }: {
     continueSession: boolean;
     forceNew: boolean;
     freshBlocks: boolean;
+    initBlocks?: string[];
+    baseTools?: string[];
     agentIdArg: string | null;
     model?: string;
+    system?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
   }) {
@@ -361,6 +432,8 @@ async function main() {
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [agentProvenance, setAgentProvenance] =
+      useState<AgentProvenance | null>(null);
 
     useEffect(() => {
       async function init() {
@@ -405,6 +478,9 @@ async function main() {
             }
           }
         }
+
+        // Set resuming state early so loading messages are accurate
+        setIsResumingSession(!!resumingAgentId);
 
         // If resuming an existing agent, load the exact tools attached to it
         // Otherwise, load a full toolset based on model/toolset preference
@@ -487,7 +563,7 @@ async function main() {
         if (!agent && forceNew) {
           // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -496,7 +572,12 @@ async function main() {
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
+            system,
+            initBlocks,
+            baseTools,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -533,7 +614,7 @@ async function main() {
         // Priority 5: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          agent = await createAgent(
+          const result = await createAgent(
             undefined,
             model,
             undefined,
@@ -542,7 +623,12 @@ async function main() {
             skillsDirectory,
             settings.parallelToolCalls,
             sleeptimeFlag ?? settings.enableSleeptime,
+            system,
+            undefined,
+            undefined,
           );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Ensure local project settings are loaded before updating
@@ -560,6 +646,41 @@ async function main() {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
         await initializeLoadedSkillsFlag();
+
+        // Re-discover skills and update the skills memory block
+        // This ensures new skills added after agent creation are available
+        try {
+          const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } =
+            await import("./agent/skills");
+          const { join } = await import("node:path");
+
+          const resolvedSkillsDirectory =
+            skillsDirectory || join(process.cwd(), SKILLS_DIR);
+          const { skills, errors } = await discoverSkills(
+            resolvedSkillsDirectory,
+          );
+
+          if (errors.length > 0) {
+            console.warn("Errors encountered during skill discovery:");
+            for (const error of errors) {
+              console.warn(`  ${error.path}: ${error.message}`);
+            }
+          }
+
+          // Update the skills memory block with freshly discovered skills
+          const formattedSkills = formatSkillsForMemory(
+            skills,
+            resolvedSkillsDirectory,
+          );
+          await client.agents.blocks.update("skills", {
+            agent_id: agent.id,
+            value: formattedSkills,
+          });
+        } catch (error) {
+          console.warn(
+            `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
 
         // Check if we're resuming an existing agent
         const localProjectSettings = settingsManager.getLocalProjectSettings();
@@ -583,7 +704,7 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, freshBlocks, agentIdArg, model]);
+    }, [continueSession, forceNew, freshBlocks, agentIdArg, model, system]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -594,6 +715,7 @@ async function main() {
         startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
         tokenStreaming: settings.tokenStreaming,
+        agentProvenance,
       });
     }
 
@@ -606,6 +728,7 @@ async function main() {
       startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
       tokenStreaming: settings.tokenStreaming,
+      agentProvenance,
     });
   }
 
@@ -614,8 +737,11 @@ async function main() {
       continueSession: shouldContinue,
       forceNew: forceNew,
       freshBlocks: freshBlocks,
+      initBlocks: initBlocks,
+      baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
+      system: specifiedSystem,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
     }),

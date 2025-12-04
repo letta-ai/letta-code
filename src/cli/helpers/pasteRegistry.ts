@@ -25,7 +25,8 @@ export function allocatePaste(content: string): number {
 
 export function resolvePlaceholders(text: string): string {
   if (!text) return text;
-  return text.replace(
+  // First resolve text placeholders
+  let result = text.replace(
     /\[Pasted text #(\d+) \+(\d+) lines\]/g,
     (_match, idStr) => {
       const id = Number(idStr);
@@ -33,6 +34,9 @@ export function resolvePlaceholders(text: string): string {
       return content !== undefined ? content : _match;
     },
   );
+  // Then convert visual newline indicators back to real newlines
+  result = result.replace(/↵/g, "\n");
+  return result;
 }
 
 export function extractTextPlaceholderIds(text: string): number[] {

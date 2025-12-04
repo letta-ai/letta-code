@@ -85,11 +85,39 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/system": {
+    desc: "Switch system prompt",
+    handler: () => {
+      // Handled specially in App.tsx to open system prompt selector
+      return "Opening system prompt selector...";
+    },
+  },
   "/download": {
     desc: "Download agent file locally",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Downloading agent file...";
+    },
+  },
+  "/bashes": {
+    desc: "Show background shell processes",
+    handler: () => {
+      // Handled specially in App.tsx to show background processes
+      return "Showing background processes...";
+    },
+  },
+  "/init": {
+    desc: "Initialize agent memory for this project",
+    handler: () => {
+      // Handled specially in App.tsx to send initialization prompt
+      return "Initializing memory...";
+    },
+  },
+  "/skill": {
+    desc: "Enter skill creation mode (optionally: /skill <description>)",
+    handler: () => {
+      // Handled specially in App.tsx to trigger skill-creation workflow
+      return "Starting skill creation...";
     },
   },
   "/agents": {

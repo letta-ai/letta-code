@@ -3,7 +3,7 @@ import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface BashOutputArgs {
-  bash_id: string;
+  shell_id: string;
   filter?: string;
 }
 interface BashOutputResult {
@@ -13,11 +13,11 @@ interface BashOutputResult {
 export async function bash_output(
   args: BashOutputArgs,
 ): Promise<BashOutputResult> {
-  validateRequiredParams(args, ["bash_id"], "BashOutput");
-  const { bash_id, filter } = args;
-  const proc = backgroundProcesses.get(bash_id);
+  validateRequiredParams(args, ["shell_id"], "BashOutput");
+  const { shell_id, filter } = args;
+  const proc = backgroundProcesses.get(shell_id);
   if (!proc)
-    return { message: `No background process found with ID: ${bash_id}` };
+    return { message: `No background process found with ID: ${shell_id}` };
   const stdout = proc.stdout.join("\n");
   const stderr = proc.stderr.join("\n");
   let text = stdout;

@@ -9,7 +9,7 @@ import { MEMORY_PROMPTS } from "./promptAssets";
 /**
  * Available memory block labels
  */
-export const MEMORY_BLOCK_LABELS = ["persona", "human", "project", "skills", "loaded_skills"] as const;
+export const MEMORY_BLOCK_LABELS = ["persona_empty", "human", "project", "skills", "loaded_skills"] as const;
 
 /**
  * Type for memory block labels

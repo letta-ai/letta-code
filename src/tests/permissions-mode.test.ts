@@ -23,7 +23,7 @@ test("default mode - no overrides", () => {
 
   const result = checkPermission(
     "Bash",
-    { command: "ls" },
+    { command: "curl http://example.com" }, // Use non-read-only command
     permissions,
     "/Users/test/project",
   );
@@ -161,7 +161,7 @@ test("acceptEdits mode - does NOT allow Bash", () => {
 
   const result = checkPermission(
     "Bash",
-    { command: "ls" },
+    { command: "curl http://example.com" }, // Use non-read-only command
     permissions,
     "/Users/test/project",
   );

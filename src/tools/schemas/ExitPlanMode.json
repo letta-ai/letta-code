@@ -1,11 +1,6 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "properties": {
-    "plan": {
-      "type": "string"
-    }
-  },
-  "required": ["plan"],
-  "additionalProperties": false
+  "properties": {},
+  "additionalProperties": true,
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }

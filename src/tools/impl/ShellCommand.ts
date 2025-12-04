@@ -1,4 +1,5 @@
-import { bash } from "./Bash.js";
+import { ShellExecutionError, shell } from "./Shell.js";
+import { buildShellLaunchers } from "./shellLaunchers.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
@@ -24,47 +25,41 @@ export async function shell_command(
 ): Promise<ShellCommandResult> {
   validateRequiredParams(args, ["command"], "shell_command");
 
-  const { command, workdir, timeout_ms, justification: description } = args;
-
-  // Reuse Bash implementation for execution, but honor the requested workdir
-  const previousUserCwd = process.env.USER_CWD;
-  if (workdir) {
-    process.env.USER_CWD = workdir;
+  const {
+    command,
+    workdir,
+    timeout_ms,
+    with_escalated_permissions,
+    justification,
+  } = args;
+  const launchers = buildShellLaunchers(command);
+  if (launchers.length === 0) {
+    throw new Error("Command must be a non-empty string");
   }
 
-  try {
-    const result = await bash({
-      command,
-      timeout: timeout_ms ?? 120000,
-      description,
-      run_in_background: false,
-    });
+  const tried: string[] = [];
+  let lastError: Error | null = null;
 
-    const text = (result.content ?? [])
-      .map((item) =>
-        "text" in item && typeof item.text === "string" ? item.text : "",
-      )
-      .filter(Boolean)
-      .join("\n");
-
-    const stdout = text ? text.split("\n") : [];
-    const stderr =
-      result.status === "error"
-        ? ["Command reported an error. See output for details."]
-        : [];
-
-    return {
-      output: text,
-      stdout,
-      stderr,
-    };
-  } finally {
-    if (workdir) {
-      if (previousUserCwd === undefined) {
-        delete process.env.USER_CWD;
-      } else {
-        process.env.USER_CWD = previousUserCwd;
+  for (const launcher of launchers) {
+    try {
+      return await shell({
+        command: launcher,
+        workdir,
+        timeout_ms,
+        with_escalated_permissions,
+        justification,
+      });
+    } catch (error) {
+      if (error instanceof ShellExecutionError && error.code === "ENOENT") {
+        tried.push(launcher[0] || "");
+        lastError = error;
+        continue;
       }
+      throw error;
     }
   }
+
+  const suffix = tried.filter(Boolean).join(", ");
+  const reason = lastError?.message || "Shell unavailable";
+  throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
 }

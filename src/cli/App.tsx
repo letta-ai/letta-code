@@ -1,5 +1,6 @@
 // src/cli/App.tsx
 
+import { existsSync, readFileSync } from "node:fs";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -15,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import type { AgentProvenance } from "../agent/create";
 import { setCurrentAgentId } from "../agent/context";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
@@ -35,6 +37,7 @@ import { ApprovalDialog } from "./components/ApprovalDialogRich";
 // import { AssistantMessage } from "./components/AssistantMessage";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
+import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 // import { ErrorMessage } from "./components/ErrorMessage";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
@@ -42,9 +45,12 @@ import { Input } from "./components/InputRich";
 import { AgentManager } from "./components/AgentManager";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
+import { QuestionDialog } from "./components/QuestionDialog";
 // import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { StatusMessage } from "./components/StatusMessage";
+import { SystemPromptSelector } from "./components/SystemPromptSelector";
 // import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -64,6 +70,7 @@ import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
+import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
@@ -93,9 +100,97 @@ function getPlanModeReminder(): string {
     return "";
   }
 
-  // Use bundled reminder text for binary compatibility
-  const { PLAN_MODE_REMINDER } = require("../agent/promptAssets");
-  return PLAN_MODE_REMINDER;
+  const planFilePath = permissionMode.getPlanFilePath();
+
+  // Generate dynamic reminder with plan file path
+  return `<system-reminder>
+Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
+
+## Plan File Info:
+${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using the Write tool.` : "No plan file path assigned."}
+
+You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
+
+**Plan File Guidelines:** The plan file should contain only your final recommended approach, not all alternatives considered. Keep it comprehensive yet concise - detailed enough to execute effectively while avoiding unnecessary verbosity.
+
+## Enhanced Planning Workflow
+
+### Phase 1: Initial Understanding
+Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions.
+
+1. Understand the user's request thoroughly
+2. Explore the codebase to understand existing patterns and relevant code
+3. Use AskUserQuestion tool to clarify ambiguities in the user request up front.
+
+### Phase 2: Planning
+Goal: Come up with an approach to solve the problem identified in phase 1.
+
+- Provide any background context that may help with the task without prescribing the exact design itself
+- Create a detailed plan
+
+### Phase 3: Synthesis
+Goal: Synthesize the perspectives from Phase 2, and ensure that it aligns with the user's intentions by asking them questions.
+
+1. Collect all findings from exploration
+2. Keep track of critical files that should be read before implementing the plan
+3. Use AskUserQuestion to ask the user questions about trade offs.
+
+### Phase 4: Final Plan
+Once you have all the information you need, ensure that the plan file has been updated with your synthesized recommendation including:
+
+- Recommended approach with rationale
+- Key insights from different perspectives
+- Critical files that need modification
+
+### Phase 5: Call ExitPlanMode
+At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call ExitPlanMode to indicate to the user that you are done planning.
+
+This is critical - your turn should only end with either asking the user a question or calling ExitPlanMode. Do not stop unless it's for these 2 reasons.
+
+NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+</system-reminder>
+`;
+}
+
+// Read plan content from the plan file
+function readPlanFile(): string {
+  const planFilePath = permissionMode.getPlanFilePath();
+  if (!planFilePath) {
+    return "No plan file path set.";
+  }
+  if (!existsSync(planFilePath)) {
+    return `Plan file not found at ${planFilePath}`;
+  }
+  try {
+    return readFileSync(planFilePath, "utf-8");
+  } catch {
+    return `Failed to read plan file at ${planFilePath}`;
+  }
+}
+
+// Fancy UI tools require specialized dialogs instead of the standard ApprovalDialog
+function isFancyUITool(name: string): boolean {
+  return (
+    name === "AskUserQuestion" ||
+    name === "EnterPlanMode" ||
+    name === "ExitPlanMode"
+  );
+}
+
+// Extract questions from AskUserQuestion tool args
+function getQuestionsFromApproval(approval: ApprovalRequest) {
+  const parsed = safeJsonParseOr<Record<string, unknown>>(
+    approval.toolArgs,
+    {},
+  );
+  return (
+    (parsed.questions as Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description: string }>;
+      multiSelect: boolean;
+    }>) || []
+  );
 }
 
 // Get skill unload reminder if skills are loaded (using cached flag)
@@ -106,6 +201,74 @@ function getSkillUnloadReminder(): string {
     return SKILL_UNLOAD_REMINDER;
   }
   return "";
+}
+
+// Generate status lines based on agent provenance
+function generateStatusLines(
+  continueSession: boolean,
+  agentProvenance: AgentProvenance | null,
+  agentState?: AgentState | null,
+): string[] {
+  const lines: string[] = [];
+
+  // For resumed agents
+  if (continueSession) {
+    lines.push(`Resumed existing agent (${agentState?.id})`);
+
+    // Show attached blocks if available
+    if (agentState?.memory?.blocks) {
+      const labels = agentState.memory.blocks
+        .map((b) => b.label)
+        .filter(Boolean)
+        .join(", ");
+      if (labels) {
+        lines.push(`  → Memory blocks: ${labels}`);
+      }
+    }
+
+    lines.push("  → To create a new agent, use --new");
+    return lines;
+  }
+
+  // For new agents with provenance
+  if (agentProvenance) {
+    if (agentProvenance.freshBlocks) {
+      lines.push(`Created new agent (${agentState?.id})`);
+      const allLabels = agentProvenance.blocks.map((b) => b.label).join(", ");
+      if (allLabels) {
+        lines.push(`  → Created new memory blocks: ${allLabels}`);
+      }
+    } else {
+      lines.push(`Created new agent (${agentState?.id})`);
+
+      // Group blocks by source
+      const globalBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "global")
+        .map((b) => b.label);
+      const projectBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "project")
+        .map((b) => b.label);
+      const newBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "new")
+        .map((b) => b.label);
+
+      if (globalBlocks.length > 0) {
+        lines.push(
+          `  → Reusing from global (~/.letta/): ${globalBlocks.join(", ")}`,
+        );
+      }
+      if (projectBlocks.length > 0) {
+        lines.push(
+          `  → Reusing from project (.letta/): ${projectBlocks.join(", ")}`,
+        );
+      }
+      if (newBlocks.length > 0) {
+        lines.push(`  → Created new blocks: ${newBlocks.join(", ")}`);
+      }
+    }
+  }
+
+  return lines;
 }
 
 // Items that have finished rendering and no longer change
@@ -130,6 +293,7 @@ export default function App({
   startupApprovals = [],
   messageHistory = [],
   tokenStreaming = true,
+  agentProvenance = null,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -146,6 +310,7 @@ export default function App({
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
   tokenStreaming?: boolean;
+  agentProvenance?: AgentProvenance | null;
 }) {
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
@@ -215,21 +380,28 @@ export default function App({
     }>
   >([]);
 
-  // If we have a plan approval request, show the plan dialog
-  const [planApprovalPending, setPlanApprovalPending] = useState<{
-    plan: string;
-    toolCallId: string;
-    toolArgs: string;
-  } | null>(null);
+  // Derive current approval from pending approvals and results
+  // This is the approval currently being shown to the user
+  const currentApproval = pendingApprovals[approvalResults.length];
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
+  const [systemPromptSelectorOpen, setSystemPromptSelectorOpen] =
+    useState(false);
+  const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
+    string | null
+  >("default");
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "default" | "gemini" | null
+    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const currentModelLabel =
+    llmConfig?.model_endpoint_type && llmConfig?.model
+      ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+      : (llmConfig?.model ?? null);
+  const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
 
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
@@ -298,7 +470,7 @@ export default function App({
       const ln = b.byId.get(id);
       if (!ln) continue;
       // console.log(`[COMMIT] Checking ${id}: kind=${ln.kind}, phase=${(ln as any).phase}`);
-      if (ln.kind === "user" || ln.kind === "error") {
+      if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         // console.log(`[COMMIT] Committed ${id} (${ln.kind})`);
@@ -358,6 +530,8 @@ export default function App({
   }, [refreshDerived]);
 
   // Restore pending approval from startup when ready
+  // All approvals (including fancy UI tools) go through pendingApprovals
+  // The render logic determines which UI to show based on tool name
   useEffect(() => {
     // Use new plural field if available, otherwise wrap singular in array for backward compat
     const approvals =
@@ -368,45 +542,29 @@ export default function App({
           : [];
 
     if (loadingState === "ready" && approvals.length > 0) {
-      // Check if this is an ExitPlanMode approval - route to plan dialog
-      const planApproval = approvals.find((a) => a.toolName === "ExitPlanMode");
-      if (planApproval) {
-        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          planApproval.toolArgs,
-          {},
-        );
-        const plan = (parsedArgs.plan as string) || "No plan provided";
+      // All approvals go through the same flow - UI rendering decides which dialog to show
+      setPendingApprovals(approvals);
 
-        setPlanApprovalPending({
-          plan,
-          toolCallId: planApproval.toolCallId,
-          toolArgs: planApproval.toolArgs,
-        });
-      } else {
-        // Regular tool approvals (may be multiple for parallel tools)
-        setPendingApprovals(approvals);
+      // Analyze approval contexts for all restored approvals
+      const analyzeStartupApprovals = async () => {
+        try {
+          const contexts = await Promise.all(
+            approvals.map(async (approval) => {
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                approval.toolArgs,
+                {},
+              );
+              return await analyzeToolApproval(approval.toolName, parsedArgs);
+            }),
+          );
+          setApprovalContexts(contexts);
+        } catch (error) {
+          // If analysis fails, leave context as null (will show basic options)
+          console.error("Failed to analyze startup approvals:", error);
+        }
+      };
 
-        // Analyze approval contexts for all restored approvals
-        const analyzeStartupApprovals = async () => {
-          try {
-            const contexts = await Promise.all(
-              approvals.map(async (approval) => {
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
-                  {},
-                );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
-              }),
-            );
-            setApprovalContexts(contexts);
-          } catch (error) {
-            // If analysis fails, leave context as null (will show basic options)
-            console.error("Failed to analyze startup approvals:", error);
-          }
-        };
-
-        analyzeStartupApprovals();
-      }
+      analyzeStartupApprovals();
     }
   }, [loadingState, startupApproval, startupApprovals]);
 
@@ -437,6 +595,43 @@ export default function App({
       }
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
+
+      // Inject "showing N messages" status at the START of backfilled history
+      const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
+      const messageCount = messageHistory.length;
+      const agentUrl = agentState?.id
+        ? `https://app.letta.com/agents/${agentState.id}`
+        : null;
+      const backfillLines = [
+        `Showing ${messageCount} most recent message${messageCount !== 1 ? "s" : ""}`,
+        agentUrl
+          ? `  → View full history in ADE: ${agentUrl}`
+          : "  → View full history in ADE",
+      ];
+      buffersRef.current.byId.set(backfillStatusId, {
+        kind: "status",
+        id: backfillStatusId,
+        lines: backfillLines,
+      });
+      // Insert at the beginning of the order array
+      buffersRef.current.order.unshift(backfillStatusId);
+
+      // Inject provenance status line at the END of the backfilled history
+      const statusLines = generateStatusLines(
+        continueSession,
+        agentProvenance,
+        agentState,
+      );
+      if (statusLines.length > 0) {
+        const statusId = `status-${Date.now().toString(36)}`;
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: statusLines,
+        });
+        buffersRef.current.order.push(statusId);
+      }
+
       refreshDerived();
       commitEligibleLines(buffersRef.current);
     }
@@ -448,6 +643,7 @@ export default function App({
     continueSession,
     columns,
     agentState,
+    agentProvenance,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -496,10 +692,16 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       const currentInput = initialInput;
+      // Track lastRunId outside the while loop so it's available in catch block
+      let lastKnownRunId: string | null = null;
 
       try {
         setStreaming(true);
         abortControllerRef.current = new AbortController();
+
+        // Clear any stale pending tool calls from previous turns
+        // If we're sending a new message, old pending state is no longer relevant
+        markIncompleteToolsAsCancelled(buffersRef.current);
 
         while (true) {
           // Stream one turn
@@ -511,6 +713,11 @@ export default function App({
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
             );
+
+          // Update lastKnownRunId for error handling in catch block
+          if (lastRunId) {
+            lastKnownRunId = lastRunId;
+          }
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -554,27 +761,7 @@ export default function App({
               return;
             }
 
-            // Check each approval for ExitPlanMode special case
-            const planApproval = approvalsToProcess.find(
-              (a) => a.toolName === "ExitPlanMode",
-            );
-            if (planApproval) {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                planApproval.toolArgs,
-                {},
-              );
-              const plan = (parsedArgs.plan as string) || "No plan provided";
-
-              setPlanApprovalPending({
-                plan,
-                toolCallId: planApproval.toolCallId,
-                toolArgs: planApproval.toolArgs,
-              });
-              setStreaming(false);
-              return;
-            }
-
-            // Check permissions for all approvals
+            // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
                 // Check if approval is incomplete (missing name or arguments)
@@ -607,15 +794,30 @@ export default function App({
             );
 
             // Categorize approvals by permission decision
-            const needsUserInput = approvalResults.filter(
-              (ac) => ac.permission.decision === "ask",
-            );
-            const autoDenied = approvalResults.filter(
-              (ac) => ac.permission.decision === "deny",
-            );
-            const autoAllowed = approvalResults.filter(
-              (ac) => ac.permission.decision === "allow",
-            );
+            // Fancy UI tools should always go through their dialog, even if auto-allowed
+            const needsUserInput: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
+
+              // Fancy tools should always go through a UI dialog in interactive mode,
+              // even if a rule says "allow". Deny rules are still respected.
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                // decision === "allow"
+                autoAllowed.push(ac);
+              }
+            }
 
             // Execute auto-allowed tools
             const autoAllowedResults = await Promise.all(
@@ -648,14 +850,30 @@ export default function App({
               }),
             );
 
-            // Create denial results for auto-denied tools
-            const autoDeniedResults = autoDenied.map((ac) => ({
-              approval: ac.approval,
-              reason:
+            // Create denial results for auto-denied tools and update buffers
+            const autoDeniedResults = autoDenied.map((ac) => {
+              const reason =
                 "matchedRule" in ac.permission && ac.permission.matchedRule
                   ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`,
-            }));
+                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`;
+
+              // Update buffers with tool rejection for UI
+              onChunk(buffersRef.current, {
+                message_type: "tool_return_message",
+                id: "dummy",
+                date: new Date().toISOString(),
+                tool_call_id: ac.approval.toolCallId,
+                tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                status: "error",
+                stdout: null,
+                stderr: null,
+              });
+
+              return {
+                approval: ac.approval,
+                reason,
+              };
+            });
 
             // If all are auto-handled, continue immediately without showing dialog
             if (needsUserInput.length === 0) {
@@ -707,8 +925,13 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
+          // Build run info suffix for debugging
+          const runInfoSuffix = lastRunId
+            ? `\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
+            : `\n(stop_reason: ${stopReason})`;
+
           // Fetch error details from the run if available
-          let errorDetails = `Unexpected stop reason: ${stopReason}`;
+          let errorDetails = `An error occurred during agent execution`;
           if (lastRunId) {
             try {
               const client = await getClient();
@@ -729,31 +952,43 @@ export default function App({
             } catch (_e) {
               // If we can't fetch error details, let user know
               appendError(
-                `${errorDetails}\n(Unable to fetch additional error details from server)`,
+                `${errorDetails}${runInfoSuffix}\n(Unable to fetch additional error details from server)`,
               );
               return;
             }
           }
 
-          appendError(errorDetails);
+          appendError(`${errorDetails}${runInfoSuffix}`);
 
           setStreaming(false);
           refreshDerived();
           return;
         }
       } catch (e) {
+        // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
+        markIncompleteToolsAsCancelled(buffersRef.current);
+
+        // Build error message with run_id for debugging
+        const runIdSuffix = lastKnownRunId
+          ? `\n(run_id: ${lastKnownRunId}, stop_reason: error)`
+          : "";
+
         // Handle APIError from streaming (event: error)
         if (e instanceof APIError && e.error?.error) {
           const { type, message, detail } = e.error.error;
           const errorType = type ? `[${type}] ` : "";
           const errorMessage = message || "An error occurred";
           const errorDetail = detail ? `:\n${detail}` : "";
-          appendError(`${errorType}${errorMessage}${errorDetail}`);
+          appendError(
+            `${errorType}${errorMessage}${errorDetail}${runIdSuffix}`,
+          );
         } else {
           // Fallback for non-API errors
-          appendError(e instanceof Error ? e.message : String(e));
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          appendError(`${errorMessage}${runIdSuffix}`);
         }
         setStreaming(false);
+        refreshDerived();
       } finally {
         abortControllerRef.current = null;
       }
@@ -816,15 +1051,23 @@ export default function App({
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
+        const trimmed = msg.trim();
+
         // Special handling for /model command - opens selector
-        if (msg.trim() === "/model") {
+        if (trimmed === "/model") {
           setModelSelectorOpen(true);
           return { submitted: true };
         }
 
         // Special handling for /toolset command - opens selector
-        if (msg.trim() === "/toolset") {
+        if (trimmed === "/toolset") {
           setToolsetSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /system command - opens system prompt selector
+        if (trimmed === "/system") {
+          setSystemPromptSelectorOpen(true);
           return { submitted: true };
         }
 
@@ -835,7 +1078,7 @@ export default function App({
         }
 
         // Special handling for /agent command - show agent link
-        if (msg.trim() === "/agent") {
+        if (trimmed === "/agent") {
           const cmdId = uid("cmd");
           const agentUrl = `https://app.letta.com/projects/default-project/agents/${agentId}`;
           buffersRef.current.byId.set(cmdId, {
@@ -852,13 +1095,13 @@ export default function App({
         }
 
         // Special handling for /exit command - show stats and exit
-        if (msg.trim() === "/exit") {
+        if (trimmed === "/exit") {
           handleExit();
           return { submitted: true };
         }
 
         // Special handling for /logout command - clear credentials and exit
-        if (msg.trim() === "/logout") {
+        if (trimmed === "/logout") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -1283,6 +1526,43 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /bashes command - show background shell processes
+        if (msg.trim() === "/bashes") {
+          const { backgroundProcesses } = await import(
+            "../tools/impl/process_manager"
+          );
+          const cmdId = uid("cmd");
+
+          let output: string;
+          if (backgroundProcesses.size === 0) {
+            output = "No background processes running";
+          } else {
+            const lines = ["Background processes:"];
+            for (const [id, proc] of backgroundProcesses) {
+              const status =
+                proc.status === "running"
+                  ? "running"
+                  : proc.status === "completed"
+                    ? `completed (exit ${proc.exitCode})`
+                    : `failed (exit ${proc.exitCode})`;
+              lines.push(`  ${id}: ${proc.command} [${status}]`);
+            }
+            output = lines.join("\n");
+          }
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output,
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
         // Special handling for /download command - download agent file
         if (msg.trim() === "/download") {
           const cmdId = uid("cmd");
@@ -1313,6 +1593,200 @@ export default function App({
               success: true,
             });
             refreshDerived();
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /skill command - enter skill creation mode
+        if (trimmed.startsWith("/skill")) {
+          const cmdId = uid("cmd");
+
+          // Extract optional description after `/skill`
+          const [, ...rest] = trimmed.split(/\s+/);
+          const description = rest.join(" ").trim();
+
+          const initialOutput = description
+            ? `Starting skill creation for: ${description}`
+            : "Starting skill creation. I’ll load the skill-creator skill and ask a few questions about the skill you want to build...";
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: initialOutput,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the skill-creation prompt
+            const { SKILL_CREATOR_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Build system-reminder content for skill creation
+            const userDescriptionLine = description
+              ? `\n\nUser-provided skill description:\n${description}`
+              : "\n\nThe user did not provide a description with /skill. Ask what kind of skill they want to create before proceeding.";
+
+            const skillMessage = `<system-reminder>\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n</system-reminder>`;
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "Entered skill creation mode. Answer the assistant’s questions to design your new skill.",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Process conversation with the skill-creation prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: skillMessage,
+              },
+            ]);
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        // Special handling for /init command - initialize agent memory
+        if (trimmed === "/init") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Gathering project context...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the initialization prompt
+            const { INITIALIZE_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Gather git context if available
+            let gitContext = "";
+            try {
+              const { execSync } = await import("node:child_process");
+              const cwd = process.cwd();
+
+              // Check if we're in a git repo
+              try {
+                execSync("git rev-parse --git-dir", {
+                  cwd,
+                  stdio: "pipe",
+                });
+
+                // Gather git info
+                const branch = execSync("git branch --show-current", {
+                  cwd,
+                  encoding: "utf-8",
+                }).trim();
+                const mainBranch = execSync(
+                  "git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo 'main'",
+                  { cwd, encoding: "utf-8", shell: "/bin/bash" },
+                ).trim();
+                const status = execSync("git status --short", {
+                  cwd,
+                  encoding: "utf-8",
+                }).trim();
+                const recentCommits = execSync(
+                  "git log --oneline -10 2>/dev/null || echo 'No commits yet'",
+                  { cwd, encoding: "utf-8" },
+                ).trim();
+
+                gitContext = `
+## Current Project Context
+
+**Working directory**: ${cwd}
+
+### Git Status
+- **Current branch**: ${branch}
+- **Main branch**: ${mainBranch}
+- **Status**:
+${status || "(clean working tree)"}
+
+### Recent Commits
+${recentCommits}
+`;
+              } catch {
+                // Not a git repo, just include working directory
+                gitContext = `
+## Current Project Context
+
+**Working directory**: ${cwd}
+**Git**: Not a git repository
+`;
+              }
+            } catch {
+              // execSync import failed, skip git context
+            }
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "Assimilating project context and defragmenting memories...",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Send initialization prompt with git context as a system reminder
+            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n${gitContext}\n</system-reminder>`;
+
+            // Process conversation with the init prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: initMessage,
+              },
+            ]);
           } catch (error) {
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -1814,17 +2288,40 @@ export default function App({
         );
         setLlmConfig(updatedConfig);
 
-        // After switching models, reload tools for the selected provider and relink
-        const { switchToolsetForModel } = await import("../tools/toolset");
-        const toolsetName = await switchToolsetForModel(
-          selectedModel.handle ?? "",
-          agentId,
+        // After switching models, only switch toolset if it actually changes
+        const { isOpenAIModel, isGeminiModel } = await import(
+          "../tools/manager"
         );
-        setCurrentToolset(toolsetName);
+        const targetToolset:
+          | "codex"
+          | "codex_snake"
+          | "default"
+          | "gemini"
+          | "gemini_snake" = isOpenAIModel(selectedModel.handle ?? "")
+          ? "codex"
+          : isGeminiModel(selectedModel.handle ?? "")
+            ? "gemini"
+            : "default";
 
-        // Update the same command with final result (include toolset info)
+        let toolsetName:
+          | "codex"
+          | "codex_snake"
+          | "default"
+          | "gemini"
+          | "gemini_snake"
+          | null = null;
+        if (currentToolset !== targetToolset) {
+          const { switchToolsetForModel } = await import("../tools/toolset");
+          toolsetName = await switchToolsetForModel(
+            selectedModel.handle ?? "",
+            agentId,
+          );
+          setCurrentToolset(toolsetName);
+        }
+
+        // Update the same command with final result (include toolset info only if changed)
         const autoToolsetLine = toolsetName
-          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.`
+          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
           : null;
         const outputLines = [
           `Switched to ${selectedModel.label}`,
@@ -1858,11 +2355,102 @@ export default function App({
         setCommandRunning(false);
       }
     },
+    [agentId, refreshDerived, currentToolset],
+  );
+
+  const handleSystemPromptSelect = useCallback(
+    async (promptId: string) => {
+      setSystemPromptSelectorOpen(false);
+
+      const cmdId = uid("cmd");
+
+      try {
+        // Find the selected prompt
+        const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+        const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
+
+        if (!selectedPrompt) {
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: `System prompt not found: ${promptId}`,
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return;
+        }
+
+        // Immediately add command to transcript with "running" phase
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/system ${promptId}`,
+          output: `Switching system prompt to ${selectedPrompt.label}...`,
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Lock input during async operation
+        setCommandRunning(true);
+
+        // Update the agent's system prompt
+        const { updateAgentSystemPrompt } = await import("../agent/modify");
+        const result = await updateAgentSystemPrompt(
+          agentId,
+          selectedPrompt.content,
+        );
+
+        if (result.success) {
+          setCurrentSystemPromptId(promptId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: `Switched system prompt to ${selectedPrompt.label}`,
+            phase: "finished",
+            success: true,
+          });
+        } else {
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/system ${promptId}`,
+            output: result.message,
+            phase: "finished",
+            success: false,
+          });
+        }
+        refreshDerived();
+      } catch (error) {
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/system ${promptId}`,
+          output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
     [agentId, refreshDerived],
   );
 
   const handleToolsetSelect = useCallback(
-    async (toolsetId: "codex" | "default" | "gemini") => {
+    async (
+      toolsetId:
+        | "codex"
+        | "codex_snake"
+        | "default"
+        | "gemini"
+        | "gemini_snake",
+    ) => {
       setToolsetSelectorOpen(false);
 
       const cmdId = uid("cmd");
@@ -2016,10 +2604,11 @@ export default function App({
 
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
-      if (!planApprovalPending) return;
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-      const { toolCallId, toolArgs } = planApprovalPending;
-      setPlanApprovalPending(null);
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
       // Exit plan mode
       const newMode = acceptEdits ? "acceptEdits" : "default";
@@ -2027,9 +2616,9 @@ export default function App({
       setUiPermissionMode(newMode);
 
       try {
-        // Execute ExitPlanMode tool
+        // Execute ExitPlanMode tool to get the result
         const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          toolArgs,
+          approval.toolArgs,
           {},
         );
         const toolResult = await executeTool("ExitPlanMode", parsedArgs);
@@ -2039,71 +2628,212 @@ export default function App({
           message_type: "tool_return_message",
           id: "dummy",
           date: new Date().toISOString(),
-          tool_call_id: toolCallId,
+          tool_call_id: approval.toolCallId,
           tool_return: toolResult.toolReturn,
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
         });
 
-        // Rotate to a new thinking message
         setThinkingMessage(getRandomThinkingMessage());
         refreshDerived();
 
-        // Restart conversation loop with approval response
-        await processConversation([
-          {
-            type: "approval",
-            approvals: [
-              {
-                type: "tool",
-                tool_call_id: toolCallId,
-                tool_return: toolResult.toolReturn,
-                status: toolResult.status,
-                stdout: toolResult.stdout,
-                stderr: toolResult.stderr,
-              },
-            ],
-          },
-        ]);
+        const decision = {
+          type: "approve" as const,
+          approval,
+          precomputedResult: toolResult,
+        };
+
+        if (isLast) {
+          setIsExecutingTool(true);
+          await sendAllResults(decision);
+        } else {
+          setApprovalResults((prev) => [...prev, decision]);
+        }
       } catch (e) {
         appendError(String(e));
         setStreaming(false);
       }
     },
-    [planApprovalPending, processConversation, appendError, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      appendError,
+      refreshDerived,
+    ],
   );
 
   const handlePlanKeepPlanning = useCallback(
     async (reason: string) => {
-      if (!planApprovalPending) return;
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
 
-      const { toolCallId } = planApprovalPending;
-      setPlanApprovalPending(null);
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
 
-      // Stay in plan mode - send denial with user's feedback to agent
-      try {
-        // Rotate to a new thinking message for this continuation
-        setThinkingMessage(getRandomThinkingMessage());
+      // Stay in plan mode
+      const denialReason =
+        reason ||
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
 
-        // Restart conversation loop with denial response
-        await processConversation([
-          {
-            type: "approval",
-            approval_request_id: toolCallId,
-            approve: false,
-            reason:
-              reason ||
-              "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
-          },
-        ]);
-      } catch (e) {
-        appendError(String(e));
-        setStreaming(false);
+      const decision = {
+        type: "deny" as const,
+        approval,
+        reason: denialReason,
+      };
+
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [planApprovalPending, processConversation, appendError],
+    [pendingApprovals, approvalResults, sendAllResults],
   );
+
+  const handleQuestionSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      const currentIndex = approvalResults.length;
+      const approval = pendingApprovals[currentIndex];
+      if (!approval) return;
+
+      const isLast = currentIndex + 1 >= pendingApprovals.length;
+
+      // Get questions from approval args
+      const questions = getQuestionsFromApproval(approval);
+
+      // Format the answer string like Claude Code does
+      const answerParts = questions.map((q) => {
+        const answer = answers[q.question] || "";
+        return `"${q.question}"="${answer}"`;
+      });
+      const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
+
+      const precomputedResult: ToolExecutionResult = {
+        toolReturn,
+        status: "success",
+      };
+
+      // Update buffers with tool return
+      onChunk(buffersRef.current, {
+        message_type: "tool_return_message",
+        id: "dummy",
+        date: new Date().toISOString(),
+        tool_call_id: approval.toolCallId,
+        tool_return: toolReturn,
+        status: "success",
+        stdout: null,
+        stderr: null,
+      });
+
+      setThinkingMessage(getRandomThinkingMessage());
+      refreshDerived();
+
+      const decision = {
+        type: "approve" as const,
+        approval,
+        precomputedResult,
+      };
+
+      if (isLast) {
+        setIsExecutingTool(true);
+        await sendAllResults(decision);
+      } else {
+        setApprovalResults((prev) => [...prev, decision]);
+      }
+    },
+    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
+  );
+
+  const handleEnterPlanModeApprove = useCallback(async () => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (!approval) return;
+
+    const isLast = currentIndex + 1 >= pendingApprovals.length;
+
+    // Generate plan file path
+    const planFilePath = generatePlanFilePath();
+
+    // Toggle plan mode on and store plan file path
+    permissionMode.setMode("plan");
+    permissionMode.setPlanFilePath(planFilePath);
+    setUiPermissionMode("plan");
+
+    // Get the tool return message from the implementation
+    const toolReturn = `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use AskUserQuestion if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. When ready, use ExitPlanMode to present your plan for approval
+
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
+
+Plan file path: ${planFilePath}`;
+
+    const precomputedResult: ToolExecutionResult = {
+      toolReturn,
+      status: "success",
+    };
+
+    // Update buffers with tool return
+    onChunk(buffersRef.current, {
+      message_type: "tool_return_message",
+      id: "dummy",
+      date: new Date().toISOString(),
+      tool_call_id: approval.toolCallId,
+      tool_return: toolReturn,
+      status: "success",
+      stdout: null,
+      stderr: null,
+    });
+
+    setThinkingMessage(getRandomThinkingMessage());
+    refreshDerived();
+
+    const decision = {
+      type: "approve" as const,
+      approval,
+      precomputedResult,
+    };
+
+    if (isLast) {
+      setIsExecutingTool(true);
+      await sendAllResults(decision);
+    } else {
+      setApprovalResults((prev) => [...prev, decision]);
+    }
+  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
+
+  const handleEnterPlanModeReject = useCallback(async () => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (!approval) return;
+
+    const isLast = currentIndex + 1 >= pendingApprovals.length;
+
+    const rejectionReason =
+      "User chose to skip plan mode and start implementing directly.";
+
+    const decision = {
+      type: "deny" as const,
+      approval,
+      reason: rejectionReason,
+    };
+
+    if (isLast) {
+      setIsExecutingTool(true);
+      await sendAllResults(decision);
+    } else {
+      setApprovalResults((prev) => [...prev, decision]);
+    }
+  }, [pendingApprovals, approvalResults, sendAllResults]);
 
   // Live area shows only in-progress items
   const liveItems = useMemo(() => {
@@ -2141,13 +2871,32 @@ export default function App({
           },
         },
       ]);
+
+      // Inject status line for fresh sessions
+      const statusLines = generateStatusLines(
+        continueSession,
+        agentProvenance,
+        agentState,
+      );
+      if (statusLines.length > 0) {
+        const statusId = `status-${Date.now().toString(36)}`;
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: statusLines,
+        });
+        buffersRef.current.order.push(statusId);
+        refreshDerived();
+      }
     }
   }, [
     loadingState,
     continueSession,
     messageHistory.length,
     columns,
+    agentProvenance,
     agentState,
+    refreshDerived,
   ]);
 
   return (
@@ -2171,9 +2920,11 @@ export default function App({
               <ToolCallMessage line={item} />
             ) : item.kind === "error" ? (
               <ErrorMessage line={item} />
-            ) : (
+            ) : item.kind === "status" ? (
+              <StatusMessage line={item} />
+            ) : item.kind === "command" ? (
               <CommandMessage line={item} />
-            )}
+            ) : null}
           </Box>
         )}
       </Static>
@@ -2191,29 +2942,29 @@ export default function App({
         {loadingState === "ready" && (
           <>
             {/* Transcript */}
-            {liveItems.length > 0 &&
-              pendingApprovals.length === 0 &&
-              !planApprovalPending && (
-                <Box flexDirection="column">
-                  {liveItems.map((ln) => (
-                    <Box key={ln.id} marginTop={1}>
-                      {ln.kind === "user" ? (
-                        <UserMessage line={ln} />
-                      ) : ln.kind === "reasoning" ? (
-                        <ReasoningMessage line={ln} />
-                      ) : ln.kind === "assistant" ? (
-                        <AssistantMessage line={ln} />
-                      ) : ln.kind === "tool_call" ? (
-                        <ToolCallMessage line={ln} />
-                      ) : ln.kind === "error" ? (
-                        <ErrorMessage line={ln} />
-                      ) : (
-                        <CommandMessage line={ln} />
-                      )}
-                    </Box>
-                  ))}
-                </Box>
-              )}
+            {liveItems.length > 0 && pendingApprovals.length === 0 && (
+              <Box flexDirection="column">
+                {liveItems.map((ln) => (
+                  <Box key={ln.id} marginTop={1}>
+                    {ln.kind === "user" ? (
+                      <UserMessage line={ln} />
+                    ) : ln.kind === "reasoning" ? (
+                      <ReasoningMessage line={ln} />
+                    ) : ln.kind === "assistant" ? (
+                      <AssistantMessage line={ln} />
+                    ) : ln.kind === "tool_call" ? (
+                      <ToolCallMessage line={ln} />
+                    ) : ln.kind === "error" ? (
+                      <ErrorMessage line={ln} />
+                    ) : ln.kind === "status" ? (
+                      <StatusMessage line={ln} />
+                    ) : ln.kind === "command" ? (
+                      <CommandMessage line={ln} />
+                    ) : null}
+                  </Box>
+                ))}
+              </Box>
+            )}
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
@@ -2233,8 +2984,8 @@ export default function App({
                 pendingApprovals.length === 0 &&
                 !modelSelectorOpen &&
                 !toolsetSelectorOpen &&
-                !agentSelectorOpen &&
-                !planApprovalPending
+                !systemPromptSelectorOpen &&
+                !agentSelectorOpen
               }
               streaming={streaming}
               commandRunning={commandRunning}
@@ -2248,12 +2999,17 @@ export default function App({
               interruptRequested={interruptRequested}
               agentId={agentId}
               agentName={agentName}
+              currentModel={currentModelDisplay}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
             {modelSelectorOpen && (
               <ModelSelector
-                currentModel={llmConfig?.model}
+                currentModel={
+                  llmConfig?.model_endpoint_type && llmConfig?.model
+                    ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+                    : undefined
+                }
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
               />
@@ -2265,6 +3021,15 @@ export default function App({
                 currentToolset={currentToolset ?? undefined}
                 onSelect={handleToolsetSelect}
                 onCancel={() => setToolsetSelectorOpen(false)}
+              />
+            )}
+
+            {/* System Prompt Selector - conditionally mounted as overlay */}
+            {systemPromptSelectorOpen && (
+              <SystemPromptSelector
+                currentPromptId={currentSystemPromptId ?? undefined}
+                onSelect={handleSystemPromptSelect}
+                onCancel={() => setSystemPromptSelectorOpen(false)}
               />
             )}
 
@@ -2282,12 +3047,12 @@ export default function App({
               <AgentManager onClose={() => setAgentManagerOpen(false)} />
             )}
 
-            {/* Plan Mode Dialog - below live items */}
-            {planApprovalPending && (
+            {/* Plan Mode Dialog - for ExitPlanMode tool */}
+            {currentApproval?.toolName === "ExitPlanMode" && (
               <>
                 <Box height={1} />
                 <PlanModeDialog
-                  plan={planApprovalPending.plan}
+                  plan={readPlanFile()}
                   onApprove={() => handlePlanApprove(false)}
                   onApproveAndAcceptEdits={() => handlePlanApprove(true)}
                   onKeepPlanning={handlePlanKeepPlanning}
@@ -2295,27 +3060,41 @@ export default function App({
               </>
             )}
 
-            {/* Approval Dialog - below live items */}
-            {pendingApprovals.length > 0 && (
+            {/* Question Dialog - for AskUserQuestion tool */}
+            {currentApproval?.toolName === "AskUserQuestion" && (
+              <>
+                <Box height={1} />
+                <QuestionDialog
+                  questions={getQuestionsFromApproval(currentApproval)}
+                  onSubmit={handleQuestionSubmit}
+                />
+              </>
+            )}
+
+            {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}
+            {currentApproval?.toolName === "EnterPlanMode" && (
+              <>
+                <Box height={1} />
+                <EnterPlanModeDialog
+                  onApprove={handleEnterPlanModeApprove}
+                  onReject={handleEnterPlanModeReject}
+                />
+              </>
+            )}
+
+            {/* Approval Dialog - for standard tools (not fancy UI tools) */}
+            {currentApproval && !isFancyUITool(currentApproval.toolName) && (
               <>
                 <Box height={1} />
                 <ApprovalDialog
-                  approvals={
-                    pendingApprovals[approvalResults.length]
-                      ? ([
-                          pendingApprovals[
-                            approvalResults.length
-                          ] as ApprovalRequest,
-                        ] as ApprovalRequest[])
-                      : []
-                  }
+                  approvals={[currentApproval]}
                   approvalContexts={
                     approvalContexts[approvalResults.length]
-                      ? ([
+                      ? [
                           approvalContexts[
                             approvalResults.length
                           ] as ApprovalContext,
-                        ] as ApprovalContext[])
+                        ]
                       : []
                   }
                   progress={{

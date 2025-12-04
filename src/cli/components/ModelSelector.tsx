@@ -1,6 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { models } from "../../agent/model";
 import { colors } from "./colors";
 
@@ -39,6 +39,18 @@ export function ModelSelector({
     if (featuredModels.length > 0) return featuredModels;
     return typedModels.slice(0, 5);
   }, [featuredModels, showAll, typedModels]);
+
+  // Set initial selection to current model on mount
+  const initializedRef = useRef(false);
+  useEffect(() => {
+    if (!initializedRef.current) {
+      const index = visibleModels.findIndex((m) => m.handle === currentModel);
+      if (index >= 0) {
+        setSelectedIndex(index);
+      }
+      initializedRef.current = true;
+    }
+  }, [visibleModels, currentModel]);
 
   const totalItems = showAll ? visibleModels.length : visibleModels.length + 1;
 

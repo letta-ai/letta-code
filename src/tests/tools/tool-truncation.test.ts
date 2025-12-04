@@ -139,6 +139,7 @@ describe("tool truncation integration tests", () => {
         pattern: "match",
         path: testDir,
         output_mode: "content",
+        head_limit: 0, // Disable head_limit to test truncation
       });
 
       expect(result.output.length).toBeLessThanOrEqual(15000); // 10K + notice
@@ -280,7 +281,7 @@ describe("tool truncation integration tests", () => {
         // Wait a bit for output to accumulate
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const outputResult = await bash_output({ bash_id: bashId });
+        const outputResult = await bash_output({ shell_id: bashId });
 
         expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
         if (outputResult.message.length > 30000) {

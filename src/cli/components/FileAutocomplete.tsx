@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
 import { colors } from "./colors";
 
@@ -25,6 +25,7 @@ export function FileAutocomplete({
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
+  const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // Extract the text after the "@" symbol where the cursor is positioned
   const extractSearchQuery = useCallback(
@@ -94,6 +95,11 @@ export function FileAutocomplete({
   });
 
   useEffect(() => {
+    // Clear any existing debounce timeout
+    if (debounceTimeout.current) {
+      clearTimeout(debounceTimeout.current);
+    }
+
     const result = extractSearchQuery(currentInput, cursorPosition);
 
     if (!result) {
@@ -138,7 +144,7 @@ export function FileAutocomplete({
       return;
     }
 
-    // If query is empty (just typed "@"), show current directory contents
+    // If query is empty (just typed "@"), show current directory contents (no debounce)
     if (query.length === 0) {
       setIsLoading(true);
       onActiveChange?.(true);
@@ -158,7 +164,7 @@ export function FileAutocomplete({
       return;
     }
 
-    // Check if it's a URL pattern
+    // Check if it's a URL pattern (no debounce)
     if (query.startsWith("http://") || query.startsWith("https://")) {
       setMatches([{ path: query, type: "url" }]);
       setSelectedIndex(0);
@@ -166,26 +172,38 @@ export function FileAutocomplete({
       return;
     }
 
-    // Search for matching files (deep search through subdirectories)
+    // Debounce the file search (300ms delay)
+    // Keep existing matches visible while debouncing
     setIsLoading(true);
     onActiveChange?.(true);
-    searchFiles(query, true) // Enable deep search
-      .then((results) => {
-        setMatches(results);
-        setSelectedIndex(0);
-        setIsLoading(false);
-        onActiveChange?.(results.length > 0);
-        // Remember this query had valid matches
-        if (results.length > 0) {
-          setLastValidQuery(query);
-        }
-      })
-      .catch(() => {
-        setMatches([]);
-        setSelectedIndex(0);
-        setIsLoading(false);
-        onActiveChange?.(false);
-      });
+
+    debounceTimeout.current = setTimeout(() => {
+      // Search for matching files (deep search through subdirectories)
+      searchFiles(query, true) // Enable deep search
+        .then((results) => {
+          setMatches(results);
+          setSelectedIndex(0);
+          setIsLoading(false);
+          onActiveChange?.(results.length > 0);
+          // Remember this query had valid matches
+          if (results.length > 0) {
+            setLastValidQuery(query);
+          }
+        })
+        .catch(() => {
+          setMatches([]);
+          setSelectedIndex(0);
+          setIsLoading(false);
+          onActiveChange?.(false);
+        });
+    }, 300);
+
+    // Cleanup function to clear timeout on unmount
+    return () => {
+      if (debounceTimeout.current) {
+        clearTimeout(debounceTimeout.current);
+      }
+    };
   }, [
     currentInput,
     cursorPosition,
@@ -215,31 +233,34 @@ export function FileAutocomplete({
     >
       <Text dimColor>
         File/URL autocomplete (↑↓ to navigate, Tab/Enter to select):
+        {isLoading && " Searching..."}
       </Text>
-      {isLoading ? (
-        <Text dimColor>Searching...</Text>
+      {matches.length > 0 ? (
+        <>
+          {matches.slice(0, 10).map((item, idx) => (
+            <Box key={item.path} flexDirection="row" gap={1}>
+              <Text
+                color={
+                  idx === selectedIndex
+                    ? colors.status.success
+                    : item.type === "dir"
+                      ? colors.status.processing
+                      : undefined
+                }
+                bold={idx === selectedIndex}
+              >
+                {idx === selectedIndex ? "▶ " : "  "}
+                {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
+              </Text>
+              <Text bold={idx === selectedIndex}>{item.path}</Text>
+            </Box>
+          ))}
+          {matches.length > 10 && (
+            <Text dimColor>... and {matches.length - 10} more</Text>
+          )}
+        </>
       ) : (
-        matches.slice(0, 10).map((item, idx) => (
-          <Box key={item.path} flexDirection="row" gap={1}>
-            <Text
-              color={
-                idx === selectedIndex
-                  ? colors.status.success
-                  : item.type === "dir"
-                    ? colors.status.processing
-                    : undefined
-              }
-              bold={idx === selectedIndex}
-            >
-              {idx === selectedIndex ? "▶ " : "  "}
-              {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
-            </Text>
-            <Text bold={idx === selectedIndex}>{item.path}</Text>
-          </Box>
-        ))
-      )}
-      {matches.length > 10 && (
-        <Text dimColor>... and {matches.length - 10} more</Text>
+        isLoading && <Text dimColor>Searching...</Text>
       )}
     </Box>
   );

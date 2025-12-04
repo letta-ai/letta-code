@@ -13,7 +13,11 @@ import { createAgent } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
-import { createBuffers, toLines } from "./cli/helpers/accumulator";
+import {
+  createBuffers,
+  markIncompleteToolsAsCancelled,
+  toLines,
+} from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
@@ -36,6 +40,7 @@ export async function handleHeadlessCommand(
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
+      system: { type: "string", short: "s" },
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
@@ -52,6 +57,8 @@ export async function handleHeadlessCommand(
       link: { type: "boolean" },
       unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
+      "init-blocks": { type: "string" },
+      "base-tools": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -84,7 +91,50 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
+  const specifiedSystem = values.system as string | undefined;
+  const initBlocksRaw = values["init-blocks"] as string | undefined;
+  const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+
+  if (initBlocksRaw && !forceNew) {
+    console.error(
+      "Error: --init-blocks can only be used together with --new to control initial memory blocks.",
+    );
+    process.exit(1);
+  }
+
+  let initBlocks: string[] | undefined;
+  if (initBlocksRaw !== undefined) {
+    const trimmed = initBlocksRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      initBlocks = [];
+    } else {
+      initBlocks = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
+
+  if (baseToolsRaw && !forceNew) {
+    console.error(
+      "Error: --base-tools can only be used together with --new to control initial base tools.",
+    );
+    process.exit(1);
+  }
+
+  let baseTools: string[] | undefined;
+  if (baseToolsRaw !== undefined) {
+    const trimmed = baseToolsRaw.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") {
+      baseTools = [];
+    } else {
+      baseTools = trimmed
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    }
+  }
 
   // Priority 1: Try to use --agent specified ID
   if (specifiedAgentId) {
@@ -98,7 +148,7 @@ export async function handleHeadlessCommand(
   // Priority 2: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -107,7 +157,11 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      specifiedSystem,
+      initBlocks,
+      baseTools,
     );
+    agent = result.agent;
   }
 
   // Priority 3: Try to resume from project settings (.letta/settings.local.json)
@@ -139,7 +193,7 @@ export async function handleHeadlessCommand(
   // Priority 5: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    agent = await createAgent(
+    const result = await createAgent(
       undefined,
       model,
       undefined,
@@ -148,7 +202,11 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       settings.parallelToolCalls,
       sleeptimeFlag ?? settings.enableSleeptime,
+      specifiedSystem,
+      undefined,
+      undefined,
     );
+    agent = result.agent;
   }
 
   // Save agent ID to both project and global settings
@@ -159,6 +217,40 @@ export async function handleHeadlessCommand(
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
   await initializeLoadedSkillsFlag();
+
+  // Re-discover skills and update the skills memory block
+  // This ensures new skills added after agent creation are available
+  try {
+    const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } = await import(
+      "./agent/skills"
+    );
+    const { join } = await import("node:path");
+
+    const resolvedSkillsDirectory =
+      skillsDirectory || join(process.cwd(), SKILLS_DIR);
+    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
+
+    if (errors.length > 0) {
+      console.warn("Errors encountered during skill discovery:");
+      for (const error of errors) {
+        console.warn(`  ${error.path}: ${error.message}`);
+      }
+    }
+
+    // Update the skills memory block with freshly discovered skills
+    const formattedSkills = formatSkillsForMemory(
+      skills,
+      resolvedSkillsDirectory,
+    );
+    await client.agents.blocks.update("skills", {
+      agent_id: agent.id,
+      value: formattedSkills,
+    });
+  } catch (error) {
+    console.warn(
+      `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   // Validate output format
   const outputFormat =
@@ -338,6 +430,9 @@ export async function handleHeadlessCommand(
       content: [{ type: "text", text: messageContent }],
     },
   ];
+
+  // Track lastRunId outside the while loop so it's available in catch block
+  let lastKnownRunId: string | null = null;
 
   try {
     while (true) {
@@ -559,6 +654,7 @@ export async function handleHeadlessCommand(
         apiDurationMs = performance.now() - startTime;
         // Use the last run_id we saw (if any)
         lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
+        if (lastRunId) lastKnownRunId = lastRunId;
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -576,6 +672,7 @@ export async function handleHeadlessCommand(
         approvals = result.approvals || [];
         apiDurationMs = result.apiDurationMs;
         lastRunId = result.lastRunId || null;
+        if (lastRunId) lastKnownRunId = lastRunId;
       }
 
       // Track API duration for this stream
@@ -688,6 +785,9 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
+      // Mark incomplete tool calls as cancelled to prevent stuck state
+      markIncompleteToolsAsCancelled(buffers);
+
       // Extract error details from buffers if available
       const errorLines = toLines(buffers).filter(
         (line) => line.kind === "error",
@@ -729,24 +829,39 @@ export async function handleHeadlessCommand(
             type: "error",
             message: errorMessage,
             stop_reason: stopReason,
+            run_id: lastRunId,
           }),
         );
       } else {
-        console.error(errorMessage);
+        // Include run_id and stop_reason for debugging
+        const runInfoSuffix = lastRunId
+          ? ` (run_id: ${lastRunId}, stop_reason: ${stopReason})`
+          : ` (stop_reason: ${stopReason})`;
+        console.error(`${errorMessage}${runInfoSuffix}`);
       }
       process.exit(1);
     }
   } catch (error) {
+    // Mark incomplete tool calls as cancelled
+    markIncompleteToolsAsCancelled(buffers);
+
+    // Build run info suffix for debugging
+    const runInfoSuffix = lastKnownRunId
+      ? ` (run_id: ${lastKnownRunId}, stop_reason: error)`
+      : "";
+
     // Handle APIError from streaming (event: error)
     if (error instanceof APIError && error.error?.error) {
       const { type, message, detail } = error.error.error;
       const errorType = type ? `[${type}] ` : "";
       const errorMessage = message || "An error occurred";
       const errorDetail = detail ? `: ${detail}` : "";
-      console.error(`Error: ${errorType}${errorMessage}${errorDetail}`);
+      console.error(
+        `Error: ${errorType}${errorMessage}${errorDetail}${runInfoSuffix}`,
+      );
     } else {
       // Fallback for non-API errors
-      console.error(`Error: ${error}`);
+      console.error(`Error: ${error}${runInfoSuffix}`);
     }
     process.exit(1);
   }
