@@ -77,6 +77,7 @@ async function executeSubagent(
   config: SubagentConfig,
   model: string,
   userPrompt: string,
+  baseURL: string,
 ): Promise<SubagentResult> {
   try {
     // Run letta in headless mode with the user prompt
@@ -158,9 +159,11 @@ async function executeSubagent(
       try {
         const event = JSON.parse(line);
 
-        // Capture agent ID from init event
+        // Capture agent ID from init event and print URL immediately
         if (event.type === "init" && event.agent_id) {
           agentId = event.agent_id;
+          const agentURL = `${baseURL}/agents/${agentId}`;
+          console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
         }
 
         // Track tool calls from message chunks (handles streamed tool calls)
@@ -220,7 +223,7 @@ async function executeSubagent(
               ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
               : `${durationSec.toFixed(1)}s`;
 
-            console.log(`${ANSI_DIM}     ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
+            console.log(`${ANSI_DIM}      ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
           }
         }
 
@@ -370,23 +373,20 @@ export async function spawnSubagent(
   // Use parent agent's model override, or fall back to subagent config's recommended model
   const model = userModel || config.recommendedModel;
 
+  // Get base URL for agent links before starting
+  const baseURL = await getBaseURL();
+
   // Print subagent header before execution starts
   console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
 
   // Execute subagent via letta CLI in headless mode
   // The CLI will create the agent and execute it
-  const result = await executeSubagent(type, config, model, prompt);
-
-  // Print subagent URL if we got an agent ID
-  if (result.agentId) {
-    const baseURL = await getBaseURL();
-    const agentURL = `${baseURL}/agents/${result.agentId}`;
-    console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
-  }
+  // URL is printed immediately when we get the agent ID from the init event
+  const result = await executeSubagent(type, config, model, prompt, baseURL);
 
   // Print error to console so user can see it
   if (!result.success && result.error) {
-    console.log(`${ANSI_DIM}  ⎿  Error: ${result.error}${ANSI_RESET}`);
+    console.log(`${ANSI_DIM}      ⎿  Error: ${result.error}${ANSI_RESET}`);
   }
 
   return result;
