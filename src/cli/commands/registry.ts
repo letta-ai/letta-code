@@ -120,11 +120,11 @@ export const commands: Record<string, Command> = {
       return "Starting skill creation...";
     },
   },
-  "/agents": {
+  "/subagents": {
     desc: "Manage custom subagents",
     handler: () => {
-      // Handled specially in App.tsx to open AgentManager component
-      return "Opening agent manager...";
+      // Handled specially in App.tsx to open SubagentManager component
+      return "Opening subagent manager...";
     },
   },
 };

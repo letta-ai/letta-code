@@ -1,5 +1,5 @@
 /**
- * AgentManager component - displays available subagents
+ * SubagentManager component - displays available subagents
  */
 
 import { Box, Text, useInput } from "ink";
@@ -12,7 +12,7 @@ import {
 } from "../../agent/subagents";
 import { colors } from "./colors";
 
-interface AgentManagerProps {
+interface SubagentManagerProps {
   onClose: () => void;
 }
 
@@ -21,7 +21,7 @@ interface SubagentItem {
   config: SubagentConfig;
 }
 
-export function AgentManager({ onClose }: AgentManagerProps) {
+export function SubagentManager({ onClose }: SubagentManagerProps) {
   const [subagents, setSubagents] = useState<SubagentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

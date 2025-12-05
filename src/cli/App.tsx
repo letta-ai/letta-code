@@ -42,7 +42,7 @@ import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 // import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
-import { AgentManager } from "./components/AgentManager";
+import { SubagentManager } from "./components/SubagentManager";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { QuestionDialog } from "./components/QuestionDialog";
@@ -406,8 +406,8 @@ export default function App({
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
 
-  // Agent manager state (for /agents command)
-  const [agentManagerOpen, setAgentManagerOpen] = useState(false);
+  // Subagent manager state (for /subagents command)
+  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1071,9 +1071,9 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /agents command - opens agent manager
-        if (msg.trim() === "/agents") {
-          setAgentManagerOpen(true);
+        // Special handling for /subagents command - opens subagent manager
+        if (msg.trim() === "/subagents") {
+          setSubagentManagerOpen(true);
           return { submitted: true };
         }
 
@@ -3042,9 +3042,9 @@ Plan file path: ${planFilePath}`;
               />
             )}
 
-            {/* Agent Manager - for managing custom subagents */}
-            {agentManagerOpen && (
-              <AgentManager onClose={() => setAgentManagerOpen(false)} />
+            {/* Subagent Manager - for managing custom subagents */}
+            {subagentManagerOpen && (
+              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
