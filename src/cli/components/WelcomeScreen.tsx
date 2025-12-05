@@ -37,7 +37,9 @@ export function getAgentStatusHints(
         .filter(Boolean)
         .join(", ");
       if (labels) {
-        hints.push(`→ Attached ${count} memory block${count !== 1 ? "s" : ""}: ${labels}`);
+        hints.push(
+          `→ Attached ${count} memory block${count !== 1 ? "s" : ""}: ${labels}`,
+        );
       }
     }
     hints.push("→ To create a new agent, use --new");
@@ -65,16 +67,24 @@ export function getAgentStatusHints(
       .map((b) => b.label);
 
     if (reusedGlobalBlocks.length > 0) {
-      hints.push(`→ Reusing from global (~/.letta/): ${reusedGlobalBlocks.join(", ")}`);
+      hints.push(
+        `→ Reusing from global (~/.letta/): ${reusedGlobalBlocks.join(", ")}`,
+      );
     }
     if (newGlobalBlocks.length > 0) {
-      hints.push(`→ Created in global (~/.letta/): ${newGlobalBlocks.join(", ")}`);
+      hints.push(
+        `→ Created in global (~/.letta/): ${newGlobalBlocks.join(", ")}`,
+      );
     }
     if (reusedProjectBlocks.length > 0) {
-      hints.push(`→ Reusing from project (.letta/): ${reusedProjectBlocks.join(", ")}`);
+      hints.push(
+        `→ Reusing from project (.letta/): ${reusedProjectBlocks.join(", ")}`,
+      );
     }
     if (newProjectBlocks.length > 0) {
-      hints.push(`→ Created in project (.letta/): ${newProjectBlocks.join(", ")}`);
+      hints.push(
+        `→ Created in project (.letta/): ${newProjectBlocks.join(", ")}`,
+      );
     }
   }
 
@@ -103,12 +113,17 @@ export function WelcomeScreen({
   const logoLines = asciiLogo.trim().split("\n");
   const isMedium = terminalWidth >= 80;
 
-  const statusMessage = getStatusMessage(loadingState, !!continueSession, agentId);
+  const statusMessage = getStatusMessage(
+    loadingState,
+    !!continueSession,
+    agentId,
+  );
   const pathLine = isMedium ? `Running in ${cwd}` : cwd;
   const agentUrl = agentId ? `https://app.letta.com/agents/${agentId}` : null;
-  const hints = loadingState === "ready"
-    ? getAgentStatusHints(!!continueSession, agentState, agentProvenance)
-    : [];
+  const hints =
+    loadingState === "ready"
+      ? getAgentStatusHints(!!continueSession, agentState, agentProvenance)
+      : [];
 
   return (
     <Box flexDirection="row" marginTop={1}>
