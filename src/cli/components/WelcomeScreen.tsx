@@ -55,10 +55,10 @@ export function WelcomeScreen({
       .join(", ");
 
     if (isWide && labels) {
-      return `attached ${count} memory block${count !== 1 ? "s" : ""} (${labels})`;
+      return `${count} memory block${count !== 1 ? "s" : ""} (${labels})`;
     }
     if (isMedium) {
-      return `attached ${count} memory block${count !== 1 ? "s" : ""}`;
+      return `${count} memory block${count !== 1 ? "s" : ""}`;
     }
     return null;
   };
@@ -138,24 +138,35 @@ export function WelcomeScreen({
 
     // For new agents with provenance, show block sources
     if (agentProvenance) {
-      const globalBlocks = agentProvenance.blocks
+      // Blocks reused from existing storage
+      const reusedGlobalBlocks = agentProvenance.blocks
         .filter((b) => b.source === "global")
         .map((b) => b.label);
-      const projectBlocks = agentProvenance.blocks
+      const reusedProjectBlocks = agentProvenance.blocks
         .filter((b) => b.source === "project")
         .map((b) => b.label);
-      const newBlocks = agentProvenance.blocks
-        .filter((b) => b.source === "new")
+
+      // New blocks - categorize by where they'll be stored
+      // (project/skills → .letta/, others → ~/.letta/)
+      const newBlocks = agentProvenance.blocks.filter((b) => b.source === "new");
+      const newGlobalBlocks = newBlocks
+        .filter((b) => b.label !== "project" && b.label !== "skills")
+        .map((b) => b.label);
+      const newProjectBlocks = newBlocks
+        .filter((b) => b.label === "project" || b.label === "skills")
         .map((b) => b.label);
 
-      if (globalBlocks.length > 0) {
-        hints.push(`→ Reusing from global (~/.letta/): ${globalBlocks.join(", ")}`);
+      if (reusedGlobalBlocks.length > 0) {
+        hints.push(`→ Reusing from global (~/.letta/): ${reusedGlobalBlocks.join(", ")}`);
       }
-      if (projectBlocks.length > 0) {
-        hints.push(`→ Reusing from project (.letta/): ${projectBlocks.join(", ")}`);
+      if (newGlobalBlocks.length > 0) {
+        hints.push(`→ Created in global (~/.letta/): ${newGlobalBlocks.join(", ")}`);
       }
-      if (newBlocks.length > 0) {
-        hints.push(`→ Created new blocks: ${newBlocks.join(", ")}`);
+      if (reusedProjectBlocks.length > 0) {
+        hints.push(`→ Reusing from project (.letta/): ${reusedProjectBlocks.join(", ")}`);
+      }
+      if (newProjectBlocks.length > 0) {
+        hints.push(`→ Created in project (.letta/): ${newProjectBlocks.join(", ")}`);
       }
     }
 
