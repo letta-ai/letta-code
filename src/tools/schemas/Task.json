@@ -15,8 +15,7 @@
     },
     "model": {
       "type": "string",
-      "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type.",
-      "enum": ["sonnet", "opus", "haiku"]
+      "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type."
     }
   },
   "required": ["subagent_type", "prompt", "description"],

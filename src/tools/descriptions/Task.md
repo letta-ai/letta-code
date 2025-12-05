@@ -12,6 +12,7 @@ When using the Task tool, you must specify:
 - **subagent_type**: Which specialized agent to use (see Available Agents section)
 - **prompt**: Detailed, self-contained instructions for the agent (agents cannot ask questions mid-execution)
 - **description**: Short 3-5 word summary for tracking
+- **model** (optional): Override the model for this agent
 
 ## When to use this tool:
 
@@ -39,11 +40,12 @@ When using the Task tool, you must specify:
 ## Examples:
 
 ```typescript
-// Good - specific and actionable
+// Good - specific and actionable with a user-specified model "gpt-5-low"
 Task({
   subagent_type: "explore",
   description: "Find authentication code",
-  prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
+  prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used.",
+  model: "gpt-5-low"
 })
 
 // Good - complex multi-step task
