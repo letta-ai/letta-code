@@ -7,25 +7,14 @@ import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
- * Block labels that are stored globally (shared across all projects)
- */
-export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
-
-/**
- * Block labels that are stored per-project (local to the current directory)
+ * Block labels that are stored per-project (local to the current directory).
+ * All other blocks are stored globally (shared across all projects).
  */
 export const PROJECT_BLOCK_LABELS = [
   "project",
   "skills",
   "loaded_skills",
 ] as const;
-
-/**
- * Check if a block label is a global block
- */
-export function isGlobalBlock(label: string): boolean {
-  return (GLOBAL_BLOCK_LABELS as readonly string[]).includes(label);
-}
 
 /**
  * Check if a block label is a project-level block
