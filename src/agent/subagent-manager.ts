@@ -243,15 +243,18 @@ async function executeSubagent(
       proc.on("error", () => resolve(null));
     });
 
-    const stderr = Buffer.concat(stderrChunks).toString("utf-8");
+    const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
     // Check for errors
     if (exitCode !== 0) {
+      // Extract meaningful error message from stderr
+      // stderr often starts with "Error: " which we can use directly
+      const errorMessage = stderr || `Subagent exited with code ${exitCode}`;
       return {
         agentId: agentId || "",
         report: "",
         success: false,
-        error: `Subagent execution failed with exit code ${exitCode}: ${stderr}`,
+        error: errorMessage,
       };
     }
 
@@ -379,6 +382,11 @@ export async function spawnSubagent(
     const baseURL = await getBaseURL();
     const agentURL = `${baseURL}/agents/${result.agentId}`;
     console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
+  }
+
+  // Print error to console so user can see it
+  if (!result.success && result.error) {
+    console.log(`${ANSI_DIM}  ⎿  Error: ${result.error}${ANSI_RESET}`);
   }
 
   return result;

@@ -248,13 +248,22 @@ async function main() {
     process.exit(1);
   }
 
-  // Validate system prompt if provided (dynamically from SYSTEM_PROMPTS)
+  // Validate system prompt if provided (can be a system prompt ID or subagent name)
   if (specifiedSystem) {
     const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+    const { getAllSubagentConfigs } = await import("./agent/subagents");
+
     const validSystemPrompts = SYSTEM_PROMPTS.map((p) => p.id);
-    if (!validSystemPrompts.includes(specifiedSystem)) {
+    const subagentConfigs = await getAllSubagentConfigs();
+    const validSubagentNames = Object.keys(subagentConfigs);
+
+    const isValidSystemPrompt = validSystemPrompts.includes(specifiedSystem);
+    const isValidSubagent = validSubagentNames.includes(specifiedSystem);
+
+    if (!isValidSystemPrompt && !isValidSubagent) {
+      const allValid = [...validSystemPrompts, ...validSubagentNames];
       console.error(
-        `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${validSystemPrompts.join(", ")}.`,
+        `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${allValid.join(", ")}.`,
       );
       process.exit(1);
     }
