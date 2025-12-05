@@ -2835,22 +2835,7 @@ Plan file path: ${planFilePath}`;
         },
       ]);
 
-      // Inject status line for fresh sessions
-      const statusLines = generateStatusLines(
-        continueSession,
-        agentProvenance,
-        agentState,
-      );
-      if (statusLines.length > 0) {
-        const statusId = `status-${Date.now().toString(36)}`;
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: statusLines,
-        });
-        buffersRef.current.order.push(statusId);
-        refreshDerived();
-      }
+      // Note: Status info is already shown in WelcomeScreen, no need to duplicate here
     }
   }, [
     loadingState,
