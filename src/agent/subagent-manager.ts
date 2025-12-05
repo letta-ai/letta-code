@@ -2,14 +2,12 @@
  * Subagent manager for spawning and coordinating subagents
  *
  * This module handles:
- * - Creating separate Letta agent instances for each subagent type
+ * - Spawning subagents via letta CLI in headless mode
  * - Executing subagents and collecting final reports
  * - Managing parallel subagent execution
  */
 
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getErrorMessage } from "../utils/error";
-import { getClient } from "./client";
 import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
 
 // ============================================================================
@@ -19,12 +17,6 @@ import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
 /** ANSI escape codes for console output */
 const ANSI_DIM = "\x1b[2m";
 const ANSI_RESET = "\x1b[0m";
-
-/** Default embedding model for subagents */
-const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
-
-/** Base Letta tools that are always kept regardless of allowedTools config */
-const BASE_LETTA_TOOLS = ["memory", "web_search", "conversation_search", "fetch_webpage"];
 
 /**
  * Subagent execution result
@@ -37,111 +29,68 @@ export interface SubagentResult {
 }
 
 /**
- * Resolve model string to full model identifier
- * Uses the model resolution utilities from model.ts
+ * Resolve model string for subagent
+ * Returns the user-provided model or falls back to config's recommended model
  */
-async function resolveSubagentModel(
+function resolveSubagentModel(
   modelShorthand: string | undefined,
   config: SubagentConfig,
-): Promise<string> {
-  // Import dynamically to avoid circular dependencies
-  const { resolveModel } = await import("./model");
-
-  // If user provided a model, try to resolve it
+): string {
+  // If user provided a model, use it (letta CLI will resolve it)
   if (modelShorthand) {
-    const resolved = resolveModel(modelShorthand);
-    if (resolved) {
-      return resolved;
-    }
-    console.warn(
-      `Failed to resolve model "${modelShorthand}", falling back to recommended model`,
-    );
+    return modelShorthand;
   }
 
-  // Fall back to recommended model from config, and resolve it
-  const resolved = resolveModel(config.recommendedModel);
-  if (!resolved) {
-    throw new Error(
-      `Failed to resolve recommended model "${config.recommendedModel}" for subagent`,
-    );
-  }
-
-  return resolved;
+  // Fall back to recommended model from config
+  return config.recommendedModel;
 }
 
 /**
- * Create a subagent with specified configuration
- * Uses dynamic import to reuse createAgent while avoiding circular dependencies
+ * Build CLI arguments for spawning a subagent
  */
-async function createSubagent(
+function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
   model: string,
   userPrompt: string,
-): Promise<AgentState> {
-  // Inject user prompt into system prompt
-  const systemPrompt = config.systemPrompt.replace(
-    "{user_provided_prompt}",
-    userPrompt,
-  );
+): string[] {
+  const args: string[] = [
+    "--new",
+    "--fresh-blocks",
+    "--system", type,
+    "--model", model,
+    "-p", userPrompt,
+    "--output-format", "stream-json",
+  ];
 
-  // Use dynamic import to break circular dependency at module initialization time
-  const { createAgent } = await import("./create");
+  // Add memory block filtering if specified
+  if (config.memoryBlocks === "none") {
+    args.push("--init-blocks", "none");
+  } else if (Array.isArray(config.memoryBlocks) && config.memoryBlocks.length > 0) {
+    args.push("--init-blocks", config.memoryBlocks.join(","));
+  }
+  // If "all", don't add --init-blocks (default behavior)
 
-  const client = await getClient();
-
-  // Create agent using the standard createAgent function with custom system prompt
-  const agent = await createAgent(
-    `subagent-${type}-${Date.now()}`,
-    model,
-    DEFAULT_EMBEDDING_MODEL,
-    undefined, // no update args
-    false, // share memory blocks with parent agent
-    undefined, // no skills directory
-    true, // parallel tool calls
-    false, // no sleeptime
-    systemPrompt, // custom system prompt for this subagent type
-  );
-
-  // Handle tool filtering
-  const allTools = agent.tools || [];
-
-  // If allowedTools is "all", keep all tools
-  if (config.allowedTools === "all") {
-    return agent;
+  // Add tool filtering if specified
+  if (config.allowedTools !== "all" && Array.isArray(config.allowedTools) && config.allowedTools.length > 0) {
+    args.push("--allowedTools", config.allowedTools.join(","));
   }
 
-  // Filter to keep only allowed tools (and base tools like memory, web_search, etc.)
-  const allowedToolNames = new Set(config.allowedTools);
-  const remainingTools = allTools.filter((tool) => {
-    if (!tool.name) return true; // Keep tools without names (shouldn't happen)
-    // Keep if it's an allowed tool OR a base Letta tool
-    return (
-      allowedToolNames.has(tool.name as never) ||
-      BASE_LETTA_TOOLS.includes(tool.name)
-    );
-  });
-
-  // Extract tool IDs from remaining tools
-  const remainingToolIds = remainingTools
-    .map((t) => t.id)
-    .filter((id): id is string => typeof id === "string");
-
-  // Update agent with filtered tools
-  if (remainingToolIds.length !== allTools.length) {
-    await client.agents.update(agent.id, {
-      tool_ids: remainingToolIds,
-    });
+  // Add permission mode if specified
+  if (config.permissionMode && config.permissionMode !== "default") {
+    args.push("--permission-mode", config.permissionMode);
   }
 
-  return agent;
+  return args;
 }
 
 /**
  * Execute a subagent and collect its final report by spawning letta in headless mode
  */
 async function executeSubagent(
-  agent: AgentState,
+  type: string,
+  config: SubagentConfig,
+  model: string,
   userPrompt: string,
 ): Promise<SubagentResult> {
   try {
@@ -150,15 +99,14 @@ async function executeSubagent(
     const { spawn } = await import("node:child_process");
     const { createInterface } = await import("node:readline");
 
+    // Build CLI arguments
+    const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
+
     // Spawn letta in headless mode with stream-json output for progress visibility
-    const proc = spawn(
-      "letta",
-      ["--agent", agent.id, "-p", userPrompt, "--output-format", "stream-json"],
-      {
-        cwd: process.cwd(),
-        env: process.env,
-      }
-    );
+    const proc = spawn("letta", cliArgs, {
+      cwd: process.cwd(),
+      env: process.env,
+    });
 
     // Track all stdout for final result parsing
     const stdoutChunks: Buffer[] = [];
@@ -174,6 +122,7 @@ async function executeSubagent(
     const displayedToolCalls = new Set<string>();
     // Accumulate tool call info from message chunks (name + args may come separately)
     const pendingToolCalls = new Map<string, { name: string; args: string }>();
+    let agentId: string | null = null;
     let finalResult: string | null = null;
     let finalError: string | null = null;
     let resultStats: { durationMs: number; totalTokens: number } | null = null;
@@ -223,6 +172,11 @@ async function executeSubagent(
 
       try {
         const event = JSON.parse(line);
+
+        // Capture agent ID from init event
+        if (event.type === "init" && event.agent_id) {
+          agentId = event.agent_id;
+        }
 
         // Track tool calls from message chunks (handles streamed tool calls)
         if (event.type === "message" && event.message_type === "approval_request_message") {
@@ -309,7 +263,7 @@ async function executeSubagent(
     // Check for errors
     if (exitCode !== 0) {
       return {
-        agentId: agent.id,
+        agentId: agentId || "",
         report: "",
         success: false,
         error: `Subagent execution failed with exit code ${exitCode}: ${stderr}`,
@@ -319,7 +273,7 @@ async function executeSubagent(
     // Use the captured final result, or parse from stdout if not captured
     if (finalResult !== null) {
       return {
-        agentId: agent.id,
+        agentId: agentId || "",
         report: finalResult,
         success: !finalError,
         error: finalError || undefined,
@@ -329,7 +283,7 @@ async function executeSubagent(
     // If we captured an error but no result
     if (finalError) {
       return {
-        agentId: agent.id,
+        agentId: agentId || "",
         report: "",
         success: false,
         error: finalError,
@@ -346,7 +300,7 @@ async function executeSubagent(
 
       if (result.type === "result") {
         return {
-          agentId: agent.id,
+          agentId: agentId || "",
           report: result.result || "",
           success: !result.is_error,
           error: result.is_error ? (result.result || "Unknown error") : undefined,
@@ -355,14 +309,14 @@ async function executeSubagent(
 
       // Unexpected format
       return {
-        agentId: agent.id,
+        agentId: agentId || "",
         report: "",
         success: false,
         error: "Unexpected output format from subagent",
       };
     } catch (parseError) {
       return {
-        agentId: agent.id,
+        agentId: agentId || "",
         report: "",
         success: false,
         error: `Failed to parse subagent output: ${getErrorMessage(parseError)}`,
@@ -370,7 +324,7 @@ async function executeSubagent(
     }
   } catch (error) {
     return {
-      agentId: agent.id,
+      agentId: "",
       report: "",
       success: false,
       error: getErrorMessage(error),
@@ -420,41 +374,22 @@ export async function spawnSubagent(
     };
   }
 
-  let resolvedModel: string;
-  try {
-    resolvedModel = await resolveSubagentModel(model, config);
-  } catch (error) {
-    return {
-      agentId: "",
-      report: "",
-      success: false,
-      error: `Failed to resolve model: ${getErrorMessage(error)}`,
-    };
-  }
-
-  // Create subagent with appropriate configuration
-  let subagent: AgentState;
-  try {
-    subagent = await createSubagent(type, config, resolvedModel, prompt);
-  } catch (error) {
-    return {
-      agentId: "",
-      report: "",
-      success: false,
-      error: `Failed to create subagent: ${getErrorMessage(error)}`,
-    };
-  }
-
-  // Build and print header lines
-  const baseURL = await getBaseURL();
-  const agentURL = `${baseURL}/agents/${subagent.id}`;
+  // Resolve model (user-provided or config default)
+  const resolvedModel = resolveSubagentModel(model, config);
 
   // Print subagent header before execution starts
   console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
-  console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
 
-  // Execute subagent and collect final report
-  const result = await executeSubagent(subagent, prompt);
+  // Execute subagent via letta CLI in headless mode
+  // The CLI will create the agent and execute it
+  const result = await executeSubagent(type, config, resolvedModel, prompt);
+
+  // Print subagent URL if we got an agent ID
+  if (result.agentId) {
+    const baseURL = await getBaseURL();
+    const agentURL = `${baseURL}/agents/${result.agentId}`;
+    console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
+  }
 
   return result;
 }
