@@ -585,16 +585,11 @@ export default function App({
       backfillBuffers(buffersRef.current, messageHistory);
 
       // Inject "showing N messages" status at the START of backfilled history
+      // (Only show message count - other info is already in WelcomeScreen)
       const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
       const messageCount = messageHistory.length;
-      const agentUrl = agentState?.id
-        ? `https://app.letta.com/agents/${agentState.id}`
-        : null;
       const backfillLines = [
         `Showing ${messageCount} most recent message${messageCount !== 1 ? "s" : ""}`,
-        agentUrl
-          ? `  → View full history in ADE: ${agentUrl}`
-          : "  → View full history in ADE",
       ];
       buffersRef.current.byId.set(backfillStatusId, {
         kind: "status",
@@ -604,21 +599,7 @@ export default function App({
       // Insert at the beginning of the order array
       buffersRef.current.order.unshift(backfillStatusId);
 
-      // Inject provenance status line at the END of the backfilled history
-      const statusLines = generateStatusLines(
-        continueSession,
-        agentProvenance,
-        agentState,
-      );
-      if (statusLines.length > 0) {
-        const statusId = `status-${Date.now().toString(36)}`;
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: statusLines,
-        });
-        buffersRef.current.order.push(statusId);
-      }
+      // Note: Provenance/agent info is already shown in WelcomeScreen, no need to duplicate
 
       refreshDerived();
       commitEligibleLines(buffersRef.current);

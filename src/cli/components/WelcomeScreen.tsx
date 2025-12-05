@@ -39,41 +39,32 @@ export function WelcomeScreen({
   const isWide = terminalWidth >= 120;
   const isMedium = terminalWidth >= 80;
 
-  const getMemoryBlocksText = () => {
-    if (!agentState?.memory?.blocks) {
+  const getMemoryBlocksLine = () => {
+    if (loadingState !== "ready" || !agentState?.memory?.blocks) {
       return null;
     }
 
     const blocks = agentState.memory.blocks;
-    const count = blocks.length;
     const labels = blocks
       .map((b) => b.label)
       .filter(Boolean)
       .join(", ");
 
-    if (isWide && labels) {
-      return `attached ${count} memory block${count !== 1 ? "s" : ""} (${labels})`;
-    }
-    if (isMedium) {
-      return `attached ${count} memory block${count !== 1 ? "s" : ""}`;
+    if (labels) {
+      return `  → Memory blocks: ${labels}`;
     }
     return null;
   };
 
   const getAgentMessage = () => {
     if (loadingState === "ready") {
-      const memoryText = getMemoryBlocksText();
-      const baseText =
-        continueSession && agentId
-          ? "Resumed agent"
-          : agentId
-            ? "Created a new agent"
-            : "Ready to go!";
-
-      if (memoryText) {
-        return `${baseText}, ${memoryText}`;
+      if (agentId) {
+        const baseText = continueSession
+          ? "Resumed existing agent:"
+          : "Created new agent:";
+        return baseText;
       }
-      return baseText;
+      return "Ready to go!";
     }
     if (loadingState === "initializing") {
       return continueSession ? "Resuming agent..." : "Creating agent...";
@@ -96,6 +87,14 @@ export function WelcomeScreen({
     return "";
   };
 
+  const getAgentLink = () => {
+    if (loadingState === "ready" && agentId) {
+      const url = `https://app.letta.com/agents/${agentId}`;
+      return { text: url, url };
+    }
+    return null;
+  };
+
   const getPathLine = () => {
     if (isMedium) {
       return `Running in ${cwd}`;
@@ -103,23 +102,18 @@ export function WelcomeScreen({
     return cwd;
   };
 
-  const getAgentLink = () => {
-    if (loadingState === "ready" && agentId) {
-      const url = `https://app.letta.com/agents/${agentId}`;
-      if (isWide) {
-        return { text: url, url };
-      }
-      if (isMedium) {
-        return { text: agentId, url };
-      }
-      return { text: "Click to view in ADE", url };
+  const getTip = () => {
+    if (loadingState === "ready" && continueSession) {
+      return "  → To create a new agent, use --new";
     }
     return null;
   };
 
   const agentMessage = getAgentMessage();
   const pathLine = getPathLine();
+  const memoryBlocksLine = getMemoryBlocksLine();
   const agentLink = getAgentLink();
+  const tip = getTip();
 
   return (
     <Box flexDirection="row" marginTop={1}>
@@ -139,12 +133,18 @@ export function WelcomeScreen({
           Letta Code v{version}
         </Text>
         <Text dimColor>{pathLine}</Text>
-        {agentMessage && <Text dimColor>{agentMessage}</Text>}
-        {agentLink && (
-          <Link url={agentLink.url}>
-            <Text dimColor>{agentLink.text}</Text>
-          </Link>
-        )}
+        {agentMessage && agentLink ? (
+          <Box flexDirection="row" gap={1}>
+            <Text dimColor>{agentMessage}</Text>
+            <Link url={agentLink.url}>
+              <Text dimColor>{agentLink.text}</Text>
+            </Link>
+          </Box>
+        ) : agentMessage ? (
+          <Text dimColor>{agentMessage}</Text>
+        ) : null}
+        {memoryBlocksLine && <Text dimColor>{memoryBlocksLine}</Text>}
+        {tip && <Text dimColor>{tip}</Text>}
       </Box>
     </Box>
   );
