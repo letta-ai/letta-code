@@ -1,6 +1,7 @@
 import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
 import Link from "ink-link";
+import type { AgentProvenance } from "../../agent/create";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { asciiLogo } from "./AsciiArt";
@@ -19,11 +20,13 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
+  agentProvenance,
   terminalWidth: frozenWidth,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentState?: Letta.AgentState | null;
+  agentProvenance?: AgentProvenance | null;
   terminalWidth?: number;
 }) {
   const currentWidth = useTerminalWidth();
@@ -62,18 +65,12 @@ export function WelcomeScreen({
 
   const getAgentMessage = () => {
     if (loadingState === "ready") {
-      const memoryText = getMemoryBlocksText();
-      const baseText =
-        continueSession && agentId
-          ? "Resumed agent"
-          : agentId
-            ? "Created a new agent"
-            : "Ready to go!";
-
-      if (memoryText) {
-        return `${baseText}, ${memoryText}`;
-      }
-      return baseText;
+      // Memory blocks shown in hints, not in main message
+      return continueSession && agentId
+        ? "Resumed agent"
+        : agentId
+          ? "Created a new agent"
+          : "Ready to go!";
     }
     if (loadingState === "initializing") {
       return continueSession ? "Resuming agent..." : "Creating agent...";
@@ -117,9 +114,58 @@ export function WelcomeScreen({
     return null;
   };
 
+  const getHintLines = (): string[] => {
+    if (loadingState !== "ready") return [];
+
+    const hints: string[] = [];
+
+    // For resumed agents, show memory blocks and --new hint
+    if (continueSession) {
+      if (agentState?.memory?.blocks) {
+        const blocks = agentState.memory.blocks;
+        const count = blocks.length;
+        const labels = blocks
+          .map((b) => b.label)
+          .filter(Boolean)
+          .join(", ");
+        if (labels) {
+          hints.push(`→ Attached ${count} memory block${count !== 1 ? "s" : ""}: ${labels}`);
+        }
+      }
+      hints.push("→ To create a new agent, use --new");
+      return hints;
+    }
+
+    // For new agents with provenance, show block sources
+    if (agentProvenance) {
+      const globalBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "global")
+        .map((b) => b.label);
+      const projectBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "project")
+        .map((b) => b.label);
+      const newBlocks = agentProvenance.blocks
+        .filter((b) => b.source === "new")
+        .map((b) => b.label);
+
+      if (globalBlocks.length > 0) {
+        hints.push(`→ Reusing from global (~/.letta/): ${globalBlocks.join(", ")}`);
+      }
+      if (projectBlocks.length > 0) {
+        hints.push(`→ Reusing from project (.letta/): ${projectBlocks.join(", ")}`);
+      }
+      if (newBlocks.length > 0) {
+        hints.push(`→ Created new blocks: ${newBlocks.join(", ")}`);
+      }
+    }
+
+    return hints;
+  };
+
   const agentMessage = getAgentMessage();
   const pathLine = getPathLine();
   const agentLink = getAgentLink();
+  const hintLines = getHintLines();
 
   return (
     <Box flexDirection="row" marginTop={1}>
@@ -139,12 +185,25 @@ export function WelcomeScreen({
           Letta Code v{version}
         </Text>
         <Text dimColor>{pathLine}</Text>
-        {agentMessage && <Text dimColor>{agentMessage}</Text>}
-        {agentLink && (
-          <Link url={agentLink.url}>
-            <Text dimColor>{agentLink.text}</Text>
-          </Link>
+        {agentMessage && (
+          <Text dimColor>
+            {agentMessage}
+            {agentLink && (
+              <>
+                {": "}
+                <Link url={agentLink.url}>
+                  <Text dimColor>{agentLink.url}</Text>
+                </Link>
+              </>
+            )}
+          </Text>
         )}
+        {hintLines.map((hint, idx) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: Hint lines are static and never reorder
+          <Text key={idx} dimColor>
+            {hint}
+          </Text>
+        ))}
       </Box>
     </Box>
   );
