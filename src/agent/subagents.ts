@@ -33,14 +33,10 @@ export interface SubagentConfig {
   allowedTools: string[] | "all";
   /** Recommended model - any model ID from models.json or full handle */
   recommendedModel: string;
-  /** Permission mode for the subagent (unknown values default to "default") */
-  permissionMode: string;
   /** Skills to auto-load */
   skills: string[];
   /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
   memoryBlocks: MemoryBlockLabel[] | "all" | "none";
-  /** Path to the source file */
-  filePath: string;
 }
 
 /**
@@ -161,10 +157,8 @@ async function parseSubagentFile(filePath: string): Promise<SubagentConfig | nul
     systemPrompt: body,
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
-    permissionMode: getStringField(frontmatter, "permissionMode") || "default",
     skills: parseSkills(getStringField(frontmatter, "skills")),
     memoryBlocks: parseMemoryBlocks(getStringField(frontmatter, "memoryBlocks")),
-    filePath,
   };
 }
 

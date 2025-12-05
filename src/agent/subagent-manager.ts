@@ -31,12 +31,12 @@ export interface SubagentResult {
 /**
  * Build CLI arguments for spawning a subagent
  */
-function buildSubagentArgs(
+async function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
   model: string,
   userPrompt: string,
-): string[] {
+): Promise<string[]> {
   const args: string[] = [
     "--new",
     "--fresh-blocks",
@@ -45,6 +45,13 @@ function buildSubagentArgs(
     "-p", userPrompt,
     "--output-format", "stream-json",
   ];
+
+  // Inherit permission mode from parent
+  const { permissionMode } = await import("../permissions/mode");
+  const currentMode = permissionMode.getMode();
+  if (currentMode !== "default") {
+    args.push("--permission-mode", currentMode);
+  }
 
   // Add memory block filtering if specified
   if (config.memoryBlocks === "none") {
@@ -57,11 +64,6 @@ function buildSubagentArgs(
   // Add tool filtering if specified
   if (config.allowedTools !== "all" && Array.isArray(config.allowedTools) && config.allowedTools.length > 0) {
     args.push("--allowedTools", config.allowedTools.join(","));
-  }
-
-  // Add permission mode if specified
-  if (config.permissionMode && config.permissionMode !== "default") {
-    args.push("--permission-mode", config.permissionMode);
   }
 
   return args;
@@ -83,7 +85,7 @@ async function executeSubagent(
     const { createInterface } = await import("node:readline");
 
     // Build CLI arguments
-    const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
+    const cliArgs = await buildSubagentArgs(type, config, model, userPrompt);
 
     // Spawn letta in headless mode with stream-json output for progress visibility
     const proc = spawn("letta", cliArgs, {
