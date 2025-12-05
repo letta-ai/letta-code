@@ -6,11 +6,10 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getErrorMessage } from "../utils/error";
 import {
-  generateFrontmatter,
   getStringField,
   parseCommaSeparatedList,
   parseFrontmatter,
@@ -273,107 +272,4 @@ export async function getAllSubagentConfigs(
 export function clearSubagentConfigCache(): void {
   cachedConfigs = null;
   cacheWorkingDir = null;
-}
-
-/**
- * Default system prompt template for new subagents
- */
-const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a specialized agent.
-
-Your task: {user_provided_prompt}
-
-You are a specialized subagent launched via the Task tool. You run autonomously and return a single final report when done.
-You CANNOT ask questions mid-execution - all instructions are provided upfront.
-You DO have access to the full conversation history, so you can reference earlier context.
-
-## Instructions
-
-[Add your specific instructions here]
-
-## Output Format
-
-[Describe the expected output format]
-`;
-
-/**
- * Create a new subagent file
- */
-export async function createSubagentFile(
-  name: string,
-  description: string,
-  options: {
-    tools?: string;
-    model?: string;
-    permissionMode?: string;
-    skills?: string;
-    memoryBlocks?: string;
-    systemPrompt?: string;
-  } = {},
-  workingDirectory: string = process.cwd(),
-): Promise<string> {
-  // Validate name
-  if (!isValidName(name)) {
-    throw new Error(
-      `Invalid name "${name}": must start with lowercase letter and contain only lowercase letters, numbers, and hyphens`,
-    );
-  }
-
-  const agentsDir = join(workingDirectory, AGENTS_DIR);
-
-  // Ensure directory exists
-  if (!existsSync(agentsDir)) {
-    await mkdir(agentsDir, { recursive: true });
-  }
-
-  const filePath = join(agentsDir, `${name}.md`);
-
-  // Check if file already exists
-  if (existsSync(filePath)) {
-    throw new Error(`Subagent "${name}" already exists at ${filePath}`);
-  }
-
-  // Generate frontmatter
-  const frontmatterData: Record<string, string | undefined> = {
-    name,
-    description,
-    tools: options.tools,
-    model: options.model,
-    permissionMode: options.permissionMode,
-    skills: options.skills,
-  };
-
-  const frontmatter = generateFrontmatter(frontmatterData);
-  const systemPrompt = options.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
-  const content = `${frontmatter}\n\n${systemPrompt}`;
-
-  await writeFile(filePath, content, "utf-8");
-
-  return filePath;
-}
-
-/**
- * Delete a subagent file
- */
-export async function deleteSubagentFile(
-  name: string,
-  workingDirectory: string = process.cwd(),
-): Promise<void> {
-  const agentsDir = join(workingDirectory, AGENTS_DIR);
-  const filePath = join(agentsDir, `${name}.md`);
-
-  if (!existsSync(filePath)) {
-    throw new Error(`Subagent "${name}" not found at ${filePath}`);
-  }
-
-  await unlink(filePath);
-}
-
-/**
- * Get the path to a subagent file
- */
-export function getSubagentPath(
-  name: string,
-  workingDirectory: string = process.cwd(),
-): string {
-  return join(workingDirectory, AGENTS_DIR, `${name}.md`);
 }

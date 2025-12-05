@@ -29,23 +29,6 @@ export interface SubagentResult {
 }
 
 /**
- * Resolve model string for subagent
- * Returns the user-provided model or falls back to config's recommended model
- */
-function resolveSubagentModel(
-  modelShorthand: string | undefined,
-  config: SubagentConfig,
-): string {
-  // If user provided a model, use it (letta CLI will resolve it)
-  if (modelShorthand) {
-    return modelShorthand;
-  }
-
-  // Fall back to recommended model from config
-  return config.recommendedModel;
-}
-
-/**
  * Build CLI arguments for spawning a subagent
  */
 function buildSubagentArgs(
@@ -354,12 +337,17 @@ async function getBaseURL(): Promise<string> {
 
 /**
  * Spawn a subagent and execute it autonomously
+ *
+ * @param type - Subagent type (e.g., "code-reviewer", "explore")
+ * @param prompt - The task prompt for the subagent
+ * @param description - Short description for display
+ * @param userModel - Optional model override from the parent agent
  */
 export async function spawnSubagent(
   type: string,
   prompt: string,
   description: string,
-  model?: string,
+  userModel?: string,
 ): Promise<SubagentResult> {
   // Get all configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
@@ -374,15 +362,15 @@ export async function spawnSubagent(
     };
   }
 
-  // Resolve model (user-provided or config default)
-  const resolvedModel = resolveSubagentModel(model, config);
+  // Use parent agent's model override, or fall back to subagent config's recommended model
+  const model = userModel || config.recommendedModel;
 
   // Print subagent header before execution starts
   console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
 
   // Execute subagent via letta CLI in headless mode
   // The CLI will create the agent and execute it
-  const result = await executeSubagent(type, config, resolvedModel, prompt);
+  const result = await executeSubagent(type, config, model, prompt);
 
   // Print subagent URL if we got an agent ID
   if (result.agentId) {
