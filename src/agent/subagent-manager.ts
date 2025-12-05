@@ -8,7 +8,7 @@
  */
 
 import { getErrorMessage } from "../utils/error";
-import { type SubagentConfig, getAllSubagentConfigs } from "./subagents";
+import { getAllSubagentConfigs, type SubagentConfig } from "./subagents";
 
 // ============================================================================
 // Constants
@@ -40,10 +40,14 @@ async function buildSubagentArgs(
   const args: string[] = [
     "--new",
     "--fresh-blocks",
-    "--system", type,
-    "--model", model,
-    "-p", userPrompt,
-    "--output-format", "stream-json",
+    "--system",
+    type,
+    "--model",
+    model,
+    "-p",
+    userPrompt,
+    "--output-format",
+    "stream-json",
   ];
 
   // Inherit permission mode from parent
@@ -56,13 +60,20 @@ async function buildSubagentArgs(
   // Add memory block filtering if specified
   if (config.memoryBlocks === "none") {
     args.push("--init-blocks", "none");
-  } else if (Array.isArray(config.memoryBlocks) && config.memoryBlocks.length > 0) {
+  } else if (
+    Array.isArray(config.memoryBlocks) &&
+    config.memoryBlocks.length > 0
+  ) {
     args.push("--init-blocks", config.memoryBlocks.join(","));
   }
   // If "all", don't add --init-blocks (default behavior)
 
   // Add tool filtering if specified
-  if (config.allowedTools !== "all" && Array.isArray(config.allowedTools) && config.allowedTools.length > 0) {
+  if (
+    config.allowedTools !== "all" &&
+    Array.isArray(config.allowedTools) &&
+    config.allowedTools.length > 0
+  ) {
     args.push("--allowedTools", config.allowedTools.join(","));
   }
 
@@ -128,7 +139,7 @@ async function executeSubagent(
           .map(([key, value]) => {
             let displayValue = String(value);
             if (displayValue.length > 100) {
-              displayValue = displayValue.slice(0, 97) + "...";
+              displayValue = `${displayValue.slice(0, 97)}...`;
             }
             return `${key}: "${displayValue}"`;
           })
@@ -139,13 +150,20 @@ async function executeSubagent(
     }
 
     // Helper to display a tool call live
-    function displayToolCall(toolCallId: string, toolName: string, toolArgs: string) {
-      if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
+    function displayToolCall(
+      toolCallId: string,
+      toolName: string,
+      toolArgs: string,
+    ) {
+      if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId))
+        return;
       displayedToolCalls.add(toolCallId);
 
       const formattedArgs = formatToolArgs(toolArgs);
       if (formattedArgs) {
-        console.log(`${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`);
+        console.log(
+          `${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`,
+        );
       } else {
         console.log(`${ANSI_DIM}     ${toolName}()${ANSI_RESET}`);
       }
@@ -154,7 +172,7 @@ async function executeSubagent(
     // Parse each line as a JSON event
     rl.on("line", (line: string) => {
       // Collect for final parsing
-      stdoutChunks.push(Buffer.from(line + "\n"));
+      stdoutChunks.push(Buffer.from(`${line}\n`));
 
       try {
         const event = JSON.parse(line);
@@ -167,7 +185,10 @@ async function executeSubagent(
         }
 
         // Track tool calls from message chunks (handles streamed tool calls)
-        if (event.type === "message" && event.message_type === "approval_request_message") {
+        if (
+          event.type === "message" &&
+          event.message_type === "approval_request_message"
+        ) {
           const toolCalls = Array.isArray(event.tool_calls)
             ? event.tool_calls
             : event.tool_call
@@ -215,15 +236,19 @@ async function executeSubagent(
 
             // Display completion stats
             const toolCount = displayedToolCalls.size;
-            const tokenStr = resultStats.totalTokens >= 1000
-              ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
-              : String(resultStats.totalTokens);
+            const tokenStr =
+              resultStats.totalTokens >= 1000
+                ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
+                : String(resultStats.totalTokens);
             const durationSec = resultStats.durationMs / 1000;
-            const durationStr = durationSec >= 60
-              ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
-              : `${durationSec.toFixed(1)}s`;
+            const durationStr =
+              durationSec >= 60
+                ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
+                : `${durationSec.toFixed(1)}s`;
 
-            console.log(`${ANSI_DIM}      ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`);
+            console.log(
+              `${ANSI_DIM}      ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`,
+            );
           }
         }
 
@@ -294,7 +319,7 @@ async function executeSubagent(
           agentId: agentId || "",
           report: result.result || "",
           success: !result.is_error,
-          error: result.is_error ? (result.result || "Unknown error") : undefined,
+          error: result.is_error ? result.result || "Unknown error" : undefined,
         };
       }
 

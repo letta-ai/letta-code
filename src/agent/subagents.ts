@@ -69,7 +69,11 @@ function isValidName(name: string): boolean {
  * Invalid tool names are kept - they'll be filtered out at runtime when matching against actual tools
  */
 function parseTools(toolsStr: string | undefined): string[] | "all" {
-  if (!toolsStr || toolsStr.trim() === "" || toolsStr.trim().toLowerCase() === "all") {
+  if (
+    !toolsStr ||
+    toolsStr.trim() === "" ||
+    toolsStr.trim().toLowerCase() === "all"
+  ) {
     return "all";
   }
   const tools = parseCommaSeparatedList(toolsStr);
@@ -89,7 +93,11 @@ function parseSkills(skillsStr: string | undefined): string[] {
 function parseMemoryBlocks(
   blocksStr: string | undefined,
 ): MemoryBlockLabel[] | "all" | "none" {
-  if (!blocksStr || blocksStr.trim() === "" || blocksStr.trim().toLowerCase() === "all") {
+  if (
+    !blocksStr ||
+    blocksStr.trim() === "" ||
+    blocksStr.trim().toLowerCase() === "all"
+  ) {
     return "all";
   }
 
@@ -98,7 +106,9 @@ function parseMemoryBlocks(
   }
 
   const parts = parseCommaSeparatedList(blocksStr).map((b) => b.toLowerCase());
-  const blocks = parts.filter((p) => VALID_MEMORY_BLOCKS.has(p)) as MemoryBlockLabel[];
+  const blocks = parts.filter((p) =>
+    VALID_MEMORY_BLOCKS.has(p),
+  ) as MemoryBlockLabel[];
 
   return blocks.length > 0 ? blocks : "all";
 }
@@ -107,9 +117,10 @@ function parseMemoryBlocks(
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
  */
-function validateFrontmatter(
-  frontmatter: Record<string, string | string[]>,
-): { valid: boolean; errors: string[] } {
+function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
+  valid: boolean;
+  errors: string[];
+} {
   const errors: string[] = [];
 
   // Check required fields only
@@ -137,7 +148,9 @@ function validateFrontmatter(
 /**
  * Parse a subagent file
  */
-async function parseSubagentFile(filePath: string): Promise<SubagentConfig | null> {
+async function parseSubagentFile(
+  filePath: string,
+): Promise<SubagentConfig | null> {
   const content = await readFile(filePath, "utf-8");
   const { frontmatter, body } = parseFrontmatter(content);
 
@@ -158,7 +171,9 @@ async function parseSubagentFile(filePath: string): Promise<SubagentConfig | nul
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
     skills: parseSkills(getStringField(frontmatter, "skills")),
-    memoryBlocks: parseMemoryBlocks(getStringField(frontmatter, "memoryBlocks")),
+    memoryBlocks: parseMemoryBlocks(
+      getStringField(frontmatter, "memoryBlocks"),
+    ),
   };
 }
 

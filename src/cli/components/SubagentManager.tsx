@@ -5,9 +5,9 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import {
+  AGENTS_DIR,
   clearSubagentConfigCache,
   getAllSubagentConfigs,
-  AGENTS_DIR,
   type SubagentConfig,
 } from "../../agent/subagents";
 import { colors } from "./colors";
@@ -27,27 +27,28 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    async function loadSubagents() {
+      setLoading(true);
+      setError(null);
+      try {
+        clearSubagentConfigCache();
+        const configs = await getAllSubagentConfigs();
+        const items: SubagentItem[] = Object.entries(configs).map(
+          ([name, config]) => ({
+            name,
+            config,
+          }),
+        );
+        items.sort((a, b) => a.name.localeCompare(b.name));
+        setSubagents(items);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    }
     loadSubagents();
   }, []);
-
-  async function loadSubagents() {
-    setLoading(true);
-    setError(null);
-    try {
-      clearSubagentConfigCache();
-      const configs = await getAllSubagentConfigs();
-      const items: SubagentItem[] = Object.entries(configs).map(([name, config]) => ({
-        name,
-        config,
-      }));
-      items.sort((a, b) => a.name.localeCompare(b.name));
-      setSubagents(items);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useInput((_input, key) => {
     if (key.escape || key.return) {
@@ -69,9 +70,7 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
         Available Subagents
       </Text>
 
-      {error && (
-        <Text color={colors.status.error}>Error: {error}</Text>
-      )}
+      {error && <Text color={colors.status.error}>Error: {error}</Text>}
 
       <Box flexDirection="column">
         {subagents.length === 0 ? (
@@ -85,7 +84,7 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
                 </Text>
                 <Text dimColor>({item.config.recommendedModel})</Text>
               </Box>
-              <Text>  {item.config.description}</Text>
+              <Text> {item.config.description}</Text>
             </Box>
           ))
         )}

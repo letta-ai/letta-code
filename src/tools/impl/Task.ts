@@ -5,8 +5,8 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { getAllSubagentConfigs } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagent-manager";
+import { getAllSubagentConfigs } from "../../agent/subagents";
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {
@@ -25,7 +25,7 @@ function formatTaskArgs(args: TaskArgs): string {
   parts.push(`description="${args.description}"`);
   // Truncate prompt for display
   const promptPreview =
-    args.prompt.length > 20 ? args.prompt.slice(0, 17) + "..." : args.prompt;
+    args.prompt.length > 20 ? `${args.prompt.slice(0, 17)}...` : args.prompt;
   parts.push(`prompt="${promptPreview}"`);
   if (args.model) parts.push(`model="${args.model}"`);
   return parts.join(", ");
@@ -36,7 +36,11 @@ function formatTaskArgs(args: TaskArgs): string {
  */
 export async function task(args: TaskArgs): Promise<string> {
   // Validate required parameters
-  validateRequiredParams(args, ["subagent_type", "prompt", "description"], "Task");
+  validateRequiredParams(
+    args,
+    ["subagent_type", "prompt", "description"],
+    "Task",
+  );
 
   const { subagent_type, prompt, description, model } = args;
 

@@ -110,4 +110,3 @@ export async function initializeLoadedSkillsFlag(): Promise<void> {
     context.hasLoadedSkills = false;
   }
 }
-

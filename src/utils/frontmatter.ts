@@ -7,7 +7,10 @@
  */
 export function parseCommaSeparatedList(str: string | undefined): string[] {
   if (!str || str.trim() === "") return [];
-  return str.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  return str
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /**

@@ -4,8 +4,8 @@ import {
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
-import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 import { discoverSubagents } from "../agent/subagents";
+import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
