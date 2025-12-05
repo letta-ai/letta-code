@@ -14,7 +14,7 @@ import type {
 import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
-import { getDefaultMemoryBlocks } from "./memory";
+import { getDefaultMemoryBlocks, isProjectBlock } from "./memory";
 import {
   formatAvailableModels,
   getModelUpdateArgs,
@@ -289,8 +289,8 @@ export async function createAgent(
       }
       blockIds.push(createdBlock.id);
 
-      // Categorize: project/skills are local, persona/human are global
-      if (label === "project" || label === "skills") {
+      // Categorize based on block type defined in memory.ts
+      if (isProjectBlock(label)) {
         newLocalBlockIds[label] = createdBlock.id;
       } else {
         newGlobalBlockIds[label] = createdBlock.id;
