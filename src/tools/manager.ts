@@ -489,7 +489,7 @@ export function isGeminiModel(modelIdentifier: string): boolean {
  * @returns Promise that resolves when all tools are registered
  */
 export async function upsertToolsToServer(client: Letta): Promise<void> {
-  const OPERATION_TIMEOUT = 5000; // 5 seconds
+  const OPERATION_TIMEOUT = 20000; // 20 seconds
   const MAX_TOTAL_TIME = 30000; // 30 seconds
   const startTime = Date.now();
 
