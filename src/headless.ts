@@ -15,9 +15,9 @@ import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
 import {
   createBuffers,
+  type Line,
   markIncompleteToolsAsCancelled,
   toLines,
-  type Line,
 } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
@@ -894,8 +894,7 @@ export async function handleHeadlessCommand(
       "resultText" in line &&
       typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
         "string" &&
-      ((line as Extract<Line, { kind: "tool_call" }>).resultText ?? "")
-        .trim()
+      ((line as Extract<Line, { kind: "tool_call" }>).resultText ?? "").trim()
         .length > 0,
   ) as Extract<Line, { kind: "tool_call" }> | undefined;
 
