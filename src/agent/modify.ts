@@ -43,6 +43,13 @@ function buildModelSettings(
           | "high",
       };
     }
+    // If a max_output_tokens override is provided in the model's updateArgs,
+    // propagate it into the OpenAI model settings so the backend can raise
+    // the generation cap (prevents premature ResponseIncompleteEvent with
+    // reason='max_output_tokens').
+    if (typeof updateArgs?.max_output_tokens === "number") {
+      openaiSettings.max_output_tokens = updateArgs.max_output_tokens as number;
+    }
     return openaiSettings;
   }
 
