@@ -17,6 +17,7 @@ import {
   createBuffers,
   markIncompleteToolsAsCancelled,
   toLines,
+  type Line,
 } from "./cli/helpers/accumulator";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
@@ -867,16 +868,42 @@ export async function handleHeadlessCommand(
   // Update stats with final usage data from buffers
   sessionStats.updateUsageFromBuffers(buffers);
 
-  // Extract final assistant message
+  // Extract final result from transcript, with sensible fallbacks
   const lines = toLines(buffers);
-  const lastAssistant = [...lines]
-    .reverse()
-    .find((line) => line.kind === "assistant");
+  const reversed = [...lines].reverse();
+
+  const lastAssistant = reversed.find(
+    (line) =>
+      line.kind === "assistant" &&
+      "text" in line &&
+      typeof line.text === "string" &&
+      line.text.trim().length > 0,
+  ) as Extract<Line, { kind: "assistant" }> | undefined;
+
+  const lastReasoning = reversed.find(
+    (line) =>
+      line.kind === "reasoning" &&
+      "text" in line &&
+      typeof line.text === "string" &&
+      line.text.trim().length > 0,
+  ) as Extract<Line, { kind: "reasoning" }> | undefined;
+
+  const lastToolResult = reversed.find(
+    (line) =>
+      line.kind === "tool_call" &&
+      "resultText" in line &&
+      typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
+        "string" &&
+      ((line as Extract<Line, { kind: "tool_call" }>).resultText ?? "")
+        .trim()
+        .length > 0,
+  ) as Extract<Line, { kind: "tool_call" }> | undefined;
 
   const resultText =
-    lastAssistant && "text" in lastAssistant
-      ? lastAssistant.text
-      : "No assistant response found";
+    (lastAssistant && lastAssistant.text) ||
+    (lastReasoning && lastReasoning.text) ||
+    (lastToolResult && lastToolResult.resultText) ||
+    "No assistant response found";
 
   // Output based on format
   if (outputFormat === "json") {
@@ -930,10 +957,10 @@ export async function handleHeadlessCommand(
     console.log(JSON.stringify(resultEvent));
   } else {
     // text format (default)
-    if (!lastAssistant || !("text" in lastAssistant)) {
+    if (!resultText || resultText === "No assistant response found") {
       console.error("No assistant response found");
       process.exit(1);
     }
-    console.log(lastAssistant.text);
+    console.log(resultText);
   }
 }
