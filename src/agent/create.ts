@@ -358,15 +358,11 @@ export async function createAgent(
 
   // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
 
-  // Apply updateArgs if provided (e.g., reasoningEffort, verbosity, etc.)
-  // Skip if updateArgs only contains context_window (already set in create)
+  // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.)
+  // We intentionally pass context_window through so updateAgentLLMConfig can set
+  // context_window_limit using the latest server API, avoiding any fallback.
   if (updateArgs && Object.keys(updateArgs).length > 0) {
-    // Remove context_window if present; already set during create
-    const otherArgs = { ...updateArgs } as Record<string, unknown>;
-    delete (otherArgs as Record<string, unknown>).context_window;
-    if (Object.keys(otherArgs).length > 0) {
-      await updateAgentLLMConfig(agent.id, modelHandle, otherArgs);
-    }
+    await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
