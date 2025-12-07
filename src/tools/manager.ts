@@ -481,7 +481,7 @@ export function isGeminiModel(modelIdentifier: string): boolean {
  * while actual execution happens client-side via the approval flow.
  *
  * Implements resilient retry logic:
- * - Retries if operation takes more than 5 seconds
+ * - Retries if a single upsert attempt exceeds the per-attempt timeout
  * - Keeps retrying up to 30 seconds total
  * - Uses exponential backoff between retries
  *
@@ -507,7 +507,11 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       // Create a timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          reject(new Error("Tool upsert operation timed out (5s)"));
+          reject(
+            new Error(
+              `Tool upsert operation timed out (${OPERATION_TIMEOUT / 1000}s)`,
+            ),
+          );
         }, OPERATION_TIMEOUT);
       });
 
