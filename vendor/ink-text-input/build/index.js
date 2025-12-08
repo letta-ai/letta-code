@@ -49,6 +49,29 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         if (key.escape || (key.ctrl && input === 'c') || key.tab || (key.shift && key.tab)) {
             return;
         }
+        // Filter Ctrl+W (delete word) - handled by parent component
+        if (key.ctrl && (input === 'w' || input === 'W')) {
+            return;
+        }
+        // Filter out garbage from Option+Arrow escape sequences
+        // When Option+Left sends \x1bb, Ink parses it as meta=true, input='\x1bb'
+        // These should not be inserted as text
+        if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F' ||
+            input === '\x1bb' || input === '\x1bB' || input === '\x1bf' || input === '\x1bF')) {
+            return;
+        }
+        // Also filter CSI sequences for Option+Arrow (e.g., \x1b[1;3D for Option+Left)
+        if (input && typeof input === 'string' && /^\x1b\[(?:1;)?[3-9][ABCD]$/.test(input)) {
+            return;
+        }
+        // Filter any escape sequence that starts with \x1b - these are control sequences, not text input
+        if (input && typeof input === 'string' && input.startsWith('\x1b')) {
+            return;
+        }
+        // Filter Option+Delete sequences (\x1b\x7f = ESC+DEL, \x1b\x08 = ESC+BS)
+        if (input === '\x1b\x7f' || input === '\x1b\x08' || input === '\x1b\b') {
+            return;
+        }
         if (key.return) {
             if (onSubmit) {
                 onSubmit(originalValue);

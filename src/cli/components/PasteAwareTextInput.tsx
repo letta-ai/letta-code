@@ -5,7 +5,7 @@
 // 4. Resolves placeholders on submit
 
 // Import useInput from vendored Ink for bracketed paste support
-import { useInput } from "ink";
+import { useInput, useStdin } from "ink";
 import RawTextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -41,17 +41,17 @@ function findPreviousWordBoundary(text: string, cursorPos: number): number {
   let pos = cursorPos - 1;
   
   // Skip whitespace backwards
-  while (pos > 0 && /\s/.test(text[pos])) {
+  while (pos > 0 && /\s/.test(text.charAt(pos))) {
     pos--;
   }
-  
+
   // Skip word characters backwards
-  while (pos > 0 && /\S/.test(text[pos])) {
+  while (pos > 0 && /\S/.test(text.charAt(pos))) {
     pos--;
   }
-  
+
   // If we stopped at whitespace, move forward one
-  if (pos > 0 && /\s/.test(text[pos])) {
+  if (pos > 0 && /\s/.test(text.charAt(pos))) {
     pos++;
   }
   
@@ -65,16 +65,30 @@ function findNextWordBoundary(text: string, cursorPos: number): number {
   let pos = cursorPos;
   
   // Skip current word forward
-  while (pos < text.length && /\S/.test(text[pos])) {
+  while (pos < text.length && /\S/.test(text.charAt(pos))) {
     pos++;
   }
-  
+
   // Skip whitespace forward
-  while (pos < text.length && /\s/.test(text[pos])) {
+  while (pos < text.length && /\s/.test(text.charAt(pos))) {
     pos++;
   }
   
   return pos;
+}
+
+type WordDirection = "left" | "right";
+
+const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
+const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
+
+function detectOptionWordDirection(sequence: string): WordDirection | null {
+  if (!sequence.startsWith("\u001b")) return null;
+  if (sequence === "\u001bb" || sequence === "\u001bB") return "left";
+  if (sequence === "\u001bf" || sequence === "\u001bF") return "right";
+  if (OPTION_LEFT_PATTERN.test(sequence)) return "left";
+  if (OPTION_RIGHT_PATTERN.test(sequence)) return "right";
+  return null;
 }
 
 export function PasteAwareTextInput({
@@ -86,6 +100,7 @@ export function PasteAwareTextInput({
   cursorPosition,
   onCursorMove,
 }: PasteAwareTextInputProps) {
+  const { internal_eventEmitter } = useStdin();
   const [displayValue, setDisplayValue] = useState(value);
   const [actualValue, setActualValue] = useState(value);
   const lastPasteDetectedAtRef = useRef<number>(0);
@@ -94,6 +109,34 @@ export function PasteAwareTextInput({
   const [nudgeCursorOffset, setNudgeCursorOffset] = useState<
     number | undefined
   >(undefined);
+  const displayValueRef = useRef(displayValue);
+  const focusRef = useRef(focus);
+
+  useEffect(() => {
+    displayValueRef.current = displayValue;
+  }, [displayValue]);
+
+  useEffect(() => {
+    focusRef.current = focus;
+  }, [focus]);
+
+  const moveCursorToPreviousWord = () => {
+    const newPos = findPreviousWordBoundary(
+      displayValueRef.current,
+      caretOffsetRef.current,
+    );
+    setNudgeCursorOffset(newPos);
+    caretOffsetRef.current = newPos;
+  };
+
+  const moveCursorToNextWord = () => {
+    const newPos = findNextWordBoundary(
+      displayValueRef.current,
+      caretOffsetRef.current,
+    );
+    setNudgeCursorOffset(newPos);
+    caretOffsetRef.current = newPos;
+  };
 
   // Apply cursor position from parent
   useEffect(() => {
@@ -202,51 +245,119 @@ export function PasteAwareTextInput({
     { isActive: focus },
   );
 
-  // Handle option+arrow keys for word-by-word navigation and deletion
-  useInput(
-    (input, key) => {
-      // Option+Left: move to previous word
-      if (key.meta && key.leftArrow) {
-        const newPos = findPreviousWordBoundary(displayValue, caretOffsetRef.current);
-        setNudgeCursorOffset(newPos);
-        caretOffsetRef.current = newPos;
-        return;
+  // Handle Option+Arrow keys directly from raw stdin to detect modifier+arrow combinations
+  // that Ink's useInput doesn't parse correctly
+  useEffect(() => {
+    if (!internal_eventEmitter) return undefined;
+
+    const handleRawInput = (payload: unknown) => {
+      if (!focusRef.current) return;
+
+      let sequence: string | null = null;
+      if (typeof payload === "string") {
+        sequence = payload;
+      } else if (
+        payload &&
+        typeof payload === "object" &&
+        typeof (payload as { sequence?: unknown }).sequence === "string"
+      ) {
+        sequence = (payload as { sequence?: string }).sequence ?? null;
       }
-      
-      // Option+Right: move to next word
-      if (key.meta && key.rightArrow) {
-        const newPos = findNextWordBoundary(displayValue, caretOffsetRef.current);
-        setNudgeCursorOffset(newPos);
-        caretOffsetRef.current = newPos;
+
+      // Only process escape sequences (not normal input)
+      if (!sequence || sequence.length > 32 || !sequence.includes("\u001b")) {
         return;
       }
 
-      // Option+Delete/Backspace: delete previous word
-      if (key.meta && (key.delete || key.backspace)) {
-        const wordStart = findPreviousWordBoundary(displayValue, caretOffsetRef.current);
-        const newDisplay = displayValue.slice(0, wordStart) + displayValue.slice(caretOffsetRef.current);
-        const newActual = actualValue.slice(0, wordStart) + actualValue.slice(caretOffsetRef.current);
-        
-        setDisplayValue(newDisplay);
-        setActualValue(newActual);
-        onChange(newDisplay);
-        setNudgeCursorOffset(wordStart);
-        caretOffsetRef.current = wordStart;
+      // Check each escape sequence in the input
+      const parts = sequence.split("\u001b");
+      for (let i = 1; i < parts.length; i++) {
+        const dir = detectOptionWordDirection("\u001b" + parts[i]);
+        if (dir === "left") {
+          moveCursorToPreviousWord();
+          return;
+        }
+        if (dir === "right") {
+          moveCursorToNextWord();
+          return;
+        }
+      }
+    };
+
+    internal_eventEmitter.prependListener("input", handleRawInput);
+    return () => {
+      internal_eventEmitter.removeListener("input", handleRawInput);
+    };
+}, [internal_eventEmitter]);
+
+  // Store onChange in a ref to avoid stale closures in event handlers
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  // Handle Option+Delete via raw stdin
+  // Different terminals send different sequences:
+  // - Standard: ESC + DEL (\x1b\x7f)
+  // - Some terminals: Ctrl+W (\x17) when Option+Delete is pressed
+  useEffect(() => {
+    if (!internal_eventEmitter) return undefined;
+
+    const deletePreviousWord = () => {
+      const curPos = caretOffsetRef.current;
+      const wordStart = findPreviousWordBoundary(displayValueRef.current, curPos);
+      if (wordStart === curPos) return; // Nothing to delete
+
+      const newDisplay = displayValueRef.current.slice(0, wordStart) + displayValueRef.current.slice(curPos);
+      const resolvedActual = resolvePlaceholders(newDisplay);
+
+      setDisplayValue(newDisplay);
+      setActualValue(resolvedActual);
+      onChangeRef.current(newDisplay);
+      setNudgeCursorOffset(wordStart);
+      caretOffsetRef.current = wordStart;
+    };
+
+    const handleDeleteSequence = (payload: unknown) => {
+      if (!focusRef.current) return;
+
+      let sequence: string | null = null;
+      if (typeof payload === "string") {
+        sequence = payload;
+      } else if (
+        payload &&
+        typeof payload === "object" &&
+        typeof (payload as { sequence?: unknown }).sequence === "string"
+      ) {
+        sequence = (payload as { sequence?: string }).sequence ?? null;
+      }
+
+      if (!sequence) return;
+
+      // Option+Delete on macOS sends ESC + DEL (\x1b\x7f)
+      if (sequence === "\x1b\x7f") {
+        deletePreviousWord();
         return;
       }
 
-      // Cmd+Delete/Backspace: delete all text
-      if (key.ctrl && (key.delete || key.backspace)) {
-        setDisplayValue("");
-        setActualValue("");
-        onChange("");
-        setNudgeCursorOffset(0);
-        caretOffsetRef.current = 0;
+      // Some terminals send ESC + Backspace (\x1b\x08 or \x1b\b)
+      if (sequence === "\x1b\x08" || sequence === "\x1b\b") {
+        deletePreviousWord();
         return;
       }
-    },
-    { isActive: focus },
-  );
+
+      // Warp and some terminals send Ctrl+W (\x17) for Option+Delete
+      if (sequence === "\x17") {
+        deletePreviousWord();
+        return;
+      }
+    };
+
+    internal_eventEmitter.prependListener("input", handleDeleteSequence);
+    return () => {
+      internal_eventEmitter.removeListener("input", handleDeleteSequence);
+    };
+  }, [internal_eventEmitter]);
 
   const handleChange = (newValue: string) => {
     // If we just handled a paste via useInput, ignore this immediate change
@@ -254,6 +365,7 @@ export function PasteAwareTextInput({
       suppressNextChangeRef.current = false;
       return;
     }
+
     // Heuristic: detect large additions that look like pastes
     const addedLen = newValue.length - displayValue.length;
     const lineDelta = countLines(newValue) - countLines(displayValue);

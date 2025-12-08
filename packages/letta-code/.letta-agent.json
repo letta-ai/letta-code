@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "updatedAt": "2025-09-12T19:00:19.351Z",
+  "byBaseUrl": {
+    "https://api.letta.com": {
+      "agents": [
+        {
+          "agentId": "agent-8d1b54dc-0951-48e4-bbcb-e1846f2ac4c1",
+          "lastUsedAt": "2025-09-12T18:55:43.051Z"
+        },
+        {
+          "agentId": "agent-814e7f35-aa78-4778-8636-94325ab38b67",
+          "lastUsedAt": "2025-09-12T18:40:55.379Z"
+        },
+        {
+          "agentId": "agent-b1d5e6d9-25d4-498d-b24f-3abdf0c56af2",
+          "lastUsedAt": "2025-09-12T18:37:25.200Z"
+        }
+      ],
+      "mostRecent": "agent-8d1b54dc-0951-48e4-bbcb-e1846f2ac4c1"
+    },
+    "http://localhost:8283": {
+      "agents": [
+        {
+          "agentId": "agent-c2cda3a2-a418-4898-99f9-bbae63f99aac",
+          "lastUsedAt": "2025-09-12T19:00:19.351Z"
+        }
+      ],
+      "mostRecent": "agent-c2cda3a2-a418-4898-99f9-bbae63f99aac"
+    }
+  }
+}
