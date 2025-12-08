@@ -2,6 +2,7 @@ import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
 import Link from "ink-link";
 import type { AgentProvenance } from "../../agent/create";
+import { isProjectBlock } from "../../agent/memory";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { asciiLogo } from "./AsciiArt";
@@ -57,13 +58,13 @@ export function getAgentStatusHints(
       .map((b) => b.label);
 
     // New blocks - categorize by where they'll be stored
-    // (project/skills → .letta/, others → ~/.letta/)
+    // (project blocks → .letta/, others → ~/.letta/)
     const newBlocks = agentProvenance.blocks.filter((b) => b.source === "new");
     const newGlobalBlocks = newBlocks
-      .filter((b) => b.label !== "project" && b.label !== "skills")
+      .filter((b) => !isProjectBlock(b.label))
       .map((b) => b.label);
     const newProjectBlocks = newBlocks
-      .filter((b) => b.label === "project" || b.label === "skills")
+      .filter((b) => isProjectBlock(b.label))
       .map((b) => b.label);
 
     if (reusedGlobalBlocks.length > 0) {
