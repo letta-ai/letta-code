@@ -1,7 +1,8 @@
 /**
  * Subagent configuration, discovery, and management
  *
- * All subagents are defined as Markdown files with YAML frontmatter
+ * Built-in subagents are bundled with the package.
+ * Users can also define custom subagents as Markdown files with YAML frontmatter
  * in the .letta/agents/ directory.
  */
 
@@ -15,6 +16,11 @@ import {
   parseFrontmatter,
 } from "../utils/frontmatter";
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
+
+// Built-in subagent definitions (embedded at build time)
+import exploreAgentMd from "./subagents/builtin/explore.md";
+import planAgentMd from "./subagents/builtin/plan.md";
+import generalPurposeAgentMd from "./subagents/builtin/general-purpose.md";
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
@@ -146,12 +152,9 @@ function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
 }
 
 /**
- * Parse a subagent file
+ * Parse a subagent from markdown content
  */
-async function parseSubagentFile(
-  filePath: string,
-): Promise<SubagentConfig | null> {
-  const content = await readFile(filePath, "utf-8");
+function parseSubagentContent(content: string): SubagentConfig {
   const { frontmatter, body } = parseFrontmatter(content);
 
   // Validate frontmatter
@@ -160,7 +163,6 @@ async function parseSubagentFile(
     throw new Error(validation.errors.join("; "));
   }
 
-  // Extract fields using helper
   const name = frontmatter.name as string;
   const description = frontmatter.description as string;
 
@@ -175,6 +177,44 @@ async function parseSubagentFile(
       getStringField(frontmatter, "memoryBlocks"),
     ),
   };
+}
+
+/**
+ * Parse a subagent file
+ */
+async function parseSubagentFile(
+  filePath: string,
+): Promise<SubagentConfig | null> {
+  const content = await readFile(filePath, "utf-8");
+  return parseSubagentContent(content);
+}
+
+/**
+ * Built-in subagents that ship with the package
+ * These are available to all users without configuration
+ */
+function getBuiltinSubagents(): Record<string, SubagentConfig> {
+  const builtins: Record<string, SubagentConfig> = {};
+
+  const builtinSources = [
+    exploreAgentMd,
+    planAgentMd,
+    generalPurposeAgentMd,
+  ];
+
+  for (const source of builtinSources) {
+    try {
+      const config = parseSubagentContent(source);
+      builtins[config.name] = config;
+    } catch (error) {
+      // Built-in subagents should always be valid; log error but don't crash
+      console.warn(
+        `[subagent] Failed to parse built-in subagent: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  return builtins;
 }
 
 /**
@@ -242,7 +282,9 @@ let cachedConfigs: Record<string, SubagentConfig> | null = null;
 let cacheWorkingDir: string | null = null;
 
 /**
- * Get all subagent configurations from .letta/agents/
+ * Get all subagent configurations
+ * Includes built-in subagents and any user-defined ones from .letta/agents/
+ * User-defined subagents override built-ins with the same name
  * Results are cached per working directory
  */
 export async function getAllSubagentConfigs(
@@ -253,9 +295,10 @@ export async function getAllSubagentConfigs(
     return cachedConfigs;
   }
 
-  const configs: Record<string, SubagentConfig> = {};
+  // Start with built-in subagents
+  const configs: Record<string, SubagentConfig> = getBuiltinSubagents();
 
-  // Discover all subagents from .letta/agents/
+  // Discover user-defined subagents from .letta/agents/
   const { subagents, errors } = await discoverSubagents(workingDirectory);
 
   // Log any discovery errors
@@ -263,7 +306,7 @@ export async function getAllSubagentConfigs(
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
   }
 
-  // Convert to map by name
+  // User-defined subagents override built-ins with the same name
   for (const subagent of subagents) {
     configs[subagent.name] = subagent;
   }
