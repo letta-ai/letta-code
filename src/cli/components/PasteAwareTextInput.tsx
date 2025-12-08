@@ -33,6 +33,50 @@ function sanitizeForDisplay(text: string): string {
   return text.replace(/\r\n|\r|\n/g, "↵");
 }
 
+/** Find the boundary of the previous word for option+left navigation */
+function findPreviousWordBoundary(text: string, cursorPos: number): number {
+  if (cursorPos === 0) return 0;
+  
+  // Move back one position if we're at the end of a word
+  let pos = cursorPos - 1;
+  
+  // Skip whitespace backwards
+  while (pos > 0 && /\s/.test(text[pos])) {
+    pos--;
+  }
+  
+  // Skip word characters backwards
+  while (pos > 0 && /\S/.test(text[pos])) {
+    pos--;
+  }
+  
+  // If we stopped at whitespace, move forward one
+  if (pos > 0 && /\s/.test(text[pos])) {
+    pos++;
+  }
+  
+  return Math.max(0, pos);
+}
+
+/** Find the boundary of the next word for option+right navigation */
+function findNextWordBoundary(text: string, cursorPos: number): number {
+  if (cursorPos >= text.length) return text.length;
+  
+  let pos = cursorPos;
+  
+  // Skip current word forward
+  while (pos < text.length && /\S/.test(text[pos])) {
+    pos++;
+  }
+  
+  // Skip whitespace forward
+  while (pos < text.length && /\s/.test(text[pos])) {
+    pos++;
+  }
+  
+  return pos;
+}
+
 export function PasteAwareTextInput({
   value,
   onChange,
@@ -153,6 +197,28 @@ export function PasteAwareTextInput({
           setNudgeCursorOffset(nextCaret);
           caretOffsetRef.current = nextCaret;
         }
+      }
+    },
+    { isActive: focus },
+  );
+
+  // Handle option+arrow keys for word-by-word navigation
+  useInput(
+    (input, key) => {
+      // Option+Left: move to previous word
+      if (key.meta && key.leftArrow) {
+        const newPos = findPreviousWordBoundary(displayValue, caretOffsetRef.current);
+        setNudgeCursorOffset(newPos);
+        caretOffsetRef.current = newPos;
+        return;
+      }
+      
+      // Option+Right: move to next word
+      if (key.meta && key.rightArrow) {
+        const newPos = findNextWordBoundary(displayValue, caretOffsetRef.current);
+        setNudgeCursorOffset(newPos);
+        caretOffsetRef.current = newPos;
+        return;
       }
     },
     { isActive: focus },
