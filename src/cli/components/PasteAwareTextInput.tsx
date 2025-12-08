@@ -202,7 +202,7 @@ export function PasteAwareTextInput({
     { isActive: focus },
   );
 
-  // Handle option+arrow keys for word-by-word navigation
+  // Handle option+arrow keys for word-by-word navigation and deletion
   useInput(
     (input, key) => {
       // Option+Left: move to previous word
@@ -218,6 +218,30 @@ export function PasteAwareTextInput({
         const newPos = findNextWordBoundary(displayValue, caretOffsetRef.current);
         setNudgeCursorOffset(newPos);
         caretOffsetRef.current = newPos;
+        return;
+      }
+
+      // Option+Delete/Backspace: delete previous word
+      if (key.meta && (key.delete || key.backspace)) {
+        const wordStart = findPreviousWordBoundary(displayValue, caretOffsetRef.current);
+        const newDisplay = displayValue.slice(0, wordStart) + displayValue.slice(caretOffsetRef.current);
+        const newActual = actualValue.slice(0, wordStart) + actualValue.slice(caretOffsetRef.current);
+        
+        setDisplayValue(newDisplay);
+        setActualValue(newActual);
+        onChange(newDisplay);
+        setNudgeCursorOffset(wordStart);
+        caretOffsetRef.current = wordStart;
+        return;
+      }
+
+      // Cmd+Delete/Backspace: delete all text
+      if (key.ctrl && (key.delete || key.backspace)) {
+        setDisplayValue("");
+        setActualValue("");
+        onChange("");
+        setNudgeCursorOffset(0);
+        caretOffsetRef.current = 0;
         return;
       }
     },
