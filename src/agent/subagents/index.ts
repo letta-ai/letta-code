@@ -18,9 +18,18 @@ import {
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 
 // Built-in subagent definitions (embedded at build time)
-import exploreAgentMd from "./builtin/explore.md";
-import planAgentMd from "./builtin/plan.md";
-import generalPurposeAgentMd from "./builtin/general-purpose.md";
+// All .md files in builtin/ are automatically included
+const builtinModules = (
+  import.meta as unknown as {
+    glob: (
+      pattern: string,
+      options: { eager: true; query: string },
+    ) => Record<string, { default: string }>;
+  }
+).glob("./builtin/*.md", {
+  eager: true,
+  query: "?raw",
+});
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
@@ -190,31 +199,42 @@ async function parseSubagentFile(
 }
 
 /**
+ * Cached built-in subagents (parsed once on first access)
+ */
+let cachedBuiltinSubagents: Record<string, SubagentConfig> | null = null;
+
+/**
  * Built-in subagents that ship with the package
  * These are available to all users without configuration
  */
 function getBuiltinSubagents(): Record<string, SubagentConfig> {
+  if (cachedBuiltinSubagents) {
+    return cachedBuiltinSubagents;
+  }
+
   const builtins: Record<string, SubagentConfig> = {};
 
-  const builtinSources = [
-    exploreAgentMd,
-    planAgentMd,
-    generalPurposeAgentMd,
-  ];
-
-  for (const source of builtinSources) {
+  for (const [path, module] of Object.entries(builtinModules)) {
     try {
-      const config = parseSubagentContent(source);
+      const config = parseSubagentContent(module.default);
       builtins[config.name] = config;
     } catch (error) {
       // Built-in subagents should always be valid; log error but don't crash
       console.warn(
-        `[subagent] Failed to parse built-in subagent: ${getErrorMessage(error)}`,
+        `[subagent] Failed to parse built-in subagent ${path}: ${getErrorMessage(error)}`,
       );
     }
   }
 
+  cachedBuiltinSubagents = builtins;
   return builtins;
+}
+
+/**
+ * Get the names of built-in subagents
+ */
+export function getBuiltinSubagentNames(): Set<string> {
+  return new Set(Object.keys(getBuiltinSubagents()));
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   AGENTS_DIR,
   clearSubagentConfigCache,
   getAllSubagentConfigs,
+  getBuiltinSubagentNames,
   type SubagentConfig,
 } from "../../agent/subagents";
 import { colors } from "./colors";
@@ -22,7 +23,8 @@ interface SubagentItem {
 }
 
 export function SubagentManager({ onClose }: SubagentManagerProps) {
-  const [subagents, setSubagents] = useState<SubagentItem[]>([]);
+  const [builtinSubagents, setBuiltinSubagents] = useState<SubagentItem[]>([]);
+  const [customSubagents, setCustomSubagents] = useState<SubagentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,14 +35,24 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
       try {
         clearSubagentConfigCache();
         const configs = await getAllSubagentConfigs();
-        const items: SubagentItem[] = Object.entries(configs).map(
-          ([name, config]) => ({
-            name,
-            config,
-          }),
-        );
-        items.sort((a, b) => a.name.localeCompare(b.name));
-        setSubagents(items);
+        const builtinNames = getBuiltinSubagentNames();
+        const builtin: SubagentItem[] = [];
+        const custom: SubagentItem[] = [];
+
+        for (const [name, config] of Object.entries(configs)) {
+          const item = { name, config };
+          if (builtinNames.has(name)) {
+            builtin.push(item);
+          } else {
+            custom.push(item);
+          }
+        }
+
+        builtin.sort((a, b) => a.name.localeCompare(b.name));
+        custom.sort((a, b) => a.name.localeCompare(b.name));
+
+        setBuiltinSubagents(builtin);
+        setCustomSubagents(custom);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -64,6 +76,22 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
     );
   }
 
+  const renderSubagentList = (items: SubagentItem[]) =>
+    items.map((item) => (
+      <Box key={item.name} flexDirection="column" marginBottom={1}>
+        <Box gap={1}>
+          <Text bold color={colors.selector.itemHighlighted}>
+            {item.name}
+          </Text>
+          <Text dimColor>({item.config.recommendedModel})</Text>
+        </Box>
+        <Text> {item.config.description}</Text>
+      </Box>
+    ));
+
+  const hasNoSubagents =
+    builtinSubagents.length === 0 && customSubagents.length === 0;
+
   return (
     <Box flexDirection="column" padding={1} gap={1}>
       <Text bold color={colors.selector.title}>
@@ -72,26 +100,32 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
 
       {error && <Text color={colors.status.error}>Error: {error}</Text>}
 
-      <Box flexDirection="column">
-        {subagents.length === 0 ? (
-          <Text dimColor>No subagents found in {AGENTS_DIR}/</Text>
-        ) : (
-          subagents.map((item) => (
-            <Box key={item.name} flexDirection="column" marginBottom={1}>
-              <Box gap={1}>
-                <Text bold color={colors.selector.itemHighlighted}>
-                  {item.name}
-                </Text>
-                <Text dimColor>({item.config.recommendedModel})</Text>
-              </Box>
-              <Text> {item.config.description}</Text>
+      {hasNoSubagents ? (
+        <Text dimColor>No subagents found</Text>
+      ) : (
+        <>
+          {builtinSubagents.length > 0 && (
+            <Box flexDirection="column">
+              <Text bold dimColor>
+                Built-in
+              </Text>
+              {renderSubagentList(builtinSubagents)}
             </Box>
-          ))
-        )}
-      </Box>
+          )}
+
+          {customSubagents.length > 0 && (
+            <Box flexDirection="column">
+              <Text bold dimColor>
+                Custom
+              </Text>
+              {renderSubagentList(customSubagents)}
+            </Box>
+          )}
+        </>
+      )}
 
       <Text dimColor>
-        To create or edit subagents, add .md files to {AGENTS_DIR}/
+        To add custom subagents, create .md files in {AGENTS_DIR}/
       </Text>
       <Text dimColor>Press ESC or Enter to close</Text>
     </Box>
