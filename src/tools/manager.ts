@@ -547,7 +547,7 @@ function injectSubagentsIntoTaskDescription(
  * while actual execution happens client-side via the approval flow.
  *
  * Implements resilient retry logic:
- * - Retries if operation takes more than 5 seconds
+ * - Retries if a single upsert attempt exceeds the per-attempt timeout
  * - Keeps retrying up to 30 seconds total
  * - Uses exponential backoff between retries
  *
@@ -555,7 +555,7 @@ function injectSubagentsIntoTaskDescription(
  * @returns Promise that resolves when all tools are registered
  */
 export async function upsertToolsToServer(client: Letta): Promise<void> {
-  const OPERATION_TIMEOUT = 5000; // 5 seconds
+  const OPERATION_TIMEOUT = 20000; // 20 seconds
   const MAX_TOTAL_TIME = 30000; // 30 seconds
   const startTime = Date.now();
 
@@ -573,7 +573,11 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       // Create a timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          reject(new Error("Tool upsert operation timed out (5s)"));
+          reject(
+            new Error(
+              `Tool upsert operation timed out (${OPERATION_TIMEOUT / 1000}s)`,
+            ),
+          );
         }, OPERATION_TIMEOUT);
       });
 

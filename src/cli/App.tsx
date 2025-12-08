@@ -203,74 +203,6 @@ function getSkillUnloadReminder(): string {
   return "";
 }
 
-// Generate status lines based on agent provenance
-function generateStatusLines(
-  continueSession: boolean,
-  agentProvenance: AgentProvenance | null,
-  agentState?: AgentState | null,
-): string[] {
-  const lines: string[] = [];
-
-  // For resumed agents
-  if (continueSession) {
-    lines.push(`Resumed existing agent (${agentState?.id})`);
-
-    // Show attached blocks if available
-    if (agentState?.memory?.blocks) {
-      const labels = agentState.memory.blocks
-        .map((b) => b.label)
-        .filter(Boolean)
-        .join(", ");
-      if (labels) {
-        lines.push(`  → Memory blocks: ${labels}`);
-      }
-    }
-
-    lines.push("  → To create a new agent, use --new");
-    return lines;
-  }
-
-  // For new agents with provenance
-  if (agentProvenance) {
-    if (agentProvenance.freshBlocks) {
-      lines.push(`Created new agent (${agentState?.id})`);
-      const allLabels = agentProvenance.blocks.map((b) => b.label).join(", ");
-      if (allLabels) {
-        lines.push(`  → Created new memory blocks: ${allLabels}`);
-      }
-    } else {
-      lines.push(`Created new agent (${agentState?.id})`);
-
-      // Group blocks by source
-      const globalBlocks = agentProvenance.blocks
-        .filter((b) => b.source === "global")
-        .map((b) => b.label);
-      const projectBlocks = agentProvenance.blocks
-        .filter((b) => b.source === "project")
-        .map((b) => b.label);
-      const newBlocks = agentProvenance.blocks
-        .filter((b) => b.source === "new")
-        .map((b) => b.label);
-
-      if (globalBlocks.length > 0) {
-        lines.push(
-          `  → Reusing from global (~/.letta/): ${globalBlocks.join(", ")}`,
-        );
-      }
-      if (projectBlocks.length > 0) {
-        lines.push(
-          `  → Reusing from project (.letta/): ${projectBlocks.join(", ")}`,
-        );
-      }
-      if (newBlocks.length > 0) {
-        lines.push(`  → Created new blocks: ${newBlocks.join(", ")}`);
-      }
-    }
-  }
-
-  return lines;
-}
-
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -279,6 +211,7 @@ type StaticItem =
       snapshot: {
         continueSession: boolean;
         agentState?: AgentState | null;
+        agentProvenance?: AgentProvenance | null;
         terminalWidth: number;
       };
     }
@@ -588,6 +521,7 @@ export default function App({
             snapshot: {
               continueSession,
               agentState,
+              agentProvenance,
               terminalWidth: columns,
             },
           },
@@ -615,22 +549,6 @@ export default function App({
       });
       // Insert at the beginning of the order array
       buffersRef.current.order.unshift(backfillStatusId);
-
-      // Inject provenance status line at the END of the backfilled history
-      const statusLines = generateStatusLines(
-        continueSession,
-        agentProvenance,
-        agentState,
-      );
-      if (statusLines.length > 0) {
-        const statusId = `status-${Date.now().toString(36)}`;
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: statusLines,
-        });
-        buffersRef.current.order.push(statusId);
-      }
 
       refreshDerived();
       commitEligibleLines(buffersRef.current);
@@ -2852,12 +2770,18 @@ Plan file path: ${planFilePath}`;
   }, [lines, tokenStreamingEnabled]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
+  // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
     if (
       loadingState === "ready" &&
       !welcomeCommittedRef.current &&
       messageHistory.length === 0
     ) {
+      // For new agents, wait until provenance is available
+      // For resumed agents, provenance stays null (that's expected)
+      if (!continueSession && !agentProvenance) {
+        return; // Wait for provenance to be set
+      }
       welcomeCommittedRef.current = true;
       setStaticItems((prev) => [
         ...prev,
@@ -2867,27 +2791,11 @@ Plan file path: ${planFilePath}`;
           snapshot: {
             continueSession,
             agentState,
+            agentProvenance,
             terminalWidth: columns,
           },
         },
       ]);
-
-      // Inject status line for fresh sessions
-      const statusLines = generateStatusLines(
-        continueSession,
-        agentProvenance,
-        agentState,
-      );
-      if (statusLines.length > 0) {
-        const statusId = `status-${Date.now().toString(36)}`;
-        buffersRef.current.byId.set(statusId, {
-          kind: "status",
-          id: statusId,
-          lines: statusLines,
-        });
-        buffersRef.current.order.push(statusId);
-        refreshDerived();
-      }
     }
   }, [
     loadingState,
@@ -2896,7 +2804,6 @@ Plan file path: ${planFilePath}`;
     columns,
     agentProvenance,
     agentState,
-    refreshDerived,
   ]);
 
   return (

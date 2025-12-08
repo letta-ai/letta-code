@@ -7,20 +7,38 @@ import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
- * Available memory block labels
+ * Block labels that are stored globally (shared across all projects).
  */
-export const MEMORY_BLOCK_LABELS = [
-  "persona_empty",
-  "human",
+export const GLOBAL_BLOCK_LABELS = ["persona_empty", "human"] as const;
+
+/**
+ * Block labels that are stored per-project (local to the current directory).
+ */
+export const PROJECT_BLOCK_LABELS = [
   "project",
   "skills",
   "loaded_skills",
 ] as const;
 
 /**
+ * All available memory block labels (derived from global + project blocks)
+ */
+export const MEMORY_BLOCK_LABELS = [
+  ...GLOBAL_BLOCK_LABELS,
+  ...PROJECT_BLOCK_LABELS,
+] as const;
+
+/**
  * Type for memory block labels
  */
 export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
+
+/**
+ * Check if a block label is a project-level block
+ */
+export function isProjectBlock(label: string): boolean {
+  return (PROJECT_BLOCK_LABELS as readonly string[]).includes(label);
+}
 
 /**
  * Parse frontmatter and content from an .mdx file

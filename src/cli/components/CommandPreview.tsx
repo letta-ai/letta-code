@@ -4,10 +4,12 @@ import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
 // Compute command list once at module level since it never changes
-const commandList = Object.entries(commands).map(([cmd, { desc }]) => ({
-  cmd,
-  desc,
-}));
+const commandList = Object.entries(commands)
+  .map(([cmd, { desc }]) => ({
+    cmd,
+    desc,
+  }))
+  .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
 export function CommandPreview({
   currentInput,
