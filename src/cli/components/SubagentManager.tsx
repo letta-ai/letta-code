@@ -6,6 +6,7 @@ import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import {
   AGENTS_DIR,
+  GLOBAL_AGENTS_DIR,
   clearSubagentConfigCache,
   getAllSubagentConfigs,
   getBuiltinSubagentNames,
@@ -125,7 +126,7 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
       )}
 
       <Text dimColor>
-        To add custom subagents, create .md files in {AGENTS_DIR}/
+      To add custom subagents, create .md files in {AGENTS_DIR}/ (project) or {GLOBAL_AGENTS_DIR}/ (global)
       </Text>
       <Text dimColor>Press ESC or Enter to close</Text>
     </Box>

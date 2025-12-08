@@ -63,9 +63,17 @@ export interface SubagentDiscoveryResult {
 }
 
 /**
- * Directory for subagent files
+ * Directory for subagent files (relative to project root)
  */
 export const AGENTS_DIR = ".letta/agents";
+
+/**
+ * Global directory for subagent files (in user's home directory)
+ */
+export const GLOBAL_AGENTS_DIR = join(
+  process.env.HOME || process.env.USERPROFILE || "~",
+  ".letta/agents",
+);
 
 /**
  * Valid memory block labels (derived from memory.ts)
@@ -238,19 +246,16 @@ export function getBuiltinSubagentNames(): Set<string> {
 }
 
 /**
- * Discover subagents from .letta/agents/ directory
+ * Discover subagents from a single directory
  */
-export async function discoverSubagents(
-  workingDirectory: string = process.cwd(),
-): Promise<SubagentDiscoveryResult> {
-  const agentsDir = join(workingDirectory, AGENTS_DIR);
-  const errors: Array<{ path: string; message: string }> = [];
-  const subagents: SubagentConfig[] = [];
-  const seenNames = new Set<string>();
-
-  // Check if directory exists
+async function discoverSubagentsFromDir(
+  agentsDir: string,
+  seenNames: Set<string>,
+  subagents: SubagentConfig[],
+  errors: Array<{ path: string; message: string }>,
+): Promise<void> {
   if (!existsSync(agentsDir)) {
-    return { subagents: [], errors: [] };
+    return;
   }
 
   try {
@@ -266,13 +271,15 @@ export async function discoverSubagents(
       try {
         const config = await parseSubagentFile(filePath);
         if (config) {
-          // Check for duplicate names
+          // Check for duplicate names (later directories override earlier ones)
           if (seenNames.has(config.name)) {
-            errors.push({
-              path: filePath,
-              message: `Duplicate subagent name "${config.name}" - skipping`,
-            });
-            continue;
+            // Remove the existing one and replace with this one
+            const existingIndex = subagents.findIndex(
+              (s) => s.name === config.name,
+            );
+            if (existingIndex !== -1) {
+              subagents.splice(existingIndex, 1);
+            }
           }
 
           seenNames.add(config.name);
@@ -291,6 +298,26 @@ export async function discoverSubagents(
       message: `Failed to read agents directory: ${getErrorMessage(error)}`,
     });
   }
+}
+
+/**
+ * Discover subagents from global (~/.letta/agents) and project (.letta/agents) directories
+ * Project-level subagents override global ones with the same name
+ */
+export async function discoverSubagents(
+  workingDirectory: string = process.cwd(),
+): Promise<SubagentDiscoveryResult> {
+  const errors: Array<{ path: string; message: string }> = [];
+  const subagents: SubagentConfig[] = [];
+  const seenNames = new Set<string>();
+
+  // First, discover from global directory (~/.letta/agents)
+  await discoverSubagentsFromDir(GLOBAL_AGENTS_DIR, seenNames, subagents, errors);
+
+  // Then, discover from project directory (.letta/agents)
+  // Project-level overrides global with same name
+  const projectAgentsDir = join(workingDirectory, AGENTS_DIR);
+  await discoverSubagentsFromDir(projectAgentsDir, seenNames, subagents, errors);
 
   return { subagents, errors };
 }
