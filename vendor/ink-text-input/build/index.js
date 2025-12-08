@@ -3,8 +3,8 @@ import { Text, useInput } from 'ink';
 import React, { useEffect, useState } from 'react';
 
 function TextInput({ value: originalValue, placeholder = '', focus = true, mask, highlightPastedText = false, showCursor = true, onChange, onSubmit, externalCursorOffset, onCursorOffsetChange }) {
-    const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0 });
-    const { cursorOffset, cursorWidth } = state;
+    const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0, killBuffer: '' });
+    const { cursorOffset, cursorWidth, killBuffer } = state;
     useEffect(() => {
         setState(previousState => {
             if (!focus || !showCursor) {
@@ -12,7 +12,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             }
             const newValue = originalValue || '';
             if (previousState.cursorOffset > newValue.length - 1) {
-                return { cursorOffset: newValue.length, cursorWidth: 0 };
+                return { ...previousState, cursorOffset: newValue.length, cursorWidth: 0 };
             }
             return previousState;
         });
@@ -21,7 +21,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         if (typeof externalCursorOffset === 'number') {
             const newValue = originalValue || '';
             const clamped = Math.max(0, Math.min(externalCursorOffset, newValue.length));
-            setState(prev => ({ cursorOffset: clamped, cursorWidth: 0 }));
+            setState(prev => ({ ...prev, cursorOffset: clamped, cursorWidth: 0 }));
             if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(clamped);
         }
     }, [externalCursorOffset, originalValue, onCursorOffsetChange]);
@@ -58,6 +58,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         let nextCursorOffset = cursorOffset;
         let nextValue = originalValue;
         let nextCursorWidth = 0;
+        let nextKillBuffer = killBuffer;
         if (key.leftArrow) {
             if (showCursor) {
                 nextCursorOffset--;
@@ -91,6 +92,28 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
                 nextCursorOffset = originalValue.length;
             }
         }
+        else if (key.ctrl && input === 'k') {
+            // CTRL-K: kill from cursor to end of line
+            if (cursorOffset < originalValue.length) {
+                nextKillBuffer = originalValue.slice(cursorOffset);
+                nextValue = originalValue.slice(0, cursorOffset);
+            }
+        }
+        else if (key.ctrl && input === 'u') {
+            // CTRL-U: kill from beginning to cursor
+            if (cursorOffset > 0) {
+                nextKillBuffer = originalValue.slice(0, cursorOffset);
+                nextValue = originalValue.slice(cursorOffset);
+                nextCursorOffset = 0;
+            }
+        }
+        else if (key.ctrl && input === 'y') {
+            // CTRL-Y: yank (paste) from kill buffer
+            if (killBuffer) {
+                nextValue = originalValue.slice(0, cursorOffset) + killBuffer + originalValue.slice(cursorOffset);
+                nextCursorOffset = cursorOffset + killBuffer.length;
+            }
+        }
         else {
             nextValue = originalValue.slice(0, cursorOffset) + input + originalValue.slice(cursorOffset, originalValue.length);
             nextCursorOffset += input.length;
@@ -99,7 +122,7 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             }
         }
         nextCursorOffset = Math.max(0, Math.min(nextCursorOffset, nextValue.length));
-        setState({ cursorOffset: nextCursorOffset, cursorWidth: nextCursorWidth });
+        setState(prev => ({ ...prev, cursorOffset: nextCursorOffset, cursorWidth: nextCursorWidth, killBuffer: nextKillBuffer }));
         if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
         if (nextValue !== originalValue) {
             onChange(nextValue);
