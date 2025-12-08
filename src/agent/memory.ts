@@ -9,7 +9,7 @@ import { MEMORY_PROMPTS } from "./promptAssets";
 /**
  * Block labels that are stored globally (shared across all projects).
  */
-export const GLOBAL_BLOCK_LABELS = ["persona_empty", "human"] as const;
+export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
 
 /**
  * Block labels that are stored per-project (local to the current directory).
