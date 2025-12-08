@@ -7,8 +7,8 @@
  * - Managing parallel subagent execution
  */
 
-import { getErrorMessage } from "../utils/error";
-import { getAllSubagentConfigs, type SubagentConfig } from "./subagents";
+import { getErrorMessage } from "../../utils/error";
+import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
 // Constants
@@ -51,7 +51,7 @@ async function buildSubagentArgs(
   ];
 
   // Inherit permission mode from parent
-  const { permissionMode } = await import("../permissions/mode");
+  const { permissionMode } = await import("../../permissions/mode");
   const currentMode = permissionMode.getMode();
   if (currentMode !== "default") {
     args.push("--permission-mode", currentMode);
@@ -352,7 +352,7 @@ async function executeSubagent(
  * Get the base URL for constructing agent links
  */
 async function getBaseURL(): Promise<string> {
-  const { settingsManager } = await import("../settings-manager");
+  const { settingsManager } = await import("../../settings-manager");
   const settings = settingsManager.getSettings();
 
   const baseURL =

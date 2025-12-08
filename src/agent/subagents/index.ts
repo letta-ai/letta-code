@@ -9,18 +9,18 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getErrorMessage } from "../utils/error";
+import { getErrorMessage } from "../../utils/error";
 import {
   getStringField,
   parseCommaSeparatedList,
   parseFrontmatter,
-} from "../utils/frontmatter";
-import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "./memory";
+} from "../../utils/frontmatter";
+import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 
 // Built-in subagent definitions (embedded at build time)
-import exploreAgentMd from "./subagents/builtin/explore.md";
-import planAgentMd from "./subagents/builtin/plan.md";
-import generalPurposeAgentMd from "./subagents/builtin/general-purpose.md";
+import exploreAgentMd from "./builtin/explore.md";
+import planAgentMd from "./builtin/plan.md";
+import generalPurposeAgentMd from "./builtin/general-purpose.md";
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
