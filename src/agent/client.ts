@@ -34,16 +34,27 @@ export async function getClient() {
         apiKey = tokens.access_token;
       } catch (error) {
         console.error("Failed to refresh access token:", error);
-        console.error("Please run 'letta login' to re-authenticate");
+        console.error(
+          "Please re-authenticate by running 'letta' in interactive mode",
+        );
         process.exit(1);
       }
     }
   }
 
+  // Check if refresh token is missing for Letta Cloud
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     "https://api.letta.com";
+
+  if (baseURL === "https://api.letta.com" && !settings.refreshToken) {
+    console.error("Missing refresh token for Letta Cloud");
+    console.error(
+      "Please re-authenticate by running 'letta' in interactive mode",
+    );
+    process.exit(1);
+  }
 
   if (!apiKey && baseURL === "https://api.letta.com") {
     console.error("Missing LETTA_API_KEY");
