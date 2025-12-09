@@ -46,14 +46,6 @@ export async function getClient() {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  if (baseURL === LETTA_CLOUD_API_URL && !settings.refreshToken) {
-    console.error("Missing refresh token for Letta Cloud");
-    console.error(
-      "Run 'letta setup' to configure authentication or set your LETTA_API_KEY environment variable",
-    );
-    process.exit(1);
-  }
-
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     console.error("Missing LETTA_API_KEY");
     console.error(
