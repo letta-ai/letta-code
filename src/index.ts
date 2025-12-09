@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
@@ -265,10 +266,10 @@ async function main() {
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+    LETTA_CLOUD_API_URL;
 
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
-  if (baseURL === "https://api.letta.com" && !settings.refreshToken) {
+  if (baseURL === LETTA_CLOUD_API_URL && !settings.refreshToken) {
     // For headless mode, error out (assume automation context)
     if (isHeadless) {
       console.error("Missing refresh token");
@@ -283,7 +284,7 @@ async function main() {
     return main();
   }
 
-  if (!apiKey && baseURL === "https://api.letta.com") {
+  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     // For headless mode, error out (assume automation context)
     if (isHeadless) {
       console.error("Missing LETTA_API_KEY");

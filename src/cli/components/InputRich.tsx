@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
+import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
@@ -110,7 +111,7 @@ export function Input({
   const serverUrl =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+    LETTA_CLOUD_API_URL;
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {

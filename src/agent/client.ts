@@ -1,5 +1,5 @@
 import Letta from "@letta-ai/letta-client";
-import { refreshAccessToken } from "../auth/oauth";
+import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
 export async function getClient() {
@@ -46,9 +46,9 @@ export async function getClient() {
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+    LETTA_CLOUD_API_URL;
 
-  if (baseURL === "https://api.letta.com" && !settings.refreshToken) {
+  if (baseURL === LETTA_CLOUD_API_URL && !settings.refreshToken) {
     console.error("Missing refresh token for Letta Cloud");
     console.error(
       "Please re-authenticate by running 'letta' in interactive mode",
@@ -56,7 +56,7 @@ export async function getClient() {
     process.exit(1);
   }
 
-  if (!apiKey && baseURL === "https://api.letta.com") {
+  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     console.error("Missing LETTA_API_KEY");
     console.error("Run 'letta setup' to configure authentication");
     process.exit(1);
