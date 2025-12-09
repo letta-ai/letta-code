@@ -292,30 +292,21 @@ The `/model` command automatically switches toolsets when you change models. Use
 
 ### Subagents
 
-The **Task** tool allows the main agent to spawn specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools:
+The **Task** tool allows the main agent to spawn specialized subagents that autonomously handle complex tasks. Subagents run in headless mode and return a final report when done.
 
-**Available Subagent Types:**
+**Built-in Subagent Types:**
 
-- **Explore** - Fast agent for codebase exploration (read-only)
-  - Tools: Glob, Grep, Read, LS, BashOutput
-  - Use for: Finding files, searching code, understanding structure
-  - Recommended model: Haiku (fast and efficient)
-
-- **Plan** - Fast agent for planning complex tasks (read-only)
-  - Tools: Glob, Grep, Read, LS, BashOutput
-  - Use for: Breaking down complex tasks, understanding dependencies
-  - Recommended model: Haiku (fast and efficient)
-
-- **general-purpose** - Full-capability agent for research and implementation
-  - Tools: All tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
-  - Use for: Complex multi-step tasks, autonomous coding
-  - Recommended model: Sonnet (more capable)
+| Type | Description | Model |
+|------|-------------|-------|
+| `explore` | Fast codebase exploration (read-only) | Haiku |
+| `plan` | Break down complex tasks into steps | Opus |
+| `general-purpose` | Full-capability research & implementation | Sonnet 4.5 |
 
 **Key Features:**
 
 - **Parallel execution**: Launch multiple subagents concurrently for independent tasks
-- **Conflict detection**: Automatic detection and retry when multiple agents edit the same file
 - **Context-aware**: Subagents see full conversation history and can reference earlier context
+- **Permission inheritance**: Subagents inherit permission mode and allowed/disallowed tools from the parent
 - **Stateless**: Each subagent returns a single final report when done
 
 **Example Usage:**
@@ -323,38 +314,84 @@ The **Task** tool allows the main agent to spawn specialized subagents that auto
 ```typescript
 // Explore the codebase for authentication code
 Task({
-  subagent_type: "Explore",
+  subagent_type: "explore",
   description: "Find authentication code",
-  prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
+  prompt: "Search for all authentication-related code in src/."
 })
 
 // Plan a complex feature implementation
 Task({
-  subagent_type: "Plan",
+  subagent_type: "plan",
   description: "Plan user dashboard feature",
-  prompt: "Plan implementation of a user dashboard that shows usage metrics. Break down into steps."
+  prompt: "Plan implementation of a user dashboard that shows usage metrics."
 })
 
 // Implement a feature autonomously
 Task({
   subagent_type: "general-purpose",
   description: "Add input validation",
-  prompt: "Add email and password validation to the registration form. Check existing patterns first."
+  prompt: "Add email and password validation to the registration form."
 })
 
-// Launch multiple subagents in parallel
-Task({ subagent_type: "Explore", description: "Find frontend components", prompt: "..." })
-Task({ subagent_type: "Explore", description: "Find backend APIs", prompt: "..." })
+// Use a specific model (overrides the subagent's default)
+Task({
+  subagent_type: "plan",
+  description: "Plan database migration",
+  prompt: "Plan the migration from SQLite to PostgreSQL.",
+  model: "sonnet"
+})
 ```
 
-**Best Practices:**
+### Custom Subagents
 
-- ✅ Use parallel Explore/Plan subagents for read-only operations
-- ✅ Use parallel general-purpose subagents for editing different files
-- ⚠️  Be cautious with parallel edits to the same file (conflict detection will handle it, but may require retries)
-- 📝 Provide detailed, self-contained prompts (subagents cannot ask questions mid-execution)
+You can define custom subagents as Markdown files with YAML frontmatter. Custom subagents can override built-ins or add new specialized behaviors. Once defined, custom subagents are available via the Task tool.
 
-For more details on subagent architecture and concurrency behavior, see [`subagent-experiments/SUBAGENTS.md`](subagent-experiments/SUBAGENTS.md).
+**Discovery Locations:**
+
+1. **Global**: `~/.letta/agents/*.md` - Available in all projects
+2. **Project**: `.letta/agents/*.md` - Project-specific (overrides global)
+
+**Example Custom Subagent:**
+
+Create `.letta/agents/code-reviewer.md`:
+
+```markdown
+---
+name: code-reviewer
+description: Reviews code for quality, security, and best practices
+tools: Glob, Grep, Read
+model: sonnet
+memoryBlocks: human, persona
+---
+
+You are a code review agent that analyzes code for quality and security issues.
+
+## Instructions
+
+- Use Grep to find patterns that indicate common issues
+- Use Read to examine specific files in detail
+- Check for security vulnerabilities (OWASP top 10)
+- Verify error handling and edge cases
+- Look for code style consistency
+
+## Output Format
+
+1. Summary of findings
+2. Issues found (Critical / Warning / Info)
+3. Specific recommendations with file:line references
+```
+
+**Frontmatter Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique identifier (lowercase, hyphens allowed) |
+| `description` | Yes | When to use this subagent |
+| `tools` | No | Comma-separated tool names, or `all` (default: `all`) |
+| `model` | No | Model to use: `haiku`, `sonnet`, `opus`, or full handle (default: `inherit`) |
+| `memoryBlocks` | No | Memory blocks to include: `all`, `none`, or comma-separated labels like `human, persona, project` (default: `all`) |
+```
+
 
 ### Headless Mode
 ```bash
