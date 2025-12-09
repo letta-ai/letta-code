@@ -27,8 +27,9 @@ function buildModelSettings(
   const isOpenAI = modelHandle.startsWith("openai/");
   const isAnthropic = modelHandle.startsWith("anthropic/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
+  const isOpenRouter = modelHandle.startsWith("openrouter/");
 
-  if (isOpenAI) {
+  if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,
