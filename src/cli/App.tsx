@@ -361,7 +361,7 @@ export default function App({
 
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
-  
+
   // Store the current stream so we can abort it directly
   const currentStreamRef = useRef<Stream<LettaStreamingResponse> | null>(null);
 
@@ -942,15 +942,15 @@ export default function App({
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
-      
+
       // Update buffer state and show error message
       markIncompleteToolsAsCancelled(buffersRef.current);
       appendError("Stream interrupted by user");
-      
+
       // Stop streaming and refresh UI
       setStreaming(false);
       refreshDerived();
-      
+
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
@@ -958,14 +958,14 @@ export default function App({
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
-      
+
       return;
     } else {
       setInterruptRequested(true);
       try {
         const client = await getClient();
         await client.agents.messages.cancel(agentId);
-        
+
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }
@@ -974,7 +974,14 @@ export default function App({
         setInterruptRequested(false);
       }
     }
-  }, [agentId, streaming, interruptRequested, appendError, isExecutingTool, refreshDerived]);
+  }, [
+    agentId,
+    streaming,
+    interruptRequested,
+    appendError,
+    isExecutingTool,
+    refreshDerived,
+  ]);
 
   // Reset interrupt flag when streaming ends
   useEffect(() => {
@@ -2912,7 +2919,9 @@ Plan file path: ${planFilePath}`;
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen
               }
-              streaming={streaming && !abortControllerRef.current?.signal.aborted}
+              streaming={
+                streaming && !abortControllerRef.current?.signal.aborted
+              }
               commandRunning={commandRunning}
               tokenCount={tokenCount}
               thinkingMessage={thinkingMessage}
