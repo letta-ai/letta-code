@@ -5,8 +5,8 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { spawnSubagent } from "../../agent/subagents/manager";
 import { getAllSubagentConfigs } from "../../agent/subagents";
+import { spawnSubagent } from "../../agent/subagents/manager";
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {

@@ -305,12 +305,22 @@ export async function discoverSubagents(
   const seenNames = new Set<string>();
 
   // First, discover from global directory (~/.letta/agents)
-  await discoverSubagentsFromDir(GLOBAL_AGENTS_DIR, seenNames, subagents, errors);
+  await discoverSubagentsFromDir(
+    GLOBAL_AGENTS_DIR,
+    seenNames,
+    subagents,
+    errors,
+  );
 
   // Then, discover from project directory (.letta/agents)
   // Project-level overrides global with same name
   const projectAgentsDir = join(workingDirectory, AGENTS_DIR);
-  await discoverSubagentsFromDir(projectAgentsDir, seenNames, subagents, errors);
+  await discoverSubagentsFromDir(
+    projectAgentsDir,
+    seenNames,
+    subagents,
+    errors,
+  );
 
   return { subagents, errors };
 }
