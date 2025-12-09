@@ -148,7 +148,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       <Text>{asciiLogo}</Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
-      <Text>Please choose how you'd like to authenticate:</Text>
+      <Text>Let's get you authenticated:</Text>
       <Text> </Text>
       <Box>
         <Text color={selectedOption === 0 ? "cyan" : undefined}>
