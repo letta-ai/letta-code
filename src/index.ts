@@ -268,22 +268,6 @@ async function main() {
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Check if refresh token is missing for Letta Cloud (only when not using env var)
-  if (baseURL === LETTA_CLOUD_API_URL && !settings.refreshToken) {
-    // For headless mode, error out (assume automation context)
-    if (isHeadless) {
-      console.error("Missing refresh token");
-      console.error("Run 'letta' in interactive mode to re-authenticate.");
-      process.exit(1);
-    }
-
-    // For interactive mode, show setup flow
-    const { runSetup } = await import("./auth/setup");
-    await runSetup();
-    // After setup, restart main flow
-    return main();
-  }
-
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     // For headless mode, error out (assume automation context)
     if (isHeadless) {
