@@ -312,33 +312,11 @@ The **Task** tool allows the main agent to spawn specialized subagents that auto
 **Example Usage:**
 
 ```typescript
-// Explore the codebase for authentication code
-Task({
-  subagent_type: "explore",
-  description: "Find authentication code",
-  prompt: "Search for all authentication-related code in src/."
-})
-
-// Plan a complex feature implementation
-Task({
-  subagent_type: "plan",
-  description: "Plan user dashboard feature",
-  prompt: "Plan implementation of a user dashboard that shows usage metrics."
-})
-
-// Implement a feature autonomously
-Task({
-  subagent_type: "general-purpose",
-  description: "Add input validation",
-  prompt: "Add email and password validation to the registration form."
-})
-
-// Use a specific model (overrides the subagent's default)
 Task({
   subagent_type: "plan",
   description: "Plan database migration",
   prompt: "Plan the migration from SQLite to PostgreSQL.",
-  model: "sonnet"
+  model: "sonnet"  // Override the subagent's default
 })
 ```
 
@@ -390,7 +368,6 @@ You are a code review agent that analyzes code for quality and security issues.
 | `tools` | No | Comma-separated tool names, or `all` (default: `all`) |
 | `model` | No | Model to use: `haiku`, `sonnet`, `opus`, or full handle (default: `inherit`) |
 | `memoryBlocks` | No | Memory blocks to include: `all`, `none`, or comma-separated labels like `human, persona, project` (default: `all`) |
-```
 
 
 ### Headless Mode
