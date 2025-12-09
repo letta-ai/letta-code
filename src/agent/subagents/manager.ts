@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
@@ -329,6 +330,16 @@ function buildSubagentArgs(
     args.push("--permission-mode", currentMode);
   }
 
+  // Inherit permission rules from parent (--allowedTools/--disallowedTools)
+  const parentAllowedTools = cliPermissions.getAllowedTools();
+  if (parentAllowedTools.length > 0) {
+    args.push("--allowedTools", parentAllowedTools.join(","));
+  }
+  const parentDisallowedTools = cliPermissions.getDisallowedTools();
+  if (parentDisallowedTools.length > 0) {
+    args.push("--disallowedTools", parentDisallowedTools.join(","));
+  }
+
   // Add memory block filtering if specified
   if (config.memoryBlocks === "none") {
     args.push("--init-blocks", "none");
@@ -345,7 +356,7 @@ function buildSubagentArgs(
     Array.isArray(config.allowedTools) &&
     config.allowedTools.length > 0
   ) {
-    args.push("--allowedTools", config.allowedTools.join(","));
+    args.push("--tools", config.allowedTools.join(","));
   }
 
   return args;
