@@ -18,18 +18,11 @@ import {
 import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 
 // Built-in subagent definitions (embedded at build time)
-// All .md files in builtin/ are automatically included
-const builtinModules = (
-  import.meta as unknown as {
-    glob: (
-      pattern: string,
-      options: { eager: true; query: string },
-    ) => Record<string, { default: string }>;
-  }
-).glob("./builtin/*.md", {
-  eager: true,
-  query: "?raw",
-});
+import exploreAgentMd from "./builtin/explore.md";
+import generalPurposeAgentMd from "./builtin/general-purpose.md";
+import planAgentMd from "./builtin/plan.md";
+
+const BUILTIN_SOURCES = [exploreAgentMd, generalPurposeAgentMd, planAgentMd];
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
@@ -222,14 +215,14 @@ function getBuiltinSubagents(): Record<string, SubagentConfig> {
 
   const builtins: Record<string, SubagentConfig> = {};
 
-  for (const [path, module] of Object.entries(builtinModules)) {
+  for (const source of BUILTIN_SOURCES) {
     try {
-      const config = parseSubagentContent(module.default);
+      const config = parseSubagentContent(source);
       builtins[config.name] = config;
     } catch (error) {
       // Built-in subagents should always be valid; log error but don't crash
       console.warn(
-        `[subagent] Failed to parse built-in subagent ${path}: ${getErrorMessage(error)}`,
+        `[subagent] Failed to parse built-in subagent: ${getErrorMessage(error)}`,
       );
     }
   }
@@ -342,8 +335,8 @@ export async function getAllSubagentConfigs(
     return cachedConfigs;
   }
 
-  // Start with built-in subagents
-  const configs: Record<string, SubagentConfig> = getBuiltinSubagents();
+  // Start with a copy of built-in subagents (don't mutate the cache)
+  const configs: Record<string, SubagentConfig> = { ...getBuiltinSubagents() };
 
   // Discover user-defined subagents from .letta/agents/
   const { subagents, errors } = await discoverSubagents(workingDirectory);

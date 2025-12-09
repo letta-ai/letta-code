@@ -71,15 +71,19 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
 
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box flexDirection="column">
         <Text>Loading subagents...</Text>
       </Box>
     );
   }
 
   const renderSubagentList = (items: SubagentItem[]) =>
-    items.map((item) => (
-      <Box key={item.name} flexDirection="column" marginBottom={1}>
+    items.map((item, index) => (
+      <Box
+        key={item.name}
+        flexDirection="column"
+        marginBottom={index < items.length - 1 ? 1 : 0}
+      >
         <Box gap={1}>
           <Text bold color={colors.selector.itemHighlighted}>
             {item.name}
@@ -94,7 +98,7 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
     builtinSubagents.length === 0 && customSubagents.length === 0;
 
   return (
-    <Box flexDirection="column" padding={1} gap={1}>
+    <Box flexDirection="column" gap={1}>
       <Text bold color={colors.selector.title}>
         Available Subagents
       </Text>
