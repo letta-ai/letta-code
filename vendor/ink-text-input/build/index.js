@@ -54,22 +54,14 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             return;
         }
         // Filter out garbage from Option+Arrow escape sequences
-        // When Option+Left sends \x1bb, Ink parses it as meta=true, input='\x1bb'
+        // When Option+Left sends \x1bb, Ink parses it as meta=true, input='b'
         // These should not be inserted as text
-        if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F' ||
-            input === '\x1bb' || input === '\x1bB' || input === '\x1bf' || input === '\x1bF')) {
-            return;
-        }
-        // Also filter CSI sequences for Option+Arrow (e.g., \x1b[1;3D for Option+Left)
-        if (input && typeof input === 'string' && /^\x1b\[(?:1;)?[3-9][ABCD]$/.test(input)) {
+        if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) {
             return;
         }
         // Filter any escape sequence that starts with \x1b - these are control sequences, not text input
+        // This catches: Option+Arrow CSI sequences (\x1b[1;3D), Option+Delete (\x1b\x7f, \x1b\x08), etc.
         if (input && typeof input === 'string' && input.startsWith('\x1b')) {
-            return;
-        }
-        // Filter Option+Delete sequences (\x1b\x7f = ESC+DEL, \x1b\x08 = ESC+BS)
-        if (input === '\x1b\x7f' || input === '\x1b\x08' || input === '\x1b\b') {
             return;
         }
         if (key.return) {
@@ -97,6 +89,10 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             return;
         }
         else if (key.backspace || key.delete) {
+            // Skip if meta is pressed (Option+Delete) - handled by parent for word deletion
+            if (key.meta) {
+                return;
+            }
             if (cursorOffset > 0) {
                 nextValue = originalValue.slice(0, cursorOffset - 1) + originalValue.slice(cursorOffset, originalValue.length);
                 nextCursorOffset--;

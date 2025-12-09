@@ -241,6 +241,22 @@ export function PasteAwareTextInput({
           caretOffsetRef.current = nextCaret;
         }
       }
+
+      // Handle Option+Delete (meta + delete) for macOS Terminal
+      // Ink parses \x1b\x7f as key.delete with key.meta = true
+      if (key.meta && key.delete) {
+        const curPos = caretOffsetRef.current;
+        const wordStart = findPreviousWordBoundary(displayValue, curPos);
+        if (wordStart !== curPos) {
+          const newDisplay = displayValue.slice(0, wordStart) + displayValue.slice(curPos);
+          const resolvedActual = resolvePlaceholders(newDisplay);
+          setDisplayValue(newDisplay);
+          setActualValue(resolvedActual);
+          onChange(newDisplay);
+          setNudgeCursorOffset(wordStart);
+          caretOffsetRef.current = wordStart;
+        }
+      }
     },
     { isActive: focus },
   );
@@ -334,7 +350,11 @@ export function PasteAwareTextInput({
 
       if (!sequence) return;
 
-      // Option+Delete on macOS sends ESC + DEL (\x1b\x7f)
+      // Option+Delete sequences vary by terminal:
+      // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
+      // - Warp: Ctrl+W (\x17)
+      // - macOS Terminal: Just DEL (\x7f) - same as regular delete, no modifier info
+      //   (Option+Delete won't work in macOS Terminal due to this limitation)
       if (sequence === "\x1b\x7f") {
         deletePreviousWord();
         return;
