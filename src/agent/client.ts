@@ -34,9 +34,7 @@ export async function getClient() {
         apiKey = tokens.access_token;
       } catch (error) {
         console.error("Failed to refresh access token:", error);
-        console.error(
-          "Please re-authenticate by running 'letta' in interactive mode",
-        );
+        console.error("Please run 'letta login' to re-authenticate");
         process.exit(1);
       }
     }
@@ -50,10 +48,13 @@ export async function getClient() {
 
   if (baseURL === LETTA_CLOUD_API_URL && !settings.refreshToken) {
     console.error("Missing refresh token for Letta Cloud");
-    console.error(
-      "Please re-authenticate by running 'letta' in interactive mode",
-    );
+    console.error("Run 'letta setup' to configure authentication");
     process.exit(1);
+  }
+
+  if (!apiKey && baseURL === "https://api.letta.com") {
+    console.error("Missing LETTA_API_KEY");
+    console.error("Run 'letta setup' to configure authentication");
   }
 
   // Auto-cache: if LETTA_API_KEY is set in env but not in settings, write it to settings
