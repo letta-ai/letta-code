@@ -2,12 +2,14 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { APIError } from "@letta-ai/letta-client/core/error";
+import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
+  LettaStreamingResponse,
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
@@ -359,6 +361,9 @@ export default function App({
 
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Store the current stream so we can abort it directly
+  const currentStreamRef = useRef<Stream<LettaStreamingResponse> | null>(null);
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -612,6 +617,7 @@ export default function App({
         while (true) {
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
+          currentStreamRef.current = stream; // Store for eager cancellation
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -619,6 +625,7 @@ export default function App({
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
             );
+          currentStreamRef.current = null; // Clear after stream completes
 
           // Update lastKnownRunId for error handling in catch block
           if (lastRunId) {
@@ -640,7 +647,10 @@ export default function App({
 
           // Case 1.5: Stream was cancelled by user
           if (stopReason === "cancelled") {
-            appendError("Stream interrupted by user");
+            // Only show error if not using eager cancel (eager cancel already handled this)
+            if (!EAGER_CANCEL) {
+              appendError("Stream interrupted by user");
+            }
             setStreaming(false);
             return;
           }
@@ -897,6 +907,7 @@ export default function App({
         refreshDerived();
       } finally {
         abortControllerRef.current = null;
+        currentStreamRef.current = null;
       }
     },
     [agentId, appendError, refreshDerived, refreshDerivedThrottled],
@@ -921,24 +932,49 @@ export default function App({
 
     if (!streaming || interruptRequested) return;
 
-    setInterruptRequested(true);
-    try {
-      const client = await getClient();
-
-      // Send cancel request to backend
-      const _cancelResult = await client.agents.messages.cancel(agentId);
-      // console.error("cancelResult", JSON.stringify(cancelResult, null, 2));
-
-      // If EAGER_CANCEL is enabled, immediately abort the stream client-side
-      // This provides instant feedback without waiting for backend to acknowledge
-      if (EAGER_CANCEL && abortControllerRef.current) {
+    // If EAGER_CANCEL is enabled, immediately stop everything client-side first
+    if (EAGER_CANCEL) {
+      // Abort both the stream's controller and our abort signal
+      // The stream's controller will interrupt the for await loop immediately
+      if (currentStreamRef.current?.controller) {
+        currentStreamRef.current.controller.abort();
+      }
+      if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
-    } catch (e) {
-      appendError(`Failed to interrupt stream: ${String(e)}`);
-      setInterruptRequested(false);
+      
+      // Update buffer state and show error message
+      markIncompleteToolsAsCancelled(buffersRef.current);
+      appendError("Stream interrupted by user");
+      
+      // Stop streaming and refresh UI
+      setStreaming(false);
+      refreshDerived();
+      
+      // Send cancel request to backend asynchronously (fire-and-forget)
+      // Don't wait for it or show errors since user already got feedback
+      getClient()
+        .then((client) => client.agents.messages.cancel(agentId))
+        .catch(() => {
+          // Silently ignore - cancellation already happened client-side
+        });
+      
+      return;
+    } else {
+      setInterruptRequested(true);
+      try {
+        const client = await getClient();
+        await client.agents.messages.cancel(agentId);
+        
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+      } catch (e) {
+        appendError(`Failed to interrupt stream: ${String(e)}`);
+        setInterruptRequested(false);
+      }
     }
-  }, [agentId, streaming, interruptRequested, appendError, isExecutingTool]);
+  }, [agentId, streaming, interruptRequested, appendError, isExecutingTool, refreshDerived]);
 
   // Reset interrupt flag when streaming ends
   useEffect(() => {
@@ -2876,7 +2912,7 @@ Plan file path: ${planFilePath}`;
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen
               }
-              streaming={streaming}
+              streaming={streaming && !abortControllerRef.current?.signal.aborted}
               commandRunning={commandRunning}
               tokenCount={tokenCount}
               thinkingMessage={thinkingMessage}
