@@ -7,6 +7,10 @@
  * - Managing parallel subagent execution
  */
 
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { permissionMode } from "../../permissions/mode";
+import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
@@ -17,6 +21,10 @@ import { getAllSubagentConfigs, type SubagentConfig } from ".";
 /** ANSI escape codes for console output */
 const ANSI_DIM = "\x1b[2m";
 const ANSI_RESET = "\x1b[0m";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 /**
  * Subagent execution result
@@ -29,14 +37,279 @@ export interface SubagentResult {
 }
 
 /**
+ * State tracked during subagent execution
+ */
+interface ExecutionState {
+  agentId: string | null;
+  finalResult: string | null;
+  finalError: string | null;
+  resultStats: { durationMs: number; totalTokens: number } | null;
+  displayedToolCalls: Set<string>;
+  pendingToolCalls: Map<string, { name: string; args: string }>;
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Format tool arguments for display (truncated)
+ */
+function formatToolArgs(argsStr: string): string {
+  try {
+    const args = JSON.parse(argsStr);
+    const entries = Object.entries(args)
+      .filter(([_, value]) => value !== undefined && value !== null)
+      .slice(0, 2); // Show max 2 args
+
+    if (entries.length === 0) return "";
+
+    return entries
+      .map(([key, value]) => {
+        let displayValue = String(value);
+        if (displayValue.length > 100) {
+          displayValue = `${displayValue.slice(0, 97)}...`;
+        }
+        return `${key}: "${displayValue}"`;
+      })
+      .join(", ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Display a tool call to the console
+ */
+function displayToolCall(
+  toolCallId: string,
+  toolName: string,
+  toolArgs: string,
+  displayedToolCalls: Set<string>,
+): void {
+  if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
+  displayedToolCalls.add(toolCallId);
+
+  const formattedArgs = formatToolArgs(toolArgs);
+  if (formattedArgs) {
+    console.log(`${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`);
+  } else {
+    console.log(`${ANSI_DIM}     ${toolName}()${ANSI_RESET}`);
+  }
+}
+
+/**
+ * Format completion stats for display
+ */
+function formatCompletionStats(
+  toolCount: number,
+  totalTokens: number,
+  durationMs: number,
+): string {
+  const tokenStr =
+    totalTokens >= 1000
+      ? `${(totalTokens / 1000).toFixed(1)}k`
+      : String(totalTokens);
+
+  const durationSec = durationMs / 1000;
+  const durationStr =
+    durationSec >= 60
+      ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
+      : `${durationSec.toFixed(1)}s`;
+
+  return `${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr}`;
+}
+
+/**
+ * Handle an init event from the subagent stream
+ */
+function handleInitEvent(
+  event: { agent_id?: string },
+  state: ExecutionState,
+  baseURL: string,
+): void {
+  if (event.agent_id) {
+    state.agentId = event.agent_id;
+    const agentURL = `${baseURL}/agents/${event.agent_id}`;
+    console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
+  }
+}
+
+/**
+ * Handle an approval request message event
+ */
+function handleApprovalRequestEvent(
+  event: { tool_calls?: unknown[]; tool_call?: unknown },
+  state: ExecutionState,
+): void {
+  const toolCalls = Array.isArray(event.tool_calls)
+    ? event.tool_calls
+    : event.tool_call
+      ? [event.tool_call]
+      : [];
+
+  for (const toolCall of toolCalls) {
+    const tc = toolCall as {
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    };
+    const id = tc.tool_call_id;
+    if (!id) continue;
+
+    const prev = state.pendingToolCalls.get(id) || { name: "", args: "" };
+    const name = tc.name || prev.name;
+    const args = prev.args + (tc.arguments || "");
+    state.pendingToolCalls.set(id, { name, args });
+  }
+}
+
+/**
+ * Handle an auto_approval event
+ */
+function handleAutoApprovalEvent(
+  event: { tool_call_id?: string; tool_name?: string; tool_args?: string },
+  state: ExecutionState,
+): void {
+  const { tool_call_id, tool_name, tool_args = "{}" } = event;
+  if (tool_call_id && tool_name) {
+    displayToolCall(
+      tool_call_id,
+      tool_name,
+      tool_args,
+      state.displayedToolCalls,
+    );
+  }
+}
+
+/**
+ * Handle a result event
+ */
+function handleResultEvent(
+  event: {
+    result?: string;
+    is_error?: boolean;
+    duration_ms?: number;
+    usage?: { total_tokens?: number };
+  },
+  state: ExecutionState,
+): void {
+  state.finalResult = event.result || "";
+  state.resultStats = {
+    durationMs: event.duration_ms || 0,
+    totalTokens: event.usage?.total_tokens || 0,
+  };
+
+  if (event.is_error) {
+    state.finalError = event.result || "Unknown error";
+  } else {
+    // Display any pending tool calls that weren't auto-approved
+    for (const [id, { name, args }] of state.pendingToolCalls.entries()) {
+      if (name && !state.displayedToolCalls.has(id)) {
+        displayToolCall(id, name, args || "{}", state.displayedToolCalls);
+      }
+    }
+
+    // Display completion stats
+    const statsStr = formatCompletionStats(
+      state.displayedToolCalls.size,
+      state.resultStats.totalTokens,
+      state.resultStats.durationMs,
+    );
+    console.log(`${ANSI_DIM}      ⎿  Done (${statsStr})${ANSI_RESET}`);
+  }
+}
+
+/**
+ * Process a single JSON event from the subagent stream
+ */
+function processStreamEvent(
+  line: string,
+  state: ExecutionState,
+  baseURL: string,
+): void {
+  try {
+    const event = JSON.parse(line);
+
+    switch (event.type) {
+      case "init":
+        handleInitEvent(event, state, baseURL);
+        break;
+
+      case "message":
+        if (event.message_type === "approval_request_message") {
+          handleApprovalRequestEvent(event, state);
+        }
+        break;
+
+      case "auto_approval":
+        handleAutoApprovalEvent(event, state);
+        break;
+
+      case "result":
+        handleResultEvent(event, state);
+        break;
+
+      case "error":
+        state.finalError = event.error || event.message || "Unknown error";
+        break;
+    }
+  } catch {
+    // Not valid JSON, ignore
+  }
+}
+
+/**
+ * Parse the final result from stdout if not captured during streaming
+ */
+function parseResultFromStdout(
+  stdout: string,
+  agentId: string | null,
+): SubagentResult {
+  const lines = stdout.trim().split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  try {
+    const result = JSON.parse(lastLine);
+
+    if (result.type === "result") {
+      return {
+        agentId: agentId || "",
+        report: result.result || "",
+        success: !result.is_error,
+        error: result.is_error ? result.result || "Unknown error" : undefined,
+      };
+    }
+
+    return {
+      agentId: agentId || "",
+      report: "",
+      success: false,
+      error: "Unexpected output format from subagent",
+    };
+  } catch (parseError) {
+    return {
+      agentId: agentId || "",
+      report: "",
+      success: false,
+      error: `Failed to parse subagent output: ${getErrorMessage(parseError)}`,
+    };
+  }
+}
+
+// ============================================================================
+// Core Functions
+// ============================================================================
+
+/**
  * Build CLI arguments for spawning a subagent
  */
-async function buildSubagentArgs(
+function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
   model: string,
   userPrompt: string,
-): Promise<string[]> {
+): string[] {
   const args: string[] = [
     "--new",
     "--fresh-blocks",
@@ -51,7 +324,6 @@ async function buildSubagentArgs(
   ];
 
   // Inherit permission mode from parent
-  const { permissionMode } = await import("../../permissions/mode");
   const currentMode = permissionMode.getMode();
   if (currentMode !== "default") {
     args.push("--permission-mode", currentMode);
@@ -66,7 +338,6 @@ async function buildSubagentArgs(
   ) {
     args.push("--init-blocks", config.memoryBlocks.join(","));
   }
-  // If "all", don't add --init-blocks (default behavior)
 
   // Add tool filtering if specified
   if (
@@ -91,23 +362,26 @@ async function executeSubagent(
   baseURL: string,
 ): Promise<SubagentResult> {
   try {
-    // Run letta in headless mode with the user prompt
-    // This reuses ALL the existing headless logic (tool execution, approvals, etc.)
-    const { spawn } = await import("node:child_process");
-    const { createInterface } = await import("node:readline");
+    const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
 
-    // Build CLI arguments
-    const cliArgs = await buildSubagentArgs(type, config, model, userPrompt);
-
-    // Spawn letta in headless mode with stream-json output for progress visibility
+    // Spawn letta in headless mode with stream-json output
     const proc = spawn("letta", cliArgs, {
       cwd: process.cwd(),
       env: process.env,
     });
 
-    // Track all stdout for final result parsing
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+
+    // Initialize execution state
+    const state: ExecutionState = {
+      agentId: null,
+      finalResult: null,
+      finalError: null,
+      resultStats: null,
+      displayedToolCalls: new Set(),
+      pendingToolCalls: new Map(),
+    };
 
     // Create readline interface to parse JSON events line by line
     const rl = createInterface({
@@ -115,150 +389,9 @@ async function executeSubagent(
       crlfDelay: Number.POSITIVE_INFINITY,
     });
 
-    // Track tool calls for display (by tool_call_id to avoid duplicates)
-    const displayedToolCalls = new Set<string>();
-    // Accumulate tool call info from message chunks (name + args may come separately)
-    const pendingToolCalls = new Map<string, { name: string; args: string }>();
-    let agentId: string | null = null;
-    let finalResult: string | null = null;
-    let finalError: string | null = null;
-    let resultStats: { durationMs: number; totalTokens: number } | null = null;
-
-    // Helper to format tool arguments for display
-    function formatToolArgs(argsStr: string): string {
-      try {
-        const args = JSON.parse(argsStr);
-        // Show only the most important arguments, limit length
-        const entries = Object.entries(args)
-          .filter(([_, value]) => value !== undefined && value !== null)
-          .slice(0, 2); // Show max 2 args
-
-        if (entries.length === 0) return "";
-
-        return entries
-          .map(([key, value]) => {
-            let displayValue = String(value);
-            if (displayValue.length > 100) {
-              displayValue = `${displayValue.slice(0, 97)}...`;
-            }
-            return `${key}: "${displayValue}"`;
-          })
-          .join(", ");
-      } catch {
-        return "";
-      }
-    }
-
-    // Helper to display a tool call live
-    function displayToolCall(
-      toolCallId: string,
-      toolName: string,
-      toolArgs: string,
-    ) {
-      if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId))
-        return;
-      displayedToolCalls.add(toolCallId);
-
-      const formattedArgs = formatToolArgs(toolArgs);
-      if (formattedArgs) {
-        console.log(
-          `${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`,
-        );
-      } else {
-        console.log(`${ANSI_DIM}     ${toolName}()${ANSI_RESET}`);
-      }
-    }
-
-    // Parse each line as a JSON event
     rl.on("line", (line: string) => {
-      // Collect for final parsing
       stdoutChunks.push(Buffer.from(`${line}\n`));
-
-      try {
-        const event = JSON.parse(line);
-
-        // Capture agent ID from init event and print URL immediately
-        if (event.type === "init" && event.agent_id) {
-          agentId = event.agent_id;
-          const agentURL = `${baseURL}/agents/${agentId}`;
-          console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
-        }
-
-        // Track tool calls from message chunks (handles streamed tool calls)
-        if (
-          event.type === "message" &&
-          event.message_type === "approval_request_message"
-        ) {
-          const toolCalls = Array.isArray(event.tool_calls)
-            ? event.tool_calls
-            : event.tool_call
-              ? [event.tool_call]
-              : [];
-
-          for (const toolCall of toolCalls) {
-            const id = toolCall.tool_call_id;
-            if (!id) continue;
-
-            // Accumulate name and args (they may come in separate chunks)
-            const prev = pendingToolCalls.get(id) || { name: "", args: "" };
-            const name = toolCall.name || prev.name;
-            const args = prev.args + (toolCall.arguments || "");
-            pendingToolCalls.set(id, { name, args });
-          }
-        }
-
-        // Display tool calls live from auto_approval events (has complete name + args)
-        if (event.type === "auto_approval") {
-          const toolCallId = event.tool_call_id;
-          const toolName = event.tool_name;
-          const toolArgs = event.tool_args || "{}";
-          displayToolCall(toolCallId, toolName, toolArgs);
-        }
-
-        // Capture final result and stats
-        if (event.type === "result") {
-          finalResult = event.result || "";
-          resultStats = {
-            durationMs: event.duration_ms || 0,
-            totalTokens: event.usage?.total_tokens || 0,
-          };
-
-          // Check if result indicates an error
-          if (event.is_error) {
-            finalError = event.result || "Unknown error";
-          } else {
-            // Display any pending tool calls that weren't auto-approved
-            for (const [id, { name, args }] of pendingToolCalls.entries()) {
-              if (name && !displayedToolCalls.has(id)) {
-                displayToolCall(id, name, args || "{}");
-              }
-            }
-
-            // Display completion stats
-            const toolCount = displayedToolCalls.size;
-            const tokenStr =
-              resultStats.totalTokens >= 1000
-                ? `${(resultStats.totalTokens / 1000).toFixed(1)}k`
-                : String(resultStats.totalTokens);
-            const durationSec = resultStats.durationMs / 1000;
-            const durationStr =
-              durationSec >= 60
-                ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
-                : `${durationSec.toFixed(1)}s`;
-
-            console.log(
-              `${ANSI_DIM}      ⎿  Done (${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr})${ANSI_RESET}`,
-            );
-          }
-        }
-
-        // Handle error events
-        if (event.type === "error") {
-          finalError = event.error || event.message || "Unknown error";
-        }
-      } catch {
-        // Not valid JSON, ignore
-      }
+      processStreamEvent(line, state, baseURL);
     });
 
     proc.stderr.on("data", (data: Buffer) => {
@@ -273,71 +406,39 @@ async function executeSubagent(
 
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
-    // Check for errors
+    // Handle non-zero exit code
     if (exitCode !== 0) {
-      // Extract meaningful error message from stderr
-      // stderr often starts with "Error: " which we can use directly
-      const errorMessage = stderr || `Subagent exited with code ${exitCode}`;
       return {
-        agentId: agentId || "",
+        agentId: state.agentId || "",
         report: "",
         success: false,
-        error: errorMessage,
+        error: stderr || `Subagent exited with code ${exitCode}`,
       };
     }
 
-    // Use the captured final result, or parse from stdout if not captured
-    if (finalResult !== null) {
+    // Return captured result if available
+    if (state.finalResult !== null) {
       return {
-        agentId: agentId || "",
-        report: finalResult,
-        success: !finalError,
-        error: finalError || undefined,
+        agentId: state.agentId || "",
+        report: state.finalResult,
+        success: !state.finalError,
+        error: state.finalError || undefined,
       };
     }
 
-    // If we captured an error but no result
-    if (finalError) {
+    // Return error if captured
+    if (state.finalError) {
       return {
-        agentId: agentId || "",
+        agentId: state.agentId || "",
         report: "",
         success: false,
-        error: finalError,
+        error: state.finalError,
       };
     }
 
-    // Fallback: parse the last JSON line for result
+    // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-    const lines = stdout.trim().split("\n");
-    const lastLine = lines[lines.length - 1] ?? "";
-
-    try {
-      const result = JSON.parse(lastLine);
-
-      if (result.type === "result") {
-        return {
-          agentId: agentId || "",
-          report: result.result || "",
-          success: !result.is_error,
-          error: result.is_error ? result.result || "Unknown error" : undefined,
-        };
-      }
-
-      // Unexpected format
-      return {
-        agentId: agentId || "",
-        report: "",
-        success: false,
-        error: "Unexpected output format from subagent",
-      };
-    } catch (parseError) {
-      return {
-        agentId: agentId || "",
-        report: "",
-        success: false,
-        error: `Failed to parse subagent output: ${getErrorMessage(parseError)}`,
-      };
-    }
+    return parseResultFromStdout(stdout, state.agentId);
   } catch (error) {
     return {
       agentId: "",
@@ -351,8 +452,7 @@ async function executeSubagent(
 /**
  * Get the base URL for constructing agent links
  */
-async function getBaseURL(): Promise<string> {
-  const { settingsManager } = await import("../../settings-manager");
+function getBaseURL(): string {
   const settings = settingsManager.getSettings();
 
   const baseURL =
@@ -382,7 +482,6 @@ export async function spawnSubagent(
   description: string,
   userModel?: string,
 ): Promise<SubagentResult> {
-  // Get all configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
 
@@ -395,21 +494,14 @@ export async function spawnSubagent(
     };
   }
 
-  // Use parent agent's model override, or fall back to subagent config's recommended model
   const model = userModel || config.recommendedModel;
-
-  // Get base URL for agent links before starting
-  const baseURL = await getBaseURL();
+  const baseURL = getBaseURL();
 
   // Print subagent header before execution starts
   console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
 
-  // Execute subagent via letta CLI in headless mode
-  // The CLI will create the agent and execute it
-  // URL is printed immediately when we get the agent ID from the init event
   const result = await executeSubagent(type, config, model, prompt, baseURL);
 
-  // Print error to console so user can see it
   if (!result.success && result.error) {
     console.log(`${ANSI_DIM}      ⎿  Error: ${result.error}${ANSI_RESET}`);
   }

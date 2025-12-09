@@ -27,6 +27,10 @@ const BUILTIN_SOURCES = [exploreAgentMd, generalPurposeAgentMd, planAgentMd];
 // Re-export for convenience
 export type { MemoryBlockLabel };
 
+// ============================================================================
+// Types
+// ============================================================================
+
 /**
  * Subagent configuration
  */
@@ -55,6 +59,10 @@ export interface SubagentDiscoveryResult {
   errors: Array<{ path: string; message: string }>;
 }
 
+// ============================================================================
+// Constants
+// ============================================================================
+
 /**
  * Directory for subagent files (relative to project root)
  */
@@ -72,6 +80,25 @@ export const GLOBAL_AGENTS_DIR = join(
  * Valid memory block labels (derived from memory.ts)
  */
 const VALID_MEMORY_BLOCKS: Set<string> = new Set(MEMORY_BLOCK_LABELS);
+
+// ============================================================================
+// Cache
+// ============================================================================
+
+/**
+ * Consolidated cache for subagent configurations
+ * - builtins: parsed once from bundled markdown, never changes
+ * - configs: builtins + custom agents, invalidated when workingDir changes
+ */
+const cache = {
+  builtins: null as Record<string, SubagentConfig> | null,
+  configs: null as Record<string, SubagentConfig> | null,
+  workingDir: null as string | null,
+};
+
+// ============================================================================
+// Parsing Helpers
+// ============================================================================
 
 /**
  * Validate a subagent name
@@ -200,17 +227,12 @@ async function parseSubagentFile(
 }
 
 /**
- * Cached built-in subagents (parsed once on first access)
- */
-let cachedBuiltinSubagents: Record<string, SubagentConfig> | null = null;
-
-/**
  * Built-in subagents that ship with the package
  * These are available to all users without configuration
  */
 function getBuiltinSubagents(): Record<string, SubagentConfig> {
-  if (cachedBuiltinSubagents) {
-    return cachedBuiltinSubagents;
+  if (cache.builtins) {
+    return cache.builtins;
   }
 
   const builtins: Record<string, SubagentConfig> = {};
@@ -227,7 +249,7 @@ function getBuiltinSubagents(): Record<string, SubagentConfig> {
     }
   }
 
-  cachedBuiltinSubagents = builtins;
+  cache.builtins = builtins;
   return builtins;
 }
 
@@ -326,12 +348,6 @@ export async function discoverSubagents(
 }
 
 /**
- * Cache for configs to avoid repeated discovery
- */
-let cachedConfigs: Record<string, SubagentConfig> | null = null;
-let cacheWorkingDir: string | null = null;
-
-/**
  * Get all subagent configurations
  * Includes built-in subagents and any user-defined ones from .letta/agents/
  * User-defined subagents override built-ins with the same name
@@ -341,8 +357,8 @@ export async function getAllSubagentConfigs(
   workingDirectory: string = process.cwd(),
 ): Promise<Record<string, SubagentConfig>> {
   // Return cached if same working directory
-  if (cachedConfigs && cacheWorkingDir === workingDirectory) {
-    return cachedConfigs;
+  if (cache.configs && cache.workingDir === workingDirectory) {
+    return cache.configs;
   }
 
   // Start with a copy of built-in subagents (don't mutate the cache)
@@ -362,8 +378,8 @@ export async function getAllSubagentConfigs(
   }
 
   // Cache results
-  cachedConfigs = configs;
-  cacheWorkingDir = workingDirectory;
+  cache.configs = configs;
+  cache.workingDir = workingDirectory;
 
   return configs;
 }
@@ -372,6 +388,6 @@ export async function getAllSubagentConfigs(
  * Clear the subagent config cache (useful when files change)
  */
 export function clearSubagentConfigCache(): void {
-  cachedConfigs = null;
-  cacheWorkingDir = null;
+  cache.configs = null;
+  cache.workingDir = null;
 }

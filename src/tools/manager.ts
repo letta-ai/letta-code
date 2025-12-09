@@ -64,7 +64,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Task",
   "TodoWrite",
   "Write",
-  "Skill",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
