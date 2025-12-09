@@ -53,7 +53,6 @@ export async function drainStream(
     // Check if stream was aborted
     if (abortSignal?.aborted) {
       stopReason = "cancelled";
-      // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
       markIncompleteToolsAsCancelled(buffers);
       queueMicrotask(refresh);
       break;
@@ -129,6 +128,14 @@ export async function drainStream(
 
     onChunk(buffers, chunk);
     queueMicrotask(refresh);
+
+    // Check abort signal again after processing chunk (for eager cancellation)
+    if (abortSignal?.aborted) {
+      stopReason = "cancelled";
+      markIncompleteToolsAsCancelled(buffers);
+      queueMicrotask(refresh);
+      break;
+    }
 
     if (chunk.message_type === "stop_reason") {
       stopReason = chunk.stop_reason;

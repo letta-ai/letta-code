@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync } from "node:fs";
-import { APIError } from "@letta-ai/letta-client/core/error";
+import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type {
   AgentState,
@@ -362,8 +362,8 @@ export default function App({
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Store the current stream so we can abort it directly
-  const currentStreamRef = useRef<Stream<LettaStreamingResponse> | null>(null);
+  // Track if user wants to cancel (persists across state updates)
+  const userCancelledRef = useRef(false);
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -607,6 +607,12 @@ export default function App({
       let lastKnownRunId: string | null = null;
 
       try {
+        // Check if user hit escape before we started
+        if (userCancelledRef.current) {
+          userCancelledRef.current = false; // Reset for next time
+          return;
+        }
+
         setStreaming(true);
         abortControllerRef.current = new AbortController();
 
@@ -615,9 +621,14 @@ export default function App({
         markIncompleteToolsAsCancelled(buffersRef.current);
 
         while (true) {
+          // Check if cancelled before starting new stream
+          if (abortControllerRef.current?.signal.aborted) {
+            setStreaming(false);
+            return;
+          }
+
           // Stream one turn
           const stream = await sendMessageStream(agentId, currentInput);
-          currentStreamRef.current = stream; // Store for eager cancellation
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -625,7 +636,6 @@ export default function App({
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
             );
-          currentStreamRef.current = null; // Clear after stream completes
 
           // Update lastKnownRunId for error handling in catch block
           if (lastRunId) {
@@ -884,6 +894,14 @@ export default function App({
         // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(buffersRef.current);
 
+        // If using eager cancel and this is an abort error, silently ignore it
+        // The user already got "Stream interrupted by user" feedback from handleInterrupt
+        if (EAGER_CANCEL && e instanceof APIUserAbortError) {
+          setStreaming(false);
+          refreshDerived();
+          return;
+        }
+
         // Build error message with run_id for debugging
         const runIdSuffix = lastKnownRunId
           ? `\n(run_id: ${lastKnownRunId}, stop_reason: error)`
@@ -907,7 +925,6 @@ export default function App({
         refreshDerived();
       } finally {
         abortControllerRef.current = null;
-        currentStreamRef.current = null;
       }
     },
     [agentId, appendError, refreshDerived, refreshDerivedThrottled],
@@ -934,21 +951,18 @@ export default function App({
 
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
-      // Abort both the stream's controller and our abort signal
-      // The stream's controller will interrupt the for await loop immediately
-      if (currentStreamRef.current?.controller) {
-        currentStreamRef.current.controller.abort();
-      }
+      // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
 
-      // Update buffer state and show error message
+      // Set cancellation flag to prevent processConversation from starting
+      userCancelledRef.current = true;
+
+      // Stop streaming and show error message
+      setStreaming(false);
       markIncompleteToolsAsCancelled(buffersRef.current);
       appendError("Stream interrupted by user");
-
-      // Stop streaming and refresh UI
-      setStreaming(false);
       refreshDerived();
 
       // Send cancel request to backend asynchronously (fire-and-forget)
