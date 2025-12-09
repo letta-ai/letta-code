@@ -106,7 +106,6 @@ export function PasteAwareTextInput({
   const [displayValue, setDisplayValue] = useState(value);
   const [actualValue, setActualValue] = useState(value);
   const lastPasteDetectedAtRef = useRef<number>(0);
-  const suppressNextChangeRef = useRef<boolean>(false);
   const caretOffsetRef = useRef<number>((value || "").length);
   const [nudgeCursorOffset, setNudgeCursorOffset] = useState<
     number | undefined
@@ -225,23 +224,6 @@ export function PasteAwareTextInput({
           caretOffsetRef.current = nextCaret;
         }
       }
-
-      // Handle Option+Delete (meta + delete) for macOS Terminal
-      // Ink parses \x1b\x7f as key.delete with key.meta = true
-      if (key.meta && key.delete) {
-        const curPos = caretOffsetRef.current;
-        const wordStart = findPreviousWordBoundary(displayValue, curPos);
-        if (wordStart !== curPos) {
-          const newDisplay =
-            displayValue.slice(0, wordStart) + displayValue.slice(curPos);
-          const resolvedActual = resolvePlaceholders(newDisplay);
-          setDisplayValue(newDisplay);
-          setActualValue(resolvedActual);
-          onChange(newDisplay);
-          setNudgeCursorOffset(wordStart);
-          caretOffsetRef.current = wordStart;
-        }
-      }
     },
     { isActive: focus },
   );
@@ -351,12 +333,6 @@ export function PasteAwareTextInput({
   }, [internal_eventEmitter]);
 
   const handleChange = (newValue: string) => {
-    // If we just handled a paste via useInput, ignore this immediate change
-    if (suppressNextChangeRef.current) {
-      suppressNextChangeRef.current = false;
-      return;
-    }
-
     // Heuristic: detect large additions that look like pastes
     const addedLen = newValue.length - displayValue.length;
     const lineDelta = countLines(newValue) - countLines(displayValue);

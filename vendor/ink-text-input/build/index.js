@@ -10,8 +10,8 @@ function isControlSequence(input, key) {
     // Pasted content is handled separately
     if (key?.isPasted) return true;
 
-    // Standard control keys
-    if (key.escape || key.tab || (key.ctrl && input === 'c')) return true;
+    // Standard control keys (but NOT plain escape - apps may need it for shortcuts)
+    if (key.tab || (key.ctrl && input === 'c')) return true;
     if (key.shift && key.tab) return true;
 
     // Ctrl+W (delete word) - handled by parent component
@@ -20,8 +20,9 @@ function isControlSequence(input, key) {
     // Option+Arrow escape sequences: Ink parses \x1bb as meta=true, input='b'
     if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) return true;
 
-    // Any raw escape sequence starting with \x1b (CSI sequences, Option+Delete, etc.)
-    if (input && typeof input === 'string' && input.startsWith('\x1b')) return true;
+    // Filter specific escape sequences that would insert garbage, but allow plain ESC through
+    // CSI sequences (ESC[...), Option+Delete (ESC + DEL), and other multi-char escape sequences
+    if (input && typeof input === 'string' && input.startsWith('\x1b') && input.length > 1) return true;
 
     return false;
 }
