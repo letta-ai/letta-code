@@ -120,24 +120,6 @@ export function PasteAwareTextInput({
     focusRef.current = focus;
   }, [focus]);
 
-  const moveCursorToPreviousWord = () => {
-    const newPos = findPreviousWordBoundary(
-      displayValueRef.current,
-      caretOffsetRef.current,
-    );
-    setNudgeCursorOffset(newPos);
-    caretOffsetRef.current = newPos;
-  };
-
-  const moveCursorToNextWord = () => {
-    const newPos = findNextWordBoundary(
-      displayValueRef.current,
-      caretOffsetRef.current,
-    );
-    setNudgeCursorOffset(newPos);
-    caretOffsetRef.current = newPos;
-  };
-
   // Apply cursor position from parent
   useEffect(() => {
     if (typeof cursorPosition === "number") {
@@ -272,6 +254,18 @@ export function PasteAwareTextInput({
   // Falls back gracefully if internal_eventEmitter is unavailable (useInput handler above still works for some cases).
   useEffect(() => {
     if (!internal_eventEmitter) return undefined;
+
+    const moveCursorToPreviousWord = () => {
+      const newPos = findPreviousWordBoundary(displayValueRef.current, caretOffsetRef.current);
+      setNudgeCursorOffset(newPos);
+      caretOffsetRef.current = newPos;
+    };
+
+    const moveCursorToNextWord = () => {
+      const newPos = findNextWordBoundary(displayValueRef.current, caretOffsetRef.current);
+      setNudgeCursorOffset(newPos);
+      caretOffsetRef.current = newPos;
+    };
 
     const deletePreviousWord = () => {
       const curPos = caretOffsetRef.current;
