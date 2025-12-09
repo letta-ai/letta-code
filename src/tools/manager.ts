@@ -4,7 +4,7 @@ import {
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
-import { discoverSubagents } from "../agent/subagents";
+import { getAllSubagentConfigs } from "../agent/subagents";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -406,8 +406,15 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
 export async function loadTools(modelIdentifier?: string): Promise<void> {
   const { toolFilter } = await import("./filter");
 
-  // Discover all subagents to inject into Task description
-  const { subagents: discoveredSubagents } = await discoverSubagents();
+  // Get all subagents (built-in + custom) to inject into Task description
+  const allSubagentConfigs = await getAllSubagentConfigs();
+  const discoveredSubagents = Object.entries(allSubagentConfigs).map(
+    ([name, config]) => ({
+      name,
+      description: config.description,
+      recommendedModel: config.recommendedModel,
+    }),
+  );
   const filterActive = toolFilter.isActive();
 
   let baseToolNames: ToolName[];
@@ -501,7 +508,6 @@ function injectSubagentsIntoTaskDescription(
   subagents: Array<{
     name: string;
     description: string;
-    allowedTools: string[] | "all";
     recommendedModel: string;
   }>,
 ): string {
@@ -512,15 +518,8 @@ function injectSubagentsIntoTaskDescription(
   // Build subagents section
   const agentsSection = subagents
     .map((agent) => {
-      const tools =
-        agent.allowedTools === "all"
-          ? "All tools"
-          : Array.isArray(agent.allowedTools)
-            ? agent.allowedTools.join(", ")
-            : "All tools";
       return `### ${agent.name}
 - **Purpose**: ${agent.description}
-- **Tools**: ${tools}
 - **Recommended model**: ${agent.recommendedModel}`;
     })
     .join("\n\n");

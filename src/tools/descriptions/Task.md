@@ -4,8 +4,6 @@ Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-Available agent types are defined in `.letta/agents/` as Markdown files. The agent descriptions below are dynamically loaded from those files.
-
 ## Usage
 
 When using the Task tool, you must specify:
