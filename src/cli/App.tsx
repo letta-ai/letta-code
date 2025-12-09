@@ -2,14 +2,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
+
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  LettaStreamingResponse,
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
