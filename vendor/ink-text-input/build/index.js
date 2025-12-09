@@ -2,6 +2,30 @@ import chalk from 'chalk';
 import { Text, useInput } from 'ink';
 import React, { useEffect, useState } from 'react';
 
+/**
+ * Determines if the input should be treated as a control sequence (not inserted as text).
+ * This centralizes escape sequence filtering to prevent garbage characters from being inserted.
+ */
+function isControlSequence(input, key) {
+    // Pasted content is handled separately
+    if (key?.isPasted) return true;
+
+    // Standard control keys
+    if (key.escape || key.tab || (key.ctrl && input === 'c')) return true;
+    if (key.shift && key.tab) return true;
+
+    // Ctrl+W (delete word) - handled by parent component
+    if (key.ctrl && (input === 'w' || input === 'W')) return true;
+
+    // Option+Arrow escape sequences: Ink parses \x1bb as meta=true, input='b'
+    if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) return true;
+
+    // Any raw escape sequence starting with \x1b (CSI sequences, Option+Delete, etc.)
+    if (input && typeof input === 'string' && input.startsWith('\x1b')) return true;
+
+    return false;
+}
+
 function TextInput({ value: originalValue, placeholder = '', focus = true, mask, highlightPastedText = false, showCursor = true, onChange, onSubmit, externalCursorOffset, onCursorOffsetChange }) {
     const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0 });
     const { cursorOffset, cursorWidth } = state;
@@ -42,26 +66,8 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         }
     }
     useInput((input, key) => {
-        if (key && key.isPasted) {
-            return;
-        }
-        // Treat Escape as a control key (don't insert into value)
-        if (key.escape || (key.ctrl && input === 'c') || key.tab || (key.shift && key.tab)) {
-            return;
-        }
-        // Filter Ctrl+W (delete word) - handled by parent component
-        if (key.ctrl && (input === 'w' || input === 'W')) {
-            return;
-        }
-        // Filter out garbage from Option+Arrow escape sequences
-        // When Option+Left sends \x1bb, Ink parses it as meta=true, input='b'
-        // These should not be inserted as text
-        if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) {
-            return;
-        }
-        // Filter any escape sequence that starts with \x1b - these are control sequences, not text input
-        // This catches: Option+Arrow CSI sequences (\x1b[1;3D), Option+Delete (\x1b\x7f, \x1b\x08), etc.
-        if (input && typeof input === 'string' && input.startsWith('\x1b')) {
+        // Filter control sequences (escape keys, Option+Arrow garbage, etc.)
+        if (isControlSequence(input, key)) {
             return;
         }
         if (key.return) {
@@ -73,23 +79,21 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         let nextCursorOffset = cursorOffset;
         let nextValue = originalValue;
         let nextCursorWidth = 0;
-        if (key.leftArrow) {
-            if (showCursor) {
-                nextCursorOffset--;
+        if (key.leftArrow || key.rightArrow) {
+            // Skip if meta is pressed - Option+Arrow is handled by parent for word navigation
+            if (key.meta) {
+                return;
             }
-        }
-        else if (key.rightArrow) {
             if (showCursor) {
-                nextCursorOffset++;
+                nextCursorOffset += key.leftArrow ? -1 : 1;
             }
         }
         else if (key.upArrow || key.downArrow) {
-            // Handle wrapped line navigation - don't handle here, let parent decide
-            // Parent will check cursor position to determine if at boundary
+            // Let parent decide (wrapped line navigation)
             return;
         }
         else if (key.backspace || key.delete) {
-            // Skip if meta is pressed (Option+Delete) - handled by parent for word deletion
+            // Skip if meta is pressed - Option+Delete is handled by parent for word deletion
             if (key.meta) {
                 return;
             }

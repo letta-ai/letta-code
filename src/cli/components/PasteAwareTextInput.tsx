@@ -261,68 +261,22 @@ export function PasteAwareTextInput({
     { isActive: focus },
   );
 
-  // Handle Option+Arrow keys directly from raw stdin to detect modifier+arrow combinations
-  // that Ink's useInput doesn't parse correctly
-  useEffect(() => {
-    if (!internal_eventEmitter) return undefined;
-
-    const handleRawInput = (payload: unknown) => {
-      if (!focusRef.current) return;
-
-      let sequence: string | null = null;
-      if (typeof payload === "string") {
-        sequence = payload;
-      } else if (
-        payload &&
-        typeof payload === "object" &&
-        typeof (payload as { sequence?: unknown }).sequence === "string"
-      ) {
-        sequence = (payload as { sequence?: string }).sequence ?? null;
-      }
-
-      // Only process escape sequences (not normal input)
-      if (!sequence || sequence.length > 32 || !sequence.includes("\u001b")) {
-        return;
-      }
-
-      // Check each escape sequence in the input
-      const parts = sequence.split("\u001b");
-      for (let i = 1; i < parts.length; i++) {
-        const dir = detectOptionWordDirection("\u001b" + parts[i]);
-        if (dir === "left") {
-          moveCursorToPreviousWord();
-          return;
-        }
-        if (dir === "right") {
-          moveCursorToNextWord();
-          return;
-        }
-      }
-    };
-
-    internal_eventEmitter.prependListener("input", handleRawInput);
-    return () => {
-      internal_eventEmitter.removeListener("input", handleRawInput);
-    };
-}, [internal_eventEmitter]);
-
   // Store onChange in a ref to avoid stale closures in event handlers
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
-  // Handle Option+Delete via raw stdin
-  // Different terminals send different sequences:
-  // - Standard: ESC + DEL (\x1b\x7f)
-  // - Some terminals: Ctrl+W (\x17) when Option+Delete is pressed
+  // Consolidated raw stdin handler for Option+Arrow navigation and Option+Delete
+  // Uses internal_eventEmitter (Ink's private API) for escape sequences that useInput doesn't parse correctly.
+  // Falls back gracefully if internal_eventEmitter is unavailable (useInput handler above still works for some cases).
   useEffect(() => {
     if (!internal_eventEmitter) return undefined;
 
     const deletePreviousWord = () => {
       const curPos = caretOffsetRef.current;
       const wordStart = findPreviousWordBoundary(displayValueRef.current, curPos);
-      if (wordStart === curPos) return; // Nothing to delete
+      if (wordStart === curPos) return;
 
       const newDisplay = displayValueRef.current.slice(0, wordStart) + displayValueRef.current.slice(curPos);
       const resolvedActual = resolvePlaceholders(newDisplay);
@@ -334,9 +288,10 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
-    const handleDeleteSequence = (payload: unknown) => {
+    const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
+      // Extract sequence from payload (may be string or object with sequence property)
       let sequence: string | null = null;
       if (typeof payload === "string") {
         sequence = payload;
@@ -347,35 +302,38 @@ export function PasteAwareTextInput({
       ) {
         sequence = (payload as { sequence?: string }).sequence ?? null;
       }
-
       if (!sequence) return;
 
-      // Option+Delete sequences vary by terminal:
+      // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
+      // - Some terminals: ESC + Backspace (\x1b\x08)
       // - Warp: Ctrl+W (\x17)
-      // - macOS Terminal: Just DEL (\x7f) - same as regular delete, no modifier info
-      //   (Option+Delete won't work in macOS Terminal due to this limitation)
-      if (sequence === "\x1b\x7f") {
+      // Note: macOS Terminal sends plain \x7f (same as regular delete) - no modifier info
+      if (sequence === "\x1b\x7f" || sequence === "\x1b\x08" || sequence === "\x1b\b" || sequence === "\x17") {
         deletePreviousWord();
         return;
       }
 
-      // Some terminals send ESC + Backspace (\x1b\x08 or \x1b\b)
-      if (sequence === "\x1b\x08" || sequence === "\x1b\b") {
-        deletePreviousWord();
-        return;
-      }
-
-      // Warp and some terminals send Ctrl+W (\x17) for Option+Delete
-      if (sequence === "\x17") {
-        deletePreviousWord();
-        return;
+      // Option+Arrow navigation (only process escape sequences)
+      if (sequence.length <= 32 && sequence.includes("\u001b")) {
+        const parts = sequence.split("\u001b");
+        for (let i = 1; i < parts.length; i++) {
+          const dir = detectOptionWordDirection("\u001b" + parts[i]);
+          if (dir === "left") {
+            moveCursorToPreviousWord();
+            return;
+          }
+          if (dir === "right") {
+            moveCursorToNextWord();
+            return;
+          }
+        }
       }
     };
 
-    internal_eventEmitter.prependListener("input", handleDeleteSequence);
+    internal_eventEmitter.prependListener("input", handleRawInput);
     return () => {
-      internal_eventEmitter.removeListener("input", handleDeleteSequence);
+      internal_eventEmitter.removeListener("input", handleRawInput);
     };
   }, [internal_eventEmitter]);
 
