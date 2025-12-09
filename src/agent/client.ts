@@ -56,12 +56,6 @@ export async function getClient() {
     process.exit(1);
   }
 
-  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-    console.error("Missing LETTA_API_KEY");
-    console.error("Run 'letta setup' to configure authentication");
-    process.exit(1);
-  }
-
   // Auto-cache: if LETTA_API_KEY is set in env but not in settings, write it to settings
   // Note: LETTA_BASE_URL is intentionally NOT cached - it should only come from env vars
   if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
