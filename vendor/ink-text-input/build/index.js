@@ -2,6 +2,31 @@ import chalk from 'chalk';
 import { Text, useInput } from 'ink';
 import React, { useEffect, useState } from 'react';
 
+/**
+ * Determines if the input should be treated as a control sequence (not inserted as text).
+ * This centralizes escape sequence filtering to prevent garbage characters from being inserted.
+ */
+function isControlSequence(input, key) {
+    // Pasted content is handled separately
+    if (key?.isPasted) return true;
+
+    // Standard control keys (but NOT plain escape - apps may need it for shortcuts)
+    if (key.tab || (key.ctrl && input === 'c')) return true;
+    if (key.shift && key.tab) return true;
+
+    // Ctrl+W (delete word) - handled by parent component
+    if (key.ctrl && (input === 'w' || input === 'W')) return true;
+
+    // Option+Arrow escape sequences: Ink parses \x1bb as meta=true, input='b'
+    if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) return true;
+
+    // Filter specific escape sequences that would insert garbage, but allow plain ESC through
+    // CSI sequences (ESC[...), Option+Delete (ESC + DEL), and other multi-char escape sequences
+    if (input && typeof input === 'string' && input.startsWith('\x1b') && input.length > 1) return true;
+
+    return false;
+}
+
 function TextInput({ value: originalValue, placeholder = '', focus = true, mask, highlightPastedText = false, showCursor = true, onChange, onSubmit, externalCursorOffset, onCursorOffsetChange }) {
     const [state, setState] = useState({ cursorOffset: (originalValue || '').length, cursorWidth: 0, killBuffer: '' });
     const { cursorOffset, cursorWidth, killBuffer } = state;
@@ -42,11 +67,8 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         }
     }
     useInput((input, key) => {
-        if (key && key.isPasted) {
-            return;
-        }
-        // Treat Escape as a control key (don't insert into value)
-        if (key.escape || (key.ctrl && input === 'c') || key.tab || (key.shift && key.tab)) {
+        // Filter control sequences (escape keys, Option+Arrow garbage, etc.)
+        if (isControlSequence(input, key)) {
             return;
         }
         if (key.return) {
@@ -59,22 +81,24 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         let nextValue = originalValue;
         let nextCursorWidth = 0;
         let nextKillBuffer = killBuffer;
-        if (key.leftArrow) {
-            if (showCursor) {
-                nextCursorOffset--;
+        if (key.leftArrow || key.rightArrow) {
+            // Skip if meta is pressed - Option+Arrow is handled by parent for word navigation
+            if (key.meta) {
+                return;
             }
-        }
-        else if (key.rightArrow) {
             if (showCursor) {
-                nextCursorOffset++;
+                nextCursorOffset += key.leftArrow ? -1 : 1;
             }
         }
         else if (key.upArrow || key.downArrow) {
-            // Handle wrapped line navigation - don't handle here, let parent decide
-            // Parent will check cursor position to determine if at boundary
+            // Let parent decide (wrapped line navigation)
             return;
         }
         else if (key.backspace || key.delete) {
+            // Skip if meta is pressed - Option+Delete is handled by parent for word deletion
+            if (key.meta) {
+                return;
+            }
             if (cursorOffset > 0) {
                 nextValue = originalValue.slice(0, cursorOffset - 1) + originalValue.slice(cursorOffset, originalValue.length);
                 nextCursorOffset--;

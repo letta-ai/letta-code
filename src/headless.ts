@@ -65,6 +65,12 @@ export async function handleHeadlessCommand(
     allowPositionals: true,
   });
 
+  // Set tool filter if provided (controls which tools are loaded)
+  if (values.tools !== undefined) {
+    const { toolFilter } = await import("./tools/filter");
+    toolFilter.setEnabledTools(values.tools as string);
+  }
+
   // Get prompt from either positional args or stdin
   let prompt = positionals.slice(2).join(" ");
 

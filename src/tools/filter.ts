@@ -62,5 +62,20 @@ class ToolFilterManager {
   }
 }
 
-// Singleton instance
-export const toolFilter = new ToolFilterManager();
+// Use globalThis to ensure singleton across bundle
+// This prevents Bun's bundler from creating duplicate instances
+const FILTER_KEY = Symbol.for("@letta/toolFilter");
+
+type GlobalWithFilter = typeof globalThis & {
+  [key: symbol]: ToolFilterManager;
+};
+
+function getFilter(): ToolFilterManager {
+  const global = globalThis as GlobalWithFilter;
+  if (!global[FILTER_KEY]) {
+    global[FILTER_KEY] = new ToolFilterManager();
+  }
+  return global[FILTER_KEY];
+}
+
+export const toolFilter = getFilter();
