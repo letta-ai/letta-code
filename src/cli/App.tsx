@@ -2,14 +2,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   ApprovalCreate,
-  LettaStreamingResponse,
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
@@ -33,28 +31,21 @@ import {
   savePermissionRule,
 } from "../tools/manager";
 import { AgentSelector } from "./components/AgentSelector";
-// import { ApprovalDialog } from "./components/ApprovalDialog";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
-// import { AssistantMessage } from "./components/AssistantMessage";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
-// import { ErrorMessage } from "./components/ErrorMessage";
 import { ErrorMessage } from "./components/ErrorMessageRich";
-// import { Input } from "./components/Input";
 import { Input } from "./components/InputRich";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { QuestionDialog } from "./components/QuestionDialog";
-// import { ReasoningMessage } from "./components/ReasoningMessage";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
-// import { ToolCallMessage } from "./components/ToolCallMessage";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
-// import { UserMessage } from "./components/UserMessage";
 import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import {
@@ -364,6 +355,9 @@ export default function App({
 
   // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
+
+  // Message queue state for queueing messages during streaming
+  const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -938,12 +932,19 @@ export default function App({
     }, 100);
   }, []);
 
+  // Handler when user presses UP/ESC to load queue into input for editing
+  const handleEnterQueueEditMode = useCallback(() => {
+    setMessageQueue([]);
+  }, []);
+
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them locally instead of hitting the backend
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
       setStreaming(false);
       setIsExecutingTool(false);
+      appendError("Stream interrupted by user");
+      refreshDerived();
       return;
     }
 
@@ -997,6 +998,12 @@ export default function App({
     refreshDerived,
   ]);
 
+  // Keep ref to latest processConversation to avoid circular deps in useEffect
+  const processConversationRef = useRef(processConversation);
+  useEffect(() => {
+    processConversationRef.current = processConversation;
+  }, [processConversation]);
+
   // Reset interrupt flag when streaming ends
   useEffect(() => {
     if (!streaming) {
@@ -1007,10 +1014,26 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      // Block submission while a stream is in flight, a command is running, or an approval batch
-      // is currently executing tools (prevents re-surfacing pending approvals mid-execution).
-      if (!msg || streaming || commandRunning || isExecutingTool)
+      if (!msg) return { submitted: false };
+
+      // Block submission if waiting for explicit user action (approvals)
+      // In this case, input is hidden anyway, so this shouldn't happen
+      if (pendingApprovals.length > 0) {
         return { submitted: false };
+      }
+
+      // Queue message if agent is busy (streaming, executing tool, or running command)
+      // This allows messages to queue up while agent is working
+      const agentBusy = streaming || isExecutingTool || commandRunning;
+
+      if (agentBusy) {
+        setMessageQueue((prev) => [...prev, msg]);
+        return { submitted: true }; // Clears input
+      }
+
+      // Reset cancellation flag when starting new submission
+      // This ensures that after an interrupt, new messages can be sent
+      userCancelledRef.current = false;
 
       // Handle commands (messages starting with "/")
       if (msg.startsWith("/")) {
@@ -1919,8 +1942,38 @@ ${recentCommits}
       commitEligibleLines,
       isExecutingTool,
       queuedApprovalResults,
+      pendingApprovals,
     ],
   );
+
+  const onSubmitRef = useRef(onSubmit);
+  useEffect(() => {
+    onSubmitRef.current = onSubmit;
+  }, [onSubmit]);
+
+  // Process queued messages when streaming ends
+  useEffect(() => {
+    if (
+      !streaming &&
+      messageQueue.length > 0 &&
+      pendingApprovals.length === 0 &&
+      !commandRunning &&
+      !isExecutingTool
+    ) {
+      const [firstMessage, ...rest] = messageQueue;
+      setMessageQueue(rest);
+
+      // Submit the first message using the normal submit flow
+      // This ensures all setup (reminders, UI updates, etc.) happens correctly
+      onSubmitRef.current(firstMessage);
+    }
+  }, [
+    streaming,
+    messageQueue,
+    pendingApprovals,
+    commandRunning,
+    isExecutingTool,
+  ]);
 
   // Helper to send all approval results when done
   const sendAllResults = useCallback(
@@ -2936,7 +2989,6 @@ Plan file path: ${planFilePath}`;
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
-              commandRunning={commandRunning}
               tokenCount={tokenCount}
               thinkingMessage={thinkingMessage}
               onSubmit={onSubmit}
@@ -2948,6 +3000,8 @@ Plan file path: ${planFilePath}`;
               agentId={agentId}
               agentName={agentName}
               currentModel={currentModelDisplay}
+              messageQueue={messageQueue}
+              onEnterQueueEditMode={handleEnterQueueEditMode}
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
