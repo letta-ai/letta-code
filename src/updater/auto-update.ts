@@ -16,7 +16,7 @@ function isAutoUpdateEnabled(): boolean {
 
 function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
-  
+
   // If running from node_modules, it's npm installed (should auto-update)
   // Otherwise it's local dev (source or built locally)
   return !argv.includes("node_modules");
@@ -28,7 +28,7 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {
     const { stdout } = await execAsync(
       "npm view @letta-ai/letta-code version",
-      { timeout: 5000 }
+      { timeout: 5000 },
     );
     const latestVersion = stdout.trim();
 
@@ -96,7 +96,7 @@ export async function manualUpdate(): Promise<{
   }
 
   console.log(
-    `Updating from ${result.currentVersion} to ${result.latestVersion}...`
+    `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
   );
 
   const updateResult = await performUpdate();
