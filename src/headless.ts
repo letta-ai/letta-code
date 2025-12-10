@@ -905,9 +905,9 @@ export async function handleHeadlessCommand(
   ) as Extract<Line, { kind: "tool_call" }> | undefined;
 
   const resultText =
-    (lastAssistant && lastAssistant.text) ||
-    (lastReasoning && lastReasoning.text) ||
-    (lastToolResult && lastToolResult.resultText) ||
+    lastAssistant?.text ||
+    lastReasoning?.text ||
+    lastToolResult?.resultText ||
     "No assistant response found";
 
   // Output based on format
