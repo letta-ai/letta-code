@@ -18,10 +18,7 @@ function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
 
   // Check if running from source
-  if (
-    argv.includes("/src/index.ts") ||
-    argv.includes("\\src\\index.ts")
-  ) {
+  if (argv.includes("/src/index.ts") || argv.includes("\\src\\index.ts")) {
     return true;
   }
 
@@ -29,7 +26,7 @@ function isRunningLocally(): boolean {
   try {
     const { existsSync, readFileSync } = require("node:fs");
     const { dirname, join } = require("node:path");
-    
+
     // Walk up from the binary location to find package.json
     let currentDir = dirname(argv);
     for (let i = 0; i < 5; i++) {
@@ -57,7 +54,7 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {
     const { stdout } = await execAsync(
       "npm view @letta-ai/letta-code version",
-      { timeout: 5000 }
+      { timeout: 5000 },
     );
     const latestVersion = stdout.trim();
 
@@ -68,7 +65,7 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
         currentVersion,
       };
     }
-  } catch (error) {
+  } catch (_error) {
     // Silently fail
   }
 
@@ -125,7 +122,7 @@ export async function manualUpdate(): Promise<{
   }
 
   console.log(
-    `Updating from ${result.currentVersion} to ${result.latestVersion}...`
+    `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
   );
 
   const updateResult = await performUpdate();
