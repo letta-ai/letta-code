@@ -16,36 +16,10 @@ function isAutoUpdateEnabled(): boolean {
 
 function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
-
-  // Check if running from source
-  if (argv.includes("/src/index.ts") || argv.includes("\\src\\index.ts")) {
-    return true;
-  }
-
-  // Check if running from a local build (package.json nearby)
-  try {
-    const { existsSync, readFileSync } = require("node:fs");
-    const { dirname, join } = require("node:path");
-
-    // Walk up from the binary location to find package.json
-    let currentDir = dirname(argv);
-    for (let i = 0; i < 5; i++) {
-      const packageJsonPath = join(currentDir, "package.json");
-      if (existsSync(packageJsonPath)) {
-        const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-        if (pkg.name === "@letta-ai/letta-code") {
-          return true;
-        }
-      }
-      const parentDir = dirname(currentDir);
-      if (parentDir === currentDir) break;
-      currentDir = parentDir;
-    }
-  } catch {
-    // Ignore errors
-  }
-
-  return false;
+  
+  // If running from node_modules, it's npm installed (should auto-update)
+  // Otherwise it's local dev (source or built locally)
+  return !argv.includes("node_modules");
 }
 
 async function checkForUpdate(): Promise<UpdateCheckResult> {
@@ -54,7 +28,7 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   try {
     const { stdout } = await execAsync(
       "npm view @letta-ai/letta-code version",
-      { timeout: 5000 },
+      { timeout: 5000 }
     );
     const latestVersion = stdout.trim();
 
@@ -122,7 +96,7 @@ export async function manualUpdate(): Promise<{
   }
 
   console.log(
-    `Updating from ${result.currentVersion} to ${result.latestVersion}...`,
+    `Updating from ${result.currentVersion} to ${result.latestVersion}...`
   );
 
   const updateResult = await performUpdate();
