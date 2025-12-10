@@ -401,11 +401,10 @@ Letta Code automatically checks for updates on startup and installs them in the 
 
 * **Update checks**: Performed on startup
 * **Update process**: Downloads and installs automatically in the background  
-* **Notifications**: You'll see a notification when updates are installed
 * **Applying updates**: Updates take effect the next time you start Letta Code
 
 **Disable auto-updates:**
-Set the `DISABLE_AUTOUPDATER` environment variable:
+Set the `DISABLE_AUTOUPDATER` environment variable in your shell:
 ```bash
 export DISABLE_AUTOUPDATER=1
 ```
