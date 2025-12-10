@@ -1942,6 +1942,7 @@ ${recentCommits}
       commitEligibleLines,
       isExecutingTool,
       queuedApprovalResults,
+      pendingApprovals,
     ],
   );
 
