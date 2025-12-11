@@ -24,6 +24,12 @@ import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
 
+// Maximum number of times to retry a turn when the backend
+// reports an `llm_api_error` stop reason. This helps smooth
+// over transient LLM/backend issues without requiring the
+// caller to manually resubmit the prompt.
+const LLM_API_ERROR_MAX_RETRIES = 2;
+
 export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
@@ -439,6 +445,7 @@ export async function handleHeadlessCommand(
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
+  let llmApiErrorRetries = 0;
 
   try {
     while (true) {
@@ -787,6 +794,32 @@ export async function handleHeadlessCommand(
           },
         ];
         continue;
+      }
+
+      // Case 3: Transient LLM API error - retry up to a limit
+      if (stopReason === "llm_api_error") {
+        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          llmApiErrorRetries += 1;
+
+          if (outputFormat === "stream-json") {
+            console.log(
+              JSON.stringify({
+                type: "retry",
+                reason: "llm_api_error",
+                attempt: llmApiErrorRetries,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                run_id: lastRunId,
+              }),
+            );
+          } else {
+            console.error(
+              `LLM API error encountered (attempt ${llmApiErrorRetries} of ${LLM_API_ERROR_MAX_RETRIES}), retrying...`,
+            );
+          }
+
+          // Try the turn again with the same input
+          continue;
+        }
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
