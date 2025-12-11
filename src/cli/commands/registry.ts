@@ -120,6 +120,13 @@ export const commands: Record<string, Command> = {
       return "Starting skill creation...";
     },
   },
+  "/remember": {
+    desc: "Remember something from the conversation (optionally: /remember <what to remember>)",
+    handler: () => {
+      // Handled specially in App.tsx to trigger memory update
+      return "Processing memory request...";
+    },
+  },
 };
 
 /**
