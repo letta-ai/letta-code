@@ -1673,6 +1673,80 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /remember command - remember something from conversation
+        if (trimmed.startsWith("/remember")) {
+          const cmdId = uid("cmd");
+
+          // Extract optional description after `/remember`
+          const [, ...rest] = trimmed.split(/\s+/);
+          const userText = rest.join(" ").trim();
+
+          const initialOutput = userText
+            ? `Remembering: ${userText}`
+            : "Processing memory request...";
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: initialOutput,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the remember prompt
+            const { REMEMBER_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Build system-reminder content for memory request
+            const rememberMessage = userText
+              ? `<system-reminder>\n${REMEMBER_PROMPT}\n</system-reminder>${userText}`
+              : `<system-reminder>\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n</system-reminder>`;
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: userText
+                ? `Remembering: ${userText}`
+                : "Processing memory request from conversation context...",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Process conversation with the remember prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: rememberMessage,
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /init command - initialize agent memory
         if (trimmed === "/init") {
           const cmdId = uid("cmd");
