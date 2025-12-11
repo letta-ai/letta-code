@@ -65,6 +65,7 @@ import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
@@ -239,6 +240,8 @@ export default function App({
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
+
+  const resumeKey = useSuspend();
 
   // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
   useEffect(() => {
@@ -2899,7 +2902,7 @@ Plan file path: ${planFilePath}`;
   ]);
 
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box key={resumeKey} flexDirection="column" gap={1}>
       <Static
         key={staticRenderEpoch}
         items={staticItems}
