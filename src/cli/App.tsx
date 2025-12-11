@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync } from "node:fs";
-import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -57,6 +57,7 @@ import {
   toLines,
 } from "./helpers/accumulator";
 import { backfillBuffers } from "./helpers/backfill";
+import { formatErrorDetails } from "./helpers/errorFormatter";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -90,10 +91,7 @@ function getPlanModeReminder(): string {
   if (permissionMode.getMode() !== "plan") {
     return "";
   }
-
   const planFilePath = permissionMode.getPlanFilePath();
-
-  // Generate dynamic reminder with plan file path
   return `<system-reminder>
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
 
@@ -797,6 +795,14 @@ export default function App({
 
             // If all are auto-handled, continue immediately without showing dialog
             if (needsUserInput.length === 0) {
+              // Check if user cancelled before continuing
+              if (userCancelledRef.current || abortControllerRef.current?.signal.aborted) {
+                setStreaming(false);
+                markIncompleteToolsAsCancelled(buffersRef.current);
+                refreshDerived();
+                return;
+              }
+
               // Rotate to a new thinking message
               setThinkingMessage(getRandomThinkingMessage());
               refreshDerived();
@@ -896,25 +902,9 @@ export default function App({
           return;
         }
 
-        // Build error message with run_id for debugging
-        const runIdSuffix = lastKnownRunId
-          ? `\n(run_id: ${lastKnownRunId}, stop_reason: error)`
-          : "";
-
-        // Handle APIError from streaming (event: error)
-        if (e instanceof APIError && e.error?.error) {
-          const { type, message, detail } = e.error.error;
-          const errorType = type ? `[${type}] ` : "";
-          const errorMessage = message || "An error occurred";
-          const errorDetail = detail ? `:\n${detail}` : "";
-          appendError(
-            `${errorType}${errorMessage}${errorDetail}${runIdSuffix}`,
-          );
-        } else {
-          // Fallback for non-API errors
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          appendError(`${errorMessage}${runIdSuffix}`);
-        }
+        // Use comprehensive error formatting
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
         refreshDerived();
       } finally {
@@ -985,7 +975,8 @@ export default function App({
           abortControllerRef.current.abort();
         }
       } catch (e) {
-        appendError(`Failed to interrupt stream: ${String(e)}`);
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(`Failed to interrupt stream: ${errorDetails}`);
         setInterruptRequested(false);
       }
     }
@@ -1131,11 +1122,12 @@ export default function App({
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1184,11 +1176,12 @@ export default function App({
             refreshDerived();
           } catch (error) {
             // Mark command as failed
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1240,11 +1233,12 @@ export default function App({
             buffersRef.current.order.push(cmdId);
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1283,11 +1277,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1326,11 +1321,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1389,11 +1385,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1491,11 +1488,12 @@ export default function App({
             buffersRef.current.order.push(successCmdId);
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1574,11 +1572,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1647,13 +1646,12 @@ export default function App({
               },
             ]);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1768,11 +1766,12 @@ ${recentCommits}
               },
             ]);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1814,11 +1813,12 @@ ${recentCommits}
           refreshDerived();
         } catch (error) {
           // Mark command as failed if executeCommand throws
+          const errorDetails = formatErrorDetails(error, agentId);
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: msg,
-            output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+            output: `Failed: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
@@ -1983,6 +1983,18 @@ ${recentCommits}
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
       try {
+        // Don't send results if user has already cancelled
+        if (userCancelledRef.current || abortControllerRef.current?.signal.aborted) {
+          setStreaming(false);
+          setIsExecutingTool(false);
+          setPendingApprovals([]);
+          setApprovalContexts([]);
+          setApprovalResults([]);
+          setAutoHandledResults([]);
+          setAutoDeniedApprovals([]);
+          return;
+        }
+
         // Snapshot current state before clearing dialog
         const approvalResultsSnapshot = [...approvalResults];
         const autoHandledSnapshot = [...autoHandledResults];
@@ -2083,10 +2095,13 @@ ${recentCommits}
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
+        const userCancelled = userCancelledRef.current || abortControllerRef.current?.signal.aborted;
 
-        if (wasAborted) {
-          // Queue results to send alongside the next user message
-          setQueuedApprovalResults(allResults as ApprovalResult[]);
+        if (wasAborted || userCancelled) {
+          // Queue results to send alongside the next user message (if not cancelled entirely)
+          if (!userCancelled) {
+            setQueuedApprovalResults(allResults as ApprovalResult[]);
+          }
           setStreaming(false);
         } else {
           // Continue conversation with all results
@@ -2143,7 +2158,8 @@ ${recentCommits}
         setIsExecutingTool(false);
       }
     } catch (e) {
-      appendError(String(e));
+      const errorDetails = formatErrorDetails(e, agentId);
+      appendError(errorDetails);
       setStreaming(false);
       setIsExecutingTool(false);
     }
@@ -2231,12 +2247,14 @@ ${recentCommits}
           setIsExecutingTool(false);
         }
       } catch (e) {
-        appendError(String(e));
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
         setIsExecutingTool(false);
       }
     },
     [
+      agentId,
       pendingApprovals,
       approvalResults,
       sendAllResults,
@@ -2349,12 +2367,13 @@ ${recentCommits}
         refreshDerived();
       } catch (error) {
         // Mark command as failed (only if cmdId was created)
+        const errorDetails = formatErrorDetails(error, agentId);
         if (cmdId) {
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Failed to switch model: ${error instanceof Error ? error.message : String(error)}`,
+            output: `Failed to switch model: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
@@ -2436,11 +2455,12 @@ ${recentCommits}
         }
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/system ${promptId}`,
-          output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed to switch system prompt: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2496,11 +2516,12 @@ ${recentCommits}
         });
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/toolset ${toolsetId}`,
-          output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed to switch toolset: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2591,11 +2612,12 @@ ${recentCommits}
         buffersRef.current.order.push(successCmdId);
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/swap ${targetAgentId}`,
-          output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2661,11 +2683,13 @@ ${recentCommits}
           setApprovalResults((prev) => [...prev, decision]);
         }
       } catch (e) {
-        appendError(String(e));
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
       }
     },
     [
+      agentId,
       pendingApprovals,
       approvalResults,
       sendAllResults,
