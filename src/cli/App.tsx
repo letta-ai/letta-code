@@ -73,13 +73,13 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 // Feature flag: Check for pending approvals before sending messages
 // This prevents infinite thinking state when there's an orphaned approval
 // Can be disabled if the latency check adds too much overhead
-const CHECK_PENDING_APPROVALS_BEFORE_SEND = false;
+const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 
 // Feature flag: Eagerly cancel streams client-side when user presses ESC
 // When true (default), immediately abort the stream after calling .cancel()
 // This provides instant feedback to the user without waiting for backend acknowledgment
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
-const EAGER_CANCEL = false;
+const EAGER_CANCEL = true;
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -91,7 +91,10 @@ function getPlanModeReminder(): string {
   if (permissionMode.getMode() !== "plan") {
     return "";
   }
+
   const planFilePath = permissionMode.getPlanFilePath();
+
+  // Generate dynamic reminder with plan file path
   return `<system-reminder>
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
 
