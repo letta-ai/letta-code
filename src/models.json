@@ -283,7 +283,7 @@
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
   },
   {
     "id": "gemini-flash",
