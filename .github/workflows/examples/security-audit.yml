@@ -1,0 +1,66 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: AI Security Audit
+        id: audit
+        uses: letta-ai/letta-code@v1
+        with:
+          api-key: ${{ secrets.LETTA_API_KEY }}
+          prompt: |
+            Perform a comprehensive security audit of this codebase:
+            1. Check for hardcoded secrets or API keys
+            2. Identify SQL injection vulnerabilities
+            3. Check for XSS vulnerabilities
+            4. Review authentication and authorization logic
+            5. Check for insecure dependencies
+            6. Review input validation
+            7. Check for sensitive data exposure
+            
+            Generate a detailed security report with:
+            - Severity levels (Critical, High, Medium, Low)
+            - Specific file locations
+            - Remediation recommendations
+          model: 'claude-sonnet-4.5'
+          tools: 'Read,Grep,Glob'
+          disallowed-tools: 'Bash,Write,Edit'
+          permission-mode: 'plan'
+          output-format: 'json'
+
+      - name: Save audit report
+        if: steps.audit.outputs.exit-code == '0'
+        run: |
+          mkdir -p security-reports
+          echo "${{ steps.audit.outputs.result }}" > security-reports/audit-$(date +%Y%m%d).md
+
+      - name: Upload audit artifact
+        if: steps.audit.outputs.exit-code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: security-reports/
+
+      - name: Check for critical issues
+        if: steps.audit.outputs.exit-code == '0'
+        run: |
+          if echo "${{ steps.audit.outputs.result }}" | grep -qi "critical"; then
+            echo "::error::Critical security issues found!"
+            exit 1
+          fi

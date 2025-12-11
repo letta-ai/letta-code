@@ -1,0 +1,78 @@
+name: Auto-Fix Failing Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  fix-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests to identify failures
+        id: test-run
+        continue-on-error: true
+        run: npm test 2>&1 | tee test-output.txt
+
+      - name: AI Test Fixer
+        if: steps.test-run.outcome == 'failure'
+        id: fix
+        uses: letta-ai/letta-code@v1
+        with:
+          api-key: ${{ secrets.LETTA_API_KEY }}
+          prompt: |
+            The test suite is failing. Please:
+            1. Analyze the test output in test-output.txt
+            2. Identify the root cause of failures
+            3. Fix the failing tests
+            4. Run the tests again to verify fixes
+            
+            Only make minimal necessary changes to fix the tests.
+          model: 'claude-sonnet-4.5'
+          tools: 'Bash,Read,Write,Edit,Grep'
+          allowed-tools: 'Bash(npm test),Bash(npm run build),Read,Write,Edit,Grep'
+          permission-mode: 'acceptEdits'
+          output-format: 'json'
+
+      - name: Create PR with fixes
+        if: steps.fix.outputs.exit-code == '0'
+        run: |
+          git config user.name "Letta Code"
+          git config user.email "noreply@letta.com"
+          
+          git checkout -b auto-fix-tests-$(date +%s)
+          git add .
+          git commit -m "🤖 Auto-fix failing tests
+
+          ${{ steps.fix.outputs.result }}
+
+          🦾 Generated with Letta Code"
+          
+          git push origin HEAD
+          
+          gh pr create \
+            --title "🤖 Auto-fix failing tests" \
+            --body "This PR contains automated fixes for failing tests.
+
+          ## Changes
+          ${{ steps.fix.outputs.result }}
+
+          ---
+          *Powered by [Letta Code](https://github.com/letta-ai/letta-code)*"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

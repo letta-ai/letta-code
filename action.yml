@@ -1,0 +1,145 @@
+name: 'Letta Code'
+description: 'Run Letta Code AI agent in your GitHub workflows for automated code analysis, generation, and modifications'
+author: 'Letta AI'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  api-key:
+    description: 'Letta API key (get one at https://app.letta.com)'
+    required: true
+  prompt:
+    description: 'The prompt/task to send to Letta Code'
+    required: true
+  model:
+    description: 'Model to use (e.g., claude-sonnet-4.5, gpt-4o, gemini-pro)'
+    required: false
+    default: 'claude-sonnet-4.5'
+  tools:
+    description: 'Comma-separated list of tools to load (e.g., "Bash,Read,Write") or empty string for no tools'
+    required: false
+    default: ''
+  allowed-tools:
+    description: 'Comma-separated list of allowed tools with optional patterns (e.g., "Bash(npm run test:*),Read,Write")'
+    required: false
+    default: ''
+  disallowed-tools:
+    description: 'Comma-separated list of disallowed tools with optional patterns (e.g., "Bash(rm -rf:*)")'
+    required: false
+    default: ''
+  permission-mode:
+    description: 'Permission mode: default, acceptEdits, plan, or bypassPermissions'
+    required: false
+    default: 'default'
+  output-format:
+    description: 'Output format: text, json, or stream-json'
+    required: false
+    default: 'json'
+  working-directory:
+    description: 'Working directory to run Letta Code in'
+    required: false
+    default: '.'
+  bun-version:
+    description: 'Version of Bun to use'
+    required: false
+    default: '1.3.0'
+  letta-code-version:
+    description: 'Version of Letta Code to install (e.g., "latest", "0.5.1")'
+    required: false
+    default: 'latest'
+
+outputs:
+  result:
+    description: 'The result/response from Letta Code'
+    value: ${{ steps.run-letta.outputs.result }}
+  agent-id:
+    description: 'The agent ID used in this run'
+    value: ${{ steps.run-letta.outputs.agent_id }}
+  exit-code:
+    description: 'Exit code from Letta Code (0 = success)'
+    value: ${{ steps.run-letta.outputs.exit_code }}
+  duration-ms:
+    description: 'Total duration in milliseconds'
+    value: ${{ steps.run-letta.outputs.duration_ms }}
+  usage:
+    description: 'Token usage statistics (JSON)'
+    value: ${{ steps.run-letta.outputs.usage }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Install Letta Code
+      shell: bash
+      run: |
+        if [ "${{ inputs.letta-code-version }}" = "latest" ]; then
+          bun install -g @letta-ai/letta-code
+        else
+          bun install -g @letta-ai/letta-code@${{ inputs.letta-code-version }}
+        fi
+
+    - name: Run Letta Code
+      id: run-letta
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LETTA_API_KEY: ${{ inputs.api-key }}
+      run: |
+        # Build the command
+        CMD="letta -p \"${{ inputs.prompt }}\""
+        
+        # Add model
+        if [ -n "${{ inputs.model }}" ]; then
+          CMD="$CMD -m \"${{ inputs.model }}\""
+        fi
+        
+        # Add tools
+        if [ -n "${{ inputs.tools }}" ]; then
+          CMD="$CMD --tools \"${{ inputs.tools }}\""
+        fi
+        
+        # Add allowed tools
+        if [ -n "${{ inputs.allowed-tools }}" ]; then
+          CMD="$CMD --allowedTools \"${{ inputs.allowed-tools }}\""
+        fi
+        
+        # Add disallowed tools
+        if [ -n "${{ inputs.disallowed-tools }}" ]; then
+          CMD="$CMD --disallowedTools \"${{ inputs.disallowed-tools }}\""
+        fi
+        
+        # Add permission mode
+        if [ -n "${{ inputs.permission-mode }}" ] && [ "${{ inputs.permission-mode }}" != "default" ]; then
+          CMD="$CMD --permission-mode \"${{ inputs.permission-mode }}\""
+        fi
+        
+        # Add output format
+        CMD="$CMD --output-format \"${{ inputs.output-format }}\""
+        
+        # Run and capture output
+        set +e
+        OUTPUT=$(eval $CMD 2>&1)
+        EXIT_CODE=$?
+        set -e
+        
+        echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Parse JSON output if format is json
+        if [ "${{ inputs.output-format }}" = "json" ]; then
+          echo "result=$(echo "$OUTPUT" | jq -r '.result // empty')" >> $GITHUB_OUTPUT
+          echo "agent_id=$(echo "$OUTPUT" | jq -r '.agent_id // empty')" >> $GITHUB_OUTPUT
+          echo "duration_ms=$(echo "$OUTPUT" | jq -r '.duration_ms // empty')" >> $GITHUB_OUTPUT
+          echo "usage=$(echo "$OUTPUT" | jq -c '.usage // {}')" >> $GITHUB_OUTPUT
+        else
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        fi
+        
+        # Exit with the same code as letta
+        exit $EXIT_CODE
