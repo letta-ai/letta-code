@@ -28,7 +28,7 @@ import { checkToolPermission } from "./tools/manager";
 // reports an `llm_api_error` stop reason. This helps smooth
 // over transient LLM/backend issues without requiring the
 // caller to manually resubmit the prompt.
-const LLM_API_ERROR_MAX_RETRIES = 2;
+const LLM_API_ERROR_MAX_RETRIES = 3;
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -796,28 +796,35 @@ export async function handleHeadlessCommand(
         continue;
       }
 
-      // Case 3: Transient LLM API error - retry up to a limit
+      // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-          llmApiErrorRetries += 1;
+          const attempt = llmApiErrorRetries + 1;
+          const baseDelayMs = 1000;
+          const delayMs = baseDelayMs * 2 ** (attempt - 1);
+
+          llmApiErrorRetries = attempt;
 
           if (outputFormat === "stream-json") {
             console.log(
               JSON.stringify({
                 type: "retry",
                 reason: "llm_api_error",
-                attempt: llmApiErrorRetries,
+                attempt,
                 max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
                 run_id: lastRunId,
               }),
             );
           } else {
+            const delaySeconds = Math.round(delayMs / 1000);
             console.error(
-              `LLM API error encountered (attempt ${llmApiErrorRetries} of ${LLM_API_ERROR_MAX_RETRIES}), retrying...`,
+              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
             );
           }
 
-          // Try the turn again with the same input
+          // Exponential backoff before retrying the same input
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
       }
