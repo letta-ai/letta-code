@@ -68,7 +68,7 @@ function buildModelSettings(
   }
 
   if (isGoogleAI) {
-    const googleSettings: GoogleAIModelSettings = {
+    const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
       parallel_tool_calls: true,
     };
@@ -76,6 +76,9 @@ function buildModelSettings(
       googleSettings.thinking_config = {
         thinking_budget: updateArgs.thinking_budget as number,
       };
+    }
+    if (typeof updateArgs?.temperature === "number") {
+      googleSettings.temperature = updateArgs.temperature as number;
     }
     return googleSettings;
   }
