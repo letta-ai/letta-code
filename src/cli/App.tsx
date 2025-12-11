@@ -73,13 +73,13 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 // Feature flag: Check for pending approvals before sending messages
 // This prevents infinite thinking state when there's an orphaned approval
 // Can be disabled if the latency check adds too much overhead
-const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
+const CHECK_PENDING_APPROVALS_BEFORE_SEND = false;
 
 // Feature flag: Eagerly cancel streams client-side when user presses ESC
 // When true (default), immediately abort the stream after calling .cancel()
 // This provides instant feedback to the user without waiting for backend acknowledgment
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
-const EAGER_CANCEL = true;
+const EAGER_CANCEL = false;
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -595,8 +595,6 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       const currentInput = initialInput;
-      // Track lastRunId outside the while loop so it's available in catch block
-      let lastKnownRunId: string | null = null;
 
       try {
         // Check if user hit escape before we started
@@ -628,11 +626,6 @@ export default function App({
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
             );
-
-          // Update lastKnownRunId for error handling in catch block
-          if (lastRunId) {
-            lastKnownRunId = lastRunId;
-          }
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -796,7 +789,10 @@ export default function App({
             // If all are auto-handled, continue immediately without showing dialog
             if (needsUserInput.length === 0) {
               // Check if user cancelled before continuing
-              if (userCancelledRef.current || abortControllerRef.current?.signal.aborted) {
+              if (
+                userCancelledRef.current ||
+                abortControllerRef.current?.signal.aborted
+              ) {
                 setStreaming(false);
                 markIncompleteToolsAsCancelled(buffersRef.current);
                 refreshDerived();
@@ -851,13 +847,7 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Build run info suffix for debugging
-          const runInfoSuffix = lastRunId
-            ? `\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
-            : `\n(stop_reason: ${stopReason})`;
-
           // Fetch error details from the run if available
-          let errorDetails = `An error occurred during agent execution`;
           if (lastRunId) {
             try {
               const client = await getClient();
@@ -865,26 +855,40 @@ export default function App({
 
               // Check if run has error information in metadata
               if (run.metadata?.error) {
-                const error = run.metadata.error as {
+                const errorData = run.metadata.error as {
                   type?: string;
                   message?: string;
                   detail?: string;
                 };
-                const errorType = error.type ? `[${error.type}] ` : "";
-                const errorMessage = error.message || "An error occurred";
-                const errorDetail = error.detail ? `\n${error.detail}` : "";
-                errorDetails = `${errorType}${errorMessage}${errorDetail}`;
+
+                // Pass structured error data to our formatter
+                const errorObject = {
+                  error: {
+                    error: errorData,
+                    run_id: lastRunId,
+                  },
+                };
+                const errorDetails = formatErrorDetails(errorObject, agentId);
+                appendError(errorDetails);
+              } else {
+                // No error metadata, show generic error with run info
+                appendError(
+                  `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
+                );
               }
             } catch (_e) {
-              // If we can't fetch error details, let user know
+              // If we can't fetch error details, show generic error
               appendError(
-                `${errorDetails}${runInfoSuffix}\n(Unable to fetch additional error details from server)`,
+                `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
               );
               return;
             }
+          } else {
+            // No run_id available - but this is unusual since errors should have run_ids
+            appendError(
+              `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
+            );
           }
-
-          appendError(`${errorDetails}${runInfoSuffix}`);
 
           setStreaming(false);
           refreshDerived();
@@ -1984,7 +1988,10 @@ ${recentCommits}
     ) => {
       try {
         // Don't send results if user has already cancelled
-        if (userCancelledRef.current || abortControllerRef.current?.signal.aborted) {
+        if (
+          userCancelledRef.current ||
+          abortControllerRef.current?.signal.aborted
+        ) {
           setStreaming(false);
           setIsExecutingTool(false);
           setPendingApprovals([]);
@@ -2095,7 +2102,9 @@ ${recentCommits}
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
-        const userCancelled = userCancelledRef.current || abortControllerRef.current?.signal.aborted;
+        const userCancelled =
+          userCancelledRef.current ||
+          abortControllerRef.current?.signal.aborted;
 
         if (wasAborted || userCancelled) {
           // Queue results to send alongside the next user message (if not cancelled entirely)
@@ -2164,6 +2173,7 @@ ${recentCommits}
       setIsExecutingTool(false);
     }
   }, [
+    agentId,
     pendingApprovals,
     approvalResults,
     sendAllResults,
@@ -2626,7 +2636,7 @@ ${recentCommits}
         setCommandRunning(false);
       }
     },
-    [refreshDerived, commitEligibleLines, columns],
+    [refreshDerived, commitEligibleLines, columns, agentId],
   );
 
   // Track permission mode changes for UI updates
