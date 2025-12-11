@@ -1,0 +1,145 @@
+name: AI Issue Handler
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handle-letta-command:
+    if: |
+      github.event.issue.pull_request == null &&
+      contains(github.event.comment.body, '/letta')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract command
+        id: extract
+        run: |
+          COMMAND=$(echo "${{ github.event.comment.body }}" | sed 's/^.*\/letta //g')
+          echo "command=$COMMAND" >> $GITHUB_OUTPUT
+          echo "Extracted command: $COMMAND"
+
+      - name: React to comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Run Letta Code
+        id: letta
+        uses: letta-ai/letta-code@v1
+        with:
+          api-key: ${{ secrets.LETTA_API_KEY }}
+          prompt: |
+            Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+            
+            Issue body:
+            ${{ github.event.issue.body }}
+            
+            User command: ${{ steps.extract.outputs.command }}
+            
+            Please complete the requested task and provide a summary of changes made.
+          model: 'claude-sonnet-4.5'
+          tools: 'Bash,Read,Write,Edit,Grep,Glob'
+          permission-mode: 'acceptEdits'
+          output-format: 'json'
+
+      - name: Create PR with changes
+        if: steps.letta.outputs.exit-code == '0'
+        id: create-pr
+        run: |
+          git config user.name "Letta Code"
+          git config user.email "noreply@letta.com"
+          
+          BRANCH_NAME="letta-issue-${{ github.event.issue.number }}-$(date +%s)"
+          
+          git checkout -b $BRANCH_NAME
+          git add .
+          
+          if [[ -n $(git status -s) ]]; then
+            git commit -m "🤖 Fix for issue #${{ github.event.issue.number }}
+
+          ${{ steps.extract.outputs.command }}
+
+          ${{ steps.letta.outputs.result }}
+
+          🦾 Generated with Letta Code
+          
+          Closes #${{ github.event.issue.number }}"
+            
+            git push origin $BRANCH_NAME
+            
+            PR_URL=$(gh pr create \
+              --title "🤖 Fix for issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}" \
+              --body "## Changes
+            
+            ${{ steps.letta.outputs.result }}
+            
+            ## Context
+            - Issue: #${{ github.event.issue.number }}
+            - Command: \`${{ steps.extract.outputs.command }}\`
+            - Agent ID: ${{ steps.letta.outputs.agent-id }}
+            
+            ---
+            *Powered by [Letta Code](https://github.com/letta-ai/letta-code)*")
+            
+            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No changes to commit"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on issue with results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const exitCode = '${{ steps.letta.outputs.exit-code }}';
+            const result = `${{ steps.letta.outputs.result }}`;
+            const hasChanges = '${{ steps.create-pr.outputs.has_changes }}';
+            const prUrl = '${{ steps.create-pr.outputs.pr_url }}';
+            
+            let body = '## 🤖 Letta Code Results\n\n';
+            
+            if (exitCode === '0') {
+              body += '✅ Task completed successfully!\n\n';
+              body += `### Summary\n${result}\n\n`;
+              
+              if (hasChanges === 'true' && prUrl) {
+                body += `### Pull Request\nI've created a PR with the changes: ${prUrl}\n\n`;
+              } else {
+                body += '### No Changes\nNo file changes were needed for this task.\n\n';
+              }
+              
+              body += `**Agent ID:** ${{ steps.letta.outputs.agent-id }}\n`;
+              body += `**Duration:** ${{ steps.letta.outputs.duration-ms }}ms\n`;
+            } else {
+              body += '❌ Task failed\n\n';
+              body += `Exit code: ${exitCode}\n`;
+            }
+            
+            body += '\n---\n*Powered by [Letta Code](https://github.com/letta-ai/letta-code)*';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
