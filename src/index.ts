@@ -114,14 +114,6 @@ async function main() {
     // Silently ignore update failures
   });
 
-  // set LETTA_API_KEY from environment if available
-  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
-    settings.env = settings.env || {};
-    settings.env.LETTA_API_KEY = process.env.LETTA_API_KEY;
-
-    settingsManager.updateSettings({ env: settings.env });
-  }
-
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
   let positionals: string[];
@@ -286,10 +278,12 @@ async function main() {
     LETTA_CLOUD_API_URL;
 
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
+  // Skip this check if we already have an API key from env
   if (
     !isHeadless &&
     baseURL === LETTA_CLOUD_API_URL &&
-    !settings.refreshToken
+    !settings.refreshToken &&
+    !apiKey
   ) {
     // For interactive mode, show setup flow
     const { runSetup } = await import("./auth/setup");
