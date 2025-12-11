@@ -26,6 +26,9 @@ USAGE
   # headless
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
+  # maintenance
+  letta update          Manually check for updates and install if available
+
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
@@ -105,6 +108,12 @@ async function main() {
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
 
+  // Check for updates on startup (non-blocking)
+  const { checkAndAutoUpdate } = await import("./updater/auto-update");
+  checkAndAutoUpdate().catch(() => {
+    // Silently ignore update failures
+  });
+
   // set LETTA_API_KEY from environment if available
   if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
     settings.env = settings.env || {};
@@ -165,7 +174,7 @@ async function main() {
   }
 
   // Check for subcommands
-  const _command = positionals[2]; // First positional after node and script
+  const command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
   if (values.help) {
@@ -178,6 +187,14 @@ async function main() {
     const { getVersion } = await import("./version");
     console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
+  }
+
+  // Handle update command
+  if (command === "update") {
+    const { manualUpdate } = await import("./updater/auto-update");
+    const result = await manualUpdate();
+    console.log(result.message);
+    process.exit(result.success ? 0 : 1);
   }
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
