@@ -1,5 +1,5 @@
-import { useStdin, useInput } from "ink";
-import {useCallback, useEffect, useState} from "react";
+import { useInput, useStdin } from "ink";
+import { useCallback, useEffect, useState } from "react";
 
 export function useSuspend() {
   const { stdin, isRawModeSupported } = useStdin();
@@ -7,17 +7,17 @@ export function useSuspend() {
   const [resumeKey, setResumeKey] = useState(0);
 
   const forceUpdate = useCallback(() => {
-    setResumeKey(prev => prev + 1);
+    setResumeKey((prev) => prev + 1);
   }, []);
 
   useInput((input, key) => {
     // Handle CTRL-Z for suspend
-    if ((key.ctrl && input === 'z')) {
+    if (key.ctrl && input === "z") {
       if (stdin && isRawModeSupported) {
         stdin.setRawMode(false);
       }
 
-      process.kill(process.pid, 'SIGTSTP');
+      process.kill(process.pid, "SIGTSTP");
       return;
     }
   });
@@ -25,22 +25,22 @@ export function useSuspend() {
   // Handle the SIGCONT (fg command) resume
   useEffect(() => {
     const handleResume = () => {
-      if (stdin && stdin.isTTY && stdin.setRawMode) {
+      if (stdin && isRawModeSupported && stdin.setRawMode) {
         stdin.setRawMode(true);
       }
 
       // clear the console
-      process.stdout.write('\x1B[H\x1B[2J');
+      process.stdout.write("\x1B[H\x1B[2J");
 
       forceUpdate();
     };
 
-    process.on('SIGCONT', handleResume);
+    process.on("SIGCONT", handleResume);
 
     return () => {
-      process.off('SIGCONT', handleResume);
+      process.off("SIGCONT", handleResume);
     };
-  }, [stdin]);
+  }, [stdin, isRawModeSupported, forceUpdate]);
 
   return resumeKey;
 }

@@ -65,8 +65,8 @@ import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
-import {useSuspend} from "./hooks/useSuspend/useSuspend.ts";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 

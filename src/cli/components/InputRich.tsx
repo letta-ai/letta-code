@@ -1,19 +1,18 @@
 // Import useInput from vendored Ink for bracketed paste support
-import {Box, Text, useInput} from "ink";
+import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
-import {type ComponentType} from "react";
-import {useEffect, useRef, useState} from "react";
-import {LETTA_CLOUD_API_URL} from "../../auth/oauth";
-import type {PermissionMode} from "../../permissions/mode";
-import {permissionMode} from "../../permissions/mode";
-import {settingsManager} from "../../settings-manager";
-import {getVersion} from "../../version";
-import {useTerminalWidth} from "../hooks/useTerminalWidth";
-import {colors} from "./colors";
-import {InputAssist} from "./InputAssist";
-import {PasteAwareTextInput} from "./PasteAwareTextInput";
-import {QueuedMessages} from "./QueuedMessages";
-import {ShimmerText} from "./ShimmerText";
+import { type ComponentType, useEffect, useRef, useState } from "react";
+import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
+import type { PermissionMode } from "../../permissions/mode";
+import { permissionMode } from "../../permissions/mode";
+import { settingsManager } from "../../settings-manager";
+import { getVersion } from "../../version";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { colors } from "./colors";
+import { InputAssist } from "./InputAssist";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { QueuedMessages } from "./QueuedMessages";
+import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
@@ -23,22 +22,22 @@ const appVersion = getVersion();
 const COUNTER_VISIBLE_THRESHOLD = 1000;
 
 export function Input({
-                        visible = true,
-                        streaming,
-                        tokenCount,
-                        thinkingMessage,
-                        onSubmit,
-                        permissionMode: externalMode,
-                        onPermissionModeChange,
-                        onExit,
-                        onInterrupt,
-                        interruptRequested = false,
-                        agentId,
-                        agentName,
-                        currentModel,
-                        messageQueue,
-                        onEnterQueueEditMode,
-                      }: {
+  visible = true,
+  streaming,
+  tokenCount,
+  thinkingMessage,
+  onSubmit,
+  permissionMode: externalMode,
+  onPermissionModeChange,
+  onExit,
+  onInterrupt,
+  interruptRequested = false,
+  agentId,
+  agentName,
+  currentModel,
+  messageQueue,
+  onEnterQueueEditMode,
+}: {
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
@@ -155,9 +154,7 @@ export function Input({
     }
   });
 
-
   useInput((input, key) => {
-
     if (!visible) return;
 
     // Handle CTRL-C for double-ctrl-c-to-exit
@@ -439,9 +436,9 @@ export function Input({
   const getModeInfo = () => {
     switch (currentMode) {
       case "acceptEdits":
-        return {name: "accept edits", color: colors.status.processing};
+        return { name: "accept edits", color: colors.status.processing };
       case "plan":
-        return {name: "plan (read-only) mode", color: colors.status.success};
+        return { name: "plan (read-only) mode", color: colors.status.success };
       case "bypassPermissions":
         return {
           name: "yolo (allow all) mode",
@@ -472,7 +469,7 @@ export function Input({
         <Box flexDirection="row" marginBottom={1}>
           <Box width={2} flexShrink={0}>
             <Text color={colors.status.processing}>
-              <Spinner type="layer"/>
+              <Spinner type="layer" />
             </Text>
           </Box>
           <Box flexGrow={1}>
@@ -492,7 +489,7 @@ export function Input({
 
       {/* Queue display - show when streaming with queued messages */}
       {streaming && messageQueue && messageQueue.length > 0 && (
-        <QueuedMessages messages={messageQueue}/>
+        <QueuedMessages messages={messageQueue} />
       )}
 
       <Box flexDirection="column">
