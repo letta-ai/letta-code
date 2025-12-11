@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     
     steps:
       - name: Checkout code
@@ -24,20 +23,21 @@ jobs:
         uses: letta-ai/letta-code@v1
         with:
           api-key: ${{ secrets.LETTA_API_KEY }}
+          working-directory: './docs'
           prompt: |
-            Generate comprehensive API documentation for this project:
+            Generate comprehensive API documentation:
             1. Create/update API.md with all public APIs
             2. Include function signatures, parameters, return types
             3. Add usage examples for each API
-            4. Document error cases and edge cases
+            4. Document error cases
             5. Include code examples
             
-            Maintain existing documentation structure and style.
-          model: 'claude-sonnet-4.5'
-          tools: 'Read,Write,Grep,Glob'
-          working-directory: './docs'
-          permission-mode: 'acceptEdits'
-          output-format: 'json'
+            Maintain existing documentation structure.
+          cli-args: >-
+            --model claude-sonnet-4.5
+            --tools Read,Write,Grep,Glob
+            --permission-mode acceptEdits
+            --output-format json
 
       - name: Commit documentation
         if: steps.docs.outputs.exit-code == '0'
@@ -49,17 +49,8 @@ jobs:
             git add docs/
             git commit -m "📝 Auto-update API documentation
 
-          ${{ steps.docs.outputs.result }}
-
           🦾 Generated with Letta Code"
             git push
           else
             echo "No documentation changes to commit"
           fi
-
-      - name: Summary
-        if: always()
-        run: |
-          echo "Documentation generation completed!"
-          echo "Duration: ${{ steps.docs.outputs.duration-ms }}ms"
-          echo "Token usage: ${{ steps.docs.outputs.usage }}"

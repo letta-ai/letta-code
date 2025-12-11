@@ -43,11 +43,12 @@ jobs:
             4. Run the tests again to verify fixes
             
             Only make minimal necessary changes to fix the tests.
-          model: 'claude-sonnet-4.5'
-          tools: 'Bash,Read,Write,Edit,Grep'
-          allowed-tools: 'Bash(npm test),Bash(npm run build),Read,Write,Edit,Grep'
-          permission-mode: 'acceptEdits'
-          output-format: 'json'
+          cli-args: >-
+            --model claude-sonnet-4.5
+            --tools Bash,Read,Write,Edit,Grep
+            --allowedTools "Bash(npm test),Bash(npm run build),Read,Write,Edit,Grep"
+            --permission-mode acceptEdits
+            --output-format json
 
       - name: Create PR with fixes
         if: steps.fix.outputs.exit-code == '0'

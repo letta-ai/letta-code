@@ -11,31 +11,16 @@ inputs:
     required: true
   prompt:
     description: 'The prompt/task to send to Letta Code'
-    required: true
-  model:
-    description: 'Model to use (e.g., claude-sonnet-4.5, gpt-4o, gemini-pro)'
-    required: false
-    default: 'claude-sonnet-4.5'
-  tools:
-    description: 'Comma-separated list of tools to load (e.g., "Bash,Read,Write") or empty string for no tools'
     required: false
     default: ''
-  allowed-tools:
-    description: 'Comma-separated list of allowed tools with optional patterns (e.g., "Bash(npm run test:*),Read,Write")'
+  stdin:
+    description: 'Input to pipe to stdin (alternative to prompt)'
     required: false
     default: ''
-  disallowed-tools:
-    description: 'Comma-separated list of disallowed tools with optional patterns (e.g., "Bash(rm -rf:*)")'
+  cli-args:
+    description: 'Additional CLI arguments to pass to letta (e.g., "-m gpt-4o --tools Bash,Read --permission-mode plan")'
     required: false
     default: ''
-  permission-mode:
-    description: 'Permission mode: default, acceptEdits, plan, or bypassPermissions'
-    required: false
-    default: 'default'
-  output-format:
-    description: 'Output format: text, json, or stream-json'
-    required: false
-    default: 'json'
   working-directory:
     description: 'Working directory to run Letta Code in'
     required: false
@@ -48,6 +33,10 @@ inputs:
     description: 'Version of Letta Code to install (e.g., "latest", "0.5.1")'
     required: false
     default: 'latest'
+  base-url:
+    description: 'Letta base URL (for self-hosted instances)'
+    required: false
+    default: ''
 
 outputs:
   result:
@@ -65,6 +54,9 @@ outputs:
   usage:
     description: 'Token usage statistics (JSON)'
     value: ${{ steps.run-letta.outputs.usage }}
+  full-output:
+    description: 'Complete output from Letta Code'
+    value: ${{ steps.run-letta.outputs.full_output }}
 
 runs:
   using: 'composite'
@@ -89,53 +81,51 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         LETTA_API_KEY: ${{ inputs.api-key }}
+        LETTA_BASE_URL: ${{ inputs.base-url }}
       run: |
         # Build the command
-        CMD="letta -p \"${{ inputs.prompt }}\""
+        CMD="letta"
         
-        # Add model
-        if [ -n "${{ inputs.model }}" ]; then
-          CMD="$CMD -m \"${{ inputs.model }}\""
+        # Add prompt if provided
+        if [ -n "${{ inputs.prompt }}" ]; then
+          CMD="$CMD -p \"${{ inputs.prompt }}\""
+        elif [ -n "${{ inputs.stdin }}" ]; then
+          # Use stdin mode
+          CMD="$CMD -p"
         fi
         
-        # Add tools
-        if [ -n "${{ inputs.tools }}" ]; then
-          CMD="$CMD --tools \"${{ inputs.tools }}\""
+        # Add additional CLI arguments
+        if [ -n "${{ inputs.cli-args }}" ]; then
+          CMD="$CMD ${{ inputs.cli-args }}"
         fi
         
-        # Add allowed tools
-        if [ -n "${{ inputs.allowed-tools }}" ]; then
-          CMD="$CMD --allowedTools \"${{ inputs.allowed-tools }}\""
-        fi
-        
-        # Add disallowed tools
-        if [ -n "${{ inputs.disallowed-tools }}" ]; then
-          CMD="$CMD --disallowedTools \"${{ inputs.disallowed-tools }}\""
-        fi
-        
-        # Add permission mode
-        if [ -n "${{ inputs.permission-mode }}" ] && [ "${{ inputs.permission-mode }}" != "default" ]; then
-          CMD="$CMD --permission-mode \"${{ inputs.permission-mode }}\""
-        fi
-        
-        # Add output format
-        CMD="$CMD --output-format \"${{ inputs.output-format }}\""
+        echo "Running: $CMD"
         
         # Run and capture output
         set +e
-        OUTPUT=$(eval $CMD 2>&1)
+        if [ -n "${{ inputs.stdin }}" ]; then
+          OUTPUT=$(echo "${{ inputs.stdin }}" | eval $CMD 2>&1)
+        else
+          OUTPUT=$(eval $CMD 2>&1)
+        fi
         EXIT_CODE=$?
         set -e
         
         echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
         
-        # Parse JSON output if format is json
-        if [ "${{ inputs.output-format }}" = "json" ]; then
+        # Save full output
+        echo "full_output<<EOF" >> $GITHUB_OUTPUT
+        echo "$OUTPUT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        # Try to parse JSON output if it looks like JSON
+        if echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
           echo "result=$(echo "$OUTPUT" | jq -r '.result // empty')" >> $GITHUB_OUTPUT
           echo "agent_id=$(echo "$OUTPUT" | jq -r '.agent_id // empty')" >> $GITHUB_OUTPUT
           echo "duration_ms=$(echo "$OUTPUT" | jq -r '.duration_ms // empty')" >> $GITHUB_OUTPUT
           echo "usage=$(echo "$OUTPUT" | jq -c '.usage // {}')" >> $GITHUB_OUTPUT
         else
+          # Not JSON, use full output as result
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$OUTPUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT

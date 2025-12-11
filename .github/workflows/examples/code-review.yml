@@ -17,13 +17,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get PR diff
-        id: diff
-        run: |
-          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
-          echo "Files changed:"
-          git diff --name-only origin/${{ github.base_ref }}...HEAD
-
       - name: AI Code Review
         id: review
         uses: letta-ai/letta-code@v1
@@ -38,10 +31,11 @@ jobs:
             5. Documentation and readability
             
             Focus on constructive feedback and specific suggestions.
-          model: 'claude-sonnet-4.5'
-          tools: 'Read,Grep'
-          permission-mode: 'plan'
-          output-format: 'json'
+          cli-args: >-
+            --model claude-sonnet-4.5
+            --tools Read,Grep
+            --permission-mode plan
+            --output-format json
 
       - name: Post review comment
         if: steps.review.outputs.exit-code == '0'
@@ -57,11 +51,3 @@ jobs:
               repo: context.repo.repo,
               body: `## 🤖 AI Code Review\n\n${review}\n\n---\n*Powered by [Letta Code](https://github.com/letta-ai/letta-code)*`
             });
-
-      - name: Review Summary
-        if: always()
-        run: |
-          echo "Review completed!"
-          echo "Exit code: ${{ steps.review.outputs.exit-code }}"
-          echo "Agent ID: ${{ steps.review.outputs.agent-id }}"
-          echo "Duration: ${{ steps.review.outputs.duration-ms }}ms"

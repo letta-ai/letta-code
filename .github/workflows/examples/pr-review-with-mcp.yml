@@ -1,0 +1,94 @@
+name: AI PR Review (with GitHub MCP)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review-with-mcp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Configure MCP via .letta/mcp_config.json in the repo
+      - name: Setup MCP Configuration
+        run: |
+          mkdir -p .letta
+          cat > .letta/mcp_config.json << 'EOF'
+          {
+            "mcpServers": {
+              "github": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": {
+                  "GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Get PR context
+        id: pr-context
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('pr_author', pr.user.login);
+            const reviewers = pr.requested_reviewers?.map(r => r.login).join(',') || '';
+            core.setOutput('reviewers', reviewers);
+
+      - name: AI Code Review with GitHub MCP
+        id: review
+        uses: letta-ai/letta-code@v1
+        with:
+          api-key: ${{ secrets.LETTA_API_KEY }}
+          prompt: |
+            You have access to the GitHub MCP server with full GitHub API capabilities.
+            
+            PR #${{ steps.pr-context.outputs.pr_number }}
+            Author: @${{ steps.pr-context.outputs.pr_author }}
+            
+            Using the GitHub MCP tools, please:
+            1. Fetch the PR diff and changed files
+            2. Review the code comprehensively
+            3. Check for related issues or previous PRs
+            4. Review existing PR comments
+            5. Provide actionable feedback
+          cli-args: >-
+            --model claude-sonnet-4.5
+            --tools Read,Grep
+            --permission-mode plan
+            --output-format json
+
+      - name: Post review
+        if: steps.review.outputs.exit-code == '0'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const review = `${{ steps.review.outputs.result }}`;
+            const author = '${{ steps.pr-context.outputs.pr_author }}';
+            const reviewers = '${{ steps.pr-context.outputs.reviewers }}'.split(',').filter(r => r);
+            
+            let mentions = `@${author}`;
+            if (reviewers.length > 0) {
+              mentions += ' ' + reviewers.map(r => `@${r}`).join(' ');
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🤖 AI Code Review (GitHub MCP)\n\n${mentions}\n\n${review}\n\n---\n*Powered by [Letta Code](https://github.com/letta-ai/letta-code) with GitHub MCP*`
+            });
