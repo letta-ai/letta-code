@@ -2,7 +2,6 @@ import { Box, Text } from "ink";
 import { memo, useEffect, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors.js";
-import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
 type CommandLine = {
   kind: "command";
@@ -67,16 +66,22 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
       </Box>
 
       {/* Command output (if present) */}
-      {line.output && (
-        <Box flexDirection="row">
-          <Box width={5} flexShrink={0}>
-            <Text>{"  ⎿  "}</Text>
-          </Box>
-          <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-            <MarkdownDisplay text={line.output} />
-          </Box>
-        </Box>
-      )}
+      {line.output &&
+        line.output
+          .split("\n")
+          .filter((l) => l.trim() !== "")
+          .map((outputLine, idx) => (
+            <Box flexDirection="row" key={idx}>
+              <Box width={5} flexShrink={0}>
+                <Text dimColor={idx > 0}>{idx === 0 ? "  ⎿  " : "     "}</Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, columns - 5)}>
+                <Text wrap="wrap" dimColor={idx > 0}>
+                  {outputLine}
+                </Text>
+              </Box>
+            </Box>
+          ))}
     </Box>
   );
 });

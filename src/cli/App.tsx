@@ -1734,20 +1734,6 @@ export default function App({
               setAgentName(agent.name);
               setLlmConfig(agent.llm_config);
 
-              // Add welcome screen for new agent
-              welcomeCommittedRef.current = false;
-              setStaticItems([
-                {
-                  kind: "welcome",
-                  id: `welcome-${Date.now().toString(36)}`,
-                  snapshot: {
-                    continueSession: true,
-                    agentState: agent,
-                    terminalWidth: columns,
-                  },
-                },
-              ]);
-
               // Backfill message history
               if (messages.length > 0) {
                 hasBackfilledRef.current = false;
@@ -1757,13 +1743,14 @@ export default function App({
                 hasBackfilledRef.current = true;
               }
 
-              // Add success command to transcript
+              // Add success command to transcript with agent link
+              const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
               const successCmdId = uid("cmd");
               buffersRef.current.byId.set(successCmdId, {
                 kind: "command",
                 id: successCmdId,
                 input: msg,
-                output: `✓ Loaded profile "${profileName}" (${agent.name || targetAgentId})`,
+                output: `✓ Loaded profile "${profileName}" (${agent.name || targetAgentId})\n${agentUrl}`,
                 phase: "finished",
                 success: true,
               });
@@ -3277,8 +3264,8 @@ Plan file path: ${planFilePath}`;
             {/* Transcript */}
             {liveItems.length > 0 && pendingApprovals.length === 0 && (
               <Box flexDirection="column">
-                {liveItems.map((ln) => (
-                  <Box key={ln.id} marginTop={1}>
+                {liveItems.map((ln, idx) => (
+                  <Box key={ln.id} marginTop={idx > 0 || staticItems.length > 0 ? 1 : 0}>
                     {ln.kind === "user" ? (
                       <UserMessage line={ln} />
                     ) : ln.kind === "reasoning" ? (
