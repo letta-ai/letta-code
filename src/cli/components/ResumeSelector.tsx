@@ -1,6 +1,7 @@
+import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -11,7 +12,8 @@ interface ResumeSelectorProps {
   onCancel: () => void;
 }
 
-const PAGE_SIZE = 5;
+const DISPLAY_PAGE_SIZE = 5; // How many agents to show per page
+const FETCH_PAGE_SIZE = 20; // How many agents to fetch from server at once
 
 /**
  * Format a relative time string from a date
@@ -70,87 +72,103 @@ export function ResumeSelector({
   onCancel,
 }: ResumeSelectorProps) {
   const terminalWidth = useTerminalWidth();
-  const [agents, setAgents] = useState<AgentState[]>([]);
+  const [allAgents, setAllAgents] = useState<AgentState[]>([]); // All fetched agents
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [currentPage, setCurrentPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [hasMore, setHasMore] = useState(true);
+  const clientRef = useRef<Letta | null>(null);
 
+  // Fetch agents from the server
+  const fetchAgents = useCallback(
+    async (afterCursor?: string | null, query?: string) => {
+      const client = clientRef.current || (await getClient());
+      clientRef.current = client;
+
+      const agentList = await client.agents.list({
+        limit: FETCH_PAGE_SIZE,
+        include: ["agent.blocks"],
+        order: "desc",
+        order_by: "last_run_completion",
+        ...(afterCursor && { after: afterCursor }),
+        ...(query && { query_text: query }),
+      });
+
+      // Get cursor for next fetch (last item's ID if there are more)
+      const cursor =
+        agentList.items.length === FETCH_PAGE_SIZE
+          ? (agentList.items[agentList.items.length - 1]?.id ?? null)
+          : null;
+
+      return {
+        agents: agentList.items,
+        nextCursor: cursor,
+      };
+    },
+    [],
+  );
+
+  // Initial fetch
   useEffect(() => {
-    const fetchAgents = async () => {
+    const initialFetch = async () => {
       try {
-        const client = await getClient();
-        // Fetch agents with higher limit to ensure we get the current agent
-        // Include blocks to get memory block count
-        const agentList = await client.agents.list({
-          limit: 200,
-          include: ["agent.blocks"],
-          order: "desc",
-          order_by: "last_run_completion",
-        });
-
-        // Sort client-side: most recent first, nulls last
-        const sorted = [...agentList.items].sort((a, b) => {
-          const aTime = a.last_run_completion
-            ? new Date(a.last_run_completion).getTime()
-            : 0;
-          const bTime = b.last_run_completion
-            ? new Date(b.last_run_completion).getTime()
-            : 0;
-          // Put nulls (0) at the end
-          if (aTime === 0 && bTime === 0) return 0;
-          if (aTime === 0) return 1;
-          if (bTime === 0) return -1;
-          // Most recent first
-          return bTime - aTime;
-        });
-
-        setAgents(sorted);
+        const result = await fetchAgents(null, debouncedQuery || undefined);
+        setAllAgents(result.agents);
+        setNextCursor(result.nextCursor);
+        setHasMore(result.nextCursor !== null);
         setLoading(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setLoading(false);
       }
     };
-    fetchAgents();
-  }, []);
+    initialFetch();
+  }, [fetchAgents, debouncedQuery]);
 
   // Debounce search query (300ms delay)
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(searchQuery);
+      // Reset to first page when search changes
+      setCurrentPage(0);
+      setSelectedIndex(0);
+      setAllAgents([]);
+      setNextCursor(null);
+      setLoading(true);
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Filter agents based on debounced search query
-  const filteredAgents = agents.filter((agent) => {
-    if (!debouncedQuery) return true;
-    const query = debouncedQuery.toLowerCase();
-    const name = (agent.name || "").toLowerCase();
-    const id = (agent.id || "").toLowerCase();
-    return name.includes(query) || id.includes(query);
-  });
+  // Fetch more agents when needed
+  const fetchMoreAgents = useCallback(async () => {
+    if (loadingMore || !hasMore || !nextCursor) return;
 
-  // Pin current agent to top of list (if it matches the filter)
-  const matchingAgents = [...filteredAgents].sort((a, b) => {
-    if (a.id === currentAgentId) return -1;
-    if (b.id === currentAgentId) return 1;
-    return 0; // Keep sort order for everything else
-  });
+    setLoadingMore(true);
+    try {
+      const result = await fetchAgents(nextCursor, debouncedQuery || undefined);
+      setAllAgents((prev) => [...prev, ...result.agents]);
+      setNextCursor(result.nextCursor);
+      setHasMore(result.nextCursor !== null);
+    } catch (_err) {
+      // Silently fail on pagination errors
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, nextCursor, fetchAgents, debouncedQuery]);
 
-  const totalPages = Math.ceil(matchingAgents.length / PAGE_SIZE);
-  const startIndex = currentPage * PAGE_SIZE;
-  const pageAgents = matchingAgents.slice(startIndex, startIndex + PAGE_SIZE);
-
-  // Reset selected index and page when filtered list changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when query changes
-  useEffect(() => {
-    setSelectedIndex(0);
-    setCurrentPage(0);
-  }, [debouncedQuery]);
+  // Calculate display pages from all fetched agents
+  const totalDisplayPages = Math.ceil(allAgents.length / DISPLAY_PAGE_SIZE);
+  const startIndex = currentPage * DISPLAY_PAGE_SIZE;
+  const pageAgents = allAgents.slice(
+    startIndex,
+    startIndex + DISPLAY_PAGE_SIZE,
+  );
+  const canGoNext = currentPage < totalDisplayPages - 1 || hasMore;
 
   useInput((input, key) => {
     if (loading || error) return;
@@ -176,9 +194,20 @@ export function ResumeSelector({
       }
     } else if (input === "k" || input === "K") {
       // Next page (k = down/forward)
-      if (currentPage < totalPages - 1) {
-        setCurrentPage((prev) => prev + 1);
-        setSelectedIndex(0);
+      if (canGoNext) {
+        const nextPageIndex = currentPage + 1;
+        const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
+
+        // Fetch more if we need data for the next page
+        if (nextStartIndex >= allAgents.length && hasMore) {
+          fetchMoreAgents();
+        }
+
+        // Navigate if we have the data
+        if (nextStartIndex < allAgents.length) {
+          setCurrentPage(nextPageIndex);
+          setSelectedIndex(0);
+        }
       }
     } else if (input === "/") {
       // Ignore "/" - it's shown in help but just starts typing search
@@ -206,10 +235,12 @@ export function ResumeSelector({
     );
   }
 
-  if (agents.length === 0) {
+  if (!loading && allAgents.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text color={colors.selector.title}>No agents found</Text>
+        <Text color={colors.selector.title}>
+          {debouncedQuery ? "No matching agents found" : "No agents found"}
+        </Text>
         <Text dimColor>Press ESC to cancel</Text>
       </Box>
     );
@@ -296,9 +327,9 @@ export function ResumeSelector({
       <Box flexDirection="column" marginTop={1}>
         <Box>
           <Text dimColor>
-            Page {currentPage + 1}/{totalPages || 1}
-            {matchingAgents.length > 0 &&
-              ` (${matchingAgents.length} agent${matchingAgents.length === 1 ? "" : "s"})`}
+            Page {currentPage + 1}
+            {hasMore ? "+" : `/${totalDisplayPages || 1}`}
+            {loadingMore && " (loading...)"}
           </Text>
         </Box>
         <Box>
