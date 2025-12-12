@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync } from "node:fs";
-import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -41,6 +41,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
+import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
@@ -57,6 +58,7 @@ import {
   toLines,
 } from "./helpers/accumulator";
 import { backfillBuffers } from "./helpers/backfill";
+import { formatErrorDetails } from "./helpers/errorFormatter";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -326,6 +328,9 @@ export default function App({
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
 
+  // Resume selector state
+  const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
+
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
@@ -362,6 +367,15 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
+  // Queue cancellation: when queue length > 1, we send cancel and wait for natural stream end
+  const waitingForQueueCancelRef = useRef(false);
+  const queueSnapshotRef = useRef<string[]>([]);
+  const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
+  const restoreQueueOnCancelRef = useRef(restoreQueueOnCancel);
+  useEffect(() => {
+    restoreQueueOnCancelRef.current = restoreQueueOnCancel;
+  }, [restoreQueueOnCancel]);
+
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
   const prevColumnsRef = useRef(columns);
@@ -387,16 +401,13 @@ export default function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
-    // console.log(`[COMMIT] Checking ${b.order.length} lines for commit eligibility`);
     for (const id of b.order) {
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
       if (!ln) continue;
-      // console.log(`[COMMIT] Checking ${id}: kind=${ln.kind}, phase=${(ln as any).phase}`);
       if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
-        // console.log(`[COMMIT] Committed ${id} (${ln.kind})`);
         continue;
       }
       // Commands with phase should only commit when finished
@@ -404,20 +415,15 @@ export default function App({
         if (!ln.phase || ln.phase === "finished") {
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // console.log(`[COMMIT] Committed ${id} (command, finished)`);
         }
         continue;
       }
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
-        // console.log(`[COMMIT] Committed ${id} (${ln.kind}, finished)`);
-      } else {
-        // console.log(`[COMMIT] NOT committing ${id} (phase=${(ln as any).phase})`);
       }
     }
     if (newlyCommitted.length > 0) {
-      // console.log(`[COMMIT] Total committed: ${newlyCommitted.length} items`);
       setStaticItems((prev) => [...prev, ...newlyCommitted]);
     }
   }, []);
@@ -600,8 +606,6 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       const currentInput = initialInput;
-      // Track lastRunId outside the while loop so it's available in catch block
-      let lastKnownRunId: string | null = null;
 
       try {
         // Check if user hit escape before we started
@@ -634,11 +638,6 @@ export default function App({
               abortControllerRef.current?.signal,
             );
 
-          // Update lastKnownRunId for error handling in catch block
-          if (lastRunId) {
-            lastKnownRunId = lastRunId;
-          }
-
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
           sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
@@ -649,16 +648,67 @@ export default function App({
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
             setStreaming(false);
+
+            // Check if we were waiting for cancel but stream finished naturally
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancelRef.current) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+                // Don't clear queue, don't send - let dequeue effect handle them one by one
+              } else {
+                // Auto-send concatenated message
+                // Clear the queue
+                setMessageQueue([]);
+
+                // Concatenate the snapshot
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+
+                if (concatenatedMessage.trim()) {
+                  onSubmitRef.current(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+            }
+
             return;
           }
 
           // Case 1.5: Stream was cancelled by user
           if (stopReason === "cancelled") {
-            // Only show error if not using eager cancel (eager cancel already handled this)
-            if (!EAGER_CANCEL) {
-              appendError("Stream interrupted by user");
-            }
             setStreaming(false);
+
+            // Check if this cancel was triggered by queue threshold
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancelRef.current) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+                // Don't clear queue, don't send - let dequeue effect handle them one by one
+              } else {
+                // Auto-send concatenated message
+                // Clear the queue
+                setMessageQueue([]);
+
+                // Concatenate the snapshot
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+
+                if (concatenatedMessage.trim()) {
+                  onSubmitRef.current(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+            } else {
+              // Regular user cancellation - show error
+              if (!EAGER_CANCEL) {
+                appendError("Stream interrupted by user");
+              }
+            }
+
             return;
           }
 
@@ -800,6 +850,17 @@ export default function App({
 
             // If all are auto-handled, continue immediately without showing dialog
             if (needsUserInput.length === 0) {
+              // Check if user cancelled before continuing
+              if (
+                userCancelledRef.current ||
+                abortControllerRef.current?.signal.aborted
+              ) {
+                setStreaming(false);
+                markIncompleteToolsAsCancelled(buffersRef.current);
+                refreshDerived();
+                return;
+              }
+
               // Rotate to a new thinking message
               setThinkingMessage(getRandomThinkingMessage());
               refreshDerived();
@@ -848,13 +909,7 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Build run info suffix for debugging
-          const runInfoSuffix = lastRunId
-            ? `\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
-            : `\n(stop_reason: ${stopReason})`;
-
           // Fetch error details from the run if available
-          let errorDetails = `An error occurred during agent execution`;
           if (lastRunId) {
             try {
               const client = await getClient();
@@ -862,26 +917,40 @@ export default function App({
 
               // Check if run has error information in metadata
               if (run.metadata?.error) {
-                const error = run.metadata.error as {
+                const errorData = run.metadata.error as {
                   type?: string;
                   message?: string;
                   detail?: string;
                 };
-                const errorType = error.type ? `[${error.type}] ` : "";
-                const errorMessage = error.message || "An error occurred";
-                const errorDetail = error.detail ? `\n${error.detail}` : "";
-                errorDetails = `${errorType}${errorMessage}${errorDetail}`;
+
+                // Pass structured error data to our formatter
+                const errorObject = {
+                  error: {
+                    error: errorData,
+                    run_id: lastRunId,
+                  },
+                };
+                const errorDetails = formatErrorDetails(errorObject, agentId);
+                appendError(errorDetails);
+              } else {
+                // No error metadata, show generic error with run info
+                appendError(
+                  `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
+                );
               }
             } catch (_e) {
-              // If we can't fetch error details, let user know
+              // If we can't fetch error details, show generic error
               appendError(
-                `${errorDetails}${runInfoSuffix}\n(Unable to fetch additional error details from server)`,
+                `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
               );
               return;
             }
+          } else {
+            // No run_id available - but this is unusual since errors should have run_ids
+            appendError(
+              `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
+            );
           }
-
-          appendError(`${errorDetails}${runInfoSuffix}`);
 
           setStreaming(false);
           refreshDerived();
@@ -899,25 +968,9 @@ export default function App({
           return;
         }
 
-        // Build error message with run_id for debugging
-        const runIdSuffix = lastKnownRunId
-          ? `\n(run_id: ${lastKnownRunId}, stop_reason: error)`
-          : "";
-
-        // Handle APIError from streaming (event: error)
-        if (e instanceof APIError && e.error?.error) {
-          const { type, message, detail } = e.error.error;
-          const errorType = type ? `[${type}] ` : "";
-          const errorMessage = message || "An error occurred";
-          const errorDetail = detail ? `:\n${detail}` : "";
-          appendError(
-            `${errorType}${errorMessage}${errorDetail}${runIdSuffix}`,
-          );
-        } else {
-          // Fallback for non-API errors
-          const errorMessage = e instanceof Error ? e.message : String(e);
-          appendError(`${errorMessage}${runIdSuffix}`);
-        }
+        // Use comprehensive error formatting
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
         refreshDerived();
       } finally {
@@ -953,6 +1006,12 @@ export default function App({
 
     if (!streaming || interruptRequested) return;
 
+    // If we're in the middle of queue cancel, set flag to restore instead of auto-send
+    if (waitingForQueueCancelRef.current) {
+      setRestoreQueueOnCancel(true);
+      // Don't reset flags - let the cancel complete naturally
+    }
+
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       // Abort the stream via abort signal
@@ -968,6 +1027,13 @@ export default function App({
       markIncompleteToolsAsCancelled(buffersRef.current);
       appendError("Stream interrupted by user");
       refreshDerived();
+
+      // Clear any pending approvals since we're cancelling
+      setPendingApprovals([]);
+      setApprovalContexts([]);
+      setApprovalResults([]);
+      setAutoHandledResults([]);
+      setAutoDeniedApprovals([]);
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
@@ -988,7 +1054,8 @@ export default function App({
           abortControllerRef.current.abort();
         }
       } catch (e) {
-        appendError(`Failed to interrupt stream: ${String(e)}`);
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(`Failed to interrupt stream: ${errorDetails}`);
         setInterruptRequested(false);
       }
     }
@@ -1030,7 +1097,28 @@ export default function App({
       const agentBusy = streaming || isExecutingTool || commandRunning;
 
       if (agentBusy) {
-        setMessageQueue((prev) => [...prev, msg]);
+        setMessageQueue((prev) => {
+          const newQueue = [...prev, msg];
+
+          // If queue grows to 2+ messages and we're not already waiting for cancel,
+          // send cancel request and capture snapshot
+          if (newQueue.length > 1 && !waitingForQueueCancelRef.current) {
+            // Capture snapshot of queue right now
+            queueSnapshotRef.current = [...newQueue];
+            waitingForQueueCancelRef.current = true;
+
+            // Send cancel request to backend (fire-and-forget)
+            getClient()
+              .then((client) => client.agents.messages.cancel(agentId))
+              .then(() => {})
+              .catch(() => {
+                // Reset flag if cancel fails
+                waitingForQueueCancelRef.current = false;
+              });
+          }
+
+          return newQueue;
+        });
         return { submitted: true }; // Clears input
       }
 
@@ -1134,11 +1222,12 @@ export default function App({
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1187,11 +1276,12 @@ export default function App({
             refreshDerived();
           } catch (error) {
             // Mark command as failed
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1243,11 +1333,12 @@ export default function App({
             buffersRef.current.order.push(cmdId);
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1286,11 +1377,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1329,11 +1421,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1392,11 +1485,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1407,14 +1501,20 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /swap command - switch to a different agent
+        // Special handling for /resume command - show session resume selector
+        if (msg.trim() === "/resume") {
+          setResumeSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /swap command - alias for /resume
         if (msg.trim().startsWith("/swap")) {
           const parts = msg.trim().split(/\s+/);
           const targetAgentId = parts.slice(1).join(" ");
 
-          // If no agent ID provided, open agent selector
+          // If no agent ID provided, open resume selector (same as /resume)
           if (!targetAgentId) {
-            setAgentSelectorOpen(true);
+            setResumeSelectorOpen(true);
             return { submitted: true };
           }
 
@@ -1494,11 +1594,12 @@ export default function App({
             buffersRef.current.order.push(successCmdId);
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1577,11 +1678,12 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1650,13 +1752,86 @@ export default function App({
               },
             ]);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        // Special handling for /remember command - remember something from conversation
+        if (trimmed.startsWith("/remember")) {
+          const cmdId = uid("cmd");
+
+          // Extract optional description after `/remember`
+          const [, ...rest] = trimmed.split(/\s+/);
+          const userText = rest.join(" ").trim();
+
+          const initialOutput = userText
+            ? `Remembering: ${userText}`
+            : "Processing memory request...";
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: initialOutput,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Import the remember prompt
+            const { REMEMBER_PROMPT } = await import(
+              "../agent/promptAssets.js"
+            );
+
+            // Build system-reminder content for memory request
+            const rememberMessage = userText
+              ? `<system-reminder>\n${REMEMBER_PROMPT}\n</system-reminder>${userText}`
+              : `<system-reminder>\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n</system-reminder>`;
+
+            // Mark command as finished before sending message
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: userText
+                ? `Remembering: ${userText}`
+                : "Processing memory request from conversation context...",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Process conversation with the remember prompt
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: rememberMessage,
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1771,11 +1946,12 @@ ${recentCommits}
               },
             ]);
           } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+              output: `Failed: ${errorDetails}`,
               phase: "finished",
               success: false,
             });
@@ -1817,11 +1993,12 @@ ${recentCommits}
           refreshDerived();
         } catch (error) {
           // Mark command as failed if executeCommand throws
+          const errorDetails = formatErrorDetails(error, agentId);
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: msg,
-            output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+            output: `Failed: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
@@ -1880,10 +2057,33 @@ ${recentCommits}
             agent,
           );
 
+          // Check if user cancelled while we were fetching approval state
+          if (
+            userCancelledRef.current ||
+            abortControllerRef.current?.signal.aborted
+          ) {
+            // User hit ESC during the check - abort and clean up
+            buffersRef.current.byId.delete(userId);
+            const orderIndex = buffersRef.current.order.indexOf(userId);
+            if (orderIndex !== -1) {
+              buffersRef.current.order.splice(orderIndex, 1);
+            }
+            setStreaming(false);
+            refreshDerived();
+            return { submitted: false };
+          }
+
           if (existingApprovals && existingApprovals.length > 0) {
             // There are pending approvals - show them and DON'T send the message yet
             // The message will be restored to the input field for the user to decide
-            // Note: The user message is already in the transcript (optimistic update)
+
+            // Remove the optimistic user message from transcript to avoid duplication
+            buffersRef.current.byId.delete(userId);
+            const orderIndex = buffersRef.current.order.indexOf(userId);
+            if (orderIndex !== -1) {
+              buffersRef.current.order.splice(orderIndex, 1);
+            }
+
             setStreaming(false); // Stop streaming indicator
             setPendingApprovals(existingApprovals);
 
@@ -1897,14 +2097,28 @@ ${recentCommits}
                 return await analyzeToolApproval(approval.toolName, parsedArgs);
               }),
             );
+
+            // Check again after async approval analysis
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              // User cancelled during analysis - don't show dialog
+              setStreaming(false);
+              refreshDerived();
+              return { submitted: false };
+            }
+
             setApprovalContexts(contexts);
+
+            // Refresh to remove the message from UI
+            refreshDerived();
 
             // Return false = message NOT submitted, will be restored to input
             return { submitted: false };
           }
-        } catch (error) {
+        } catch (_error) {
           // If check fails, proceed anyway (don't block user)
-          console.error("Failed to check pending approvals:", error);
         }
       }
 
@@ -1961,7 +2175,9 @@ ${recentCommits}
       messageQueue.length > 0 &&
       pendingApprovals.length === 0 &&
       !commandRunning &&
-      !isExecutingTool
+      !isExecutingTool &&
+      !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
+      !userCancelledRef.current // Don't dequeue if user just cancelled
     ) {
       const [firstMessage, ...rest] = messageQueue;
       setMessageQueue(rest);
@@ -1986,6 +2202,21 @@ ${recentCommits}
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
       try {
+        // Don't send results if user has already cancelled
+        if (
+          userCancelledRef.current ||
+          abortControllerRef.current?.signal.aborted
+        ) {
+          setStreaming(false);
+          setIsExecutingTool(false);
+          setPendingApprovals([]);
+          setApprovalContexts([]);
+          setApprovalResults([]);
+          setAutoHandledResults([]);
+          setAutoDeniedApprovals([]);
+          return;
+        }
+
         // Snapshot current state before clearing dialog
         const approvalResultsSnapshot = [...approvalResults];
         const autoHandledSnapshot = [...autoHandledResults];
@@ -2086,10 +2317,15 @@ ${recentCommits}
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
+        const userCancelled =
+          userCancelledRef.current ||
+          abortControllerRef.current?.signal.aborted;
 
-        if (wasAborted) {
-          // Queue results to send alongside the next user message
-          setQueuedApprovalResults(allResults as ApprovalResult[]);
+        if (wasAborted || userCancelled) {
+          // Queue results to send alongside the next user message (if not cancelled entirely)
+          if (!userCancelled) {
+            setQueuedApprovalResults(allResults as ApprovalResult[]);
+          }
           setStreaming(false);
         } else {
           // Continue conversation with all results
@@ -2146,11 +2382,13 @@ ${recentCommits}
         setIsExecutingTool(false);
       }
     } catch (e) {
-      appendError(String(e));
+      const errorDetails = formatErrorDetails(e, agentId);
+      appendError(errorDetails);
       setStreaming(false);
       setIsExecutingTool(false);
     }
   }, [
+    agentId,
     pendingApprovals,
     approvalResults,
     sendAllResults,
@@ -2234,12 +2472,14 @@ ${recentCommits}
           setIsExecutingTool(false);
         }
       } catch (e) {
-        appendError(String(e));
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
         setIsExecutingTool(false);
       }
     },
     [
+      agentId,
       pendingApprovals,
       approvalResults,
       sendAllResults,
@@ -2352,12 +2592,13 @@ ${recentCommits}
         refreshDerived();
       } catch (error) {
         // Mark command as failed (only if cmdId was created)
+        const errorDetails = formatErrorDetails(error, agentId);
         if (cmdId) {
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Failed to switch model: ${error instanceof Error ? error.message : String(error)}`,
+            output: `Failed to switch model: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
@@ -2439,11 +2680,12 @@ ${recentCommits}
         }
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/system ${promptId}`,
-          output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed to switch system prompt: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2499,11 +2741,12 @@ ${recentCommits}
         });
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/toolset ${toolsetId}`,
-          output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed to switch toolset: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2594,11 +2837,12 @@ ${recentCommits}
         buffersRef.current.order.push(successCmdId);
         refreshDerived();
       } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
           input: `/swap ${targetAgentId}`,
-          output: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+          output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
@@ -2607,7 +2851,7 @@ ${recentCommits}
         setCommandRunning(false);
       }
     },
-    [refreshDerived, commitEligibleLines, columns],
+    [refreshDerived, commitEligibleLines, columns, agentId],
   );
 
   // Track permission mode changes for UI updates
@@ -2664,11 +2908,13 @@ ${recentCommits}
           setApprovalResults((prev) => [...prev, decision]);
         }
       } catch (e) {
-        appendError(String(e));
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
         setStreaming(false);
       }
     },
     [
+      agentId,
       pendingApprovals,
       approvalResults,
       sendAllResults,
@@ -2987,7 +3233,8 @@ Plan file path: ${planFilePath}`;
                 !modelSelectorOpen &&
                 !toolsetSelectorOpen &&
                 !systemPromptSelectorOpen &&
-                !agentSelectorOpen
+                !agentSelectorOpen &&
+                !resumeSelectorOpen
               }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
@@ -3044,6 +3291,18 @@ Plan file path: ${planFilePath}`;
                 currentAgentId={agentId}
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
+              />
+            )}
+
+            {/* Resume Selector - conditionally mounted as overlay */}
+            {resumeSelectorOpen && (
+              <ResumeSelector
+                currentAgentId={agentId}
+                onSelect={(id) => {
+                  setResumeSelectorOpen(false);
+                  handleAgentSelect(id);
+                }}
+                onCancel={() => setResumeSelectorOpen(false)}
               />
             )}
 

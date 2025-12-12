@@ -26,6 +26,9 @@ USAGE
   # headless
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
 
+  # maintenance
+  letta update          Manually check for updates and install if available
+
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
@@ -105,13 +108,11 @@ async function main() {
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
 
-  // set LETTA_API_KEY from environment if available
-  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
-    settings.env = settings.env || {};
-    settings.env.LETTA_API_KEY = process.env.LETTA_API_KEY;
-
-    settingsManager.updateSettings({ env: settings.env });
-  }
+  // Check for updates on startup (non-blocking)
+  const { checkAndAutoUpdate } = await import("./updater/auto-update");
+  checkAndAutoUpdate().catch(() => {
+    // Silently ignore update failures
+  });
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   let values: Record<string, unknown>;
@@ -165,7 +166,7 @@ async function main() {
   }
 
   // Check for subcommands
-  const _command = positionals[2]; // First positional after node and script
+  const command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
   if (values.help) {
@@ -178,6 +179,14 @@ async function main() {
     const { getVersion } = await import("./version");
     console.log(`${getVersion()} (Letta Code)`);
     process.exit(0);
+  }
+
+  // Handle update command
+  if (command === "update") {
+    const { manualUpdate } = await import("./updater/auto-update");
+    const result = await manualUpdate();
+    console.log(result.message);
+    process.exit(result.success ? 0 : 1);
   }
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
@@ -269,10 +278,12 @@ async function main() {
     LETTA_CLOUD_API_URL;
 
   // Check if refresh token is missing for Letta Cloud (only when not using env var)
+  // Skip this check if we already have an API key from env
   if (
     !isHeadless &&
     baseURL === LETTA_CLOUD_API_URL &&
-    !settings.refreshToken
+    !settings.refreshToken &&
+    !apiKey
   ) {
     // For interactive mode, show setup flow
     const { runSetup } = await import("./auth/setup");
