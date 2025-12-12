@@ -70,18 +70,20 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
         line.output
           .split("\n")
           .filter((l) => l.trim() !== "")
-          .map((outputLine, idx) => (
-            <Box flexDirection="row" key={idx}>
-              <Box width={5} flexShrink={0}>
-                <Text dimColor={idx > 0}>{idx === 0 ? "  ⎿  " : "     "}</Text>
+          .map((outputLine, idx) => {
+            const prefixWidth = idx === 0 ? 5 : 8;
+            const prefix = idx === 0 ? "  ⎿  " : "     ⎿  ";
+            return (
+              <Box flexDirection="row" key={idx}>
+                <Box width={prefixWidth} flexShrink={0}>
+                  <Text>{prefix}</Text>
+                </Box>
+                <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
+                  <Text wrap="wrap">{outputLine}</Text>
+                </Box>
               </Box>
-              <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-                <Text wrap="wrap" dimColor={idx > 0}>
-                  {outputLine}
-                </Text>
-              </Box>
-            </Box>
-          ))}
+            );
+          })}
     </Box>
   );
 });

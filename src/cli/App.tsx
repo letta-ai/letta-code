@@ -1563,7 +1563,7 @@ export default function App({
                 const isCurrent = id === agentId;
                 const shortId = id.replace("agent-", "").slice(0, 8);
                 lines.push(
-                  `  ${name} → ${shortId}${isCurrent ? " (current)" : ""}`,
+                  `${name} → ${shortId}${isCurrent ? " (current)" : ""}`,
                 );
               }
               output = lines.join("\n");
@@ -1771,7 +1771,7 @@ export default function App({
                 kind: "command",
                 id: successCmdId,
                 input: msg,
-                output: `✓ Loaded profile "${profileName}" (${agent.name || targetAgentId})\n${agentUrl}`,
+                output: `Loaded profile "${profileName}" (${agent.name || targetAgentId})\n${agentUrl}`,
                 phase: "finished",
                 success: true,
               });
