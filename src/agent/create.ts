@@ -51,7 +51,7 @@ export interface CreateAgentResult {
 }
 
 export async function createAgent(
-  name = "letta-cli-agent",
+  name = "letta-code-agent",
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
@@ -342,6 +342,7 @@ export async function createAgent(
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPrompt,
     name,
+    description: `Letta Code agent created in ${process.cwd()}`,
     embedding: embeddingModel,
     model: modelHandle,
     context_window_limit: contextWindow,
