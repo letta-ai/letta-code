@@ -138,7 +138,13 @@ export async function drainStream(
     }
 
     if (chunk.message_type === "stop_reason") {
-      stopReason = chunk.stop_reason;
+      // Prioritize more specific stop reasons over generic ones
+      // If we already have a specific reason, don't override with generic "error"
+      if (stopReason === "llm_api_error" && chunk.stop_reason === "error") {
+        // Keep llm_api_error, don't override with generic error
+      } else {
+        stopReason = chunk.stop_reason;
+      }
       // Continue reading stream to get usage_statistics that may come after
     }
   }

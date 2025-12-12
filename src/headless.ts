@@ -658,7 +658,13 @@ export async function handleHeadlessCommand(
 
           // Track stop reason
           if (chunk.message_type === "stop_reason") {
-            lastStopReason = chunk.stop_reason;
+            // Prioritize more specific stop reasons over generic ones
+            // If we already have a specific reason, don't override with generic "error"
+            if (lastStopReason === "llm_api_error" && chunk.stop_reason === "error") {
+              // Keep llm_api_error, don't override with generic error
+            } else {
+              lastStopReason = chunk.stop_reason;
+            }
           }
         }
 
@@ -667,6 +673,19 @@ export async function handleHeadlessCommand(
         // Use the last run_id we saw (if any)
         lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
         if (lastRunId) lastKnownRunId = lastRunId;
+
+        // Debug: Log the stopReason for troubleshooting
+        if (outputFormat === "stream-json") {
+          console.log(
+            JSON.stringify({
+              type: "debug",
+              message: "Stream ended",
+              stopReason,
+              llmApiErrorRetries,
+              maxRetries: LLM_API_ERROR_MAX_RETRIES,
+            }),
+          );
+        }
 
         // Mark final line as finished
         const { markCurrentLineAsFinished } = await import(
@@ -692,6 +711,8 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        // Reset retry counter after successful turn
+        llmApiErrorRetries = 0;
         break;
       }
 
@@ -793,45 +814,28 @@ export async function handleHeadlessCommand(
             approvals: executedResults as ApprovalResult[],
           },
         ];
+        // Reset retry counter after successful approval processing
+        llmApiErrorRetries = 0;
         continue;
       }
 
-      // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
-      if (stopReason === "llm_api_error") {
-        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-          const attempt = llmApiErrorRetries + 1;
-          const baseDelayMs = 1000;
-          const delayMs = baseDelayMs * 2 ** (attempt - 1);
-
-          llmApiErrorRetries = attempt;
-
-          if (outputFormat === "stream-json") {
-            console.log(
-              JSON.stringify({
-                type: "retry",
-                reason: "llm_api_error",
-                attempt,
-                max_attempts: LLM_API_ERROR_MAX_RETRIES,
-                delay_ms: delayMs,
-                run_id: lastRunId,
-              }),
-            );
-          } else {
-            const delaySeconds = Math.round(delayMs / 1000);
-            console.error(
-              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
-            );
-          }
-
-          // Exponential backoff before retrying the same input
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          continue;
-        }
+      // Case 3: Error handling - retry ALL errors with exponential backoff up to a limit
+      // This includes llm_api_error, error, and any other error types
+      if (outputFormat === "stream-json") {
+        console.log(
+          JSON.stringify({
+            type: "debug",
+            message: "Checking retry condition",
+            stopReason,
+            llmApiErrorRetries,
+            maxRetries: LLM_API_ERROR_MAX_RETRIES,
+            willRetry:
+              (stopReason === "llm_api_error" || stopReason === "error") &&
+              llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES,
+          }),
+        );
       }
-
-      // Unexpected stop reason (error, llm_api_error, etc.)
-      // Retry all errors up to the max retry limit
-      if (stopReason === "error" && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+      if ((stopReason === "llm_api_error" || stopReason === "error") && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         const attempt = llmApiErrorRetries + 1;
         const baseDelayMs = 1000;
         const delayMs = baseDelayMs * 2 ** (attempt - 1);
@@ -842,7 +846,7 @@ export async function handleHeadlessCommand(
           console.log(
             JSON.stringify({
               type: "retry",
-              reason: "error",
+              reason: stopReason,
               attempt,
               max_attempts: LLM_API_ERROR_MAX_RETRIES,
               delay_ms: delayMs,
@@ -851,11 +855,13 @@ export async function handleHeadlessCommand(
           );
         } else {
           const delaySeconds = Math.round(delayMs / 1000);
+          const errorType = stopReason === "llm_api_error" ? "LLM API error" : "Error";
           console.error(
-            `Error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+            `${errorType} encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
           );
         }
 
+        // Exponential backoff before retrying the same input
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }
