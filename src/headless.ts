@@ -830,53 +830,34 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
-      // Before failing, check run metadata to see if this is a retriable llm_api_error
-      if (
-        stopReason === "error" &&
-        lastRunId &&
-        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-      ) {
-        try {
-          const run = await client.runs.retrieve(lastRunId);
-          const metaError = run.metadata?.error as
-            | {
-                type?: string;
-                message?: string;
-                detail?: string;
-              }
-            | undefined;
+      // Retry all errors up to the max retry limit
+      if (stopReason === "error" && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+        const attempt = llmApiErrorRetries + 1;
+        const baseDelayMs = 1000;
+        const delayMs = baseDelayMs * 2 ** (attempt - 1);
 
-          if (metaError?.type === "llm_api_error") {
-            const attempt = llmApiErrorRetries + 1;
-            const baseDelayMs = 1000;
-            const delayMs = baseDelayMs * 2 ** (attempt - 1);
+        llmApiErrorRetries = attempt;
 
-            llmApiErrorRetries = attempt;
-
-            if (outputFormat === "stream-json") {
-              console.log(
-                JSON.stringify({
-                  type: "retry",
-                  reason: "llm_api_error",
-                  attempt,
-                  max_attempts: LLM_API_ERROR_MAX_RETRIES,
-                  delay_ms: delayMs,
-                  run_id: lastRunId,
-                }),
-              );
-            } else {
-              const delaySeconds = Math.round(delayMs / 1000);
-              console.error(
-                `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
-              );
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-            continue;
-          }
-        } catch (_e) {
-          // If we can't fetch run metadata, fall through to normal error handling
+        if (outputFormat === "stream-json") {
+          console.log(
+            JSON.stringify({
+              type: "retry",
+              reason: "error",
+              attempt,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: delayMs,
+              run_id: lastRunId,
+            }),
+          );
+        } else {
+          const delaySeconds = Math.round(delayMs / 1000);
+          console.error(
+            `Error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+          );
         }
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
       }
 
       // Mark incomplete tool calls as cancelled to prevent stuck state
