@@ -363,6 +363,11 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
+  // Queue cancellation: when queue length > 1, we send cancel and wait for natural stream end
+  const waitingForQueueCancelRef = useRef(false);
+  const queueSnapshotRef = useRef<string[]>([]);
+  const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
+
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
   const prevColumnsRef = useRef(columns);
@@ -388,16 +393,13 @@ export default function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
-    // console.log(`[COMMIT] Checking ${b.order.length} lines for commit eligibility`);
     for (const id of b.order) {
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
       if (!ln) continue;
-      // console.log(`[COMMIT] Checking ${id}: kind=${ln.kind}, phase=${(ln as any).phase}`);
       if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
-        // console.log(`[COMMIT] Committed ${id} (${ln.kind})`);
         continue;
       }
       // Commands with phase should only commit when finished
@@ -405,20 +407,15 @@ export default function App({
         if (!ln.phase || ln.phase === "finished") {
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // console.log(`[COMMIT] Committed ${id} (command, finished)`);
         }
         continue;
       }
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
-        // console.log(`[COMMIT] Committed ${id} (${ln.kind}, finished)`);
-      } else {
-        // console.log(`[COMMIT] NOT committing ${id} (phase=${(ln as any).phase})`);
       }
     }
     if (newlyCommitted.length > 0) {
-      // console.log(`[COMMIT] Total committed: ${newlyCommitted.length} items`);
       setStaticItems((prev) => [...prev, ...newlyCommitted]);
     }
   }, []);
@@ -643,16 +640,67 @@ export default function App({
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
             setStreaming(false);
+
+            // Check if we were waiting for cancel but stream finished naturally
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancel) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+                // Don't clear queue, don't send - let dequeue effect handle them one by one
+              } else {
+                // Auto-send concatenated message
+                // Clear the queue
+                setMessageQueue([]);
+
+                // Concatenate the snapshot
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+
+                if (concatenatedMessage.trim()) {
+                  onSubmit(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+            }
+
             return;
           }
 
           // Case 1.5: Stream was cancelled by user
           if (stopReason === "cancelled") {
-            // Only show error if not using eager cancel (eager cancel already handled this)
-            if (!EAGER_CANCEL) {
-              appendError("Stream interrupted by user");
-            }
             setStreaming(false);
+
+            // Check if this cancel was triggered by queue threshold
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancel) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+                // Don't clear queue, don't send - let dequeue effect handle them one by one
+              } else {
+                // Auto-send concatenated message
+                // Clear the queue
+                setMessageQueue([]);
+
+                // Concatenate the snapshot
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+
+                if (concatenatedMessage.trim()) {
+                  onSubmit(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+            } else {
+              // Regular user cancellation - show error
+              if (!EAGER_CANCEL) {
+                appendError("Stream interrupted by user");
+              }
+            }
+
             return;
           }
 
@@ -950,6 +998,12 @@ export default function App({
 
     if (!streaming || interruptRequested) return;
 
+    // If we're in the middle of queue cancel, set flag to restore instead of auto-send
+    if (waitingForQueueCancelRef.current) {
+      setRestoreQueueOnCancel(true);
+      // Don't reset flags - let the cancel complete naturally
+    }
+
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       // Abort the stream via abort signal
@@ -1028,7 +1082,28 @@ export default function App({
       const agentBusy = streaming || isExecutingTool || commandRunning;
 
       if (agentBusy) {
-        setMessageQueue((prev) => [...prev, msg]);
+        setMessageQueue((prev) => {
+          const newQueue = [...prev, msg];
+
+          // If queue grows to 2+ messages and we're not already waiting for cancel,
+          // send cancel request and capture snapshot
+          if (newQueue.length > 1 && !waitingForQueueCancelRef.current) {
+            // Capture snapshot of queue right now
+            queueSnapshotRef.current = [...newQueue];
+            waitingForQueueCancelRef.current = true;
+
+            // Send cancel request to backend (fire-and-forget)
+            getClient()
+              .then((client) => client.agents.messages.cancel(agentId))
+              .then(() => {})
+              .catch(() => {
+                // Reset flag if cancel fails
+                waitingForQueueCancelRef.current = false;
+              });
+          }
+
+          return newQueue;
+        });
         return { submitted: true }; // Clears input
       }
 
@@ -1968,7 +2043,8 @@ ${recentCommits}
       messageQueue.length > 0 &&
       pendingApprovals.length === 0 &&
       !commandRunning &&
-      !isExecutingTool
+      !isExecutingTool &&
+      !waitingForQueueCancelRef.current // Don't dequeue while waiting for cancel
     ) {
       const [firstMessage, ...rest] = messageQueue;
       setMessageQueue(rest);
