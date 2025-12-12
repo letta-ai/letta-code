@@ -1514,6 +1514,300 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /profile command - manage named agent profiles
+        if (
+          msg.trim() === "/profile" ||
+          msg.trim().startsWith("/profile ")
+        ) {
+          const parts = msg.trim().split(/\s+/);
+          const subcommand = parts[1] || "list"; // default to list
+          const profileName = parts.slice(2).join(" ");
+
+          const { settingsManager } = await import("../settings-manager");
+          const cmdId = uid("cmd");
+
+          // /profile list (or just /profile)
+          if (subcommand === "list" || parts.length === 1) {
+            const localSettings = settingsManager.getLocalProjectSettings();
+            const profiles = localSettings.profiles || {};
+            const entries = Object.entries(profiles);
+
+            let output: string;
+            if (entries.length === 0) {
+              output =
+                "No profiles saved. Use /profile save <name> to create one.";
+            } else {
+              const lines = ["Profiles:"];
+              for (const [name, id] of entries) {
+                const isCurrent = id === agentId;
+                const shortId = id.replace("agent-", "").slice(0, 8);
+                lines.push(
+                  `  ${name} → ${shortId}${isCurrent ? " (current)" : ""}`,
+                );
+              }
+              output = lines.join("\n");
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // /profile save <name>
+          if (subcommand === "save") {
+            if (!profileName) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: "Please provide a profile name: /profile save <name>",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            if (!/^[a-zA-Z0-9_-]+$/.test(profileName)) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output:
+                  "Profile name must only contain letters, numbers, underscores, and hyphens",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            const localSettings = settingsManager.getLocalProjectSettings();
+            const profiles = { ...(localSettings.profiles || {}) };
+            const existed = profileName in profiles;
+            profiles[profileName] = agentId;
+            settingsManager.updateLocalProjectSettings({ profiles });
+
+            const shortId = agentId.replace("agent-", "").slice(0, 8);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: existed
+                ? `✓ Profile "${profileName}" updated (${shortId})`
+                : `✓ Profile "${profileName}" saved (${shortId})`,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // /profile delete <name>
+          if (subcommand === "delete") {
+            if (!profileName) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output:
+                  "Please provide a profile name: /profile delete <name>",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            const localSettings = settingsManager.getLocalProjectSettings();
+            const profiles = { ...(localSettings.profiles || {}) };
+
+            if (!(profileName in profiles)) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Profile "${profileName}" not found. Use /profile list to see available profiles.`,
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            delete profiles[profileName];
+            settingsManager.updateLocalProjectSettings({ profiles });
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `✓ Profile "${profileName}" deleted`,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // /profile load <name>
+          if (subcommand === "load") {
+            if (!profileName) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: "Please provide a profile name: /profile load <name>",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            const localSettings = settingsManager.getLocalProjectSettings();
+            const profiles = localSettings.profiles || {};
+            const targetAgentId = profiles[profileName];
+
+            if (!targetAgentId) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Profile "${profileName}" not found. Use /profile list to see available profiles.`,
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            // Same as /swap logic
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Loading profile "${profileName}"...`,
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            setCommandRunning(true);
+
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(targetAgentId);
+
+              const messagesPage =
+                await client.agents.messages.list(targetAgentId);
+              const messages = messagesPage.items;
+
+              await updateProjectSettings({ lastAgent: targetAgentId });
+
+              // Clear current transcript
+              buffersRef.current.byId.clear();
+              buffersRef.current.order = [];
+              buffersRef.current.tokenCount = 0;
+              emittedIdsRef.current.clear();
+              setStaticItems([]);
+
+              // Update agent state
+              setAgentId(targetAgentId);
+              setAgentState(agent);
+              setAgentName(agent.name);
+              setLlmConfig(agent.llm_config);
+
+              // Add welcome screen for new agent
+              welcomeCommittedRef.current = false;
+              setStaticItems([
+                {
+                  kind: "welcome",
+                  id: `welcome-${Date.now().toString(36)}`,
+                  snapshot: {
+                    continueSession: true,
+                    agentState: agent,
+                    terminalWidth: columns,
+                  },
+                },
+              ]);
+
+              // Backfill message history
+              if (messages.length > 0) {
+                hasBackfilledRef.current = false;
+                backfillBuffers(buffersRef.current, messages);
+                refreshDerived();
+                commitEligibleLines(buffersRef.current);
+                hasBackfilledRef.current = true;
+              }
+
+              // Add success command to transcript
+              const successCmdId = uid("cmd");
+              buffersRef.current.byId.set(successCmdId, {
+                kind: "command",
+                id: successCmdId,
+                input: msg,
+                output: `✓ Loaded profile "${profileName}" (${agent.name || targetAgentId})`,
+                phase: "finished",
+                success: true,
+              });
+              buffersRef.current.order.push(successCmdId);
+              refreshDerived();
+            } catch (error) {
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
+              const isNotFound =
+                errorMessage.includes("not found") ||
+                errorMessage.includes("404");
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: isNotFound
+                  ? `Agent for profile "${profileName}" no longer exists. Use /profile delete ${profileName} to remove this stale profile.`
+                  : `Failed to load profile: ${errorMessage}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            } finally {
+              setCommandRunning(false);
+            }
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output:
+              "Unknown subcommand. Usage: /profile [list|save|load|delete] <name>",
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
         // Special handling for /bashes command - show background shell processes
         if (msg.trim() === "/bashes") {
           const { backgroundProcesses } = await import(

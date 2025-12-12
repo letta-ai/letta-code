@@ -120,6 +120,13 @@ export const commands: Record<string, Command> = {
       return "Starting skill creation...";
     },
   },
+  "/profile": {
+    desc: "Manage named agent profiles (save/load/list/delete)",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing profiles...";
+    },
+  },
 };
 
 /**
