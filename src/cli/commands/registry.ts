@@ -72,6 +72,13 @@ export const commands: Record<string, Command> = {
       return "Renaming agent...";
     },
   },
+  "/description": {
+    desc: "Update the current agent's description",
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Updating description...";
+    },
+  },
   "/swap": {
     desc: "Alias for /resume",
     hidden: true, // Hidden - use /resume instead
