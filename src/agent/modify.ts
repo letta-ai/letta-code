@@ -87,7 +87,7 @@ function buildModelSettings(
   if (isGoogleVertex) {
     // Vertex AI uses the same Google provider on the backend; only the handle differs.
     const googleVertexSettings: Record<string, unknown> = {
-      provider_type: "google_ai",
+      provider_type: "google_vertex",
       parallel_tool_calls: true,
     };
     if (updateArgs?.thinking_budget !== undefined) {
