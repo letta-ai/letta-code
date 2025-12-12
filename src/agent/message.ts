@@ -18,11 +18,12 @@ export async function sendMessageStream(
     background?: boolean;
     // add more later: includePings, request timeouts, etc.
   } = { streamTokens: true, background: true },
+  requestOptions: { maxRetries?: number } = { maxRetries: 0 },
 ): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
   return client.agents.messages.stream(agentId, {
     messages: messages,
     stream_tokens: opts.streamTokens ?? true,
     background: opts.background ?? true,
-  });
+  }, requestOptions);
 }
