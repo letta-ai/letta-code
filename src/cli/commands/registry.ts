@@ -6,6 +6,7 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  hidden?: boolean; // Hidden commands don't show in autocomplete but still work
 }
 
 export const commands: Record<string, Command> = {
@@ -72,10 +73,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/swap": {
-    desc: "Switch to a different agent",
+    desc: "Alias for /resume",
+    hidden: true, // Hidden - use /resume instead
     handler: () => {
-      // Handled specially in App.tsx to access agent list and client
-      return "Swapping agent...";
+      // Handled specially in App.tsx - redirects to /resume
+      return "Opening session selector...";
     },
   },
   "/toolset": {
@@ -125,6 +127,13 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
+    },
+  },
+  "/resume": {
+    desc: "Resume a previous agent session",
+    handler: () => {
+      // Handled specially in App.tsx to show resume selector
+      return "Opening session selector...";
     },
   },
 };
