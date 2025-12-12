@@ -79,8 +79,8 @@ export function ResumeSelector({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(""); // What user is typing
+  const [activeQuery, setActiveQuery] = useState(""); // Submitted search query
   const [hasMore, setHasMore] = useState(true);
   const clientRef = useRef<Letta | null>(null);
 
@@ -113,36 +113,40 @@ export function ResumeSelector({
     [],
   );
 
-  // Initial fetch
+  // Fetch agents when activeQuery changes (initial load or search submitted)
   useEffect(() => {
-    const initialFetch = async () => {
+    const doFetch = async () => {
+      setLoading(true);
       try {
-        const result = await fetchAgents(null, debouncedQuery || undefined);
+        const result = await fetchAgents(null, activeQuery || undefined);
         setAllAgents(result.agents);
         setNextCursor(result.nextCursor);
         setHasMore(result.nextCursor !== null);
-        setLoading(false);
+        setCurrentPage(0);
+        setSelectedIndex(0);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+      } finally {
         setLoading(false);
       }
     };
-    initialFetch();
-  }, [fetchAgents, debouncedQuery]);
+    doFetch();
+  }, [fetchAgents, activeQuery]);
 
-  // Debounce search query (300ms delay)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-      // Reset to first page when search changes
-      setCurrentPage(0);
-      setSelectedIndex(0);
-      setAllAgents([]);
-      setNextCursor(null);
-      setLoading(true);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  // Submit search (called when Enter is pressed while typing search)
+  const submitSearch = useCallback(() => {
+    if (searchInput !== activeQuery) {
+      setActiveQuery(searchInput);
+    }
+  }, [searchInput, activeQuery]);
+
+  // Clear search
+  const clearSearch = useCallback(() => {
+    setSearchInput("");
+    if (activeQuery) {
+      setActiveQuery("");
+    }
+  }, [activeQuery]);
 
   // Fetch more agents when needed
   const fetchMoreAgents = useCallback(async () => {
@@ -150,7 +154,7 @@ export function ResumeSelector({
 
     setLoadingMore(true);
     try {
-      const result = await fetchAgents(nextCursor, debouncedQuery || undefined);
+      const result = await fetchAgents(nextCursor, activeQuery || undefined);
       setAllAgents((prev) => [...prev, ...result.agents]);
       setNextCursor(result.nextCursor);
       setHasMore(result.nextCursor !== null);
@@ -159,7 +163,7 @@ export function ResumeSelector({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, nextCursor, fetchAgents, debouncedQuery]);
+  }, [loadingMore, hasMore, nextCursor, fetchAgents, activeQuery]);
 
   // Calculate display pages from all fetched agents
   const totalDisplayPages = Math.ceil(allAgents.length / DISPLAY_PAGE_SIZE);
@@ -178,14 +182,24 @@ export function ResumeSelector({
     } else if (key.downArrow) {
       setSelectedIndex((prev) => Math.min(pageAgents.length - 1, prev + 1));
     } else if (key.return) {
-      const selectedAgent = pageAgents[selectedIndex];
-      if (selectedAgent?.id) {
-        onSelect(selectedAgent.id);
+      // If typing a search query, submit it; otherwise select agent
+      if (searchInput && searchInput !== activeQuery) {
+        submitSearch();
+      } else {
+        const selectedAgent = pageAgents[selectedIndex];
+        if (selectedAgent?.id) {
+          onSelect(selectedAgent.id);
+        }
       }
     } else if (key.escape) {
-      onCancel();
+      // If typing search, clear it first; otherwise cancel
+      if (searchInput) {
+        clearSearch();
+      } else {
+        onCancel();
+      }
     } else if (key.backspace || key.delete) {
-      setSearchQuery((prev) => prev.slice(0, -1));
+      setSearchInput((prev) => prev.slice(0, -1));
     } else if (input === "j" || input === "J") {
       // Previous page (j = up/back)
       if (currentPage > 0) {
@@ -210,42 +224,14 @@ export function ResumeSelector({
         }
       }
     } else if (input === "/") {
-      // Ignore "/" - it's shown in help but just starts typing search
-      // Don't add it to the search query
+      // Ignore "/" - just starts typing search
     } else if (input && !key.ctrl && !key.meta) {
-      // Add regular characters to search query (searches name and ID)
-      setSearchQuery((prev) => prev + input);
+      // Add regular characters to search input
+      setSearchInput((prev) => prev + input);
     }
   });
 
-  if (loading) {
-    return (
-      <Box flexDirection="column">
-        <Text color={colors.selector.title}>Loading agents...</Text>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box flexDirection="column">
-        <Text color="red">Error loading agents: {error}</Text>
-        <Text dimColor>Press ESC to cancel</Text>
-      </Box>
-    );
-  }
-
-  if (!loading && allAgents.length === 0) {
-    return (
-      <Box flexDirection="column">
-        <Text color={colors.selector.title}>
-          {debouncedQuery ? "No matching agents found" : "No agents found"}
-        </Text>
-        <Text dimColor>Press ESC to cancel</Text>
-      </Box>
-    );
-  }
-
+  // Always show the header, with contextual content below
   return (
     <Box flexDirection="column" gap={1}>
       <Box>
@@ -254,91 +240,127 @@ export function ResumeSelector({
         </Text>
       </Box>
 
-      {searchQuery && (
+      {/* Search input - show when typing or when there's an active search */}
+      {(searchInput || activeQuery) && (
         <Box>
-          <Text dimColor>Search (name/ID): </Text>
-          <Text>{searchQuery}</Text>
+          <Text dimColor>Search: </Text>
+          <Text>{searchInput}</Text>
+          {searchInput && searchInput !== activeQuery && (
+            <Text dimColor> (press Enter to search)</Text>
+          )}
+          {activeQuery && searchInput === activeQuery && (
+            <Text dimColor> (Esc to clear)</Text>
+          )}
         </Box>
       )}
 
-      <Box flexDirection="column">
-        {pageAgents.map((agent, index) => {
-          const isSelected = index === selectedIndex;
-          const isCurrent = agent.id === currentAgentId;
-
-          const relativeTime = formatRelativeTime(agent.last_run_completion);
-          const blockCount = agent.blocks?.length ?? 0;
-          const modelStr = formatModel(agent);
-
-          // Calculate available width for agent ID
-          // Row format: "> Name · agent-id (current)"
-          const nameLen = (agent.name || "Unnamed").length;
-          const fixedChars = 2 + 3 + (isCurrent ? 10 : 0); // "> " + " · " + " (current)"
-          const availableForId = Math.max(
-            15,
-            terminalWidth - nameLen - fixedChars,
-          );
-          const displayId = truncateAgentId(agent.id, availableForId);
-
-          return (
-            <Box key={agent.id} flexDirection="column" marginBottom={1}>
-              {/* Row 1: Selection indicator, agent name, and ID */}
-              <Box flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? ">" : " "}
-                </Text>
-                <Text> </Text>
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {agent.name || "Unnamed"}
-                </Text>
-                <Text dimColor> · {displayId}</Text>
-                {isCurrent && (
-                  <Text color={colors.selector.itemCurrent}> (current)</Text>
-                )}
-              </Box>
-              {/* Row 2: Description */}
-              <Box flexDirection="row" marginLeft={2}>
-                <Text dimColor italic>
-                  {agent.description || "No description"}
-                </Text>
-              </Box>
-              {/* Row 3: Metadata (dimmed) */}
-              <Box flexDirection="row" marginLeft={2}>
-                <Text dimColor>
-                  {relativeTime} · {blockCount} memory block
-                  {blockCount === 1 ? "" : "s"} · {modelStr}
-                </Text>
-              </Box>
-            </Box>
-          );
-        })}
-      </Box>
-
-      {/* Footer with pagination and controls */}
-      <Box flexDirection="column" marginTop={1}>
-        <Box>
-          <Text dimColor>
-            Page {currentPage + 1}
-            {hasMore ? "+" : `/${totalDisplayPages || 1}`}
-            {loadingMore && " (loading...)"}
-          </Text>
+      {/* Error state */}
+      {error && (
+        <Box flexDirection="column">
+          <Text color="red">Error: {error}</Text>
+          <Text dimColor>Press ESC to cancel</Text>
         </Box>
+      )}
+
+      {/* Loading state */}
+      {loading && !error && (
         <Box>
-          <Text dimColor>
-            ↑↓ navigate · Enter select · J/K prev/next page · Type to search ·
-            Esc cancel
-          </Text>
+          <Text dimColor>Loading agents...</Text>
         </Box>
-      </Box>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && allAgents.length === 0 && (
+        <Box flexDirection="column">
+          <Text dimColor>
+            {activeQuery ? "No matching agents found" : "No agents found"}
+          </Text>
+          <Text dimColor>Press ESC to cancel</Text>
+        </Box>
+      )}
+
+      {/* Agent list - only show when loaded and have agents */}
+      {!loading && !error && allAgents.length > 0 && (
+        <Box flexDirection="column">
+          {pageAgents.map((agent, index) => {
+            const isSelected = index === selectedIndex;
+            const isCurrent = agent.id === currentAgentId;
+
+            const relativeTime = formatRelativeTime(agent.last_run_completion);
+            const blockCount = agent.blocks?.length ?? 0;
+            const modelStr = formatModel(agent);
+
+            // Calculate available width for agent ID
+            // Row format: "> Name · agent-id (current)"
+            const nameLen = (agent.name || "Unnamed").length;
+            const fixedChars = 2 + 3 + (isCurrent ? 10 : 0); // "> " + " · " + " (current)"
+            const availableForId = Math.max(
+              15,
+              terminalWidth - nameLen - fixedChars,
+            );
+            const displayId = truncateAgentId(agent.id, availableForId);
+
+            return (
+              <Box key={agent.id} flexDirection="column" marginBottom={1}>
+                {/* Row 1: Selection indicator, agent name, and ID */}
+                <Box flexDirection="row">
+                  <Text
+                    color={
+                      isSelected ? colors.selector.itemHighlighted : undefined
+                    }
+                  >
+                    {isSelected ? ">" : " "}
+                  </Text>
+                  <Text> </Text>
+                  <Text
+                    bold={isSelected}
+                    color={
+                      isSelected ? colors.selector.itemHighlighted : undefined
+                    }
+                  >
+                    {agent.name || "Unnamed"}
+                  </Text>
+                  <Text dimColor> · {displayId}</Text>
+                  {isCurrent && (
+                    <Text color={colors.selector.itemCurrent}> (current)</Text>
+                  )}
+                </Box>
+                {/* Row 2: Description */}
+                <Box flexDirection="row" marginLeft={2}>
+                  <Text dimColor italic>
+                    {agent.description || "No description"}
+                  </Text>
+                </Box>
+                {/* Row 3: Metadata (dimmed) */}
+                <Box flexDirection="row" marginLeft={2}>
+                  <Text dimColor>
+                    {relativeTime} · {blockCount} memory block
+                    {blockCount === 1 ? "" : "s"} · {modelStr}
+                  </Text>
+                </Box>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+
+      {/* Footer with pagination and controls - only show when loaded with agents */}
+      {!loading && !error && allAgents.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Box>
+            <Text dimColor>
+              Page {currentPage + 1}
+              {hasMore ? "+" : `/${totalDisplayPages || 1}`}
+              {loadingMore && " (loading...)"}
+            </Text>
+          </Box>
+          <Box>
+            <Text dimColor>
+              ↑↓ navigate · Enter select · J/K page · Type + Enter to search
+            </Text>
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }
