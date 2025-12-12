@@ -11,7 +11,7 @@ interface ResumeSelectorProps {
   onCancel: () => void;
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 5;
 
 /**
  * Format a relative time string from a date
@@ -274,7 +274,13 @@ export function ResumeSelector({
                   <Text color={colors.selector.itemCurrent}> (current)</Text>
                 )}
               </Box>
-              {/* Row 2: Metadata (dimmed) */}
+              {/* Row 2: Description */}
+              <Box flexDirection="row" marginLeft={2}>
+                <Text dimColor italic>
+                  {agent.description || "No description"}
+                </Text>
+              </Box>
+              {/* Row 3: Metadata (dimmed) */}
               <Box flexDirection="row" marginLeft={2}>
                 <Text dimColor>
                   {relativeTime} · {blockCount} memory block
