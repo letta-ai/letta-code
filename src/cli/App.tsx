@@ -229,6 +229,7 @@ export default function App({
     | "upserting"
     | "linking"
     | "unlinking"
+    | "importing"
     | "initializing"
     | "checking"
     | "ready";

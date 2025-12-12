@@ -46,6 +46,7 @@ OPTIONS
                         Default: text
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
+  --from-af <path>      Create agent from an AgentFile (.af) template
 
 
 BEHAVIOR
@@ -144,6 +145,7 @@ async function main() {
         link: { type: "boolean" },
         unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
+        "from-af": { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -200,6 +202,7 @@ async function main() {
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const fromAfFile = values["from-af"] as string | undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // --init-blocks only makes sense when creating a brand new agent
@@ -266,6 +269,30 @@ async function main() {
       console.error(
         `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${validSystemPrompts.join(", ")}.`,
       );
+      process.exit(1);
+    }
+  }
+
+  // Validate --from-af flag
+  if (fromAfFile) {
+    if (specifiedAgentId) {
+      console.error("Error: --from-af cannot be used with --agent");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --from-af cannot be used with --continue");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --from-af cannot be used with --new");
+      process.exit(1);
+    }
+    // Verify file exists
+    const { resolve } = await import("node:path");
+    const resolvedPath = resolve(fromAfFile);
+    const file = Bun.file(resolvedPath);
+    if (!(await file.exists())) {
+      console.error(`Error: AgentFile not found: ${resolvedPath}`);
       process.exit(1);
     }
   }
@@ -434,6 +461,7 @@ async function main() {
     system,
     toolset,
     skillsDirectory,
+    fromAfFile,
   }: {
     continueSession: boolean;
     forceNew: boolean;
@@ -445,12 +473,14 @@ async function main() {
     system?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
+    fromAfFile?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
       | "assembling"
       | "upserting"
       | "linking"
       | "unlinking"
+      | "importing"
       | "initializing"
       | "checking"
       | "ready"
@@ -569,8 +599,25 @@ async function main() {
 
         let agent: AgentState | null = null;
 
-        // Priority 1: Try to use --agent specified ID
-        if (agentIdArg) {
+        // Priority 1: Import from AgentFile template
+        if (fromAfFile) {
+          setLoadingState("importing");
+          const { importAgentFromFile } = await import("./agent/import");
+          const result = await importAgentFromFile({
+            filePath: fromAfFile,
+            modelOverride: model,
+            stripMessages: true,
+          });
+          agent = result.agent;
+          setAgentProvenance({
+            isNew: true,
+            freshBlocks: true,
+            blocks: [],
+          });
+        }
+
+        // Priority 2: Try to use --agent specified ID
+        if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
             // console.log(`Using agent ${agentIdArg}...`);
@@ -731,7 +778,15 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, freshBlocks, agentIdArg, model, system]);
+    }, [
+      continueSession,
+      forceNew,
+      freshBlocks,
+      agentIdArg,
+      model,
+      system,
+      fromAfFile,
+    ]);
 
     if (!agentId) {
       return React.createElement(App, {
@@ -771,6 +826,7 @@ async function main() {
       system: specifiedSystem,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
+      fromAfFile: fromAfFile,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
