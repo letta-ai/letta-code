@@ -41,6 +41,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
+import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
@@ -326,6 +327,9 @@ export default function App({
 
   // Agent selector state
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
+
+  // Resume selector state
+  const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1411,14 +1415,20 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /swap command - switch to a different agent
+        // Special handling for /resume command - show session resume selector
+        if (msg.trim() === "/resume") {
+          setResumeSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /swap command - alias for /resume
         if (msg.trim().startsWith("/swap")) {
           const parts = msg.trim().split(/\s+/);
           const targetAgentId = parts.slice(1).join(" ");
 
-          // If no agent ID provided, open agent selector
+          // If no agent ID provided, open resume selector (same as /resume)
           if (!targetAgentId) {
-            setAgentSelectorOpen(true);
+            setResumeSelectorOpen(true);
             return { submitted: true };
           }
 
@@ -3098,7 +3108,8 @@ Plan file path: ${planFilePath}`;
                 !modelSelectorOpen &&
                 !toolsetSelectorOpen &&
                 !systemPromptSelectorOpen &&
-                !agentSelectorOpen
+                !agentSelectorOpen &&
+                !resumeSelectorOpen
               }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
@@ -3155,6 +3166,18 @@ Plan file path: ${planFilePath}`;
                 currentAgentId={agentId}
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
+              />
+            )}
+
+            {/* Resume Selector - conditionally mounted as overlay */}
+            {resumeSelectorOpen && (
+              <ResumeSelector
+                currentAgentId={agentId}
+                onSelect={(id) => {
+                  setResumeSelectorOpen(false);
+                  handleAgentSelect(id);
+                }}
+                onCancel={() => setResumeSelectorOpen(false)}
               />
             )}
 

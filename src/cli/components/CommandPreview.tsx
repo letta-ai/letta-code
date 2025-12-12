@@ -4,7 +4,9 @@ import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
 // Compute command list once at module level since it never changes
+// Filter out hidden commands (like /swap which is an alias for /resume)
 const commandList = Object.entries(commands)
+  .filter(([, { hidden }]) => !hidden)
   .map(([cmd, { desc }]) => ({
     cmd,
     desc,
