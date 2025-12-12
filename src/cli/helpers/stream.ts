@@ -17,7 +17,7 @@ export type ApprovalRequest = {
   toolArgs: string;
 };
 
-type DrainResult = {
+export type DrainResult = {
   stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
@@ -244,7 +244,7 @@ export async function drainStreamWithResume(
       const resumeStream = await client.runs.messages.stream(result.lastRunId, {
         starting_after: result.lastSeqId,
         batch_size: 1000, // Fetch buffered chunks quickly
-      });
+      }, { maxRetries: 0 });
 
       // Continue draining from where we left off
       const resumeResult = await drainStream(
