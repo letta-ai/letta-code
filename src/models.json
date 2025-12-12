@@ -326,5 +326,12 @@
     "label": "o4-mini",
     "description": "OpenAI's latest o-series reasoning model",
     "updateArgs": { "context_window": 180000 }
+  },
+  {
+    "id": "gemini-3-vertex",
+    "handle": "google_vertex/gemini-3-pro-preview",
+    "label": "Gemini 3 Pro (Vertex AI)",
+    "description": "Google's smartest Gemini 3 Pro model on Vertex AI",
+    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
   }
 ]
