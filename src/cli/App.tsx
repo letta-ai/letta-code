@@ -1020,6 +1020,13 @@ export default function App({
       appendError("Stream interrupted by user");
       refreshDerived();
 
+      // Clear any pending approvals since we're cancelling
+      setPendingApprovals([]);
+      setApprovalContexts([]);
+      setApprovalResults([]);
+      setAutoHandledResults([]);
+      setAutoDeniedApprovals([]);
+
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
@@ -1962,10 +1969,33 @@ ${recentCommits}
             agent,
           );
 
+          // Check if user cancelled while we were fetching approval state
+          if (
+            userCancelledRef.current ||
+            abortControllerRef.current?.signal.aborted
+          ) {
+            // User hit ESC during the check - abort and clean up
+            buffersRef.current.byId.delete(userId);
+            const orderIndex = buffersRef.current.order.indexOf(userId);
+            if (orderIndex !== -1) {
+              buffersRef.current.order.splice(orderIndex, 1);
+            }
+            setStreaming(false);
+            refreshDerived();
+            return { submitted: false };
+          }
+
           if (existingApprovals && existingApprovals.length > 0) {
             // There are pending approvals - show them and DON'T send the message yet
             // The message will be restored to the input field for the user to decide
-            // Note: The user message is already in the transcript (optimistic update)
+
+            // Remove the optimistic user message from transcript to avoid duplication
+            buffersRef.current.byId.delete(userId);
+            const orderIndex = buffersRef.current.order.indexOf(userId);
+            if (orderIndex !== -1) {
+              buffersRef.current.order.splice(orderIndex, 1);
+            }
+
             setStreaming(false); // Stop streaming indicator
             setPendingApprovals(existingApprovals);
 
@@ -1979,14 +2009,28 @@ ${recentCommits}
                 return await analyzeToolApproval(approval.toolName, parsedArgs);
               }),
             );
+
+            // Check again after async approval analysis
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              // User cancelled during analysis - don't show dialog
+              setStreaming(false);
+              refreshDerived();
+              return { submitted: false };
+            }
+
             setApprovalContexts(contexts);
+
+            // Refresh to remove the message from UI
+            refreshDerived();
 
             // Return false = message NOT submitted, will be restored to input
             return { submitted: false };
           }
         } catch (error) {
           // If check fails, proceed anyway (don't block user)
-          console.error("Failed to check pending approvals:", error);
         }
       }
 
@@ -2044,7 +2088,8 @@ ${recentCommits}
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
-      !waitingForQueueCancelRef.current // Don't dequeue while waiting for cancel
+      !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
+      !userCancelledRef.current // Don't dequeue if user just cancelled
     ) {
       const [firstMessage, ...rest] = messageQueue;
       setMessageQueue(rest);
