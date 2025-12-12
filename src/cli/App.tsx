@@ -1501,6 +1501,71 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /description command - update agent description
+        if (msg.trim().startsWith("/description")) {
+          const parts = msg.trim().split(/\s+/);
+          const newDescription = parts.slice(1).join(" ");
+
+          if (!newDescription) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Please provide a description: /description <text>",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Updating description...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            await client.agents.update(agentId, {
+              description: newDescription,
+            });
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Description updated to "${newDescription}"`,
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /resume command - show session resume selector
         if (msg.trim() === "/resume") {
           setResumeSelectorOpen(true);
