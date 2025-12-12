@@ -2,6 +2,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "../../agent/client";
+import { debugWarn } from "../../utils/debug";
 
 import {
   type createBuffers,
@@ -179,10 +180,11 @@ export async function drainStream(
     }));
 
     if (approvals.length === 0) {
-      console.error(
-        "[drainStream] No approvals collected despite requires_approval stop reason",
+      debugWarn(
+        "drainStream",
+        "No approvals collected despite requires_approval stop reason",
       );
-      console.error("[drainStream] Pending approvals map:", allPending);
+      debugWarn("drainStream", "Pending approvals map:", allPending);
     } else {
       // Set legacy singular field for backward compatibility
       approval = approvals[0] || null;
