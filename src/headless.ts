@@ -1,5 +1,4 @@
 import { parseArgs } from "node:util";
-import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -19,10 +18,17 @@ import {
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
+import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
+
+// Maximum number of times to retry a turn when the backend
+// reports an `llm_api_error` stop reason. This helps smooth
+// over transient LLM/backend issues without requiring the
+// caller to manually resubmit the prompt.
+const LLM_API_ERROR_MAX_RETRIES = 3;
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -439,6 +445,7 @@ export async function handleHeadlessCommand(
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
+  let llmApiErrorRetries = 0;
 
   try {
     while (true) {
@@ -789,6 +796,39 @@ export async function handleHeadlessCommand(
         continue;
       }
 
+      // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
+      if (stopReason === "llm_api_error") {
+        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          const attempt = llmApiErrorRetries + 1;
+          const baseDelayMs = 1000;
+          const delayMs = baseDelayMs * 2 ** (attempt - 1);
+
+          llmApiErrorRetries = attempt;
+
+          if (outputFormat === "stream-json") {
+            console.log(
+              JSON.stringify({
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
+                run_id: lastRunId,
+              }),
+            );
+          } else {
+            const delaySeconds = Math.round(delayMs / 1000);
+            console.error(
+              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+            );
+          }
+
+          // Exponential backoff before retrying the same input
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Mark incomplete tool calls as cancelled to prevent stuck state
       markIncompleteToolsAsCancelled(buffers);
@@ -806,20 +846,24 @@ export async function handleHeadlessCommand(
           ? errorMessages.join("; ")
           : `Unexpected stop reason: ${stopReason}`;
 
-      // Fetch detailed error from run metadata if available
+      // Fetch detailed error from run metadata if available (same as TUI mode)
       if (lastRunId && errorMessages.length === 0) {
         try {
           const run = await client.runs.retrieve(lastRunId);
           if (run.metadata?.error) {
-            const error = run.metadata.error as {
+            const errorData = run.metadata.error as {
               type?: string;
               message?: string;
               detail?: string;
             };
-            const errorType = error.type ? `[${error.type}] ` : "";
-            const errorMsg = error.message || "An error occurred";
-            const errorDetail = error.detail ? `: ${error.detail}` : "";
-            errorMessage = `${errorType}${errorMsg}${errorDetail}`;
+            // Construct error object that formatErrorDetails can parse
+            const errorObject = {
+              error: {
+                error: errorData,
+                run_id: lastRunId,
+              },
+            };
+            errorMessage = formatErrorDetails(errorObject, agent.id);
           }
         } catch (_e) {
           // If we can't fetch error details, append note to error message
@@ -838,11 +882,7 @@ export async function handleHeadlessCommand(
           }),
         );
       } else {
-        // Include run_id and stop_reason for debugging
-        const runInfoSuffix = lastRunId
-          ? ` (run_id: ${lastRunId}, stop_reason: ${stopReason})`
-          : ` (stop_reason: ${stopReason})`;
-        console.error(`${errorMessage}${runInfoSuffix}`);
+        console.error(`Error: ${errorMessage}`);
       }
       process.exit(1);
     }
@@ -850,23 +890,19 @@ export async function handleHeadlessCommand(
     // Mark incomplete tool calls as cancelled
     markIncompleteToolsAsCancelled(buffers);
 
-    // Build run info suffix for debugging
-    const runInfoSuffix = lastKnownRunId
-      ? ` (run_id: ${lastKnownRunId}, stop_reason: error)`
-      : "";
+    // Use comprehensive error formatting (same as TUI mode)
+    const errorDetails = formatErrorDetails(error, agent.id);
 
-    // Handle APIError from streaming (event: error)
-    if (error instanceof APIError && error.error?.error) {
-      const { type, message, detail } = error.error.error;
-      const errorType = type ? `[${type}] ` : "";
-      const errorMessage = message || "An error occurred";
-      const errorDetail = detail ? `: ${detail}` : "";
-      console.error(
-        `Error: ${errorType}${errorMessage}${errorDetail}${runInfoSuffix}`,
+    if (outputFormat === "stream-json") {
+      console.log(
+        JSON.stringify({
+          type: "error",
+          message: errorDetails,
+          run_id: lastKnownRunId,
+        }),
       );
     } else {
-      // Fallback for non-API errors
-      console.error(`Error: ${error}${runInfoSuffix}`);
+      console.error(`Error: ${errorDetails}`);
     }
     process.exit(1);
   }
