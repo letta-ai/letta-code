@@ -210,6 +210,8 @@ type StaticItem =
     }
   | Line;
 
+type IndexedStaticItem = StaticItem & { staticIndex?: number };
+
 export default function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
@@ -346,7 +348,26 @@ export default function App({
   const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
-  const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
+  const [staticItems, setStaticItems] = useState<IndexedStaticItem[]>([]);
+  const staticIndexRef = useRef(0);
+
+  const resetStaticItems = useCallback(() => {
+    staticIndexRef.current = 0;
+    setStaticItems([]);
+  }, []);
+
+  const appendStaticItems = useCallback((items: StaticItem[]) => {
+    if (items.length === 0) return;
+    setStaticItems((prev) => {
+      const startIndex = staticIndexRef.current;
+      const itemsWithIndex = items.map((item, idx) => ({
+        ...item,
+        staticIndex: startIndex + idx,
+      }));
+      staticIndexRef.current += items.length;
+      return [...prev, ...itemsWithIndex];
+    });
+  }, []);
 
   // Track committed ids to avoid duplicates
   const emittedIdsRef = useRef<Set<string>>(new Set());
@@ -419,9 +440,9 @@ export default function App({
     }
     if (newlyCommitted.length > 0) {
       // console.log(`[COMMIT] Total committed: ${newlyCommitted.length} items`);
-      setStaticItems((prev) => [...prev, ...newlyCommitted]);
+      appendStaticItems(newlyCommitted);
     }
-  }, []);
+  }, [appendStaticItems]);
 
   // Render-ready transcript
   const [lines, setLines] = useState<Line[]>([]);
@@ -504,8 +525,7 @@ export default function App({
       // Append welcome snapshot FIRST so it appears above history
       if (!welcomeCommittedRef.current) {
         welcomeCommittedRef.current = true;
-        setStaticItems((prev) => [
-          ...prev,
+        appendStaticItems([
           {
             kind: "welcome",
             id: `welcome-${Date.now().toString(36)}`,
@@ -549,6 +569,7 @@ export default function App({
     messageHistory,
     refreshDerived,
     commitEligibleLines,
+    appendStaticItems,
     continueSession,
     columns,
     agentState,
@@ -1454,7 +1475,7 @@ export default function App({
             buffersRef.current.order = [];
             buffersRef.current.tokenCount = 0;
             emittedIdsRef.current.clear();
-            setStaticItems([]);
+            resetStaticItems();
 
             // Update agent state
             setAgentId(targetAgentId);
@@ -1464,7 +1485,7 @@ export default function App({
 
             // Add welcome screen for new agent
             welcomeCommittedRef.current = false;
-            setStaticItems([
+            appendStaticItems([
               {
                 kind: "welcome",
                 id: `welcome-${Date.now().toString(36)}`,
@@ -1726,7 +1747,7 @@ export default function App({
               buffersRef.current.order = [];
               buffersRef.current.tokenCount = 0;
               emittedIdsRef.current.clear();
-              setStaticItems([]);
+              resetStaticItems();
 
               // Update agent state
               setAgentId(targetAgentId);
@@ -2865,7 +2886,7 @@ ${recentCommits}
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
         emittedIdsRef.current.clear();
-        setStaticItems([]);
+        resetStaticItems();
 
         // Update agent state
         setAgentId(targetAgentId);
@@ -2875,7 +2896,7 @@ ${recentCommits}
 
         // Add welcome screen for new agent
         welcomeCommittedRef.current = false;
-        setStaticItems([
+        appendStaticItems([
           {
             kind: "welcome",
             id: `welcome-${Date.now().toString(36)}`,
@@ -3196,8 +3217,7 @@ Plan file path: ${planFilePath}`;
         return; // Wait for provenance to be set
       }
       welcomeCommittedRef.current = true;
-      setStaticItems((prev) => [
-        ...prev,
+      appendStaticItems([
         {
           kind: "welcome",
           id: `welcome-${Date.now().toString(36)}`,
@@ -3217,6 +3237,7 @@ Plan file path: ${planFilePath}`;
     columns,
     agentProvenance,
     agentState,
+    appendStaticItems,
   ]);
 
   return (
@@ -3226,13 +3247,14 @@ Plan file path: ${planFilePath}`;
         items={staticItems}
         style={{ flexDirection: "column" }}
       >
-        {(item: StaticItem, index: number) => (
-          <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-            {item.kind === "welcome" ? (
-              <WelcomeScreen loadingState="ready" {...item.snapshot} />
-            ) : item.kind === "user" ? (
-              <UserMessage line={item} />
-            ) : item.kind === "reasoning" ? (
+        {(item: IndexedStaticItem, index: number) => {
+          return (
+            <Box key={item.id} marginBottom={1}>
+              {item.kind === "welcome" ? (
+                <WelcomeScreen loadingState="ready" {...item.snapshot} />
+              ) : item.kind === "user" ? (
+                <UserMessage line={item} />
+              ) : item.kind === "reasoning" ? (
               <ReasoningMessage line={item} />
             ) : item.kind === "assistant" ? (
               <AssistantMessage line={item} />
@@ -3245,8 +3267,9 @@ Plan file path: ${planFilePath}`;
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
             ) : null}
-          </Box>
-        )}
+            </Box>
+          );
+        }}
       </Static>
 
       <Box flexDirection="column" gap={1}>
@@ -3265,7 +3288,7 @@ Plan file path: ${planFilePath}`;
             {liveItems.length > 0 && pendingApprovals.length === 0 && (
               <Box flexDirection="column">
                 {liveItems.map((ln, idx) => (
-                  <Box key={ln.id} marginTop={idx > 0 || staticItems.length > 0 ? 1 : 0}>
+                  <Box key={ln.id} marginTop={idx > 0 ? 1 : 0}>
                     {ln.kind === "user" ? (
                       <UserMessage line={ln} />
                     ) : ln.kind === "reasoning" ? (
