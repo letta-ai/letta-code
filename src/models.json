@@ -54,10 +54,71 @@
     }
   },
   {
+    "id": "gpt-5.2-none",
+    "handle": "openai/gpt-5.2",
+    "label": "GPT-5.2 (none)",
+    "description": "OpenAI's latest model (no reasoning, fastest GPT-5.2 option)",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-low",
+    "handle": "openai/gpt-5.2",
+    "label": "GPT-5.2 (low)",
+    "description": "OpenAI's latest model (some reasoning enabled)",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-medium",
+    "handle": "openai/gpt-5.2",
+    "label": "GPT-5.2 (medium)",
+    "description": "OpenAI's latest model (using their recommended reasoning level)",
+    "isFeatured": true,
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-high",
+    "handle": "openai/gpt-5.2",
+    "label": "GPT-5.2 (high)",
+    "description": "OpenAI's latest model (high reasoning effort)",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-xhigh",
+    "handle": "openai/gpt-5.2",
+    "label": "GPT-5.2 (extra-high)",
+    "description": "OpenAI's latest model (maximum reasoning depth)",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
     "id": "gpt-5.1-none",
     "handle": "openai/gpt-5.1",
     "label": "GPT-5.1 (none)",
-    "description": "OpenAI's latest model (no reasoning, fastest GPT-5.1 option)",
+    "description": "OpenAI's GPT-5.1 model (no reasoning, fastest GPT-5.1 option)",
     "updateArgs": {
       "reasoning_effort": "none",
       "verbosity": "medium",
@@ -69,7 +130,7 @@
     "id": "gpt-5.1-low",
     "handle": "openai/gpt-5.1",
     "label": "GPT-5.1 (low)",
-    "description": "OpenAI's latest model (some reasoning enabled)",
+    "description": "OpenAI's GPT-5.1 model (some reasoning enabled)",
     "updateArgs": {
       "reasoning_effort": "low",
       "verbosity": "medium",
@@ -81,8 +142,7 @@
     "id": "gpt-5.1-medium",
     "handle": "openai/gpt-5.1",
     "label": "GPT-5.1 (medium)",
-    "description": "OpenAI's latest model (using their recommended reasoning level)",
-    "isFeatured": true,
+    "description": "OpenAI's GPT-5.1 model (using their recommended reasoning level)",
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
@@ -94,7 +154,7 @@
     "id": "gpt-5.1-high",
     "handle": "openai/gpt-5.1",
     "label": "GPT-5.1 (high)",
-    "description": "OpenAI's latest model (maximum reasoning depth)",
+    "description": "OpenAI's GPT-5.1 model (maximum reasoning depth)",
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "medium",
