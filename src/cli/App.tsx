@@ -367,6 +367,10 @@ export default function App({
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<string[]>([]);
   const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
+  const restoreQueueOnCancelRef = useRef(restoreQueueOnCancel);
+  useEffect(() => {
+    restoreQueueOnCancelRef.current = restoreQueueOnCancel;
+  }, [restoreQueueOnCancel]);
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -643,7 +647,7 @@ export default function App({
 
             // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
-              if (restoreQueueOnCancel) {
+              if (restoreQueueOnCancelRef.current) {
                 // User hit ESC during queue cancel - abort the auto-send
                 setRestoreQueueOnCancel(false);
                 // Don't clear queue, don't send - let dequeue effect handle them one by one
@@ -656,7 +660,7 @@ export default function App({
                 const concatenatedMessage = queueSnapshotRef.current.join("\n");
 
                 if (concatenatedMessage.trim()) {
-                  onSubmit(concatenatedMessage);
+                  onSubmitRef.current(concatenatedMessage);
                 }
               }
 
@@ -674,7 +678,7 @@ export default function App({
 
             // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {
-              if (restoreQueueOnCancel) {
+              if (restoreQueueOnCancelRef.current) {
                 // User hit ESC during queue cancel - abort the auto-send
                 setRestoreQueueOnCancel(false);
                 // Don't clear queue, don't send - let dequeue effect handle them one by one
@@ -687,7 +691,7 @@ export default function App({
                 const concatenatedMessage = queueSnapshotRef.current.join("\n");
 
                 if (concatenatedMessage.trim()) {
-                  onSubmit(concatenatedMessage);
+                  onSubmitRef.current(concatenatedMessage);
                 }
               }
 
@@ -2029,7 +2033,7 @@ ${recentCommits}
             // Return false = message NOT submitted, will be restored to input
             return { submitted: false };
           }
-        } catch (error) {
+        } catch (_error) {
           // If check fails, proceed anyway (don't block user)
         }
       }
