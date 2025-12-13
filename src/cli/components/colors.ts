@@ -113,6 +113,17 @@ export const colors = {
     inProgress: brandColors.primaryAccent,
   },
 
+  // Subagent display
+  subagent: {
+    header: brandColors.primaryAccent,
+    running: brandColors.statusWarning,
+    completed: brandColors.statusSuccess,
+    error: brandColors.statusError,
+    treeChar: brandColors.textDisabled,
+    stats: brandColors.textSecondary,
+    hint: brandColors.textDisabled,
+  },
+
   // Info/modal views
   info: {
     border: brandColors.primaryAccent,

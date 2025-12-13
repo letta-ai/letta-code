@@ -58,7 +58,9 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
+import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentManager } from "./components/SubagentManager";
+import { clearCompletedSubagents } from "./helpers/subagentState";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -689,6 +691,9 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+
+        // Clear completed subagents from the UI when starting a new turn
+        clearCompletedSubagents();
 
         while (true) {
           // Check if cancelled before starting new stream
@@ -3666,6 +3671,9 @@ Plan file path: ${planFilePath}`;
                 ))}
               </Box>
             )}
+
+            {/* Subagent group display - shows running/completed subagents */}
+            <SubagentGroupDisplay />
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
