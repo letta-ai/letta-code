@@ -723,7 +723,54 @@ export async function handleHeadlessCommand(
         break;
       }
 
-      // Case 2: Requires approval - batch process all approvals
+      // Case 2: Error handling - CHECK THIS FIRST before requires_approval
+      // This ensures errors are retried even if "requires_approval" was also sent
+      if (outputFormat === "stream-json") {
+        console.log(
+          JSON.stringify({
+            type: "debug",
+            message: "Checking retry condition",
+            stopReason,
+            llmApiErrorRetries,
+            maxRetries: LLM_API_ERROR_MAX_RETRIES,
+            willRetry:
+              (stopReason === "llm_api_error" || stopReason === "error") &&
+              llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES,
+          }),
+        );
+      }
+      if ((stopReason === "llm_api_error" || stopReason === "error") && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+        const attempt = llmApiErrorRetries + 1;
+        const baseDelayMs = 1000;
+        const delayMs = baseDelayMs * 2 ** (attempt - 1);
+
+        llmApiErrorRetries = attempt;
+
+        if (outputFormat === "stream-json") {
+          console.log(
+            JSON.stringify({
+              type: "retry",
+              reason: stopReason,
+              attempt,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: delayMs,
+              run_id: lastRunId,
+            }),
+          );
+        } else {
+          const delaySeconds = Math.round(delayMs / 1000);
+          const errorType = stopReason === "llm_api_error" ? "LLM API error" : "Error";
+          console.error(
+            `${errorType} encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+          );
+        }
+
+        // Exponential backoff before retrying the same input
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      // Case 3: Requires approval - batch process all approvals
       if (stopReason === "requires_approval") {
         if (approvals.length === 0) {
           console.error("Unexpected empty approvals array");
@@ -826,53 +873,7 @@ export async function handleHeadlessCommand(
         continue;
       }
 
-      // Case 3: Error handling - retry ALL errors with exponential backoff up to a limit
-      // This includes llm_api_error, error, and any other error types
-      if (outputFormat === "stream-json") {
-        console.log(
-          JSON.stringify({
-            type: "debug",
-            message: "Checking retry condition",
-            stopReason,
-            llmApiErrorRetries,
-            maxRetries: LLM_API_ERROR_MAX_RETRIES,
-            willRetry:
-              (stopReason === "llm_api_error" || stopReason === "error") &&
-              llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES,
-          }),
-        );
-      }
-      if ((stopReason === "llm_api_error" || stopReason === "error") && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-        const attempt = llmApiErrorRetries + 1;
-        const baseDelayMs = 1000;
-        const delayMs = baseDelayMs * 2 ** (attempt - 1);
-
-        llmApiErrorRetries = attempt;
-
-        if (outputFormat === "stream-json") {
-          console.log(
-            JSON.stringify({
-              type: "retry",
-              reason: stopReason,
-              attempt,
-              max_attempts: LLM_API_ERROR_MAX_RETRIES,
-              delay_ms: delayMs,
-              run_id: lastRunId,
-            }),
-          );
-        } else {
-          const delaySeconds = Math.round(delayMs / 1000);
-          const errorType = stopReason === "llm_api_error" ? "LLM API error" : "Error";
-          console.error(
-            `${errorType} encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
-          );
-        }
-
-        // Exponential backoff before retrying the same input
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-
+      // Case 4: Unexpected stopReason or max retries exceeded - exit with error
       // Mark incomplete tool calls as cancelled to prevent stuck state
       markIncompleteToolsAsCancelled(buffers);
 
