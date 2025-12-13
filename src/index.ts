@@ -741,7 +741,6 @@ async function main() {
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
-        tokenStreaming: settings.tokenStreaming,
         agentProvenance,
       });
     }
@@ -754,7 +753,6 @@ async function main() {
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
-      tokenStreaming: settings.tokenStreaming,
       agentProvenance,
     });
   }

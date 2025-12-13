@@ -220,7 +220,6 @@ export default function App({
   startupApproval = null,
   startupApprovals = [],
   messageHistory = [],
-  tokenStreaming = true,
   agentProvenance = null,
 }: {
   agentId: string;
@@ -237,7 +236,6 @@ export default function App({
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
-  tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
   // Track current agent (can change when swapping)
@@ -332,10 +330,6 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
-
-  // Token streaming preference (can be toggled at runtime)
-  const [tokenStreamingEnabled, setTokenStreamingEnabled] =
-    useState(tokenStreaming);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -1290,23 +1284,6 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /agent command - show agent link
-        if (trimmed === "/agent") {
-          const cmdId = uid("cmd");
-          const agentUrl = `https://app.letta.com/projects/default-project/agents/${agentId}`;
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: agentUrl,
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-          return { submitted: true };
-        }
-
         // Special handling for /exit command - show stats and exit
         if (trimmed === "/exit") {
           handleExit();
@@ -1375,61 +1352,6 @@ export default function App({
             });
             refreshDerived();
           } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /stream command - toggle and save
-        if (msg.trim() === "/stream") {
-          const newValue = !tokenStreamingEnabled;
-
-          // Immediately add command to transcript with "running" phase and loading message
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `${newValue ? "Enabling" : "Disabling"} token streaming...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          // Lock input during async operation
-          setCommandRunning(true);
-
-          try {
-            setTokenStreamingEnabled(newValue);
-
-            // Save to settings
-            const { settingsManager } = await import("../settings-manager");
-            settingsManager.updateSettings({ tokenStreaming: newValue });
-
-            // Update the same command with final result
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Token streaming ${newValue ? "enabled" : "disabled"}`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
-          } catch (error) {
-            // Mark command as failed
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            // Unlock input
             setCommandRunning(false);
           }
           return { submitted: true };
@@ -1720,109 +1642,6 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /swap command - alias for /resume
-        if (msg.trim().startsWith("/swap")) {
-          const parts = msg.trim().split(/\s+/);
-          const targetAgentId = parts.slice(1).join(" ");
-
-          // If no agent ID provided, open resume selector (same as /resume)
-          if (!targetAgentId) {
-            setResumeSelectorOpen(true);
-            return { submitted: true };
-          }
-
-          // Validate and swap to specified agent ID
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `Switching to agent ${targetAgentId}...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-            // Fetch new agent
-            const agent = await client.agents.retrieve(targetAgentId);
-
-            // Fetch agent's message history
-            const messagesPage =
-              await client.agents.messages.list(targetAgentId);
-            const messages = messagesPage.items;
-
-            // Update project settings with new agent
-            await updateProjectSettings({ lastAgent: targetAgentId });
-
-            // Clear current transcript
-            buffersRef.current.byId.clear();
-            buffersRef.current.order = [];
-            buffersRef.current.tokenCount = 0;
-            emittedIdsRef.current.clear();
-            setStaticItems([]);
-
-            // Update agent state
-            setAgentId(targetAgentId);
-            setAgentState(agent);
-            setAgentName(agent.name);
-            setLlmConfig(agent.llm_config);
-
-            // Add welcome screen for new agent
-            welcomeCommittedRef.current = false;
-            setStaticItems([
-              {
-                kind: "welcome",
-                id: `welcome-${Date.now().toString(36)}`,
-                snapshot: {
-                  continueSession: true,
-                  agentState: agent,
-                  terminalWidth: columns,
-                },
-              },
-            ]);
-
-            // Backfill message history
-            if (messages.length > 0) {
-              hasBackfilledRef.current = false;
-              backfillBuffers(buffersRef.current, messages);
-              refreshDerived();
-              commitEligibleLines(buffersRef.current);
-              hasBackfilledRef.current = true;
-            }
-
-            // Add success command to transcript
-            const successCmdId = uid("cmd");
-            buffersRef.current.byId.set(successCmdId, {
-              kind: "command",
-              id: successCmdId,
-              input: msg,
-              output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(successCmdId);
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
         // Special handling for /bashes command - show background shell processes
         if (msg.trim() === "/bashes") {
           const { backgroundProcesses } = await import(
@@ -1991,7 +1810,7 @@ export default function App({
           const userText = rest.join(" ").trim();
 
           const initialOutput = userText
-            ? `Remembering: ${userText}`
+            ? "Storing to memory..."
             : "Processing memory request...";
 
           buffersRef.current.byId.set(cmdId, {
@@ -2023,7 +1842,7 @@ export default function App({
               id: cmdId,
               input: msg,
               output: userText
-                ? `Remembering: ${userText}`
+                ? "Storing to memory..."
                 : "Processing memory request from conversation context...",
               phase: "finished",
               success: true,
@@ -2364,12 +2183,9 @@ ${recentCommits}
       streaming,
       commandRunning,
       processConversation,
-      tokenStreamingEnabled,
       refreshDerived,
       agentId,
       handleExit,
-      columns,
-      commitEligibleLines,
       isExecutingTool,
       queuedApprovalResults,
       pendingApprovals,
@@ -3006,7 +2822,7 @@ ${recentCommits}
       buffersRef.current.byId.set(cmdId, {
         kind: "command",
         id: cmdId,
-        input: `/swap ${targetAgentId}`,
+        input: `/resume ${targetAgentId}`,
         output: `Switching to agent ${targetAgentId}...`,
         phase: "running",
       });
@@ -3068,7 +2884,7 @@ ${recentCommits}
         buffersRef.current.byId.set(successCmdId, {
           kind: "command",
           id: successCmdId,
-          input: `/swap ${targetAgentId}`,
+          input: `/resume ${targetAgentId}`,
           output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
           phase: "finished",
           success: true,
@@ -3080,7 +2896,7 @@ ${recentCommits}
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
-          input: `/swap ${targetAgentId}`,
+          input: `/resume ${targetAgentId}`,
           output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
@@ -3341,13 +3157,12 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Always show tool calls in progress, regardless of tokenStreaming setting
+        // Always show tool calls in progress
         return ln.phase !== "finished";
       }
-      if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
-  }, [lines, tokenStreamingEnabled]);
+  }, [lines]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
