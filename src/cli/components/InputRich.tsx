@@ -117,9 +117,27 @@ export function Input({
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Handle profile confirmation cancellation on ANY key (except Enter)
+  // When onEscapeCancel is provided, any key press should trigger cancellation
+  useInput((input, key) => {
+    if (!visible) return;
+    if (!onEscapeCancel) return;
+
+    // Enter key confirms the action, don't cancel
+    if (key.return) return;
+
+    // Any other key cancels
+    onEscapeCancel();
+    // Clear input to ensure no characters are left over
+    setValue("");
+  });
+
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
+    // Skip if onEscapeCancel is provided - handled by the confirmation handler above
+    if (onEscapeCancel) return;
+
     if (key.escape) {
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
@@ -134,12 +152,6 @@ export function Input({
             onEnterQueueEditMode();
           }
         }
-        return;
-      }
-
-      // When input is empty and onEscapeCancel is provided, call it
-      if (!value && onEscapeCancel) {
-        onEscapeCancel();
         return;
       }
 
