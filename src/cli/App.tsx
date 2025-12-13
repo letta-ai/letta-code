@@ -30,6 +30,15 @@ import {
   executeTool,
   savePermissionRule,
 } from "../tools/manager";
+import {
+  addCommandResult,
+  handleProfileDelete,
+  handleProfileList,
+  handleProfileSave,
+  handleProfileUsage,
+  type ProfileCommandContext,
+  validateProfileLoad,
+} from "./commands/profile";
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
@@ -652,7 +661,10 @@ export default function App({
           }
 
           // Stream one turn - use ref to always get the latest agentId
-          const stream = await sendMessageStream(agentIdRef.current, currentInput);
+          const stream = await sendMessageStream(
+            agentIdRef.current,
+            currentInput,
+          );
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -953,7 +965,10 @@ export default function App({
                     run_id: lastRunId,
                   },
                 };
-                const errorDetails = formatErrorDetails(errorObject, agentIdRef.current);
+                const errorDetails = formatErrorDetails(
+                  errorObject,
+                  agentIdRef.current,
+                );
                 appendError(errorDetails);
               } else {
                 // No error metadata, show generic error with run info
@@ -1196,7 +1211,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, commitEligibleLines, columns, agentId],
+    [refreshDerived, agentId],
   );
 
   const onSubmit = useCallback(
@@ -1732,236 +1747,72 @@ export default function App({
           const subcommand = parts[1]?.toLowerCase();
           const profileName = parts.slice(2).join(" ");
 
-          const { settingsManager } = await import("../settings-manager");
-          const localSettings = settingsManager.getLocalProjectSettings();
-          const profiles = localSettings.profiles || {};
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            setCommandRunning,
+            setAgentName,
+          };
 
           // /profile - list all profiles
           if (!subcommand) {
-            const cmdId = uid("cmd");
-            const profileNames = Object.keys(profiles);
-            let output: string;
-            if (profileNames.length === 0) {
-              output =
-                "No profiles saved. Use /profile save <name> to save the current agent.";
-            } else {
-              const lines = ["Saved profiles:"];
-              for (const name of profileNames.sort()) {
-                const profileAgentId = profiles[name];
-                const isCurrent = profileAgentId === agentId;
-                lines.push(
-                  `  ${name} -> ${profileAgentId}${isCurrent ? " (current)" : ""}`,
-                );
-              }
-              output = lines.join("\n");
-            }
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            handleProfileList(profileCtx, msg);
             return { submitted: true };
           }
 
           // /profile save <name>
           if (subcommand === "save") {
-            if (!profileName) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: "Please provide a profile name: /profile save <name>",
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
-              return { submitted: true };
-            }
-
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Saving profile "${profileName}"...`,
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
-
-            setCommandRunning(true);
-
-            try {
-              const client = await getClient();
-              // Update agent name via API
-              await client.agents.update(agentId, { name: profileName });
-              setAgentName(profileName);
-
-              // Save profile to local settings
-              const updatedProfiles = { ...profiles, [profileName]: agentId };
-              settingsManager.updateLocalProjectSettings({
-                profiles: updatedProfiles,
-              });
-
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Saved profile "${profileName}" (agent ${agentId})`,
-                phase: "finished",
-                success: true,
-              });
-              refreshDerived();
-            } catch (error) {
-              const errorDetails = formatErrorDetails(error, agentId);
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Failed: ${errorDetails}`,
-                phase: "finished",
-                success: false,
-              });
-              refreshDerived();
-            } finally {
-              setCommandRunning(false);
-            }
+            await handleProfileSave(profileCtx, msg, profileName);
             return { submitted: true };
           }
 
           // /profile load <name>
           if (subcommand === "load") {
-            if (!profileName) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: "Please provide a profile name: /profile load <name>",
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
+            const validation = validateProfileLoad(
+              profileCtx,
+              msg,
+              profileName,
+            );
+            if (validation.errorMessage) {
               return { submitted: true };
             }
 
-            const targetAgentId = profiles[profileName];
-            if (!targetAgentId) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Profile "${profileName}" not found. Use /profile to list available profiles.`,
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
-              return { submitted: true };
-            }
-
-            // Check if current agent is saved to any profile
-            const currentAgentSaved = Object.values(profiles).includes(agentId);
-
-            if (!currentAgentSaved) {
+            if (validation.needsConfirmation && validation.targetAgentId) {
               // Show warning and wait for confirmation
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output:
-                  "Warning: Current agent is not saved to any profile.\nPress Enter to continue, Escape to cancel.",
-                phase: "running",
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
+              const cmdId = addCommandResult(
+                buffersRef,
+                refreshDerived,
+                msg,
+                "Warning: Current agent is not saved to any profile.\nPress Enter to continue, or type anything to cancel.",
+                false,
+                "running",
+              );
               setProfileConfirmPending({
                 name: profileName,
-                agentId: targetAgentId,
+                agentId: validation.targetAgentId,
                 cmdId,
               });
               return { submitted: true };
             }
 
             // Current agent is saved, proceed with loading
-            await handleAgentSelect(targetAgentId, { profileName });
+            if (validation.targetAgentId) {
+              await handleAgentSelect(validation.targetAgentId, {
+                profileName,
+              });
+            }
             return { submitted: true };
           }
 
           // /profile delete <name>
           if (subcommand === "delete") {
-            if (!profileName) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: "Please provide a profile name: /profile delete <name>",
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
-              return { submitted: true };
-            }
-
-            if (!profiles[profileName]) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Profile "${profileName}" not found. Use /profile to list available profiles.`,
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
-              return { submitted: true };
-            }
-
-            const cmdId = uid("cmd");
-            const { [profileName]: _, ...remainingProfiles } = profiles;
-            settingsManager.updateLocalProjectSettings({
-              profiles: remainingProfiles,
-            });
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Deleted profile "${profileName}"`,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            handleProfileDelete(profileCtx, msg, profileName);
             return { submitted: true };
           }
 
           // Unknown subcommand
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output:
-              "Usage: /profile [save|load|delete] <name>\n  /profile - list profiles\n  /profile save <name> - save current agent\n  /profile load <name> - load a profile\n  /profile delete <name> - delete a profile",
-            phase: "finished",
-            success: false,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          handleProfileUsage(profileCtx, msg);
           return { submitted: true };
         }
 
@@ -2510,8 +2361,6 @@ ${recentCommits}
       refreshDerived,
       agentId,
       handleExit,
-      columns,
-      commitEligibleLines,
       isExecutingTool,
       queuedApprovalResults,
       pendingApprovals,
