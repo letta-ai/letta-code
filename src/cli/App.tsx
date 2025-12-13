@@ -244,20 +244,34 @@ export default function App({
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
 
+  // Keep a ref to the current agentId for use in callbacks that need the latest value
+  const agentIdRef = useRef(agentId);
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
   const resumeKey = useSuspend();
 
+  // Track previous prop values to detect actual prop changes (not internal state changes)
+  const prevInitialAgentIdRef = useRef(initialAgentId);
+  const prevInitialAgentStateRef = useRef(initialAgentState);
+
   // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
+  // Only sync when the PROP actually changes, not when internal state changes
   useEffect(() => {
-    if (initialAgentId !== agentId) {
+    if (initialAgentId !== prevInitialAgentIdRef.current) {
+      prevInitialAgentIdRef.current = initialAgentId;
+      agentIdRef.current = initialAgentId;
       setAgentId(initialAgentId);
     }
-  }, [initialAgentId, agentId]);
+  }, [initialAgentId]);
 
   useEffect(() => {
-    if (initialAgentState !== agentState) {
+    if (initialAgentState !== prevInitialAgentStateRef.current) {
+      prevInitialAgentStateRef.current = initialAgentState;
       setAgentState(initialAgentState);
     }
-  }, [initialAgentState, agentState]);
+  }, [initialAgentState]);
 
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
@@ -637,8 +651,8 @@ export default function App({
             return;
           }
 
-          // Stream one turn
-          const stream = await sendMessageStream(agentId, currentInput);
+          // Stream one turn - use ref to always get the latest agentId
+          const stream = await sendMessageStream(agentIdRef.current, currentInput);
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -939,7 +953,7 @@ export default function App({
                     run_id: lastRunId,
                   },
                 };
-                const errorDetails = formatErrorDetails(errorObject, agentId);
+                const errorDetails = formatErrorDetails(errorObject, agentIdRef.current);
                 appendError(errorDetails);
               } else {
                 // No error metadata, show generic error with run info
@@ -978,7 +992,7 @@ export default function App({
         }
 
         // Use comprehensive error formatting
-        const errorDetails = formatErrorDetails(e, agentId);
+        const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails);
         setStreaming(false);
         refreshDerived();
@@ -986,7 +1000,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [agentId, appendError, refreshDerived, refreshDerivedThrottled],
+    [appendError, refreshDerived, refreshDerivedThrottled],
   );
 
   const handleExit = useCallback(() => {
@@ -1126,7 +1140,8 @@ export default function App({
         emittedIdsRef.current.clear();
         setStaticItems([]);
 
-        // Update agent state
+        // Update agent state - also update ref immediately for any code that runs before re-render
+        agentIdRef.current = targetAgentId;
         setAgentId(targetAgentId);
         setAgentState(agent);
         setAgentName(agent.name);
@@ -1203,7 +1218,7 @@ export default function App({
         });
         refreshDerived();
         setProfileConfirmPending(null);
-        handleAgentSelect(targetAgentId);
+        await handleAgentSelect(targetAgentId);
         return { submitted: true };
       }
 
@@ -1762,7 +1777,8 @@ export default function App({
             emittedIdsRef.current.clear();
             setStaticItems([]);
 
-            // Update agent state
+            // Update agent state - also update ref immediately
+            agentIdRef.current = targetAgentId;
             setAgentId(targetAgentId);
             setAgentState(agent);
             setAgentName(agent.name);
@@ -1988,7 +2004,7 @@ export default function App({
             }
 
             // Current agent is saved, proceed with loading
-            handleAgentSelect(targetAgentId);
+            await handleAgentSelect(targetAgentId);
             return { submitted: true };
           }
 
@@ -3676,9 +3692,9 @@ Plan file path: ${planFilePath}`;
             {resumeSelectorOpen && (
               <ResumeSelector
                 currentAgentId={agentId}
-                onSelect={(id) => {
+                onSelect={async (id) => {
                   setResumeSelectorOpen(false);
-                  handleAgentSelect(id);
+                  await handleAgentSelect(id);
                 }}
                 onCancel={() => setResumeSelectorOpen(false)}
               />
