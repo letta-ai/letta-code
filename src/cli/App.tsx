@@ -1810,7 +1810,7 @@ export default function App({
           const userText = rest.join(" ").trim();
 
           const initialOutput = userText
-            ? `Remembering: ${userText}`
+            ? "Storing to memory..."
             : "Processing memory request...";
 
           buffersRef.current.byId.set(cmdId, {
@@ -1842,7 +1842,7 @@ export default function App({
               id: cmdId,
               input: msg,
               output: userText
-                ? `Remembering: ${userText}`
+                ? "Storing to memory..."
                 : "Processing memory request from conversation context...",
               phase: "finished",
               success: true,
