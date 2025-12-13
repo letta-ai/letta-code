@@ -1138,7 +1138,6 @@ export default function App({
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
         emittedIdsRef.current.clear();
-        setStaticItems([]);
 
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
@@ -1147,26 +1146,12 @@ export default function App({
         setAgentName(agent.name);
         setLlmConfig(agent.llm_config);
 
-        // Add welcome screen for new agent
-        welcomeCommittedRef.current = false;
-        setStaticItems([
-          {
-            kind: "welcome",
-            id: `welcome-${Date.now().toString(36)}`,
-            snapshot: {
-              continueSession: true,
-              agentState: agent,
-              terminalWidth: columns,
-            },
-          },
-        ]);
-
-        // Backfill message history
+        // Backfill message history (no welcome screen - only shown at bootup)
+        setStaticItems([]);
         if (messages.length > 0) {
           hasBackfilledRef.current = false;
           backfillBuffers(buffersRef.current, messages);
           refreshDerived();
-          commitEligibleLines(buffersRef.current);
           hasBackfilledRef.current = true;
         }
 
