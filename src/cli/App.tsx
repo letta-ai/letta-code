@@ -220,6 +220,7 @@ export default function App({
   startupApproval = null,
   startupApprovals = [],
   messageHistory = [],
+  tokenStreaming = false,
   agentProvenance = null,
 }: {
   agentId: string;
@@ -236,6 +237,7 @@ export default function App({
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
+  tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
   // Track current agent (can change when swapping)
@@ -330,6 +332,10 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+
+  // Token streaming preference (can be toggled at runtime)
+  const [tokenStreamingEnabled, setTokenStreamingEnabled] =
+    useState(tokenStreaming);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -1357,6 +1363,61 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /stream command - toggle and save
+        if (msg.trim() === "/stream") {
+          const newValue = !tokenStreamingEnabled;
+
+          // Immediately add command to transcript with "running" phase and loading message
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: `${newValue ? "Enabling" : "Disabling"} token streaming...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          // Lock input during async operation
+          setCommandRunning(true);
+
+          try {
+            setTokenStreamingEnabled(newValue);
+
+            // Save to settings
+            const { settingsManager } = await import("../settings-manager");
+            settingsManager.updateSettings({ tokenStreaming: newValue });
+
+            // Update the same command with final result
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Token streaming ${newValue ? "enabled" : "disabled"}`,
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            // Mark command as failed
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            // Unlock input
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /clear command - reset conversation
         if (msg.trim() === "/clear") {
           const cmdId = uid("cmd");
@@ -2189,6 +2250,7 @@ ${recentCommits}
       isExecutingTool,
       queuedApprovalResults,
       pendingApprovals,
+      tokenStreamingEnabled,
     ],
   );
 
@@ -3160,9 +3222,10 @@ Plan file path: ${planFilePath}`;
         // Always show tool calls in progress
         return ln.phase !== "finished";
       }
+      if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
-  }, [lines]);
+  }, [lines, tokenStreamingEnabled]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
