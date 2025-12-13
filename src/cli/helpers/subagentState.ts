@@ -177,8 +177,10 @@ export function updateSubagent(
     updates.status = "running";
   }
 
-  Object.assign(agent, updates);
-  syncToBuffers(agent);
+  // Create a new object to ensure React.memo detects the change
+  const updatedAgent = { ...agent, ...updates };
+  store.agents.set(id, updatedAgent);
+  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 
@@ -197,12 +199,16 @@ export function addToolCall(
   // Don't add duplicates
   if (agent.toolCalls.some((tc) => tc.id === toolCallId)) return;
 
-  agent.toolCalls.push({
-    id: toolCallId,
-    name: toolName,
-    args: toolArgs,
-  });
-  syncToBuffers(agent);
+  // Create a new object to ensure React.memo detects the change
+  const updatedAgent = {
+    ...agent,
+    toolCalls: [
+      ...agent.toolCalls,
+      { id: toolCallId, name: toolName, args: toolArgs },
+    ],
+  };
+  store.agents.set(subagentId, updatedAgent);
+  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 
@@ -216,12 +222,15 @@ export function completeSubagent(
   const agent = store.agents.get(id);
   if (!agent) return;
 
-  agent.status = result.success ? "completed" : "error";
-  if (result.error) {
-    agent.error = result.error;
-  }
-  agent.durationMs = Date.now() - agent.startTime;
-  syncToBuffers(agent);
+  // Create a new object to ensure React.memo detects the change
+  const updatedAgent = {
+    ...agent,
+    status: result.success ? "completed" : "error",
+    error: result.error,
+    durationMs: Date.now() - agent.startTime,
+  } as SubagentState;
+  store.agents.set(id, updatedAgent);
+  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 
