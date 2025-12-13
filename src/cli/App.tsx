@@ -1105,14 +1105,19 @@ export default function App({
   }, [streaming]);
 
   const handleAgentSelect = useCallback(
-    async (targetAgentId: string) => {
+    async (targetAgentId: string, opts?: { profileName?: string }) => {
       setAgentSelectorOpen(false);
+
+      const isProfileLoad = !!opts?.profileName;
+      const inputCmd = isProfileLoad
+        ? `/profile load ${opts.profileName}`
+        : `/resume ${targetAgentId}`;
 
       const cmdId = uid("cmd");
       buffersRef.current.byId.set(cmdId, {
         kind: "command",
         id: cmdId,
-        input: `/resume ${targetAgentId}`,
+        input: inputCmd,
         output: `Switching to agent ${targetAgentId}...`,
         phase: "running",
       });
@@ -1158,11 +1163,14 @@ export default function App({
         // Add success command to transcript
         const successCmdId = uid("cmd");
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
+        const successOutput = isProfileLoad
+          ? `Loaded "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`
+          : `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
         buffersRef.current.byId.set(successCmdId, {
           kind: "command",
           id: successCmdId,
-          input: `/resume ${targetAgentId}`,
-          output: `✓ Switched to agent "${agent.name || targetAgentId}"\n${agentUrl}`,
+          input: inputCmd,
+          output: successOutput,
           phase: "finished",
           success: true,
         });
@@ -1173,7 +1181,7 @@ export default function App({
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
-          input: `/resume ${targetAgentId}`,
+          input: inputCmd,
           output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
@@ -1194,16 +1202,12 @@ export default function App({
       if (profileConfirmPending && !msg) {
         // User pressed Enter with empty input - proceed with loading
         const { name, agentId: targetAgentId, cmdId } = profileConfirmPending;
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/profile load ${name}`,
-          output: `Loading profile "${name}"...`,
-          phase: "running",
-        });
+        buffersRef.current.byId.delete(cmdId);
+        const orderIdx = buffersRef.current.order.indexOf(cmdId);
+        if (orderIdx !== -1) buffersRef.current.order.splice(orderIdx, 1);
         refreshDerived();
         setProfileConfirmPending(null);
-        await handleAgentSelect(targetAgentId);
+        await handleAgentSelect(targetAgentId, { profileName: name });
         return { submitted: true };
       }
 
@@ -1885,7 +1889,7 @@ export default function App({
             }
 
             // Current agent is saved, proceed with loading
-            await handleAgentSelect(targetAgentId);
+            await handleAgentSelect(targetAgentId, { profileName });
             return { submitted: true };
           }
 
