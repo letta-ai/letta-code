@@ -30,6 +30,7 @@ export interface ProjectSettings {
 export interface LocalProjectSettings {
   lastAgent: string | null;
   permissions?: PermissionRules;
+  profiles?: Record<string, string>; // profileName -> agentId
 }
 
 const DEFAULT_SETTINGS: Settings = {
