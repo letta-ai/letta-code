@@ -253,9 +253,7 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
             const isSelected = index === selectedIndex;
             const messageText = getMessageText(msg);
             const timestamp =
-              "created_at" in msg
-                ? formatRelativeTime(msg.created_at as string)
-                : "";
+              "date" in msg ? formatRelativeTime(msg.date as string) : "";
             const msgType = (msg.message_type || "unknown").replace(
               "_message",
               "",
