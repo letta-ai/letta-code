@@ -16,6 +16,13 @@ export const commands: Record<string, Command> = {
       return "Opening model selector...";
     },
   },
+  "/stream": {
+    desc: "Toggle token streaming on/off",
+    handler: () => {
+      // Handled specially in App.tsx for live toggling
+      return "Toggling token streaming...";
+    },
+  },
   "/exit": {
     desc: "Exit and show session stats",
     handler: () => {
