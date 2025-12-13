@@ -1547,8 +1547,8 @@ export default function App({
           const { settingsManager } = await import("../settings-manager");
           const cmdId = uid("cmd");
 
-          // /profile list (or just /profile)
-          if (subcommand === "list" || parts.length === 1) {
+          // /profile (list profiles)
+          if (parts.length === 1) {
             const localSettings = settingsManager.getLocalProjectSettings();
             const profiles = localSettings.profiles || {};
             const entries = Object.entries(profiles);
@@ -1692,7 +1692,7 @@ export default function App({
                 kind: "command",
                 id: cmdId,
                 input: msg,
-                output: `Profile "${profileName}" not found. Use /profile list to see available profiles.`,
+                output: `Profile "${profileName}" not found. Use /profile to see available profiles.`,
                 phase: "finished",
                 success: false,
               });
@@ -1742,7 +1742,7 @@ export default function App({
                 kind: "command",
                 id: cmdId,
                 input: msg,
-                output: `Profile "${profileName}" not found. Use /profile list to see available profiles.`,
+                output: `Profile "${profileName}" not found. Use /profile to see available profiles.`,
                 phase: "finished",
                 success: false,
               });
@@ -1839,7 +1839,7 @@ export default function App({
             id: cmdId,
             input: msg,
             output:
-              "Unknown subcommand. Usage: /profile [list|save|load|delete] <name>",
+              "Unknown subcommand. Usage: /profile [save|load|delete] <name>",
             phase: "finished",
             success: false,
           });

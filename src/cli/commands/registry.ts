@@ -121,7 +121,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/profile": {
-    desc: "Manage named agent profiles (save/load/list/delete)",
+    desc: "Manage agent profiles (save / load / delete)",
     handler: () => {
       // Handled specially in App.tsx
       return "Managing profiles...";
