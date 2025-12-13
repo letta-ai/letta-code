@@ -68,9 +68,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       return null;
     }
 
-    // Format stats
-    const tokenStr =
-      subagent.totalTokens >= 1000
+    // Format stats - show "—" for tokens while running since we only get usage at the end
+    const isRunning = subagent.status === "pending" || subagent.status === "running";
+    const tokenStr = isRunning
+      ? "—"
+      : subagent.totalTokens >= 1000
         ? `${(subagent.totalTokens / 1000).toFixed(1)}k`
         : String(subagent.totalTokens);
     const stats = `${subagent.toolCount} tool use${subagent.toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens`;
@@ -112,7 +114,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     };
 
     return (
-      <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="column">
         {/* Header: ⏺ Ran 1 Explore agent */}
         <Box flexDirection="row">
           {subagent.status === "completed" || subagent.status === "error" ? (
@@ -130,6 +132,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
           <Text> {subagent.description}</Text>
           <Text color={colors.subagent.stats}> · {stats}</Text>
         </Box>
+
+        {/* Subagent URL if available */}
+        {subagent.agentURL && (
+          <Box flexDirection="row">
+            <Text color={colors.subagent.treeChar}>   </Text>
+            <Text dimColor>  ⎿  Subagent: {subagent.agentURL}</Text>
+          </Box>
+        )}
 
         {/* Status line */}
         <Box flexDirection="row">

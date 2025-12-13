@@ -38,9 +38,11 @@ const BlinkDot: React.FC<{ color?: string }> = ({
 // Helper Functions
 // ============================================================================
 
-function formatStats(toolCount: number, totalTokens: number): string {
-  const tokenStr =
-    totalTokens >= 1000
+function formatStats(toolCount: number, totalTokens: number, isRunning: boolean): string {
+  // Show "—" for tokens while running since we only get usage at the end
+  const tokenStr = isRunning
+    ? "—"
+    : totalTokens >= 1000
       ? `${(totalTokens / 1000).toFixed(1)}k`
       : String(totalTokens);
   return `${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens`;
@@ -98,7 +100,8 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
     }
   };
 
-  const stats = formatStats(agent.toolCalls.length, agent.totalTokens);
+  const isRunning = agent.status === "pending" || agent.status === "running";
+  const stats = formatStats(agent.toolCalls.length, agent.totalTokens, isRunning);
   const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
   return (
