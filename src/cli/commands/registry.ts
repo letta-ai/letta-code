@@ -135,6 +135,13 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
+  "/profile": {
+    desc: "Manage local profiles (save/load/delete)",
+    handler: () => {
+      // Handled specially in App.tsx for profile management
+      return "Managing profiles...";
+    },
+  },
 };
 
 /**
