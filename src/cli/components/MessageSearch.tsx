@@ -203,7 +203,7 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
     <Box flexDirection="column" gap={1}>
       <Box>
         <Text bold color={colors.selector.title}>
-          Search Messages
+          Search messages across all agents
         </Text>
       </Box>
 
