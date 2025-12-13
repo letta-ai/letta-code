@@ -1157,11 +1157,12 @@ export default function App({
 
         // Add success command to transcript
         const successCmdId = uid("cmd");
+        const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
         buffersRef.current.byId.set(successCmdId, {
           kind: "command",
           id: successCmdId,
           input: `/swap ${targetAgentId}`,
-          output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
+          output: `✓ Switched to agent "${agent.name || targetAgentId}"\n${agentUrl}`,
           phase: "finished",
           success: true,
         });
