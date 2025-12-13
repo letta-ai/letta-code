@@ -11,7 +11,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { Box, Static } from "ink";
+import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
@@ -1113,17 +1113,6 @@ export default function App({
         ? `/profile load ${opts.profileName}`
         : `/resume ${targetAgentId}`;
 
-      const cmdId = uid("cmd");
-      buffersRef.current.byId.set(cmdId, {
-        kind: "command",
-        id: cmdId,
-        input: inputCmd,
-        output: `Switching to agent ${targetAgentId}...`,
-        phase: "running",
-      });
-      buffersRef.current.order.push(cmdId);
-      refreshDerived();
-
       setCommandRunning(true);
 
       try {
@@ -1138,11 +1127,13 @@ export default function App({
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
 
-        // Clear current transcript
+        // Clear current transcript and static items
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
         emittedIdsRef.current.clear();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
 
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
@@ -1151,41 +1142,55 @@ export default function App({
         setAgentName(agent.name);
         setLlmConfig(agent.llm_config);
 
-        // Backfill message history (no welcome screen - only shown at bootup)
-        setStaticItems([]);
-        if (messages.length > 0) {
-          hasBackfilledRef.current = false;
-          backfillBuffers(buffersRef.current, messages);
-          refreshDerived();
-          hasBackfilledRef.current = true;
-        }
-
-        // Add success command to transcript
-        const successCmdId = uid("cmd");
+        // Build success command
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
         const successOutput = isProfileLoad
           ? `Loaded "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`
           : `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
-        buffersRef.current.byId.set(successCmdId, {
+        const successItem: StaticItem = {
           kind: "command",
-          id: successCmdId,
+          id: uid("cmd"),
           input: inputCmd,
           output: successOutput,
           phase: "finished",
           success: true,
-        });
-        buffersRef.current.order.push(successCmdId);
-        refreshDerived();
+        };
+
+        // Backfill message history with visual separator, then success command at end
+        if (messages.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, messages);
+          // Collect backfilled items
+          const backfilledItems: StaticItem[] = [];
+          for (const id of buffersRef.current.order) {
+            const ln = buffersRef.current.byId.get(id);
+            if (!ln) continue;
+            emittedIdsRef.current.add(id);
+            backfilledItems.push({ ...ln } as StaticItem);
+          }
+          // Add separator before backfilled messages, then success at end
+          const separator = {
+            kind: "separator" as const,
+            id: uid("sep"),
+          };
+          setStaticItems([separator, ...backfilledItems, successItem]);
+          setLines(toLines(buffersRef.current));
+          hasBackfilledRef.current = true;
+        } else {
+          setStaticItems([successItem]);
+        }
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
+        const errorCmdId = uid("cmd");
+        buffersRef.current.byId.set(errorCmdId, {
           kind: "command",
-          id: cmdId,
+          id: errorCmdId,
           input: inputCmd,
           output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
         });
+        buffersRef.current.order.push(errorCmdId);
         refreshDerived();
       } finally {
         setCommandRunning(false);
@@ -3444,6 +3449,8 @@ Plan file path: ${planFilePath}`;
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
+            ) : item.kind === "separator" ? (
+              <Text dimColor>{"─".repeat(columns)}</Text>
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
             ) : null}
