@@ -1613,25 +1613,57 @@ export default function App({
               return { submitted: true };
             }
 
-            const localSettings = settingsManager.getLocalProjectSettings();
-            const profiles = { ...(localSettings.profiles || {}) };
-            const existed = profileName in profiles;
-            profiles[profileName] = agentId;
-            settingsManager.updateLocalProjectSettings({ profiles });
-
-            const shortId = agentId.replace("agent-", "").slice(0, 8);
+            // Show running state
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: existed
-                ? `✓ Profile "${profileName}" updated (${shortId})`
-                : `✓ Profile "${profileName}" saved (${shortId})`,
-              phase: "finished",
-              success: true,
+              output: `Saving profile "${profileName}"...`,
+              phase: "running",
             });
             buffersRef.current.order.push(cmdId);
             refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              // Update agent name on server
+              const client = await getClient();
+              await client.agents.update(agentId, { name: profileName });
+              setAgentName(profileName);
+
+              // Save profile locally
+              const localSettings = settingsManager.getLocalProjectSettings();
+              const profiles = { ...(localSettings.profiles || {}) };
+              const existed = profileName in profiles;
+              profiles[profileName] = agentId;
+              settingsManager.updateLocalProjectSettings({ profiles });
+
+              const shortId = agentId.replace("agent-", "").slice(0, 8);
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: existed
+                  ? `Profile "${profileName}" updated (${shortId})`
+                  : `Profile "${profileName}" saved (${shortId})`,
+                phase: "finished",
+                success: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Failed: ${errorDetails}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            } finally {
+              setCommandRunning(false);
+            }
             return { submitted: true };
           }
 
@@ -1771,7 +1803,7 @@ export default function App({
                 kind: "command",
                 id: successCmdId,
                 input: msg,
-                output: `Loaded profile "${profileName}" (${agent.name || targetAgentId})\n${agentUrl}`,
+                output: `Loaded profile "${profileName}" \n${agentUrl}`,
                 phase: "finished",
                 success: true,
               });
