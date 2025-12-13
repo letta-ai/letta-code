@@ -1939,7 +1939,6 @@ export default function App({
           return { submitted: true };
         }
 
-
         // Special handling for /bashes command - show background shell processes
         if (msg.trim() === "/bashes") {
           const { backgroundProcesses } = await import(
