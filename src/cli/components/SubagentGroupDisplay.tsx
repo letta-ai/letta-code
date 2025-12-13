@@ -217,7 +217,7 @@ export const SubagentGroupDisplay = memo(() => {
   }
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column">
       {Array.from(grouped.entries()).map(([type, typeAgents]) => {
         const allCompleted = typeAgents.every(
           (a) => a.status === "completed" || a.status === "error",
