@@ -49,16 +49,7 @@ function truncateText(text: string, maxWidth: number): string {
  * Get display text from a message
  */
 function getMessageText(msg: MessageSearchResponse[number]): string {
-  if ("text" in msg && typeof msg.text === "string") {
-    return msg.text;
-  }
-  if ("reasoning" in msg && typeof msg.reasoning === "string") {
-    return msg.reasoning;
-  }
-  if ("tool_call" in msg && msg.tool_call) {
-    const tc = msg.tool_call as { name?: string; arguments?: string };
-    return `Tool: ${tc.name || "unknown"}`;
-  }
+  // Assistant message content
   if ("content" in msg) {
     const content = msg.content;
     if (typeof content === "string") return content;
@@ -71,7 +62,28 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
       }
     }
   }
-  return `[${msg.message_type}]`;
+  // Text field (user messages, etc)
+  if ("text" in msg && typeof msg.text === "string") {
+    return msg.text;
+  }
+  // Reasoning messages
+  if ("reasoning" in msg && typeof msg.reasoning === "string") {
+    return msg.reasoning;
+  }
+  // Tool call messages
+  if ("tool_call" in msg && msg.tool_call) {
+    const tc = msg.tool_call as { name?: string; arguments?: string };
+    return `Tool: ${tc.name || "unknown"}`;
+  }
+  // Tool return messages - show tool name and preview of return
+  if ("tool_return" in msg) {
+    const toolName = "name" in msg ? (msg.name as string) : "tool";
+    const returnValue = msg.tool_return as string;
+    // Truncate long return values
+    const preview = returnValue?.slice(0, 100) || "";
+    return `${toolName}: ${preview}`;
+  }
+  return `[${msg.message_type || "unknown"}]`;
 }
 
 export function MessageSearch({ onClose }: MessageSearchProps) {
@@ -199,9 +211,17 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       <Box flexDirection="column">
         <Box>
           <Text dimColor>Search: </Text>
-          <Text>{searchInput || ""}</Text>
-          {searchInput && searchInput !== activeQuery && (
-            <Text dimColor> (press Enter to search)</Text>
+          {searchInput ? (
+            <>
+              <Text>{searchInput}</Text>
+              {searchInput !== activeQuery && (
+                <Text dimColor> (press Enter to search)</Text>
+              )}
+            </>
+          ) : (
+            <Text dimColor italic>
+              (type your query)
+            </Text>
           )}
         </Box>
         <Box>
@@ -252,8 +272,11 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
           {pageResults.map((msg, index) => {
             const isSelected = index === selectedIndex;
             const messageText = getMessageText(msg);
-            const timestamp =
-              "date" in msg ? formatRelativeTime(msg.date as string) : "";
+            // All messages have a date field
+            const msgWithDate = msg as { date?: string };
+            const timestamp = msgWithDate.date
+              ? formatRelativeTime(msgWithDate.date)
+              : "";
             const msgType = (msg.message_type || "unknown").replace(
               "_message",
               "",
