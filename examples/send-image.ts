@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
  * Minimal example: Send an image to a Letta agent
- * 
+ *
  * Usage:
  *   bun examples/send-image.ts <agent-id> <image-path>
- * 
+ *
  * Example:
  *   bun examples/send-image.ts agent-123abc screenshot.png
  */

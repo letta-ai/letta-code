@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import { setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
@@ -54,6 +55,7 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
+import { SubagentManager } from "./components/SubagentManager";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -282,6 +284,13 @@ export default function App({
     }
   }, [initialAgentState]);
 
+  // Set agent context for tools (especially Task tool)
+  useEffect(() => {
+    if (agentId) {
+      setCurrentAgentId(agentId);
+    }
+  }, [agentId]);
+
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
 
@@ -362,6 +371,9 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+
+  // Subagent manager state (for /subagents command)
+  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1448,6 +1460,12 @@ export default function App({
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           setSystemPromptSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /subagents command - opens subagent manager
+        if (trimmed === "/subagents") {
+          setSubagentManagerOpen(true);
           return { submitted: true };
         }
 
@@ -3576,6 +3594,11 @@ Plan file path: ${planFilePath}`;
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
               />
+            )}
+
+            {/* Subagent Manager - for managing custom subagents */}
+            {subagentManagerOpen && (
+              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}

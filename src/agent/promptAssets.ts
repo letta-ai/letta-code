@@ -10,7 +10,7 @@ import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
 import personaPrompt from "./prompts/persona.mdx";
-import personaEmptyPrompt from "./prompts/persona_empty.mdx";
+import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
@@ -30,13 +30,13 @@ export const REMEMBER_PROMPT = rememberPrompt;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
-  "persona_empty.mdx": personaEmptyPrompt,
+  "persona_claude.mdx": personaClaudePrompt,
+  "persona_kawaii.mdx": personaKawaiiPrompt,
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,
   "loaded_skills.mdx": loadedSkillsPrompt,
   "style.mdx": stylePrompt,
-  "persona_kawaii.mdx": personaKawaiiPrompt,
 };
 
 // System prompt options for /system command
@@ -97,3 +97,40 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
     content: geminiPrompt,
   },
 ];
+
+/**
+ * Resolve a system prompt string to its content.
+ *
+ * Resolution order:
+ * 1. If it matches a systemPromptId from SYSTEM_PROMPTS, use its content
+ * 2. If it matches a subagent name, use that subagent's system prompt
+ * 3. Otherwise, use the default system prompt
+ *
+ * @param systemPromptInput - The system prompt ID or subagent name
+ * @returns The resolved system prompt content
+ */
+export async function resolveSystemPrompt(
+  systemPromptInput: string | undefined,
+): Promise<string> {
+  // No input - use default
+  if (!systemPromptInput) {
+    return SYSTEM_PROMPT;
+  }
+
+  // 1. Check if it matches a system prompt ID
+  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptInput);
+  if (matchedPrompt) {
+    return matchedPrompt.content;
+  }
+
+  // 2. Check if it matches a subagent name
+  const { getAllSubagentConfigs } = await import("./subagents");
+  const subagentConfigs = await getAllSubagentConfigs();
+  const matchedSubagent = subagentConfigs[systemPromptInput];
+  if (matchedSubagent) {
+    return matchedSubagent.systemPrompt;
+  }
+
+  // 3. Fall back to default
+  return SYSTEM_PROMPT;
+}

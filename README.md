@@ -294,6 +294,86 @@ letta --toolset gemini                        # Use Gemini tools with default mo
 
 The `/model` command automatically switches toolsets when you change models. Use `/toolset` if you want to manually override the automatic selection.
 
+### Subagents
+
+The **Task** tool allows the main agent to spawn specialized subagents that autonomously handle complex tasks. Subagents run in headless mode and return a final report when done.
+
+**Built-in Subagent Types:**
+
+| Type | Description | Model |
+|------|-------------|-------|
+| `explore` | Fast codebase exploration (read-only) | Haiku |
+| `plan` | Break down complex tasks into steps | Opus |
+| `general-purpose` | Full-capability research & implementation | Sonnet 4.5 |
+
+**Key Features:**
+
+- **Parallel execution**: Launch multiple subagents concurrently for independent tasks
+- **Context-aware**: Subagents see full conversation history and can reference earlier context
+- **Permission inheritance**: Subagents inherit permission mode and allowed/disallowed tools from the parent
+- **Stateless**: Each subagent returns a single final report when done
+
+**Example Usage:**
+
+```typescript
+Task({
+  subagent_type: "plan",
+  description: "Plan database migration",
+  prompt: "Plan the migration from SQLite to PostgreSQL.",
+  model: "sonnet"  // Override the subagent's default
+})
+```
+
+### Custom Subagents
+
+You can define custom subagents as Markdown files with YAML frontmatter. Custom subagents can override built-ins or add new specialized behaviors. Once defined, custom subagents are available via the Task tool.
+
+**Discovery Locations:**
+
+1. **Global**: `~/.letta/agents/*.md` - Available in all projects
+2. **Project**: `.letta/agents/*.md` - Project-specific (overrides global)
+
+**Example Custom Subagent:**
+
+Create `.letta/agents/code-reviewer.md`:
+
+```markdown
+---
+name: code-reviewer
+description: Reviews code for quality, security, and best practices
+tools: Glob, Grep, Read
+model: sonnet
+memoryBlocks: human, persona
+---
+
+You are a code review agent that analyzes code for quality and security issues.
+
+## Instructions
+
+- Use Grep to find patterns that indicate common issues
+- Use Read to examine specific files in detail
+- Check for security vulnerabilities (OWASP top 10)
+- Verify error handling and edge cases
+- Look for code style consistency
+
+## Output Format
+
+1. Summary of findings
+2. Issues found (Critical / Warning / Info)
+3. Specific recommendations with file:line references
+```
+
+**Frontmatter Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique identifier (lowercase, hyphens allowed) |
+| `description` | Yes | When to use this subagent |
+| `tools` | No | Comma-separated tool names, or `all` (default: `all`) |
+| `model` | No | Model to use: `haiku`, `sonnet`, `opus`, or full handle (default: `inherit`) |
+| `memoryBlocks` | No | Memory blocks to include: `all`, `none`, or comma-separated labels like `human, persona, project` (default: `all`) |
+
+
 ### Headless Mode
 ```bash
 letta -p "Run bun lint and correct errors"              # Auto-resumes project agent
