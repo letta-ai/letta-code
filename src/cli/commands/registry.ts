@@ -10,24 +10,10 @@ interface Command {
 }
 
 export const commands: Record<string, Command> = {
-  "/agent": {
-    desc: "Show agent link",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID
-      return "Getting agent link...";
-    },
-  },
   "/model": {
     desc: "Switch model",
     handler: () => {
       return "Opening model selector...";
-    },
-  },
-  "/stream": {
-    desc: "Toggle token streaming on/off",
-    handler: () => {
-      // Handled specially in App.tsx for live toggling
-      return "Toggling token streaming...";
     },
   },
   "/exit": {
@@ -77,14 +63,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
-    },
-  },
-  "/swap": {
-    desc: "Alias for /resume",
-    hidden: true, // Hidden - use /resume instead
-    handler: () => {
-      // Handled specially in App.tsx - redirects to /resume
-      return "Opening session selector...";
     },
   },
   "/toolset": {
