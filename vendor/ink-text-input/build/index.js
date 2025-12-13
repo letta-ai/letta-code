@@ -17,6 +17,10 @@ function isControlSequence(input, key) {
     // Ctrl+W (delete word) - handled by parent component
     if (key.ctrl && (input === 'w' || input === 'W')) return true;
 
+    // Filter out other ctrl+letter combinations that aren't handled below (e.g., ctrl+o for subagent expand)
+    // The handled ones are: ctrl+a, ctrl+e, ctrl+k, ctrl+u, ctrl+y (see useInput below)
+    if (key.ctrl && input && /^[a-z]$/i.test(input) && !['a', 'e', 'k', 'u', 'y'].includes(input.toLowerCase())) return true;
+
     // Option+Arrow escape sequences: Ink parses \x1bb as meta=true, input='b'
     if (key.meta && (input === 'b' || input === 'B' || input === 'f' || input === 'F')) return true;
 
