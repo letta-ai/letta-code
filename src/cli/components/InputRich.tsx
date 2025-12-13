@@ -117,19 +117,20 @@ export function Input({
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Handle profile confirmation cancellation on ANY key (except Enter)
-  // When onEscapeCancel is provided, any key press should trigger cancellation
-  useInput((input, key) => {
+  // Handle profile confirmation: Enter confirms, any other key cancels
+  // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
+  useInput((_input, key) => {
     if (!visible) return;
     if (!onEscapeCancel) return;
 
-    // Enter key confirms the action, don't cancel
-    if (key.return) return;
+    // Enter key confirms the action - trigger submit with empty input
+    if (key.return) {
+      onSubmit("");
+      return;
+    }
 
     // Any other key cancels
     onEscapeCancel();
-    // Clear input to ensure no characters are left over
-    setValue("");
   });
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
@@ -529,6 +530,7 @@ export function Input({
               onSubmit={handleSubmit}
               cursorPosition={cursorPos}
               onCursorMove={setCurrentCursorPosition}
+              focus={!onEscapeCancel}
             />
           </Box>
         </Box>
