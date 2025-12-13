@@ -19,6 +19,7 @@ interface TaskArgs {
   prompt: string;
   description: string;
   model?: string;
+  toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
 }
 
 /**
@@ -32,7 +33,7 @@ export async function task(args: TaskArgs): Promise<string> {
     "Task",
   );
 
-  const { subagent_type, prompt, description, model } = args;
+  const { subagent_type, prompt, description, model, toolCallId } = args;
 
   // Get all available subagent configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
@@ -45,7 +46,7 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Register subagent with state store for UI display
   const subagentId = generateSubagentId();
-  registerSubagent(subagentId, subagent_type, description);
+  registerSubagent(subagentId, subagent_type, description, toolCallId);
 
   try {
     const result = await spawnSubagent(

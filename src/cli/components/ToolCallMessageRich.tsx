@@ -17,6 +17,17 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
+  // Optional subagent data for Task tool calls
+  subagent?: {
+    id: string;
+    type: string;
+    description: string;
+    status: "pending" | "running" | "completed" | "error";
+    toolCount: number;
+    totalTokens: number;
+    agentURL: string | null;
+    error?: string;
+  };
 };
 
 // BlinkDot component copied verbatim from old codebase
@@ -49,9 +60,84 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const rawName = line.name ?? "?";
   const argsText = line.argsText ?? "...";
 
-  // Task tool handles its own display via console.log - suppress UI rendering entirely
+  // Task tool - render subagent info if available
   if (rawName === "Task" || rawName === "task") {
-    return null;
+    const subagent = line.subagent;
+    if (!subagent) {
+      // No subagent data yet, show nothing
+      return null;
+    }
+
+    // Format stats
+    const tokenStr =
+      subagent.totalTokens >= 1000
+        ? `${(subagent.totalTokens / 1000).toFixed(1)}k`
+        : String(subagent.totalTokens);
+    const stats = `${subagent.toolCount} tool use${subagent.toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens`;
+
+    // Get status indicator
+    const getSubagentDot = () => {
+      switch (subagent.status) {
+        case "pending":
+        case "running":
+          return <BlinkDot color={colors.subagent.running} />;
+        case "completed":
+          return <Text color={colors.subagent.completed}>●</Text>;
+        case "error":
+          return <Text color={colors.subagent.error}>●</Text>;
+        default:
+          return <Text>●</Text>;
+      }
+    };
+
+    // Determine header text
+    const headerText =
+      subagent.status === "completed" || subagent.status === "error"
+        ? `Ran 1 ${subagent.type} agent`
+        : `Running 1 ${subagent.type} agent…`;
+
+    // Get status line
+    const getStatusLine = () => {
+      if (subagent.status === "completed") {
+        return <Text dimColor>  ⎿  Done</Text>;
+      }
+      if (subagent.status === "error") {
+        return (
+          <Text color={colors.subagent.error}>
+            {"  "}⎿ Error: {subagent.error}
+          </Text>
+        );
+      }
+      return <Text dimColor>  ⎿  Running...</Text>;
+    };
+
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        {/* Header: ⏺ Ran 1 Explore agent */}
+        <Box flexDirection="row">
+          {subagent.status === "completed" || subagent.status === "error" ? (
+            <Text color={colors.subagent.completed}>⏺</Text>
+          ) : (
+            <BlinkDot color={colors.subagent.header} />
+          )}
+          <Text color={colors.subagent.header}> {headerText}</Text>
+        </Box>
+
+        {/* Agent row: └─ ● description · stats */}
+        <Box flexDirection="row">
+          <Text color={colors.subagent.treeChar}>└─ </Text>
+          {getSubagentDot()}
+          <Text> {subagent.description}</Text>
+          <Text color={colors.subagent.stats}> · {stats}</Text>
+        </Box>
+
+        {/* Status line */}
+        <Box flexDirection="row">
+          <Text color={colors.subagent.treeChar}>   </Text>
+          {getStatusLine()}
+        </Box>
+      </Box>
+    );
   }
 
   // Apply tool name remapping from old codebase

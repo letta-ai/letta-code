@@ -60,7 +60,11 @@ import { SessionStats as SessionStatsComponent } from "./components/SessionStats
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentManager } from "./components/SubagentManager";
-import { clearCompletedSubagents } from "./helpers/subagentState";
+import {
+  clearCompletedSubagents,
+  setBufferSyncCallback,
+  type SubagentSyncData,
+} from "./helpers/subagentState";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -522,6 +526,34 @@ export default function App({
     }
   }, [refreshDerived]);
 
+  // Set up callback to sync subagent state to tool_call lines in buffers
+  useEffect(() => {
+    setBufferSyncCallback((toolCallId: string, subagentData: SubagentSyncData) => {
+      const b = buffersRef.current;
+      // Find the tool_call line by toolCallId
+      const lineId = b.toolCallIdToLineId.get(toolCallId);
+      if (!lineId) return;
+
+      const line = b.byId.get(lineId);
+      if (!line || line.kind !== "tool_call") return;
+
+      // Update the subagent field on the tool_call line
+      line.subagent = {
+        id: subagentData.id,
+        type: subagentData.type,
+        description: subagentData.description,
+        status: subagentData.status,
+        toolCount: subagentData.toolCount,
+        totalTokens: subagentData.totalTokens,
+        agentURL: subagentData.agentURL,
+        error: subagentData.error,
+      };
+
+      // Trigger a UI refresh
+      refreshDerivedThrottled();
+    });
+  }, [refreshDerivedThrottled]);
+
   // Restore pending approval from startup when ready
   // All approvals (including fancy UI tools) go through pendingApprovals
   // The render logic determines which UI to show based on tool name
@@ -931,6 +963,7 @@ export default function App({
                 const result = await executeTool(
                   ac.approval.toolName,
                   parsedArgs,
+                  { toolCallId: ac.approval.toolCallId },
                 );
 
                 // Update buffers with tool return for UI
