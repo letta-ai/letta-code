@@ -37,6 +37,7 @@ export function Input({
   currentModel,
   messageQueue,
   onEnterQueueEditMode,
+  onEscapeCancel,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -53,6 +54,7 @@ export function Input({
   currentModel?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
+  onEscapeCancel?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -132,6 +134,12 @@ export function Input({
             onEnterQueueEditMode();
           }
         }
+        return;
+      }
+
+      // When input is empty and onEscapeCancel is provided, call it
+      if (!value && onEscapeCancel) {
+        onEscapeCancel();
         return;
       }
 
