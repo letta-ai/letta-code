@@ -1,8 +1,8 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
-import type { ComponentType } from "react";
-import { useEffect, useRef, useState } from "react";
+import { type ComponentType, useEffect, useRef, useState } from "react";
+import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
@@ -11,6 +11,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
@@ -23,7 +24,6 @@ const COUNTER_VISIBLE_THRESHOLD = 1000;
 export function Input({
   visible = true,
   streaming,
-  commandRunning = false,
   tokenCount,
   thinkingMessage,
   onSubmit,
@@ -35,10 +35,11 @@ export function Input({
   agentId,
   agentName,
   currentModel,
+  messageQueue,
+  onEnterQueueEditMode,
 }: {
   visible?: boolean;
   streaming: boolean;
-  commandRunning?: boolean;
   tokenCount: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
@@ -50,6 +51,8 @@ export function Input({
   agentId?: string;
   agentName?: string | null;
   currentModel?: string | null;
+  messageQueue?: string[];
+  onEnterQueueEditMode?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -110,7 +113,7 @@ export function Input({
   const serverUrl =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+    LETTA_CLOUD_API_URL;
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
@@ -119,6 +122,16 @@ export function Input({
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
+
+        // If there are queued messages, load them into the input box
+        if (messageQueue && messageQueue.length > 0) {
+          const queueText = messageQueue.join("\n");
+          setValue(queueText);
+          // Signal to App.tsx to clear the queue
+          if (onEnterQueueEditMode) {
+            onEnterQueueEditMode();
+          }
+        }
         return;
       }
 
@@ -141,9 +154,10 @@ export function Input({
     }
   });
 
-  // Handle CTRL-C for double-ctrl-c-to-exit
   useInput((input, key) => {
     if (!visible) return;
+
+    // Handle CTRL-C for double-ctrl-c-to-exit
     if (input === "c" && key.ctrl) {
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
@@ -226,7 +240,7 @@ export function Input({
         }
 
         // On first wrapped line
-        // First press: move to start, second press: navigate history
+        // First press: move to start, second press: queue edit or history
         if (currentCursorPosition > 0 && !atStartBoundary) {
           // First press - move cursor to start
           setCursorPos(0);
@@ -234,7 +248,25 @@ export function Input({
           return;
         }
 
-        // Second press or already at start - trigger history navigation
+        // Check if we should load queue (streaming with queued messages)
+        if (
+          streaming &&
+          messageQueue &&
+          messageQueue.length > 0 &&
+          atStartBoundary
+        ) {
+          setAtStartBoundary(false);
+          // Clear the queue and load into input as one multi-line message
+          const queueText = messageQueue.join("\n");
+          setValue(queueText);
+          // Signal to App.tsx to clear the queue
+          if (onEnterQueueEditMode) {
+            onEnterQueueEditMode();
+          }
+          return;
+        }
+
+        // Otherwise, trigger history navigation
         if (history.length === 0) return;
 
         setAtStartBoundary(false); // Reset for next time
@@ -352,9 +384,6 @@ export function Input({
       return;
     }
 
-    if (streaming || commandRunning) {
-      return;
-    }
     const previousValue = value;
 
     // Add to history if not empty and not a duplicate of the last entry
@@ -456,6 +485,11 @@ export function Input({
             </Text>
           </Box>
         </Box>
+      )}
+
+      {/* Queue display - show when streaming with queued messages */}
+      {streaming && messageQueue && messageQueue.length > 0 && (
+        <QueuedMessages messages={messageQueue} />
       )}
 
       <Box flexDirection="column">

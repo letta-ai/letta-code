@@ -27,8 +27,10 @@ function buildModelSettings(
   const isOpenAI = modelHandle.startsWith("openai/");
   const isAnthropic = modelHandle.startsWith("anthropic/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
+  const isGoogleVertex = modelHandle.startsWith("google_vertex/");
+  const isOpenRouter = modelHandle.startsWith("openrouter/");
 
-  if (isOpenAI) {
+  if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,
@@ -67,7 +69,7 @@ function buildModelSettings(
   }
 
   if (isGoogleAI) {
-    const googleSettings: GoogleAIModelSettings = {
+    const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
       parallel_tool_calls: true,
     };
@@ -76,10 +78,31 @@ function buildModelSettings(
         thinking_budget: updateArgs.thinking_budget as number,
       };
     }
+    if (typeof updateArgs?.temperature === "number") {
+      googleSettings.temperature = updateArgs.temperature as number;
+    }
     return googleSettings;
   }
 
-  // For unknown providers (e.g., openrouter), return generic settings with parallel_tool_calls
+  if (isGoogleVertex) {
+    // Vertex AI uses the same Google provider on the backend; only the handle differs.
+    const googleVertexSettings: Record<string, unknown> = {
+      provider_type: "google_vertex",
+      parallel_tool_calls: true,
+    };
+    if (updateArgs?.thinking_budget !== undefined) {
+      (googleVertexSettings as Record<string, unknown>).thinking_config = {
+        thinking_budget: updateArgs.thinking_budget as number,
+      };
+    }
+    if (typeof updateArgs?.temperature === "number") {
+      (googleVertexSettings as Record<string, unknown>).temperature =
+        updateArgs.temperature as number;
+    }
+    return googleVertexSettings;
+  }
+
+  // For unknown providers, return generic settings with parallel_tool_calls
   return { parallel_tool_calls: true };
 }
 

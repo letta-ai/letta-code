@@ -5,6 +5,7 @@ import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
+import { debugWarn } from "../utils/debug";
 
 // Number of recent messages to backfill when resuming a session
 const MESSAGE_HISTORY_LIMIT = 15;
@@ -62,8 +63,9 @@ export async function getResumeData(
       inContextLastMessageId &&
       cursorLastMessage.id !== inContextLastMessageId
     ) {
-      console.warn(
-        `[check-approval] Desync detected:\n` +
+      debugWarn(
+        "check-approval",
+        `Desync detected:\n` +
           `  cursor last: ${cursorLastMessage.id} (type: ${cursorLastMessage.message_type})\n` +
           `  in-context last: ${inContextLastMessageId} (type: unknown until found)`,
       );
@@ -84,8 +86,9 @@ export async function getResumeData(
         const inContextMessage = approvalMessage ?? lastMessage;
 
         if (inContextMessage) {
-          console.warn(
-            `[check-approval] Found in-context message (type: ${inContextMessage.message_type})` +
+          debugWarn(
+            "check-approval",
+            `Found in-context message (type: ${inContextMessage.message_type})` +
               (matchingMessages.length > 1
                 ? ` - had ${matchingMessages.length} duplicates`
                 : ""),
@@ -93,8 +96,9 @@ export async function getResumeData(
           messageToCheck = inContextMessage;
         }
       } else {
-        console.warn(
-          `[check-approval] In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
+        debugWarn(
+          "check-approval",
+          `In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
             `  This likely means the in-context message is older than the cursor window.\n` +
             `  Falling back to cursor message - approval state may be incorrect.`,
         );
@@ -110,11 +114,10 @@ export async function getResumeData(
     const lastStopReason = (agent as { last_stop_reason?: string })
       .last_stop_reason;
     if (lastStopReason === "requires_approval") {
-      console.warn(
-        `[check-approval] Agent last_stop_reason: ${lastStopReason}`,
-      );
-      console.warn(
-        `[check-approval] Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
+      debugWarn("check-approval", `Agent last_stop_reason: ${lastStopReason}`);
+      debugWarn(
+        "check-approval",
+        `Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
       );
     }
 
@@ -162,8 +165,9 @@ export async function getResumeData(
       // Set legacy singular field for backward compatibility (first approval only)
       if (pendingApprovals.length > 0) {
         pendingApproval = pendingApprovals[0] || null;
-        console.warn(
-          `[check-approval] Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
+        debugWarn(
+          "check-approval",
+          `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
         );
       }
     }

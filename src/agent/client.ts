@@ -1,5 +1,5 @@
 import Letta from "@letta-ai/letta-client";
-import { refreshAccessToken } from "../auth/oauth";
+import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
 export async function getClient() {
@@ -40,23 +40,18 @@ export async function getClient() {
     }
   }
 
+  // Check if refresh token is missing for Letta Cloud
   const baseURL =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+    LETTA_CLOUD_API_URL;
 
-  if (!apiKey && baseURL === "https://api.letta.com") {
+  if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
     console.error("Missing LETTA_API_KEY");
-    console.error("Run 'letta setup' to configure authentication");
+    console.error(
+      "Run 'letta setup' to configure authentication or set your LETTA_API_KEY environment variable",
+    );
     process.exit(1);
-  }
-
-  // Auto-cache: if LETTA_API_KEY is set in env but not in settings, write it to settings
-  // Note: LETTA_BASE_URL is intentionally NOT cached - it should only come from env vars
-  if (process.env.LETTA_API_KEY && !settings.env?.LETTA_API_KEY) {
-    const updatedEnv = { ...settings.env };
-    updatedEnv.LETTA_API_KEY = process.env.LETTA_API_KEY;
-    settingsManager.updateSettings({ env: updatedEnv });
   }
 
   return new Letta({

@@ -6,16 +6,10 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  hidden?: boolean; // Hidden commands don't show in autocomplete but still work
 }
 
 export const commands: Record<string, Command> = {
-  "/agent": {
-    desc: "Show agent link",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID
-      return "Getting agent link...";
-    },
-  },
   "/model": {
     desc: "Switch model",
     handler: () => {
@@ -71,11 +65,11 @@ export const commands: Record<string, Command> = {
       return "Renaming agent...";
     },
   },
-  "/swap": {
-    desc: "Switch to a different agent",
+  "/description": {
+    desc: "Update the current agent's description",
     handler: () => {
-      // Handled specially in App.tsx to access agent list and client
-      return "Swapping agent...";
+      // Handled specially in App.tsx to access agent ID and client
+      return "Updating description...";
     },
   },
   "/toolset": {
@@ -118,6 +112,27 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
+    },
+  },
+  "/remember": {
+    desc: "Remember something from the conversation (optionally: /remember <what to remember>)",
+    handler: () => {
+      // Handled specially in App.tsx to trigger memory update
+      return "Processing memory request...";
+    },
+  },
+  "/resume": {
+    desc: "Resume a previous agent session",
+    handler: () => {
+      // Handled specially in App.tsx to show resume selector
+      return "Opening session selector...";
+    },
+  },
+  "/search": {
+    desc: "Search messages across all agents",
+    handler: () => {
+      // Handled specially in App.tsx to show message search
+      return "Opening message search...";
     },
   },
   "/subagents": {

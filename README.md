@@ -473,6 +473,28 @@ Permissions are also configured in `.letta/settings.json`:
 }
 ```
 
+## Updates
+
+Letta Code automatically checks for updates on startup and installs them in the background.
+
+### Auto updates
+
+* **Update checks**: Performed on startup
+* **Update process**: Downloads and installs automatically in the background  
+* **Applying updates**: Updates take effect the next time you start Letta Code
+
+**Disable auto-updates:**
+Set the `DISABLE_AUTOUPDATER` environment variable in your shell:
+```bash
+export DISABLE_AUTOUPDATER=1
+```
+
+### Update manually
+
+```bash
+letta update
+```
+
 ## Self-hosting
 
 To use Letta Code with a self-hosted server, set `LETTA_BASE_URL` to your server IP, e.g. `export LETTA_BASE_URL="http://localhost:8283"`.

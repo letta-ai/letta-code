@@ -2,6 +2,7 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "../../agent/client";
+import { debugWarn } from "../../utils/debug";
 
 import {
   type createBuffers,
@@ -53,7 +54,6 @@ export async function drainStream(
     // Check if stream was aborted
     if (abortSignal?.aborted) {
       stopReason = "cancelled";
-      // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
       markIncompleteToolsAsCancelled(buffers);
       queueMicrotask(refresh);
       break;
@@ -130,6 +130,14 @@ export async function drainStream(
     onChunk(buffers, chunk);
     queueMicrotask(refresh);
 
+    // Check abort signal again after processing chunk (for eager cancellation)
+    if (abortSignal?.aborted) {
+      stopReason = "cancelled";
+      markIncompleteToolsAsCancelled(buffers);
+      queueMicrotask(refresh);
+      break;
+    }
+
     if (chunk.message_type === "stop_reason") {
       stopReason = chunk.stop_reason;
       // Continue reading stream to get usage_statistics that may come after
@@ -172,10 +180,11 @@ export async function drainStream(
     }));
 
     if (approvals.length === 0) {
-      console.error(
-        "[drainStream] No approvals collected despite requires_approval stop reason",
+      debugWarn(
+        "drainStream",
+        "No approvals collected despite requires_approval stop reason",
       );
-      console.error("[drainStream] Pending approvals map:", allPending);
+      debugWarn("drainStream", "Pending approvals map:", allPending);
     } else {
       // Set legacy singular field for backward compatibility
       approval = approvals[0] || null;
