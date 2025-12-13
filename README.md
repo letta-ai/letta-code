@@ -172,6 +172,10 @@ While in a session, you can use these commands:
 - `/swap` - Switch to a different agent (prompts with agent selector)
 - `/rename` - Rename the current agent
 - `/download` - Download agent file locally (exports agent configuration as JSON)
+- `/profile` - List saved profiles
+- `/profile save <name>` - Save current agent as a named profile (also updates agent name)
+- `/profile load <name>` - Load a saved profile (switches to that agent)
+- `/profile delete <name>` - Delete a profile (local only, agent still exists on cloud)
 
 **Configuration:**
 - `/model` - Switch models (prompts with model selector)
