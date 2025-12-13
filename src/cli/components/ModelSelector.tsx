@@ -16,12 +16,14 @@ type UiModel = {
 
 interface ModelSelectorProps {
   currentModel?: string;
+  currentEnableReasoner?: boolean;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
 }
 
 export function ModelSelector({
   currentModel,
+  currentEnableReasoner,
   onSelect,
   onCancel,
 }: ModelSelectorProps) {
@@ -85,7 +87,26 @@ export function ModelSelector({
       <Box flexDirection="column">
         {visibleModels.map((model, index) => {
           const isSelected = index === selectedIndex;
-          const isCurrent = model.handle === currentModel;
+
+          // Check if this model is current by comparing handle and relevant settings
+          let isCurrent = model.handle === currentModel;
+
+          // For models with the same handle, also check specific configuration settings
+          if (isCurrent && model.handle?.startsWith("anthropic/")) {
+            // For Anthropic models, check enable_reasoner setting
+            const modelEnableReasoner = model.updateArgs?.enable_reasoner;
+
+            // If the model explicitly sets enable_reasoner, check if it matches current settings
+            if (modelEnableReasoner !== undefined) {
+              // Model has explicit enable_reasoner setting, compare with current
+              isCurrent =
+                isCurrent && modelEnableReasoner === currentEnableReasoner;
+            } else {
+              // If model doesn't explicitly set enable_reasoner, it defaults to enabled (or undefined)
+              // It's current if currentEnableReasoner is not explicitly false
+              isCurrent = isCurrent && currentEnableReasoner !== false;
+            }
+          }
 
           return (
             <Box key={model.id} flexDirection="row" gap={1}>
