@@ -37,6 +37,7 @@ export function Input({
   currentModel,
   messageQueue,
   onEnterQueueEditMode,
+  onEscapeCancel,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -53,6 +54,7 @@ export function Input({
   currentModel?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
+  onEscapeCancel?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -115,9 +117,28 @@ export function Input({
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Handle profile confirmation: Enter confirms, any other key cancels
+  // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
+  useInput((_input, key) => {
+    if (!visible) return;
+    if (!onEscapeCancel) return;
+
+    // Enter key confirms the action - trigger submit with empty input
+    if (key.return) {
+      onSubmit("");
+      return;
+    }
+
+    // Any other key cancels
+    onEscapeCancel();
+  });
+
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
+    // Skip if onEscapeCancel is provided - handled by the confirmation handler above
+    if (onEscapeCancel) return;
+
     if (key.escape) {
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
@@ -509,6 +530,7 @@ export function Input({
               onSubmit={handleSubmit}
               cursorPosition={cursorPos}
               onCursorMove={setCurrentCursorPosition}
+              focus={!onEscapeCancel}
             />
           </Box>
         </Box>

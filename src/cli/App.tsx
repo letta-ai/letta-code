@@ -11,7 +11,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { Box, Static } from "ink";
+import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
@@ -30,6 +30,15 @@ import {
   executeTool,
   savePermissionRule,
 } from "../tools/manager";
+import {
+  addCommandResult,
+  handleProfileDelete,
+  handleProfileList,
+  handleProfileSave,
+  handleProfileUsage,
+  type ProfileCommandContext,
+  validateProfileLoad,
+} from "./commands/profile";
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
@@ -244,20 +253,34 @@ export default function App({
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
 
+  // Keep a ref to the current agentId for use in callbacks that need the latest value
+  const agentIdRef = useRef(agentId);
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
   const resumeKey = useSuspend();
 
+  // Track previous prop values to detect actual prop changes (not internal state changes)
+  const prevInitialAgentIdRef = useRef(initialAgentId);
+  const prevInitialAgentStateRef = useRef(initialAgentState);
+
   // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
+  // Only sync when the PROP actually changes, not when internal state changes
   useEffect(() => {
-    if (initialAgentId !== agentId) {
+    if (initialAgentId !== prevInitialAgentIdRef.current) {
+      prevInitialAgentIdRef.current = initialAgentId;
+      agentIdRef.current = initialAgentId;
       setAgentId(initialAgentId);
     }
-  }, [initialAgentId, agentId]);
+  }, [initialAgentId]);
 
   useEffect(() => {
-    if (initialAgentState !== agentState) {
+    if (initialAgentState !== prevInitialAgentStateRef.current) {
+      prevInitialAgentStateRef.current = initialAgentState;
       setAgentState(initialAgentState);
     }
-  }, [initialAgentState, agentState]);
+  }, [initialAgentState]);
 
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
@@ -267,6 +290,13 @@ export default function App({
 
   // Whether a command is running (disables input but no streaming UI)
   const [commandRunning, setCommandRunning] = useState(false);
+
+  // Profile load confirmation - when loading a profile and current agent is unsaved
+  const [profileConfirmPending, setProfileConfirmPending] = useState<{
+    name: string;
+    agentId: string;
+    cmdId: string;
+  } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
@@ -630,8 +660,11 @@ export default function App({
             return;
           }
 
-          // Stream one turn
-          const stream = await sendMessageStream(agentId, currentInput);
+          // Stream one turn - use ref to always get the latest agentId
+          const stream = await sendMessageStream(
+            agentIdRef.current,
+            currentInput,
+          );
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -1072,7 +1105,10 @@ export default function App({
                     run_id: lastRunId,
                   },
                 };
-                const errorDetails = formatErrorDetails(errorObject, agentId);
+                const errorDetails = formatErrorDetails(
+                  errorObject,
+                  agentIdRef.current,
+                );
                 appendError(errorDetails);
               } else {
                 // No error metadata, show generic error with run info
@@ -1111,7 +1147,7 @@ export default function App({
         }
 
         // Use comprehensive error formatting
-        const errorDetails = formatErrorDetails(e, agentId);
+        const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails);
         setStreaming(false);
         refreshDerived();
@@ -1119,7 +1155,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [agentId, appendError, refreshDerived, refreshDerivedThrottled],
+    [appendError, refreshDerived, refreshDerivedThrottled],
   );
 
   const handleExit = useCallback(() => {
@@ -1223,9 +1259,134 @@ export default function App({
     }
   }, [streaming]);
 
+  const handleAgentSelect = useCallback(
+    async (targetAgentId: string, opts?: { profileName?: string }) => {
+      setAgentSelectorOpen(false);
+
+      const isProfileLoad = !!opts?.profileName;
+      const inputCmd = isProfileLoad
+        ? `/profile load ${opts.profileName}`
+        : `/resume ${targetAgentId}`;
+
+      setCommandRunning(true);
+
+      try {
+        const client = await getClient();
+        // Fetch new agent
+        const agent = await client.agents.retrieve(targetAgentId);
+
+        // Fetch agent's message history
+        const messagesPage = await client.agents.messages.list(targetAgentId);
+        const messages = messagesPage.items;
+
+        // Update project settings with new agent
+        await updateProjectSettings({ lastAgent: targetAgentId });
+
+        // Clear current transcript and static items
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        emittedIdsRef.current.clear();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
+
+        // Update agent state - also update ref immediately for any code that runs before re-render
+        agentIdRef.current = targetAgentId;
+        setAgentId(targetAgentId);
+        setAgentState(agent);
+        setAgentName(agent.name);
+        setLlmConfig(agent.llm_config);
+
+        // Build success command
+        const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
+        const successOutput = isProfileLoad
+          ? `Loaded "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`
+          : `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
+        const successItem: StaticItem = {
+          kind: "command",
+          id: uid("cmd"),
+          input: inputCmd,
+          output: successOutput,
+          phase: "finished",
+          success: true,
+        };
+
+        // Backfill message history with visual separator, then success command at end
+        if (messages.length > 0) {
+          hasBackfilledRef.current = false;
+          backfillBuffers(buffersRef.current, messages);
+          // Collect backfilled items
+          const backfilledItems: StaticItem[] = [];
+          for (const id of buffersRef.current.order) {
+            const ln = buffersRef.current.byId.get(id);
+            if (!ln) continue;
+            emittedIdsRef.current.add(id);
+            backfilledItems.push({ ...ln } as StaticItem);
+          }
+          // Add separator before backfilled messages, then success at end
+          const separator = {
+            kind: "separator" as const,
+            id: uid("sep"),
+          };
+          setStaticItems([separator, ...backfilledItems, successItem]);
+          setLines(toLines(buffersRef.current));
+          hasBackfilledRef.current = true;
+        } else {
+          setStaticItems([successItem]);
+        }
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        const errorCmdId = uid("cmd");
+        buffersRef.current.byId.set(errorCmdId, {
+          kind: "command",
+          id: errorCmdId,
+          input: inputCmd,
+          output: `Failed: ${errorDetails}`,
+          phase: "finished",
+          success: false,
+        });
+        buffersRef.current.order.push(errorCmdId);
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [refreshDerived, agentId],
+  );
+
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
+
+      // Handle profile load confirmation (Enter to continue)
+      if (profileConfirmPending && !msg) {
+        // User pressed Enter with empty input - proceed with loading
+        const { name, agentId: targetAgentId, cmdId } = profileConfirmPending;
+        buffersRef.current.byId.delete(cmdId);
+        const orderIdx = buffersRef.current.order.indexOf(cmdId);
+        if (orderIdx !== -1) buffersRef.current.order.splice(orderIdx, 1);
+        refreshDerived();
+        setProfileConfirmPending(null);
+        await handleAgentSelect(targetAgentId, { profileName: name });
+        return { submitted: true };
+      }
+
+      // Cancel profile confirmation if user types something else
+      if (profileConfirmPending && msg) {
+        const { cmdId } = profileConfirmPending;
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/profile load ${profileConfirmPending.name}`,
+          output: "Cancelled",
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+        setProfileConfirmPending(null);
+        // Continue processing the new message
+      }
+
       if (!msg) return { submitted: false };
 
       // Block submission if waiting for explicit user action (approvals)
@@ -1700,6 +1861,81 @@ export default function App({
         // Special handling for /search command - show message search
         if (msg.trim() === "/search") {
           setMessageSearchOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /profile command - manage local profiles
+        if (msg.trim().startsWith("/profile")) {
+          const parts = msg.trim().split(/\s+/);
+          const subcommand = parts[1]?.toLowerCase();
+          const profileName = parts.slice(2).join(" ");
+
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            setCommandRunning,
+            setAgentName,
+          };
+
+          // /profile - list all profiles
+          if (!subcommand) {
+            handleProfileList(profileCtx, msg);
+            return { submitted: true };
+          }
+
+          // /profile save <name>
+          if (subcommand === "save") {
+            await handleProfileSave(profileCtx, msg, profileName);
+            return { submitted: true };
+          }
+
+          // /profile load <name>
+          if (subcommand === "load") {
+            const validation = validateProfileLoad(
+              profileCtx,
+              msg,
+              profileName,
+            );
+            if (validation.errorMessage) {
+              return { submitted: true };
+            }
+
+            if (validation.needsConfirmation && validation.targetAgentId) {
+              // Show warning and wait for confirmation
+              const cmdId = addCommandResult(
+                buffersRef,
+                refreshDerived,
+                msg,
+                "Warning: Current agent is not saved to any profile.\nPress Enter to continue, or type anything to cancel.",
+                false,
+                "running",
+              );
+              setProfileConfirmPending({
+                name: profileName,
+                agentId: validation.targetAgentId,
+                cmdId,
+              });
+              return { submitted: true };
+            }
+
+            // Current agent is saved, proceed with loading
+            if (validation.targetAgentId) {
+              await handleAgentSelect(validation.targetAgentId, {
+                profileName,
+              });
+            }
+            return { submitted: true };
+          }
+
+          // /profile delete <name>
+          if (subcommand === "delete") {
+            handleProfileDelete(profileCtx, msg, profileName);
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleProfileUsage(profileCtx, msg);
           return { submitted: true };
         }
 
@@ -2250,6 +2486,8 @@ ${recentCommits}
       isExecutingTool,
       queuedApprovalResults,
       pendingApprovals,
+      profileConfirmPending,
+      handleAgentSelect,
       tokenStreamingEnabled,
     ],
   );
@@ -2876,100 +3114,22 @@ ${recentCommits}
     [agentId, refreshDerived],
   );
 
-  const handleAgentSelect = useCallback(
-    async (targetAgentId: string) => {
-      setAgentSelectorOpen(false);
-
-      const cmdId = uid("cmd");
+  // Handle escape when profile confirmation is pending
+  const handleProfileEscapeCancel = useCallback(() => {
+    if (profileConfirmPending) {
+      const { cmdId, name } = profileConfirmPending;
       buffersRef.current.byId.set(cmdId, {
         kind: "command",
         id: cmdId,
-        input: `/resume ${targetAgentId}`,
-        output: `Switching to agent ${targetAgentId}...`,
-        phase: "running",
+        input: `/profile load ${name}`,
+        output: "Cancelled",
+        phase: "finished",
+        success: false,
       });
-      buffersRef.current.order.push(cmdId);
       refreshDerived();
-
-      setCommandRunning(true);
-
-      try {
-        const client = await getClient();
-        // Fetch new agent
-        const agent = await client.agents.retrieve(targetAgentId);
-
-        // Fetch agent's message history
-        const messagesPage = await client.agents.messages.list(targetAgentId);
-        const messages = messagesPage.items;
-
-        // Update project settings with new agent
-        await updateProjectSettings({ lastAgent: targetAgentId });
-
-        // Clear current transcript
-        buffersRef.current.byId.clear();
-        buffersRef.current.order = [];
-        buffersRef.current.tokenCount = 0;
-        emittedIdsRef.current.clear();
-        setStaticItems([]);
-
-        // Update agent state
-        setAgentId(targetAgentId);
-        setAgentState(agent);
-        setAgentName(agent.name);
-        setLlmConfig(agent.llm_config);
-
-        // Add welcome screen for new agent
-        welcomeCommittedRef.current = false;
-        setStaticItems([
-          {
-            kind: "welcome",
-            id: `welcome-${Date.now().toString(36)}`,
-            snapshot: {
-              continueSession: true,
-              agentState: agent,
-              terminalWidth: columns,
-            },
-          },
-        ]);
-
-        // Backfill message history
-        if (messages.length > 0) {
-          hasBackfilledRef.current = false;
-          backfillBuffers(buffersRef.current, messages);
-          refreshDerived();
-          commitEligibleLines(buffersRef.current);
-          hasBackfilledRef.current = true;
-        }
-
-        // Add success command to transcript
-        const successCmdId = uid("cmd");
-        buffersRef.current.byId.set(successCmdId, {
-          kind: "command",
-          id: successCmdId,
-          input: `/resume ${targetAgentId}`,
-          output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(successCmdId);
-        refreshDerived();
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/resume ${targetAgentId}`,
-          output: `Failed: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
-      } finally {
-        setCommandRunning(false);
-      }
-    },
-    [refreshDerived, commitEligibleLines, columns, agentId],
-  );
+      setProfileConfirmPending(null);
+    }
+  }, [profileConfirmPending, refreshDerived]);
 
   // Track permission mode changes for UI updates
   const [uiPermissionMode, setUiPermissionMode] = useState(
@@ -3287,6 +3447,8 @@ Plan file path: ${planFilePath}`;
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
+            ) : item.kind === "separator" ? (
+              <Text dimColor>{"─".repeat(columns)}</Text>
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
             ) : null}
@@ -3370,6 +3532,9 @@ Plan file path: ${planFilePath}`;
               currentModel={currentModelDisplay}
               messageQueue={messageQueue}
               onEnterQueueEditMode={handleEnterQueueEditMode}
+              onEscapeCancel={
+                profileConfirmPending ? handleProfileEscapeCancel : undefined
+              }
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
@@ -3417,9 +3582,9 @@ Plan file path: ${planFilePath}`;
             {resumeSelectorOpen && (
               <ResumeSelector
                 currentAgentId={agentId}
-                onSelect={(id) => {
+                onSelect={async (id) => {
                   setResumeSelectorOpen(false);
-                  handleAgentSelect(id);
+                  await handleAgentSelect(id);
                 }}
                 onCancel={() => setResumeSelectorOpen(false)}
               />

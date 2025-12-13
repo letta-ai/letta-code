@@ -169,9 +169,13 @@ While in a session, you can use these commands:
 
 **Agent Management:**
 - `/agent` - Show current agent link
-- `/swap` - Switch to a different agent (prompts with agent selector)
+- `/resume` - Switch to a different agent (prompts with agent selector)
 - `/rename` - Rename the current agent
 - `/download` - Download agent file locally (exports agent configuration as JSON)
+- `/profile` - List saved profiles
+- `/profile save <name>` - Save current agent to a named profile
+- `/profile load <name>` - Load a saved profile (switches to that agent)
+- `/profile delete <name>` - Delete a saved profile
 
 **Configuration:**
 - `/model` - Switch models (prompts with model selector)
