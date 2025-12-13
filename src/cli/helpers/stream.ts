@@ -138,12 +138,18 @@ export async function drainStream(
     }
 
     if (chunk.message_type === "stop_reason") {
-      // Prioritize more specific stop reasons over generic ones
-      // If we already have a specific reason, don't override with generic "error"
-      if (stopReason === "llm_api_error" && chunk.stop_reason === "error") {
-        // Keep llm_api_error, don't override with generic error
-      } else {
-        stopReason = chunk.stop_reason;
+      // Priority levels: llm_api_error > error > other reasons (end_turn, requires_approval, etc.)
+      const newReason = chunk.stop_reason;
+      
+      const getPriority = (reason: string | undefined) => {
+        if (reason === "llm_api_error") return 3;
+        if (reason === "error") return 2;
+        return 1;
+      };
+      
+      // Only update if new reason has higher or equal priority
+      if (getPriority(newReason) >= getPriority(stopReason)) {
+        stopReason = newReason;
       }
       // Continue reading stream to get usage_statistics that may come after
     }

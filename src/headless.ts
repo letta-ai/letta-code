@@ -656,14 +656,21 @@ export async function handleHeadlessCommand(
           const { onChunk } = await import("./cli/helpers/accumulator");
           onChunk(buffers, chunk);
 
-          // Track stop reason
+          // Track stop reason with priority:
+          // llm_api_error > error > other reasons (end_turn, requires_approval, etc.)
           if (chunk.message_type === "stop_reason") {
-            // Prioritize more specific stop reasons over generic ones
-            // If we already have a specific reason, don't override with generic "error"
-            if (lastStopReason === "llm_api_error" && chunk.stop_reason === "error") {
-              // Keep llm_api_error, don't override with generic error
-            } else {
-              lastStopReason = chunk.stop_reason;
+            const newReason = chunk.stop_reason;
+            
+            // Priority levels
+            const getPriority = (reason: string | undefined) => {
+              if (reason === "llm_api_error") return 3;
+              if (reason === "error") return 2;
+              return 1;
+            };
+            
+            // Only update if new reason has higher or equal priority
+            if (getPriority(newReason) >= getPriority(lastStopReason)) {
+              lastStopReason = newReason;
             }
           }
         }
