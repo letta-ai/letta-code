@@ -1102,9 +1102,9 @@ export default function App({
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
-          // If queue grows to 2+ messages and we're not already waiting for cancel,
+          // If any message is queued and we're not already waiting for cancel,
           // send cancel request and capture snapshot
-          if (newQueue.length > 1 && !waitingForQueueCancelRef.current) {
+          if (newQueue.length > 0 && !waitingForQueueCancelRef.current) {
             // Capture snapshot of queue right now
             queueSnapshotRef.current = [...newQueue];
             waitingForQueueCancelRef.current = true;
