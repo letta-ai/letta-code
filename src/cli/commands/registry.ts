@@ -143,6 +143,13 @@ export const commands: Record<string, Command> = {
       return "Opening session selector...";
     },
   },
+  "/search": {
+    desc: "Search messages across all agents",
+    handler: () => {
+      // Handled specially in App.tsx to show message search
+      return "Opening message search...";
+    },
+  },
 };
 
 /**

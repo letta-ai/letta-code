@@ -37,6 +37,7 @@ import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { Input } from "./components/InputRich";
+import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { QuestionDialog } from "./components/QuestionDialog";
@@ -330,6 +331,7 @@ export default function App({
 
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1569,6 +1571,12 @@ export default function App({
         // Special handling for /resume command - show session resume selector
         if (msg.trim() === "/resume") {
           setResumeSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /search command - show message search
+        if (msg.trim() === "/search") {
+          setMessageSearchOpen(true);
           return { submitted: true };
         }
 
@@ -3299,7 +3307,8 @@ Plan file path: ${planFilePath}`;
                 !toolsetSelectorOpen &&
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen &&
-                !resumeSelectorOpen
+                !resumeSelectorOpen &&
+                !messageSearchOpen
               }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
@@ -3369,6 +3378,11 @@ Plan file path: ${planFilePath}`;
                 }}
                 onCancel={() => setResumeSelectorOpen(false)}
               />
+            )}
+
+            {/* Message Search - conditionally mounted as overlay */}
+            {messageSearchOpen && (
+              <MessageSearch onClose={() => setMessageSearchOpen(false)} />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
