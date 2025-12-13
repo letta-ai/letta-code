@@ -269,12 +269,12 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
               availableWidth,
             );
 
-            // Use message id if available, otherwise fallback to index
-            const msgId =
-              "id" in msg ? String(msg.id) : `result-${startIndex + index}`;
+            // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
+            const msgId = "id" in msg ? String(msg.id) : "result";
+            const uniqueKey = `${msgId}-${startIndex + index}`;
 
             return (
-              <Box key={msgId} flexDirection="column" marginBottom={1}>
+              <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
                 <Box flexDirection="row">
                   <Text
                     color={
@@ -295,7 +295,8 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
                 </Box>
                 <Box flexDirection="row" marginLeft={2}>
                   <Text dimColor>
-                    {msgType} · {timestamp}
+                    {msgType}
+                    {timestamp && ` · ${timestamp}`}
                   </Text>
                 </Box>
               </Box>
