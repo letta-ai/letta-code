@@ -79,14 +79,6 @@ export const commands: Record<string, Command> = {
       return "Updating description...";
     },
   },
-  "/swap": {
-    desc: "Alias for /resume",
-    hidden: true, // Hidden - use /resume instead
-    handler: () => {
-      // Handled specially in App.tsx - redirects to /resume
-      return "Opening session selector...";
-    },
-  },
   "/toolset": {
     desc: "Switch toolset (codex/default)",
     handler: () => {

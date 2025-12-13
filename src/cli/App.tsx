@@ -1112,7 +1112,7 @@ export default function App({
       buffersRef.current.byId.set(cmdId, {
         kind: "command",
         id: cmdId,
-        input: `/swap ${targetAgentId}`,
+        input: `/resume ${targetAgentId}`,
         output: `Switching to agent ${targetAgentId}...`,
         phase: "running",
       });
@@ -1176,7 +1176,7 @@ export default function App({
         buffersRef.current.byId.set(successCmdId, {
           kind: "command",
           id: successCmdId,
-          input: `/swap ${targetAgentId}`,
+          input: `/resume ${targetAgentId}`,
           output: `✓ Switched to agent "${agent.name || targetAgentId}"\n${agentUrl}`,
           phase: "finished",
           success: true,
@@ -1188,7 +1188,7 @@ export default function App({
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
-          input: `/swap ${targetAgentId}`,
+          input: `/resume ${targetAgentId}`,
           output: `Failed: ${errorDetails}`,
           phase: "finished",
           success: false,
@@ -1729,110 +1729,6 @@ export default function App({
         // Special handling for /search command - show message search
         if (msg.trim() === "/search") {
           setMessageSearchOpen(true);
-          return { submitted: true };
-        }
-
-        // Special handling for /swap command - alias for /resume
-        if (msg.trim().startsWith("/swap")) {
-          const parts = msg.trim().split(/\s+/);
-          const targetAgentId = parts.slice(1).join(" ");
-
-          // If no agent ID provided, open resume selector (same as /resume)
-          if (!targetAgentId) {
-            setResumeSelectorOpen(true);
-            return { submitted: true };
-          }
-
-          // Validate and swap to specified agent ID
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `Switching to agent ${targetAgentId}...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const client = await getClient();
-            // Fetch new agent
-            const agent = await client.agents.retrieve(targetAgentId);
-
-            // Fetch agent's message history
-            const messagesPage =
-              await client.agents.messages.list(targetAgentId);
-            const messages = messagesPage.items;
-
-            // Update project settings with new agent
-            await updateProjectSettings({ lastAgent: targetAgentId });
-
-            // Clear current transcript
-            buffersRef.current.byId.clear();
-            buffersRef.current.order = [];
-            buffersRef.current.tokenCount = 0;
-            emittedIdsRef.current.clear();
-            setStaticItems([]);
-
-            // Update agent state - also update ref immediately
-            agentIdRef.current = targetAgentId;
-            setAgentId(targetAgentId);
-            setAgentState(agent);
-            setAgentName(agent.name);
-            setLlmConfig(agent.llm_config);
-
-            // Add welcome screen for new agent
-            welcomeCommittedRef.current = false;
-            setStaticItems([
-              {
-                kind: "welcome",
-                id: `welcome-${Date.now().toString(36)}`,
-                snapshot: {
-                  continueSession: true,
-                  agentState: agent,
-                  terminalWidth: columns,
-                },
-              },
-            ]);
-
-            // Backfill message history
-            if (messages.length > 0) {
-              hasBackfilledRef.current = false;
-              backfillBuffers(buffersRef.current, messages);
-              refreshDerived();
-              commitEligibleLines(buffersRef.current);
-              hasBackfilledRef.current = true;
-            }
-
-            // Add success command to transcript
-            const successCmdId = uid("cmd");
-            buffersRef.current.byId.set(successCmdId, {
-              kind: "command",
-              id: successCmdId,
-              input: msg,
-              output: `✓ Switched to agent "${agent.name || targetAgentId}"`,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(successCmdId);
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
           return { submitted: true };
         }
 
