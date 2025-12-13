@@ -10,13 +10,6 @@ interface Command {
 }
 
 export const commands: Record<string, Command> = {
-  "/agent": {
-    desc: "Show agent link",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID
-      return "Getting agent link...";
-    },
-  },
   "/model": {
     desc: "Switch model",
     handler: () => {

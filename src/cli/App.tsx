@@ -229,7 +229,7 @@ export default function App({
   startupApproval = null,
   startupApprovals = [],
   messageHistory = [],
-  tokenStreaming = true,
+  tokenStreaming = false,
   agentProvenance = null,
 }: {
   agentId: string;
@@ -399,7 +399,7 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
-  // Queue cancellation: when queue length > 1, we send cancel and wait for natural stream end
+  // Queue cancellation: when any message is queued, we send cancel and wait for stream to end
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<string[]>([]);
   const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
@@ -769,6 +769,57 @@ export default function App({
               return;
             }
 
+            // If in quietCancel mode (user queued messages), auto-reject all approvals
+            // and send denials + queued messages together
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancelRef.current) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+                // Don't clear queue, don't send - let dequeue effect handle them one by one
+              } else {
+                // Create denial results for all approvals
+                const denialResults = approvalsToProcess.map(
+                  (approvalItem) => ({
+                    type: "approval" as const,
+                    tool_call_id: approvalItem.toolCallId,
+                    approve: false,
+                    reason: "User cancelled - new message queued",
+                  }),
+                );
+
+                // Update buffers to show tools as cancelled
+                for (const approvalItem of approvalsToProcess) {
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: approvalItem.toolCallId,
+                    tool_return: "Cancelled - user sent new message",
+                    status: "error",
+                  });
+                }
+                refreshDerived();
+
+                // Queue denial results to be sent with the queued message
+                setQueuedApprovalResults(denialResults);
+
+                // Get queued messages and clear queue
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+                setMessageQueue([]);
+
+                // Send via onSubmit which will combine queuedApprovalResults + message
+                if (concatenatedMessage.trim()) {
+                  onSubmitRef.current(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+              setStreaming(false);
+              return;
+            }
+
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -896,10 +947,6 @@ export default function App({
                 return;
               }
 
-              // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage());
-              refreshDerived();
-
               // Combine auto-allowed results + auto-denied responses
               const allResults = [
                 ...autoAllowedResults.map((ar) => ({
@@ -918,12 +965,105 @@ export default function App({
                 })),
               ];
 
+              // Check if user queued messages during auto-allowed tool execution
+              if (waitingForQueueCancelRef.current) {
+                if (restoreQueueOnCancelRef.current) {
+                  // User hit ESC during queue cancel - abort the auto-send
+                  setRestoreQueueOnCancel(false);
+                } else {
+                  // Queue results to be sent with the queued message
+                  setQueuedApprovalResults(allResults);
+
+                  // Get queued messages and clear queue
+                  const concatenatedMessage =
+                    queueSnapshotRef.current.join("\n");
+                  setMessageQueue([]);
+
+                  // Send via onSubmit
+                  if (concatenatedMessage.trim()) {
+                    onSubmitRef.current(concatenatedMessage);
+                  }
+                }
+
+                // Reset flags
+                waitingForQueueCancelRef.current = false;
+                queueSnapshotRef.current = [];
+                setStreaming(false);
+                return;
+              }
+
+              // Rotate to a new thinking message
+              setThinkingMessage(getRandomThinkingMessage());
+              refreshDerived();
+
               await processConversation([
                 {
                   type: "approval",
                   approvals: allResults,
                 },
               ]);
+              return;
+            }
+
+            // Check again if user queued messages during auto-allowed tool execution
+            if (waitingForQueueCancelRef.current) {
+              if (restoreQueueOnCancelRef.current) {
+                // User hit ESC during queue cancel - abort the auto-send
+                setRestoreQueueOnCancel(false);
+              } else {
+                // Create denial results for tools that need user input
+                const denialResults = needsUserInput.map((ac) => ({
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason: "User cancelled - new message queued",
+                }));
+
+                // Update buffers to show tools as cancelled
+                for (const ac of needsUserInput) {
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: "Cancelled - user sent new message",
+                    status: "error",
+                  });
+                }
+                refreshDerived();
+
+                // Combine with auto-handled results and queue for sending
+                const allResults = [
+                  ...autoAllowedResults.map((ar) => ({
+                    type: "tool" as const,
+                    tool_call_id: ar.toolCallId,
+                    tool_return: ar.result.toolReturn,
+                    status: ar.result.status,
+                  })),
+                  ...autoDeniedResults.map((ad) => ({
+                    type: "approval" as const,
+                    tool_call_id: ad.approval.toolCallId,
+                    approve: false,
+                    reason: ad.reason,
+                  })),
+                  ...denialResults,
+                ];
+                setQueuedApprovalResults(allResults);
+
+                // Get queued messages and clear queue
+                const concatenatedMessage = queueSnapshotRef.current.join("\n");
+                setMessageQueue([]);
+
+                // Send via onSubmit
+                if (concatenatedMessage.trim()) {
+                  onSubmitRef.current(concatenatedMessage);
+                }
+              }
+
+              // Reset flags
+              waitingForQueueCancelRef.current = false;
+              queueSnapshotRef.current = [];
+              setStreaming(false);
               return;
             }
 
@@ -1263,11 +1403,11 @@ export default function App({
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
-          // If queue grows to 2+ messages and we're not already waiting for cancel,
-          // send cancel request and capture snapshot
-          if (newQueue.length > 1 && !waitingForQueueCancelRef.current) {
-            // Capture snapshot of queue right now
-            queueSnapshotRef.current = [...newQueue];
+          // Always update snapshot to include ALL queued messages
+          queueSnapshotRef.current = [...newQueue];
+
+          // If this is the first queued message, send cancel request
+          if (!waitingForQueueCancelRef.current) {
             waitingForQueueCancelRef.current = true;
 
             // Send cancel request to backend (fire-and-forget)
@@ -1308,23 +1448,6 @@ export default function App({
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           setSystemPromptSelectorOpen(true);
-          return { submitted: true };
-        }
-
-        // Special handling for /agent command - show agent link
-        if (trimmed === "/agent") {
-          const cmdId = uid("cmd");
-          const agentUrl = `https://app.letta.com/projects/default-project/agents/${agentId}`;
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: agentUrl,
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
           return { submitted: true };
         }
 
@@ -1816,6 +1939,7 @@ export default function App({
           return { submitted: true };
         }
 
+
         // Special handling for /bashes command - show background shell processes
         if (msg.trim() === "/bashes") {
           const { backgroundProcesses } = await import(
@@ -1984,7 +2108,7 @@ export default function App({
           const userText = rest.join(" ").trim();
 
           const initialOutput = userText
-            ? `Remembering: ${userText}`
+            ? "Storing to memory..."
             : "Processing memory request...";
 
           buffersRef.current.byId.set(cmdId, {
@@ -2016,7 +2140,7 @@ export default function App({
               id: cmdId,
               input: msg,
               output: userText
-                ? `Remembering: ${userText}`
+                ? "Storing to memory..."
                 : "Processing memory request from conversation context...",
               phase: "finished",
               success: true,
@@ -2357,7 +2481,6 @@ ${recentCommits}
       streaming,
       commandRunning,
       processConversation,
-      tokenStreamingEnabled,
       refreshDerived,
       agentId,
       handleExit,
@@ -2366,6 +2489,7 @@ ${recentCommits}
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,
+      tokenStreamingEnabled,
     ],
   );
 
@@ -2693,6 +2817,32 @@ ${recentCommits}
       isExecutingTool,
     ],
   );
+
+  // Cancel all pending approvals - queue denials to send with next message
+  // Similar to interrupt flow during tool execution
+  const handleCancelApprovals = useCallback(() => {
+    if (pendingApprovals.length === 0) return;
+
+    // Create denial results for all pending approvals and queue for next message
+    const denialResults = pendingApprovals.map((approval) => ({
+      type: "approval" as const,
+      tool_call_id: approval.toolCallId,
+      approve: false,
+      reason: "User cancelled the approval",
+    }));
+    setQueuedApprovalResults(denialResults);
+
+    // Mark the pending approval tool calls as cancelled in the buffers
+    markIncompleteToolsAsCancelled(buffersRef.current);
+    refreshDerived();
+
+    // Clear all approval state
+    setPendingApprovals([]);
+    setApprovalContexts([]);
+    setApprovalResults([]);
+    setAutoHandledResults([]);
+    setAutoDeniedApprovals([]);
+  }, [pendingApprovals, refreshDerived]);
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
@@ -3230,7 +3380,7 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Always show tool calls in progress, regardless of tokenStreaming setting
+        // Always show tool calls in progress
         return ln.phase !== "finished";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
@@ -3507,6 +3657,7 @@ Plan file path: ${planFilePath}`;
                   onApproveAll={handleApproveCurrent}
                   onApproveAlways={handleApproveAlways}
                   onDenyAll={handleDenyCurrent}
+                  onCancel={handleCancelApprovals}
                 />
               </>
             )}
