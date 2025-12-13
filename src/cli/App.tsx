@@ -3327,6 +3327,7 @@ Plan file path: ${planFilePath}`;
                     ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
                     : undefined
                 }
+                currentEnableReasoner={llmConfig?.enable_reasoner}
                 onSelect={handleModelSelect}
                 onCancel={() => setModelSelectorOpen(false)}
               />
