@@ -2561,6 +2561,32 @@ ${recentCommits}
     ],
   );
 
+  // Cancel all pending approvals - queue denials to send with next message
+  // Similar to interrupt flow during tool execution
+  const handleCancelApprovals = useCallback(() => {
+    if (pendingApprovals.length === 0) return;
+
+    // Create denial results for all pending approvals and queue for next message
+    const denialResults = pendingApprovals.map((approval) => ({
+      type: "approval" as const,
+      tool_call_id: approval.toolCallId,
+      approve: false,
+      reason: "User cancelled the approval",
+    }));
+    setQueuedApprovalResults(denialResults);
+
+    // Mark the pending approval tool calls as cancelled in the buffers
+    markIncompleteToolsAsCancelled(buffersRef.current);
+    refreshDerived();
+
+    // Clear all approval state
+    setPendingApprovals([]);
+    setApprovalContexts([]);
+    setApprovalResults([]);
+    setAutoHandledResults([]);
+    setAutoDeniedApprovals([]);
+  }, [pendingApprovals, refreshDerived]);
+
   const handleModelSelect = useCallback(
     async (modelId: string) => {
       setModelSelectorOpen(false);
@@ -3447,6 +3473,7 @@ Plan file path: ${planFilePath}`;
                   onApproveAll={handleApproveCurrent}
                   onApproveAlways={handleApproveAlways}
                   onDenyAll={handleDenyCurrent}
+                  onCancel={handleCancelApprovals}
                 />
               </>
             )}

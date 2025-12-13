@@ -19,6 +19,7 @@ type Props = {
   onApproveAll: () => void;
   onApproveAlways: (scope?: "project" | "session") => void;
   onDenyAll: (reason: string) => void;
+  onCancel?: () => void; // Cancel all approvals without sending to server
 };
 
 type DynamicPreviewProps = {
@@ -397,6 +398,7 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   onApproveAll,
   onApproveAlways,
   onDenyAll,
+  onCancel,
 }: Props) {
   const [selectedOption, setSelectedOption] = useState(0);
   const [isEnteringReason, setIsEnteringReason] = useState(false);
@@ -452,6 +454,14 @@ export const ApprovalDialog = memo(function ApprovalDialog({
 
   useInput((_input, key) => {
     if (isExecuting) return;
+
+    // Handle CTRL-C to cancel all approvals
+    if (key.ctrl && _input === "c") {
+      if (onCancel) {
+        onCancel();
+      }
+      return;
+    }
 
     if (isEnteringReason) {
       // When entering reason, only handle enter/escape
