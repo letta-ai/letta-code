@@ -289,9 +289,9 @@ async function main() {
     }
     // Verify file exists
     const { resolve } = await import("node:path");
+    const { existsSync } = await import("node:fs");
     const resolvedPath = resolve(fromAfFile);
-    const file = Bun.file(resolvedPath);
-    if (!(await file.exists())) {
+    if (!existsSync(resolvedPath)) {
       console.error(`Error: AgentFile not found: ${resolvedPath}`);
       process.exit(1);
     }

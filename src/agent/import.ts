@@ -1,6 +1,7 @@
 /**
  * Import an agent from an AgentFile (.af) template
  */
+import { createReadStream } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "./client";
@@ -23,8 +24,8 @@ export async function importAgentFromFile(
   const client = await getClient();
   const resolvedPath = resolve(options.filePath);
 
-  // Read file content
-  const file = Bun.file(resolvedPath);
+  // Create a file stream for the API (compatible with Node.js and Bun)
+  const file = createReadStream(resolvedPath);
 
   // Import the agent via API
   const importResponse = await client.agents.importFile({
