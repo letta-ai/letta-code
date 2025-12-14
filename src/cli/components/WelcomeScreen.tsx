@@ -12,6 +12,7 @@ type LoadingState =
   | "upserting"
   | "linking"
   | "unlinking"
+  | "importing"
   | "initializing"
   | "checking"
   | "ready";
@@ -189,6 +190,8 @@ function getStatusMessage(
       return "Attaching Letta Code tools...";
     case "unlinking":
       return "Removing Letta Code tools...";
+    case "importing":
+      return "Importing agent from template...";
     case "checking":
       return "Checking for pending approvals...";
     default:

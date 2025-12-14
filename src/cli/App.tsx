@@ -1,6 +1,6 @@
 // src/cli/App.tsx
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -239,6 +239,7 @@ export default function App({
     | "upserting"
     | "linking"
     | "unlinking"
+    | "importing"
     | "initializing"
     | "checking"
     | "ready";
@@ -1995,7 +1996,7 @@ export default function App({
             const client = await getClient();
             const fileContent = await client.agents.exportFile(agentId);
             const fileName = `${agentId}.af`;
-            await Bun.write(fileName, JSON.stringify(fileContent, null, 2));
+            writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
