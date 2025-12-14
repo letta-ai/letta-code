@@ -4,9 +4,9 @@ import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
+  isPlanTool,
   isTaskTool,
   isTodoTool,
-  isPlanTool,
 } from "../helpers/toolNameMapping.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
@@ -126,7 +126,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       typeof v === "object" && v !== null;
 
     // Check if this is a todo_write tool with successful result
-    if (isTodoTool(rawName, displayName) && line.resultOk !== false && line.argsText) {
+    if (
+      isTodoTool(rawName, displayName) &&
+      line.resultOk !== false &&
+      line.argsText
+    ) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
@@ -162,7 +166,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     }
 
     // Check if this is an update_plan tool with successful result
-    if (isPlanTool(rawName, displayName) && line.resultOk !== false && line.argsText) {
+    if (
+      isPlanTool(rawName, displayName) &&
+      line.resultOk !== false &&
+      line.argsText
+    ) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.plan && Array.isArray(parsedArgs.plan)) {

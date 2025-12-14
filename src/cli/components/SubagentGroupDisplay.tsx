@@ -12,10 +12,9 @@ import { Box, Text, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import {
   getSnapshot,
-  isExpanded,
+  type SubagentState,
   subscribe,
   toggleExpanded,
-  type SubagentState,
 } from "../helpers/subagentState.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
@@ -24,7 +23,11 @@ import { colors } from "./colors.js";
 // Helper Functions
 // ============================================================================
 
-function formatStats(toolCount: number, totalTokens: number, isRunning: boolean): string {
+function formatStats(
+  toolCount: number,
+  totalTokens: number,
+  isRunning: boolean,
+): string {
   // Show "—" for tokens while running since we only get usage at the end
   const tokenStr = isRunning
     ? "—"
@@ -87,7 +90,11 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
   };
 
   const isRunning = agent.status === "pending" || agent.status === "running";
-  const stats = formatStats(agent.toolCalls.length, agent.totalTokens, isRunning);
+  const stats = formatStats(
+    agent.toolCalls.length,
+    agent.totalTokens,
+    isRunning,
+  );
   const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
   return (
@@ -105,13 +112,13 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       {agent.agentURL && (
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor>  ⎿  Subagent: {agent.agentURL}</Text>
+          <Text dimColor> ⎿ Subagent: {agent.agentURL}</Text>
         </Box>
       )}
 
       {/* Expanded: show all tool calls */}
       {expanded &&
-        agent.toolCalls.map((tc, i) => {
+        agent.toolCalls.map((tc) => {
           const formattedArgs = formatToolArgs(tc.args);
           return (
             <Box key={tc.id} flexDirection="row">
@@ -128,15 +135,15 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor>  ⎿  Done</Text>
+          <Text dimColor> ⎿ Done</Text>
         ) : agent.status === "error" ? (
           <Text color={colors.subagent.error}>
             {"  "}⎿ Error: {agent.error}
           </Text>
         ) : lastTool ? (
-          <Text dimColor>  ⎿  {lastTool.name}</Text>
+          <Text dimColor> ⎿ {lastTool.name}</Text>
         ) : (
-          <Text dimColor>  ⎿  Starting...</Text>
+          <Text dimColor> ⎿ Starting...</Text>
         )}
       </Box>
     </Box>

@@ -20,7 +20,8 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "glob") return "Glob";
   if (rawName === "ls") return "LS";
   if (rawName === "todo_write" || rawName === "TodoWrite") return "TODO";
-  if (rawName === "EnterPlanMode" || rawName === "ExitPlanMode") return "Planning";
+  if (rawName === "EnterPlanMode" || rawName === "ExitPlanMode")
+    return "Planning";
   if (rawName === "AskUserQuestion") return "Question";
 
   // Codex toolset (snake_case)
