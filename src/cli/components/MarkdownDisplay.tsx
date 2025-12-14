@@ -109,11 +109,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         );
       }
 
-      contentBlocks.push(
-        <Box key={key}>
-          {headerElement}
-        </Box>,
-      );
+      contentBlocks.push(<Box key={key}>{headerElement}</Box>);
       return;
     }
 
