@@ -15,7 +15,7 @@ Letta Code is open source and model agnostic - supporting Claude Sonnet/Opus, GP
 
 Requirements: 
 * [Node.js](https://nodejs.org/en/download) (version 18+)
-* A [Letta Developer Platform](https://app.letta.com/) account (if you haven’t used Letta Code before, follow the instructions on startup to login via OAuth, or manually set `LETTA_API_KEY` as an environment variable)
+* A [Letta Developer Platform](https://app.letta.com/) account (or a [self-hosted Letta server](https://docs.letta.com/letta-code/configuration#self-hosted-server))
 
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
 ```bash
@@ -26,13 +26,19 @@ Then run `letta` to start Letta Code in interactive mode (see various command-li
 ```bash
 letta
 ```
+If you haven't used Letta Code before, you'll need to use OAuth to login, or set a `LETTA_API_KEY` in your environment variables.
+
+To connect to an existing agent, use the `--agent` flag:
+```bash
+letta --agent [existing-agent-id]
+```
 
 You can also run Letta Code in headless mode, making it easy to integrate into scripts (see the [docs](https://docs.letta.com/letta-code/headless) for more):
 ```bash
 letta -p "Look around this repo and write a README.md documenting it at the root level"
 ```
 
-## Memory
+## Memory and Skill Learning
 
 All agents in Letta are **stateful**: they maintain context forever and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks).
 
@@ -46,13 +52,6 @@ Over time, the agent will update its memory as it learns. To actively guide your
 > /remember [optional instructions on what to remember]
 ```
 
-## Connecting to an existing Letta agent
-
-To connect to an existing agent, use the `--agent` flag:
-```bash
-letta --agent [existing-agent-id]
-```
-
 ## Skill learning
 
 Skills are reusable modules that teach your agent new capabilities. They’re automatically discovered from your project’s `.skills` directory and loaded into the agent’s memory at session start.'
@@ -63,11 +62,6 @@ The easiest way to create a skill is using the interactive skill creation mode:
 ```
 
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
-
-## Self-hosting
-
-To use Letta Code with a self-hosted server, set `LETTA_BASE_URL` to your server IP, e.g. `export LETTA_BASE_URL="http://localhost:8283"`.
-See our [self-hosting guide](https://docs.letta.com/guides/selfhosting) for more information.
 
 ## Installing from source
 
