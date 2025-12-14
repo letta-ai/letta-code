@@ -52,7 +52,6 @@ export async function task(args: TaskArgs): Promise<string> {
     const result = await spawnSubagent(
       subagent_type,
       prompt,
-      description,
       model,
       subagentId,
     );

@@ -90,7 +90,10 @@ export async function executeApprovalBatch(
         const toolResult = await executeTool(
           decision.approval.toolName,
           parsedArgs,
-          { signal: options?.abortSignal, toolCallId: decision.approval.toolCallId },
+          {
+            signal: options?.abortSignal,
+            toolCallId: decision.approval.toolCallId,
+          },
         );
 
         // Update UI if callback provided (interactive mode)

@@ -154,7 +154,13 @@ function handleResultEvent(
     // Record any pending tool calls that weren't auto-approved
     for (const [id, { name, args }] of state.pendingToolCalls.entries()) {
       if (name && !state.displayedToolCalls.has(id)) {
-        recordToolCall(subagentId, id, name, args || "{}", state.displayedToolCalls);
+        recordToolCall(
+          subagentId,
+          id,
+          name,
+          args || "{}",
+          state.displayedToolCalls,
+        );
       }
     }
   }
@@ -430,14 +436,12 @@ function getBaseURL(): string {
  *
  * @param type - Subagent type (e.g., "code-reviewer", "explore")
  * @param prompt - The task prompt for the subagent
- * @param description - Short description for display
  * @param userModel - Optional model override from the parent agent
  * @param subagentId - ID for tracking in the state store (registered by Task tool)
  */
 export async function spawnSubagent(
   type: string,
   prompt: string,
-  description: string,
   userModel: string | undefined,
   subagentId: string,
 ): Promise<SubagentResult> {

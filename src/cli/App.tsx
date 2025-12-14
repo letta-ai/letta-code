@@ -61,10 +61,6 @@ import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
 import { SubagentManager } from "./components/SubagentManager";
-import {
-  clearCompletedSubagents,
-  clearSubagentsByIds,
-} from "./helpers/subagentState";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -86,12 +82,16 @@ import {
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
+import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import {
-  hasInProgressTaskToolCalls,
   collectFinishedTaskToolCalls,
   createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
 } from "./helpers/subagentAggregation";
-import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
+import {
+  clearCompletedSubagents,
+  clearSubagentsByIds,
+} from "./helpers/subagentState";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
@@ -524,7 +524,10 @@ export default function App({
         continue;
       }
       // Handle Task tool_calls specially - track position but don't add individually
-      if (ln.kind === "tool_call" && (ln.name === "Task" || ln.name === "task")) {
+      if (
+        ln.kind === "tool_call" &&
+        (ln.name === "Task" || ln.name === "task")
+      ) {
         if (firstTaskIndex === -1 && finishedTaskToolCalls.length > 0) {
           firstTaskIndex = newlyCommitted.length;
         }

@@ -112,7 +112,10 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       {agent.agentURL && (
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor> ⎿ Subagent: {agent.agentURL}</Text>
+          <Text dimColor>
+            {" ⎿  Subagent: "}
+            {agent.agentURL}
+          </Text>
         </Box>
       )}
 
@@ -135,15 +138,19 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor> ⎿ Done</Text>
+          <Text dimColor>{" ⎿  Done"}</Text>
         ) : agent.status === "error" ? (
           <Text color={colors.subagent.error}>
-            {"  "}⎿ Error: {agent.error}
+            {" ⎿  Error: "}
+            {agent.error}
           </Text>
         ) : lastTool ? (
-          <Text dimColor> ⎿ {lastTool.name}</Text>
+          <Text dimColor>
+            {" ⎿  "}
+            {lastTool.name}
+          </Text>
         ) : (
-          <Text dimColor> ⎿ Starting...</Text>
+          <Text dimColor>{" ⎿  Starting..."}</Text>
         )}
       </Box>
     </Box>
