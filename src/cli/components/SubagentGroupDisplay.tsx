@@ -106,11 +106,12 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + description + stats */}
+      {/* Main row: tree char + type + description + stats */}
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{treeChar} </Text>
         {getDotElement()}
-        <Text> {agent.description}</Text>
+        <Text dimColor> {agent.type.toLowerCase()}</Text>
+        <Text> · {agent.description}</Text>
         <Text color={colors.subagent.stats}> · {stats}</Text>
       </Box>
 
@@ -159,17 +160,16 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 AgentRow.displayName = "AgentRow";
 
 interface GroupHeaderProps {
-  type: string;
   count: number;
   allCompleted: boolean;
   expanded: boolean;
 }
 
 const GroupHeader = memo(
-  ({ type, count, allCompleted, expanded }: GroupHeaderProps) => {
+  ({ count, allCompleted, expanded }: GroupHeaderProps) => {
     const statusText = allCompleted
-      ? `Ran ${count} ${type} agent${count !== 1 ? "s" : ""}`
-      : `Running ${count} ${type} agent${count !== 1 ? "s" : ""}…`;
+      ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
+      : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
 
     const hint = expanded ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
 
@@ -208,40 +208,25 @@ export const SubagentGroupDisplay = memo(() => {
     return null;
   }
 
-  // Group agents by type
-  const grouped = new Map<string, SubagentState[]>();
-  for (const agent of agents) {
-    const existing = grouped.get(agent.type) || [];
-    existing.push(agent);
-    grouped.set(agent.type, existing);
-  }
+  const allCompleted = agents.every(
+    (a) => a.status === "completed" || a.status === "error",
+  );
 
   return (
     <Box flexDirection="column">
-      {Array.from(grouped.entries()).map(([type, typeAgents]) => {
-        const allCompleted = typeAgents.every(
-          (a) => a.status === "completed" || a.status === "error",
-        );
-
-        return (
-          <Box key={type} flexDirection="column">
-            <GroupHeader
-              type={type}
-              count={typeAgents.length}
-              allCompleted={allCompleted}
-              expanded={expanded}
-            />
-            {typeAgents.map((agent, index) => (
-              <AgentRow
-                key={agent.id}
-                agent={agent}
-                isLast={index === typeAgents.length - 1}
-                expanded={expanded}
-              />
-            ))}
-          </Box>
-        );
-      })}
+      <GroupHeader
+        count={agents.length}
+        allCompleted={allCompleted}
+        expanded={expanded}
+      />
+      {agents.map((agent, index) => (
+        <AgentRow
+          key={agent.id}
+          agent={agent}
+          isLast={index === agents.length - 1}
+          expanded={expanded}
+        />
+      ))}
     </Box>
   );
 });

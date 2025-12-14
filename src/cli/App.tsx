@@ -59,9 +59,11 @@ import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
+import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
 import { SubagentManager } from "./components/SubagentManager";
 import {
   clearCompletedSubagents,
+  clearSubagentsByIds,
   setBufferSyncCallback,
   type SubagentSyncData,
 } from "./helpers/subagentState";
@@ -235,6 +237,20 @@ type StaticItem =
         agentProvenance?: AgentProvenance | null;
         terminalWidth: number;
       };
+    }
+  | {
+      kind: "subagent_group";
+      id: string;
+      agents: Array<{
+        id: string;
+        type: string;
+        description: string;
+        status: "completed" | "error";
+        toolCount: number;
+        totalTokens: number;
+        agentURL: string | null;
+        error?: string;
+      }>;
     }
   | Line;
 
@@ -469,6 +485,27 @@ export default function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
+    // Collect Task tool_calls for grouping
+    const finishedTaskToolCalls: Array<{
+      id: string;
+      ln: Line & { kind: "tool_call"; subagent: NonNullable<(Line & { kind: "tool_call" })["subagent"]> };
+    }> = [];
+    let hasInProgressTaskToolCall = false;
+    let firstTaskIndex = -1;
+
+    // First pass: check if there are any in-progress Task tool_calls
+    for (const id of b.order) {
+      const ln = b.byId.get(id);
+      if (!ln) continue;
+      if (ln.kind === "tool_call" && (ln.name === "Task" || ln.name === "task")) {
+        if (emittedIdsRef.current.has(id)) continue;
+        if (ln.phase !== "finished") {
+          hasInProgressTaskToolCall = true;
+        }
+      }
+    }
+
+    // Second pass: commit lines
     for (const id of b.order) {
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
@@ -486,11 +523,52 @@ export default function App({
         }
         continue;
       }
+      // Handle Task tool_calls specially - collect them for grouping
+      // Only commit when ALL Task tool_calls are finished
+      if (ln.kind === "tool_call" && (ln.name === "Task" || ln.name === "task")) {
+        if (!hasInProgressTaskToolCall && ln.phase === "finished" && ln.subagent) {
+          if (firstTaskIndex === -1) firstTaskIndex = newlyCommitted.length;
+          finishedTaskToolCalls.push({
+            id,
+            ln: ln as Line & { kind: "tool_call"; subagent: NonNullable<(Line & { kind: "tool_call" })["subagent"]> },
+          });
+        }
+        continue; // Don't add individually
+      }
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
       }
     }
+
+    // If we collected Task tool_calls (all are finished), create a subagent_group
+    if (finishedTaskToolCalls.length > 0) {
+      // Mark all as emitted
+      for (const tc of finishedTaskToolCalls) {
+        emittedIdsRef.current.add(tc.id);
+      }
+
+      const groupItem: StaticItem = {
+        kind: "subagent_group",
+        id: `subagent-group-${Date.now().toString(36)}`,
+        agents: finishedTaskToolCalls.map((tc) => ({
+          id: tc.ln.subagent.id,
+          type: tc.ln.subagent.type,
+          description: tc.ln.subagent.description,
+          status: tc.ln.subagent.status as "completed" | "error",
+          toolCount: tc.ln.subagent.toolCount,
+          totalTokens: tc.ln.subagent.totalTokens,
+          agentURL: tc.ln.subagent.agentURL,
+          error: tc.ln.subagent.error,
+        })),
+      };
+      // Insert at the position of the first Task tool_call
+      newlyCommitted.splice(firstTaskIndex, 0, groupItem);
+
+      // Clear these agents from the subagent store
+      clearSubagentsByIds(finishedTaskToolCalls.map((tc) => tc.ln.subagent.id));
+    }
+
     if (newlyCommitted.length > 0) {
       setStaticItems((prev) => [...prev, ...newlyCommitted]);
     }
@@ -3553,7 +3631,11 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Always show tool calls in progress
+        // Skip Task tool_calls - SubagentGroupDisplay handles them
+        if (ln.name === "Task" || ln.name === "task") {
+          return false;
+        }
+        // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
@@ -3655,6 +3737,8 @@ Plan file path: ${planFilePath}`;
               <AssistantMessage line={item} />
             ) : item.kind === "tool_call" ? (
               <ToolCallMessage line={item} />
+            ) : item.kind === "subagent_group" ? (
+              <SubagentGroupStatic agents={item.agents} />
             ) : item.kind === "error" ? (
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (

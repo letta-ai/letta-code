@@ -282,6 +282,16 @@ export function clearCompletedSubagents(): void {
 }
 
 /**
+ * Clear specific subagents by their IDs (call when committing to staticItems)
+ */
+export function clearSubagentsByIds(ids: string[]): void {
+  for (const id of ids) {
+    store.agents.delete(id);
+  }
+  notifyListeners();
+}
+
+/**
  * Clear all subagents
  */
 export function clearAllSubagents(): void {
