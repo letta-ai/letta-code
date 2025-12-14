@@ -61,7 +61,8 @@ Read the docs to learn more about [skills and skill learning](https://docs.letta
 
 ## Installing from source
 
-First, install Bun if you don't have it yet: [https://bun.com/docs/installation](https://bun.com/docs/installation)
+Requirements:
+* [Bun](https://bun.com/docs/installation)
 
 ### Run directly from source (dev workflow)
 ```bash
