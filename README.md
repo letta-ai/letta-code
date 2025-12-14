@@ -52,11 +52,7 @@ Over time, the agent will update its memory as it learns. To actively guide your
 > /remember [optional instructions on what to remember]
 ```
 
-## Skill learning
-
-Skills are reusable modules that teach your agent new capabilities. They’re automatically discovered from your project’s `.skills` directory and loaded into the agent’s memory at session start.'
-
-The easiest way to create a skill is using the interactive skill creation mode:
+Skills are reusable modules that teach your agent new capabilities. They’re automatically discovered from your project’s `.skills` directory and loaded into the agent’s memory at session start. The easiest way to create a skill is using the interactive skill creation mode:
 ```bash
 > /skill
 ```
