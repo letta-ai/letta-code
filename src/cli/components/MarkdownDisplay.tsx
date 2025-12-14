@@ -58,7 +58,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         // TODO: Could parse cli-highlight output and convert ANSI to Ink components
         // but for MVP, just use a nice color like Gemini does
         contentBlocks.push(
-          <Box key={key} paddingLeft={2} marginY={1}>
+          <Box key={key} paddingLeft={2}>
             <Text color={colors.code.inline}>{code}</Text>
           </Box>,
         );
@@ -110,7 +110,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       }
 
       contentBlocks.push(
-        <Box key={key} marginY={1}>
+        <Box key={key}>
           {headerElement}
         </Box>,
       );
@@ -166,7 +166,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     // Check for horizontal rules
     if (line.match(hrRegex)) {
       contentBlocks.push(
-        <Box key={key} marginY={1}>
+        <Box key={key}>
           <Text dimColor>───────────────────────────────</Text>
         </Box>,
       );
@@ -205,7 +205,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   if (inCodeBlock && codeBlockContent.length > 0) {
     const code = codeBlockContent.join("\n");
     contentBlocks.push(
-      <Box key="unclosed-code" paddingLeft={2} marginY={1}>
+      <Box key="unclosed-code" paddingLeft={2}>
         <Text color={colors.code.inline}>{code}</Text>
       </Box>,
     );
