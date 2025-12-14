@@ -66,12 +66,12 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + type + description + stats */}
+      {/* Main row: tree char + description + type + stats */}
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{treeChar} </Text>
         <Text color={dotColor}>●</Text>
-        <Text dimColor> {agent.type.toLowerCase()}</Text>
-        <Text> · {agent.description}</Text>
+        <Text> {agent.description}</Text>
+        <Text dimColor> · {agent.type.toLowerCase()}</Text>
         <Text color={colors.subagent.stats}> · {stats}</Text>
       </Box>
 

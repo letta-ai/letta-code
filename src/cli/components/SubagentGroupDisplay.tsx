@@ -106,12 +106,12 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + type + description + stats */}
+      {/* Main row: tree char + description + type + stats */}
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{treeChar} </Text>
         {getDotElement()}
-        <Text dimColor> {agent.type.toLowerCase()}</Text>
-        <Text> · {agent.description}</Text>
+        <Text> {agent.description}</Text>
+        <Text dimColor> · {agent.type.toLowerCase()}</Text>
         <Text color={colors.subagent.stats}> · {stats}</Text>
       </Box>
 
@@ -213,7 +213,7 @@ export const SubagentGroupDisplay = memo(() => {
   );
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginTop={1}>
       <GroupHeader
         count={agents.length}
         allCompleted={allCompleted}
