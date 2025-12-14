@@ -2,7 +2,7 @@
 
 Letta Code is a self-improving, stateful coding agent that can learn from experience and improve with use. You can use Letta Code as a general purpose **CLI harness** to connect any Letta agent (even non-coding agents!) to your local dev environment.
 
-Letta Code is open source and model agnostic - supporting Claude Sonnet/Opus, GPT-5, Gemini 3 Pro, GLM-4.6, and more.
+Letta Code is fully **open source** and **model agnostic** - supporting Claude Sonnet/Opus, GPT-5, Gemini 3 Pro, GLM-4.6, and more.
 
 **Read more about how to use Letta Code on the [official docs page](https://docs.letta.com/letta-code).**
 
