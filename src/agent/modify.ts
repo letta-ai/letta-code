@@ -30,6 +30,8 @@ function buildModelSettings(
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
 
+  let settings: ModelSettings;
+
   if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
@@ -45,30 +47,27 @@ function buildModelSettings(
           | "high",
       };
     }
-    // If a max_output_tokens override is provided in the model's updateArgs,
-    // propagate it into the OpenAI model settings so the backend can raise
-    // the generation cap (prevents premature ResponseIncompleteEvent with
-    // reason='max_output_tokens').
-    if (typeof updateArgs?.max_output_tokens === "number") {
-      openaiSettings.max_output_tokens = updateArgs.max_output_tokens as number;
-    }
-    return openaiSettings;
-  }
-
-  if (isAnthropic) {
+    settings = openaiSettings;
+  } else if (isAnthropic) {
     const anthropicSettings: AnthropicModelSettings = {
       provider_type: "anthropic",
       parallel_tool_calls: true,
     };
-    if (updateArgs?.enable_reasoner !== undefined) {
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
       anthropicSettings.thinking = {
-        type: updateArgs.enable_reasoner ? "enabled" : "disabled",
+        type:
+          updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
       };
     }
-    return anthropicSettings;
-  }
-
-  if (isGoogleAI) {
+    settings = anthropicSettings;
+  } else if (isGoogleAI) {
     const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
       parallel_tool_calls: true,
@@ -81,10 +80,8 @@ function buildModelSettings(
     if (typeof updateArgs?.temperature === "number") {
       googleSettings.temperature = updateArgs.temperature as number;
     }
-    return googleSettings;
-  }
-
-  if (isGoogleVertex) {
+    settings = googleSettings;
+  } else if (isGoogleVertex) {
     // Vertex AI uses the same Google provider on the backend; only the handle differs.
     const googleVertexSettings: Record<string, unknown> = {
       provider_type: "google_vertex",
@@ -99,11 +96,19 @@ function buildModelSettings(
       (googleVertexSettings as Record<string, unknown>).temperature =
         updateArgs.temperature as number;
     }
-    return googleVertexSettings;
+    settings = googleVertexSettings;
+  } else {
+    // For unknown providers, return generic settings with parallel_tool_calls
+    settings = { parallel_tool_calls: true };
   }
 
-  // For unknown providers, return generic settings with parallel_tool_calls
-  return { parallel_tool_calls: true };
+  // Apply max_output_tokens for all providers if specified
+  if (typeof updateArgs?.max_output_tokens === "number") {
+    (settings as Record<string, unknown>).max_output_tokens =
+      updateArgs.max_output_tokens;
+  }
+
+  return settings;
 }
 
 /**
