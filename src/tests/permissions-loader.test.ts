@@ -255,7 +255,7 @@ test("Save permission preserves other settings fields", async () => {
   await Bun.write(
     settingsPath,
     JSON.stringify({
-      uiMode: "rich",
+      tokenStreaming: true,
       lastAgent: "agent-123",
       permissions: {
         allow: [],
@@ -268,7 +268,7 @@ test("Save permission preserves other settings fields", async () => {
   const file = Bun.file(settingsPath);
   const settings = await file.json();
 
-  expect(settings.uiMode).toBe("rich");
+  expect(settings.tokenStreaming).toBe(true);
   expect(settings.lastAgent).toBe("agent-123");
   expect(settings.permissions.allow).toContain("Bash(ls:*)");
 });
@@ -298,7 +298,7 @@ test("Load permissions handles missing permissions field", async () => {
   await Bun.write(
     settingsPath,
     JSON.stringify({
-      uiMode: "rich",
+      tokenStreaming: true,
       // No permissions field
     }),
   );
