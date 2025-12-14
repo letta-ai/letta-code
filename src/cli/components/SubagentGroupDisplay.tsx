@@ -9,7 +9,7 @@
  */
 
 import { Box, Text, useInput } from "ink";
-import { memo, useEffect, useState, useSyncExternalStore } from "react";
+import { memo, useSyncExternalStore } from "react";
 import {
   getSnapshot,
   isExpanded,
@@ -17,22 +17,8 @@ import {
   toggleExpanded,
   type SubagentState,
 } from "../helpers/subagentState.js";
+import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
-
-// ============================================================================
-// Helper Components
-// ============================================================================
-
-const BlinkDot: React.FC<{ color?: string }> = ({
-  color = colors.subagent.running,
-}) => {
-  const [on, setOn] = useState(true);
-  useEffect(() => {
-    const t = setInterval(() => setOn((v) => !v), 400);
-    return () => clearInterval(t);
-  }, []);
-  return <Text color={color}>{on ? "●" : " "}</Text>;
-};
 
 // ============================================================================
 // Helper Functions
