@@ -95,3 +95,14 @@ export function isPlanTool(rawName: string, displayName?: string): boolean {
     displayName === "Planning"
   );
 }
+
+/**
+ * Checks if a tool requires a specialized UI dialog instead of standard approval
+ */
+export function isFancyUITool(name: string): boolean {
+  return (
+    name === "AskUserQuestion" ||
+    name === "EnterPlanMode" ||
+    name === "ExitPlanMode"
+  );
+}

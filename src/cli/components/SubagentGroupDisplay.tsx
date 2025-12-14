@@ -1,11 +1,18 @@
 /**
- * SubagentGroupDisplay - Renders grouped subagent status in a tree view
+ * SubagentGroupDisplay - Live/interactive subagent status display
  *
- * Displays running/completed subagents with:
- * - Grouped header showing count: "Running 2 Explore agents..."
- * - Tree structure with ├─ └─ │ characters
- * - Real-time stats (tool count, tokens)
- * - Expand/collapse functionality (ctrl+o)
+ * Used in the ACTIVE render area for subagents that may still be running.
+ * Subscribes to external store and handles keyboard input - these hooks
+ * require the component to stay "alive" and re-rendering.
+ *
+ * Features:
+ * - Real-time updates via useSyncExternalStore
+ * - Blinking dots for running agents
+ * - Expand/collapse tool calls (ctrl+o)
+ * - Shows "Running N subagents..." while active
+ *
+ * When agents complete, they get committed to Ink's <Static> area using
+ * SubagentGroupStatic instead (a pure props-based snapshot with no hooks).
  */
 
 import { Box, Text, useInput } from "ink";

@@ -93,6 +93,7 @@ import {
   clearSubagentsByIds,
 } from "./helpers/subagentState";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -192,15 +193,6 @@ function readPlanFile(): string {
   } catch {
     return `Failed to read plan file at ${planFilePath}`;
   }
-}
-
-// Fancy UI tools require specialized dialogs instead of the standard ApprovalDialog
-function isFancyUITool(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
 }
 
 // Extract questions from AskUserQuestion tool args
@@ -524,10 +516,7 @@ export default function App({
         continue;
       }
       // Handle Task tool_calls specially - track position but don't add individually
-      if (
-        ln.kind === "tool_call" &&
-        (ln.name === "Task" || ln.name === "task")
-      ) {
+      if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
         if (firstTaskIndex === -1 && finishedTaskToolCalls.length > 0) {
           firstTaskIndex = newlyCommitted.length;
         }
@@ -3594,7 +3583,7 @@ Plan file path: ${planFilePath}`;
       }
       if (ln.kind === "tool_call") {
         // Skip Task tool_calls - SubagentGroupDisplay handles them
-        if (ln.name === "Task" || ln.name === "task") {
+        if (ln.name && isTaskTool(ln.name)) {
           return false;
         }
         // Always show other tool calls in progress

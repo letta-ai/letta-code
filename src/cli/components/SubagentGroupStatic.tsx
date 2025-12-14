@@ -1,12 +1,16 @@
 /**
- * SubagentGroupStatic - Renders completed subagent group in a tree view
+ * SubagentGroupStatic - Frozen snapshot of completed subagents
  *
- * Static version of SubagentGroupDisplay for committed/historical items.
- * Takes agents as props instead of reading from store.
+ * Used in Ink's <Static> area for historical/committed items that have
+ * scrolled up and should no longer re-render. Pure props-based component
+ * with NO hooks (no store subscriptions, no keyboard handlers).
  *
- * Format:
- * - Header: "Ran N subagents" (no type grouping)
- * - Each row: ├─ ● {type} · {description} · {stats}
+ * This separation from SubagentGroupDisplay is necessary because:
+ * - Static area components shouldn't have active subscriptions (memory leaks)
+ * - Keyboard handlers would stack up across frozen components
+ * - We only need a simple snapshot, not live updates
+ *
+ * Shows: "Ran N subagents" with final stats (tool count, tokens).
  */
 
 import { Box, Text } from "ink";
