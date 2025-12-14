@@ -59,8 +59,7 @@ function buildModelSettings(
       typeof updateArgs?.max_reasoning_tokens === "number"
     ) {
       anthropicSettings.thinking = {
-        type:
-          updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
         ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
           budget_tokens: updateArgs.max_reasoning_tokens,
         }),
