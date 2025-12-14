@@ -64,8 +64,6 @@ import { SubagentManager } from "./components/SubagentManager";
 import {
   clearCompletedSubagents,
   clearSubagentsByIds,
-  setBufferSyncCallback,
-  type SubagentSyncData,
 } from "./helpers/subagentState";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
@@ -542,7 +540,7 @@ export default function App({
     if (finishedTaskToolCalls.length > 0) {
       // Mark all as emitted
       for (const tc of finishedTaskToolCalls) {
-        emittedIdsRef.current.add(tc.id);
+        emittedIdsRef.current.add(tc.lineId);
       }
 
       const groupItem = createSubagentGroupItem(finishedTaskToolCalls);
@@ -555,7 +553,7 @@ export default function App({
       );
 
       // Clear these agents from the subagent store
-      clearSubagentsByIds(finishedTaskToolCalls.map((tc) => tc.line.subagent.id));
+      clearSubagentsByIds(groupItem.agents.map((a) => a.id));
     }
 
     if (newlyCommitted.length > 0) {
@@ -592,34 +590,6 @@ export default function App({
       }, 16); // ~60fps
     }
   }, [refreshDerived]);
-
-  // Set up callback to sync subagent state to tool_call lines in buffers
-  useEffect(() => {
-    setBufferSyncCallback((toolCallId: string, subagentData: SubagentSyncData) => {
-      const b = buffersRef.current;
-      // Find the tool_call line by toolCallId
-      const lineId = b.toolCallIdToLineId.get(toolCallId);
-      if (!lineId) return;
-
-      const line = b.byId.get(lineId);
-      if (!line || line.kind !== "tool_call") return;
-
-      // Update the subagent field on the tool_call line
-      line.subagent = {
-        id: subagentData.id,
-        type: subagentData.type,
-        description: subagentData.description,
-        status: subagentData.status,
-        toolCount: subagentData.toolCount,
-        totalTokens: subagentData.totalTokens,
-        agentURL: subagentData.agentURL,
-        error: subagentData.error,
-      };
-
-      // Trigger a UI refresh
-      refreshDerivedThrottled();
-    });
-  }, [refreshDerivedThrottled]);
 
   // Restore pending approval from startup when ready
   // All approvals (including fancy UI tools) go through pendingApprovals

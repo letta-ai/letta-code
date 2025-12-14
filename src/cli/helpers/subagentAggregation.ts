@@ -5,17 +5,15 @@
 
 import type { Line } from "./accumulator.js";
 import type { StaticSubagent } from "../components/SubagentGroupStatic.js";
+import { getSubagentByToolCallId } from "./subagentState.js";
 import { isTaskTool } from "./toolNameMapping.js";
 
 /**
- * A finished Task tool call with its line data and subagent info
+ * A finished Task tool call info
  */
 export interface TaskToolCallInfo {
-  id: string;
-  line: Line & {
-    kind: "tool_call";
-    subagent: NonNullable<Extract<Line, { kind: "tool_call" }>["subagent"]>;
-  };
+  lineId: string;
+  toolCallId: string;
 }
 
 /**
@@ -73,12 +71,16 @@ export function collectFinishedTaskToolCalls(
       ln.kind === "tool_call" &&
       isTaskTool(ln.name ?? "") &&
       ln.phase === "finished" &&
-      ln.subagent
+      ln.toolCallId
     ) {
-      finished.push({
-        id,
-        line: ln as TaskToolCallInfo["line"],
-      });
+      // Check if we have subagent data in the state store
+      const subagent = getSubagentByToolCallId(ln.toolCallId);
+      if (subagent) {
+        finished.push({
+          lineId: id,
+          toolCallId: ln.toolCallId,
+        });
+      }
     }
   }
 
@@ -86,23 +88,33 @@ export function collectFinishedTaskToolCalls(
 }
 
 /**
- * Creates a subagent_group static item from collected Task tool calls
+ * Creates a subagent_group static item from collected Task tool calls.
+ * Looks up subagent data from the state store.
  */
 export function createSubagentGroupItem(
   taskToolCalls: TaskToolCallInfo[],
 ): SubagentGroupItem {
+  const agents: StaticSubagent[] = [];
+
+  for (const tc of taskToolCalls) {
+    const subagent = getSubagentByToolCallId(tc.toolCallId);
+    if (subagent) {
+      agents.push({
+        id: subagent.id,
+        type: subagent.type,
+        description: subagent.description,
+        status: subagent.status as "completed" | "error",
+        toolCount: subagent.toolCalls.length,
+        totalTokens: subagent.totalTokens,
+        agentURL: subagent.agentURL,
+        error: subagent.error,
+      });
+    }
+  }
+
   return {
     kind: "subagent_group",
     id: `subagent-group-${Date.now().toString(36)}`,
-    agents: taskToolCalls.map((tc) => ({
-      id: tc.line.subagent.id,
-      type: tc.line.subagent.type,
-      description: tc.line.subagent.description,
-      status: tc.line.subagent.status as "completed" | "error",
-      toolCount: tc.line.subagent.toolCount,
-      totalTokens: tc.line.subagent.totalTokens,
-      agentURL: tc.line.subagent.agentURL,
-      error: tc.line.subagent.error,
-    })),
+    agents,
   };
 }

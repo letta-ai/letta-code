@@ -30,33 +30,10 @@ export interface SubagentState {
   toolCallId?: string; // Links this subagent to its parent Task tool call
 }
 
-/**
- * Data structure for syncing subagent state to tool_call lines in buffers
- */
-export interface SubagentSyncData {
-  id: string;
-  type: string;
-  description: string;
-  status: "pending" | "running" | "completed" | "error";
-  toolCount: number;
-  totalTokens: number;
-  agentURL: string | null;
-  error?: string;
-}
-
-/**
- * Callback type for syncing subagent state to the message buffers
- */
-export type BufferSyncCallback = (
-  toolCallId: string,
-  subagentData: SubagentSyncData,
-) => void;
-
 interface SubagentStore {
   agents: Map<string, SubagentState>;
   expanded: boolean;
   listeners: Set<() => void>;
-  bufferSyncCallback: BufferSyncCallback | null;
 }
 
 // ============================================================================
@@ -67,7 +44,6 @@ const store: SubagentStore = {
   agents: new Map(),
   expanded: false,
   listeners: new Set(),
-  bufferSyncCallback: null,
 };
 
 // Cached snapshot for useSyncExternalStore - must return same reference if unchanged
@@ -94,24 +70,6 @@ function notifyListeners(): void {
   }
 }
 
-/**
- * Sync a subagent's state to the message buffers via the callback
- */
-function syncToBuffers(agent: SubagentState): void {
-  if (!store.bufferSyncCallback || !agent.toolCallId) return;
-
-  store.bufferSyncCallback(agent.toolCallId, {
-    id: agent.id,
-    type: agent.type,
-    description: agent.description,
-    status: agent.status,
-    toolCount: agent.toolCalls.length,
-    totalTokens: agent.totalTokens,
-    agentURL: agent.agentURL,
-    error: agent.error,
-  });
-}
-
 let subagentCounter = 0;
 
 // ============================================================================
@@ -126,10 +84,17 @@ export function generateSubagentId(): string {
 }
 
 /**
- * Set the callback for syncing subagent state to message buffers
+ * Get a subagent by its parent Task tool call ID
  */
-export function setBufferSyncCallback(callback: BufferSyncCallback): void {
-  store.bufferSyncCallback = callback;
+export function getSubagentByToolCallId(
+  toolCallId: string,
+): SubagentState | undefined {
+  for (const agent of store.agents.values()) {
+    if (agent.toolCallId === toolCallId) {
+      return agent;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -158,7 +123,6 @@ export function registerSubagent(
   };
 
   store.agents.set(id, agent);
-  syncToBuffers(agent);
   notifyListeners();
 }
 
@@ -180,7 +144,6 @@ export function updateSubagent(
   // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates };
   store.agents.set(id, updatedAgent);
-  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 
@@ -208,7 +171,6 @@ export function addToolCall(
     ],
   };
   store.agents.set(subagentId, updatedAgent);
-  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 
@@ -230,7 +192,6 @@ export function completeSubagent(
     durationMs: Date.now() - agent.startTime,
   } as SubagentState;
   store.agents.set(id, updatedAgent);
-  syncToBuffers(updatedAgent);
   notifyListeners();
 }
 

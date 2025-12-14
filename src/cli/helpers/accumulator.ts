@@ -35,17 +35,6 @@ export type Line =
       resultOk?: boolean;
       // state that's useful for rendering
       phase: "streaming" | "ready" | "running" | "finished";
-      // Optional subagent data for Task tool calls
-      subagent?: {
-        id: string;
-        type: string;
-        description: string;
-        status: "pending" | "running" | "completed" | "error";
-        toolCount: number;
-        totalTokens: number;
-        agentURL: string | null;
-        error?: string;
-      };
     }
   | { kind: "error"; id: string; text: string }
   | {

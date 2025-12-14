@@ -13,7 +13,6 @@ import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { PlanRenderer } from "./PlanRenderer.js";
-import { SubagentToolCallRenderer } from "./SubagentToolCallRenderer.js";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 type ToolCallLine = {
@@ -25,17 +24,6 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
-  // Optional subagent data for Task tool calls
-  subagent?: {
-    id: string;
-    type: string;
-    description: string;
-    status: "pending" | "running" | "completed" | "error";
-    toolCount: number;
-    totalTokens: number;
-    agentURL: string | null;
-    error?: string;
-  };
 };
 
 /**
@@ -55,13 +43,9 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const rawName = line.name ?? "?";
   const argsText = line.argsText ?? "...";
 
-  // Task tool - render subagent info if available
+  // Task tool - handled by SubagentGroupDisplay, don't render here
   if (isTaskTool(rawName)) {
-    if (!line.subagent) {
-      // No subagent data yet, show nothing
-      return null;
-    }
-    return <SubagentToolCallRenderer subagent={line.subagent} />;
+    return null;
   }
 
   // Apply tool name remapping
