@@ -6,13 +6,9 @@ import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 
-export type UIMode = "simple" | "rich";
-
 export interface Settings {
-  uiMode: UIMode;
   lastAgent: string | null;
   tokenStreaming: boolean;
-  parallelToolCalls: boolean;
   enableSleeptime: boolean;
   globalSharedBlockIds: Record<string, string>;
   permissions?: PermissionRules;
@@ -34,10 +30,8 @@ export interface LocalProjectSettings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  uiMode: "simple",
   lastAgent: null,
   tokenStreaming: false,
-  parallelToolCalls: true,
   enableSleeptime: false,
   globalSharedBlockIds: {},
 };

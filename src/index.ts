@@ -597,7 +597,7 @@ async function main() {
             updateArgs,
             freshBlocks, // Only create new blocks if --fresh-blocks passed
             skillsDirectory,
-            settings.parallelToolCalls,
+            true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
             initBlocks,
@@ -648,7 +648,7 @@ async function main() {
             updateArgs,
             false, // Don't force new blocks when auto-creating (reuse shared blocks)
             skillsDirectory,
-            settings.parallelToolCalls,
+            true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
             undefined,

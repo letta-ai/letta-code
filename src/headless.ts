@@ -168,7 +168,7 @@ export async function handleHeadlessCommand(
       updateArgs,
       forceNew,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       initBlocks,
@@ -213,7 +213,7 @@ export async function handleHeadlessCommand(
       updateArgs,
       false,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       undefined,
