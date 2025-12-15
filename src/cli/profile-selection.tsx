@@ -57,7 +57,7 @@ function getLabel(option: ProfileOption): string {
   const parts: string[] = [];
   if (option.isLru) parts.push("last used");
   if (option.isLocal) parts.push("pinned");
-  else if (option.name) parts.push("global");
+  else if (!option.isLru) parts.push("global"); // Pinned globally but not locally
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
@@ -79,7 +79,7 @@ function ProfileSelectionUI({
   const loadOptions = useCallback(async () => {
     setInternalLoading(true);
     try {
-      const mergedProfiles = settingsManager.getMergedProfiles();
+      const mergedPinned = settingsManager.getMergedPinnedAgents();
       const client = await getClient();
 
       const optionsToFetch: ProfileOption[] = [];
@@ -87,30 +87,30 @@ function ProfileSelectionUI({
 
       // First: LRU agent
       if (lruAgentId) {
-        const matchingProfile = mergedProfiles.find(
+        const matchingPinned = mergedPinned.find(
           (p) => p.agentId === lruAgentId,
         );
         optionsToFetch.push({
-          name: matchingProfile?.name || null,
+          name: null, // Will be fetched from server
           agentId: lruAgentId,
-          isLocal: matchingProfile?.isLocal || false,
+          isLocal: matchingPinned?.isLocal || false,
           isLru: true,
           agent: null,
         });
         seenAgentIds.add(lruAgentId);
       }
 
-      // Then: Other profiles
-      for (const profile of mergedProfiles) {
-        if (!seenAgentIds.has(profile.agentId)) {
+      // Then: Other pinned agents
+      for (const pinned of mergedPinned) {
+        if (!seenAgentIds.has(pinned.agentId)) {
           optionsToFetch.push({
-            name: profile.name,
-            agentId: profile.agentId,
-            isLocal: profile.isLocal,
+            name: null, // Will be fetched from server
+            agentId: pinned.agentId,
+            isLocal: pinned.isLocal,
             isLru: false,
             agent: null,
           });
-          seenAgentIds.add(profile.agentId);
+          seenAgentIds.add(pinned.agentId);
         }
       }
 
@@ -200,7 +200,8 @@ function ProfileSelectionUI({
           <Box flexDirection="column" gap={1}>
             {displayOptions.map((option, index) => {
               const isSelected = index === selectedIndex;
-              const displayName = option.name || option.agentId.slice(0, 20);
+              const displayName =
+                option.agent?.name || option.agentId.slice(0, 20);
               const label = getLabel(option);
 
               return (

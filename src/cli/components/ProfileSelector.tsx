@@ -3,7 +3,6 @@ import { Box, Text, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
-import { getProfiles } from "../commands/profile";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
@@ -91,15 +90,14 @@ export const ProfileSelector = memo(function ProfileSelector({
   const [saveInput, setSaveInput] = useState("");
   const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(0);
 
-  // Load profiles and fetch agent data
+  // Load pinned agents and fetch agent data
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const profilesMap = getProfiles();
-      const profileNames = Object.keys(profilesMap).sort();
-      const localProfiles = settingsManager.getLocalProfiles();
+      const mergedPinned = settingsManager.getMergedPinnedAgents();
+      const localPinned = settingsManager.getLocalPinnedAgents();
 
-      if (profileNames.length === 0) {
+      if (mergedPinned.length === 0) {
         setProfiles([]);
         setLoading(false);
         return;
@@ -107,18 +105,18 @@ export const ProfileSelector = memo(function ProfileSelector({
 
       const client = await getClient();
 
-      // Fetch agent data for each profile
-      const profileDataPromises = profileNames.map(async (name) => {
-        const agentId = profilesMap[name] as string;
-        const isPinned = Object.values(localProfiles).includes(agentId);
+      // Fetch agent data for each pinned agent
+      const profileDataPromises = mergedPinned.map(async ({ agentId }) => {
+        const isPinned = localPinned.includes(agentId);
         try {
           const agent = await client.agents.retrieve(agentId, {
             include: ["agent.blocks"],
           });
-          return { name, agentId, agent, error: null, isPinned };
+          // Use agent name from server
+          return { name: agent.name, agentId, agent, error: null, isPinned };
         } catch (_err) {
           return {
-            name,
+            name: agentId.slice(0, 12),
             agentId,
             agent: null,
             error: "Agent not found",
@@ -225,12 +223,9 @@ export const ProfileSelector = memo(function ProfileSelector({
       // Toggle pin/unpin for selected profile
       if (selectedProfile) {
         if (selectedProfile.isPinned) {
-          settingsManager.unpinProfile(selectedProfile.name);
+          settingsManager.unpinLocal(selectedProfile.agentId);
         } else {
-          settingsManager.pinProfile(
-            selectedProfile.name,
-            selectedProfile.agentId,
-          );
+          settingsManager.pinLocal(selectedProfile.agentId);
         }
         // Reload profiles to reflect change
         loadProfiles();

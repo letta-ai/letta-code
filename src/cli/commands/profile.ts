@@ -322,24 +322,10 @@ export async function handlePin(
   argsStr: string,
 ): Promise<void> {
   const { global, name } = parsePinArgs(argsStr);
-  const localProfiles = settingsManager.getLocalProfiles();
-  const globalProfiles = settingsManager.getGlobalProfiles();
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
 
-  // Determine the name to use
-  const pinName = name || ctx.agentName;
-
-  if (!pinName) {
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "Agent has no name. Use /pin <name> to pin with a name.",
-      false,
-    );
-    return;
-  }
-
-  // If user provided a name different from current, rename the agent
+  // If user provided a name, rename the agent first
   if (name && name !== ctx.agentName) {
     try {
       const { getClient } = await import("../../agent/client");
@@ -358,10 +344,11 @@ export async function handlePin(
     }
   }
 
+  const displayName = name || ctx.agentName || ctx.agentId.slice(0, 12);
+
   if (global) {
     // Pin globally
-    const isAlreadyPinned = Object.values(globalProfiles).includes(ctx.agentId);
-    if (isAlreadyPinned) {
+    if (globalPinned.includes(ctx.agentId)) {
       addCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -371,18 +358,17 @@ export async function handlePin(
       );
       return;
     }
-    settingsManager.pinGlobal(pinName, ctx.agentId);
+    settingsManager.pinGlobal(ctx.agentId);
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Pinned "${pinName}" globally.`,
+      `Pinned "${displayName}" globally.`,
       true,
     );
   } else {
     // Pin locally
-    const isAlreadyPinned = Object.values(localProfiles).includes(ctx.agentId);
-    if (isAlreadyPinned) {
+    if (localPinned.includes(ctx.agentId)) {
       addCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -392,12 +378,12 @@ export async function handlePin(
       );
       return;
     }
-    settingsManager.pinProfile(pinName, ctx.agentId);
+    settingsManager.pinLocal(ctx.agentId);
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Pinned "${pinName}" to this project.`,
+      `Pinned "${displayName}" to this project.`,
       true,
     );
   }
@@ -410,20 +396,13 @@ export function handleUnpin(
   argsStr: string,
 ): void {
   const { global } = parsePinArgs(argsStr);
-  const localProfiles = settingsManager.getLocalProfiles();
-  const globalProfiles = settingsManager.getGlobalProfiles();
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const displayName = ctx.agentName || ctx.agentId.slice(0, 12);
 
   if (global) {
     // Unpin globally
-    let profileName: string | null = null;
-    for (const [name, agentId] of Object.entries(globalProfiles)) {
-      if (agentId === ctx.agentId) {
-        profileName = name;
-        break;
-      }
-    }
-
-    if (!profileName) {
+    if (!globalPinned.includes(ctx.agentId)) {
       addCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -434,25 +413,17 @@ export function handleUnpin(
       return;
     }
 
-    settingsManager.unpinGlobal(profileName);
+    settingsManager.unpinGlobal(ctx.agentId);
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Unpinned "${profileName}" globally.`,
+      `Unpinned "${displayName}" globally.`,
       true,
     );
   } else {
     // Unpin locally
-    let profileName: string | null = null;
-    for (const [name, agentId] of Object.entries(localProfiles)) {
-      if (agentId === ctx.agentId) {
-        profileName = name;
-        break;
-      }
-    }
-
-    if (!profileName) {
+    if (!localPinned.includes(ctx.agentId)) {
       addCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -463,12 +434,12 @@ export function handleUnpin(
       return;
     }
 
-    settingsManager.unpinProfile(profileName);
+    settingsManager.unpinLocal(ctx.agentId);
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Unpinned "${profileName}" from this project.`,
+      `Unpinned "${displayName}" from this project.`,
       true,
     );
   }
