@@ -58,7 +58,7 @@ import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
 import { UserMessage } from "./components/UserMessageRich";
-import { WelcomeScreen } from "./components/WelcomeScreen";
+import { getAgentStatusHints, WelcomeScreen } from "./components/WelcomeScreen";
 import {
   type Buffers,
   createBuffers,
@@ -563,17 +563,15 @@ export default function App({
       backfillBuffers(buffersRef.current, messageHistory);
 
       // Inject "showing N messages" status at the START of backfilled history
+      // Add status line showing resumed agent info
       const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
-      const messageCount = messageHistory.length;
       const agentUrl = agentState?.id
         ? `https://app.letta.com/agents/${agentState.id}`
         : null;
       const backfillLines = [
-        `Showing ${messageCount} most recent message${messageCount !== 1 ? "s" : ""}`,
-        agentUrl
-          ? `  → View full history in ADE: ${agentUrl}`
-          : "  → View full history in ADE",
-      ];
+        "Resumed agent",
+        agentUrl ? `→ ${agentUrl}` : "",
+      ].filter(Boolean);
       buffersRef.current.byId.set(backfillStatusId, {
         kind: "status",
         id: backfillStatusId,
@@ -3438,6 +3436,30 @@ Plan file path: ${planFilePath}`;
           },
         },
       ]);
+
+      // Add status line showing agent info
+      const agentUrl = agentState?.id
+        ? `https://app.letta.com/agents/${agentState.id}`
+        : null;
+      const statusId = `status-agent-${Date.now().toString(36)}`;
+      const hints = getAgentStatusHints(
+        !!continueSession,
+        agentState,
+        agentProvenance,
+      );
+      const statusLines = [
+        continueSession ? "Resumed agent" : "Created new agent",
+        agentUrl ? `→ ${agentUrl}` : "",
+        ...hints,
+      ].filter(Boolean);
+
+      buffersRef.current.byId.set(statusId, {
+        kind: "status",
+        id: statusId,
+        lines: statusLines,
+      });
+      buffersRef.current.order.push(statusId);
+      refreshDerived();
     }
   }, [
     loadingState,
@@ -3446,6 +3468,7 @@ Plan file path: ${planFilePath}`;
     columns,
     agentProvenance,
     agentState,
+    refreshDerived,
   ]);
 
   return (
