@@ -50,7 +50,8 @@ export function SlashCommandAutocomplete({
       }
 
       // Get text after "/" until next space or end
-      const query = spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
+      const query =
+        spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
       const hasSpaceAfter = spaceIndex !== -1;
 
       return { query, hasSpaceAfter };
@@ -111,12 +112,16 @@ export function SlashCommandAutocomplete({
       paddingX={1}
       marginBottom={1}
     >
-      <Text dimColor>
-        ↑↓ navigate, Tab/Enter select
-      </Text>
+      <Text dimColor>↑↓ navigate, Tab/Enter select</Text>
       {matches.map((item, idx) => (
-        <Text key={item.cmd} color={idx === selectedIndex ? colors.command.selected : undefined} bold={idx === selectedIndex}>
-          {idx === selectedIndex ? "▶ " : "  "}{item.cmd.padEnd(14)} <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
+        <Text
+          key={item.cmd}
+          color={idx === selectedIndex ? colors.command.selected : undefined}
+          bold={idx === selectedIndex}
+        >
+          {idx === selectedIndex ? "▶ " : "  "}
+          {item.cmd.padEnd(14)}{" "}
+          <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
         </Text>
       ))}
     </Box>
