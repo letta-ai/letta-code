@@ -136,14 +136,14 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent locally (use -g for global, <name> to rename)",
+    desc: "Pin current agent globally (use -l for local only)",
     handler: () => {
       // Handled specially in App.tsx
       return "Pinning agent...";
     },
   },
   "/unpin": {
-    desc: "Unpin current agent locally (use -g for global)",
+    desc: "Unpin current agent globally (use -l for local only)",
     handler: () => {
       // Handled specially in App.tsx
       return "Unpinning agent...";

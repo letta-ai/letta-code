@@ -445,9 +445,6 @@ async function main() {
   const AppModule = await import("./cli/App");
   const App = AppModule.default;
 
-  // Import profile selector component
-  const { ProfileSelectionInline } = await import("./cli/profile-selection");
-
   function LoadingApp({
     continueSession,
     forceNew,
@@ -489,47 +486,15 @@ async function main() {
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
 
-    // Profile selection state
-    const [showProfileSelector, setShowProfileSelector] = useState(false);
-    const [selectedProfileAgentId, setSelectedProfileAgentId] = useState<
-      string | null
-    >(null);
-    const [userChoseNew, setUserChoseNew] = useState(false);
-    const [lruAgentId, setLruAgentId] = useState<string | null>(null);
-    const [checkingProfiles, setCheckingProfiles] = useState(true);
-
-    // Check if we should show profile selector on mount
+    // Initialize on mount - no selector, just start immediately
     useEffect(() => {
-      async function checkProfiles() {
-        // Skip selector for explicit flags
-        if (forceNew || agentIdArg || fromAfFile) {
-          setCheckingProfiles(false);
-          setLoadingState("assembling");
-          return;
-        }
-
+      async function checkAndStart() {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
-        const localSettings = settingsManager.getLocalProjectSettings();
-        const globalProfiles = settingsManager.getGlobalProfiles();
-        const localProfiles = localSettings.profiles || {};
-        const hasProfiles =
-          Object.keys(globalProfiles).length > 0 ||
-          Object.keys(localProfiles).length > 0;
-        const lru = localSettings.lastAgent || null;
-
-        setLruAgentId(lru);
-        setCheckingProfiles(false);
-
-        // Show selector if there are choices
-        if (hasProfiles || lru) {
-          setShowProfileSelector(true);
-        } else {
-          setLoadingState("assembling");
-        }
+        setLoadingState("assembling");
       }
-      checkProfiles();
-    }, [forceNew, agentIdArg, fromAfFile]);
+      checkAndStart();
+    }, []);
 
     // Main initialization effect - runs after profile selection
     useEffect(() => {
@@ -551,24 +516,8 @@ async function main() {
           }
         }
 
-        // Priority 2: Profile selected from startup selector
-        if (!resumingAgentId && selectedProfileAgentId) {
-          try {
-            await client.agents.retrieve(selectedProfileAgentId);
-            resumingAgentId = selectedProfileAgentId;
-          } catch {
-            // Agent no longer exists
-          }
-        }
-
-        // Priority 3: Skip further resume if --new flag or user chose "Create new"
-        if (
-          !resumingAgentId &&
-          !forceNew &&
-          !userChoseNew &&
-          !selectedProfileAgentId
-        ) {
-          // Try project settings (LRU)
+        // Priority 2: LRU from local settings (if not --new)
+        if (!resumingAgentId && !forceNew) {
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
@@ -576,11 +525,11 @@ async function main() {
               await client.agents.retrieve(localProjectSettings.lastAgent);
               resumingAgentId = localProjectSettings.lastAgent;
             } catch {
-              // Agent no longer exists
+              // Agent no longer exists, will create new
             }
           }
 
-          // Priority 4: Try global settings if --continue flag
+          // Priority 3: Try global settings if --continue flag
           if (!resumingAgentId && continueSession && settings.lastAgent) {
             try {
               await client.agents.retrieve(settings.lastAgent);
@@ -687,19 +636,8 @@ async function main() {
           }
         }
 
-        // Priority 3: Resume agent selected from startup profile selector
-        if (!agent && selectedProfileAgentId) {
-          try {
-            agent = await client.agents.retrieve(selectedProfileAgentId);
-          } catch (error) {
-            console.error(
-              `Selected profile agent ${selectedProfileAgentId} not found (error: ${JSON.stringify(error)}), creating new one...`,
-            );
-          }
-        }
-
-        // Priority 4: Check if --new flag was passed or user chose "Create new" from selector
-        if (!agent && (forceNew || userChoseNew)) {
+        // Priority 3: Check if --new flag was passed - create new agent
+        if (!agent && forceNew) {
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
             undefined,
@@ -717,9 +655,8 @@ async function main() {
           setAgentProvenance(result.provenance);
         }
 
-        // Priority 5: Try to resume from project settings LRU (.letta/settings.local.json)
-        // Only if no profile was explicitly selected
-        if (!agent && !selectedProfileAgentId) {
+        // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
+        if (!agent) {
           await settingsManager.loadLocalProjectSettings();
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
@@ -820,9 +757,7 @@ async function main() {
         }
 
         // Check if we're resuming an existing agent
-        // Note: userChoseNew means user explicitly chose "Create new" from profile selector
-        const isResumingProject =
-          !forceNew && !userChoseNew && !!resumingAgentId; // Only true if we actually resumed from an existing agent
+        const isResumingProject = !forceNew && !!resumingAgentId;
         const resuming = !!(continueSession || agentIdArg || isResumingProject);
         setIsResumingSession(resuming);
 
@@ -843,40 +778,14 @@ async function main() {
       continueSession,
       forceNew,
       agentIdArg,
-      selectedProfileAgentId,
-      userChoseNew,
       model,
       system,
       fromAfFile,
       loadingState,
     ]);
 
-    // Handle profile selection
-    const handleProfileSelect = (agentId: string) => {
-      setSelectedProfileAgentId(agentId);
-      setShowProfileSelector(false);
-      setLoadingState("assembling");
-    };
-
-    const handleCreateNew = () => {
-      setUserChoseNew(true);
-      setShowProfileSelector(false);
-      setLoadingState("assembling");
-    };
-
-    // Show profile selector during "selecting" state (including while checking)
-    if (
-      loadingState === "selecting" &&
-      (checkingProfiles || showProfileSelector)
-    ) {
-      return React.createElement(ProfileSelectionInline, {
-        lruAgentId,
-        loading: checkingProfiles,
-        onSelect: handleProfileSelect,
-        onCreateNew: handleCreateNew,
-        onExit: () => process.exit(0),
-      });
-    }
+    // Profile selector is no longer shown at startup
+    // Users can access it via /pinned or /agents commands
 
     if (!agentId) {
       return React.createElement(App, {

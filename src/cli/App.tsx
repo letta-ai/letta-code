@@ -565,23 +565,27 @@ export default function App({
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
 
-      // Inject "showing N messages" status at the START of backfilled history
-      // Add status line showing resumed agent info
-      const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
+      // Add combined status at the END so user sees it without scrolling
+      const statusId = `status-resumed-${Date.now().toString(36)}`;
+      const cwd = process.cwd();
+      const shortCwd = cwd.startsWith(process.env.HOME || "")
+        ? `~${cwd.slice((process.env.HOME || "").length)}`
+        : cwd;
       const agentUrl = agentState?.id
         ? `https://app.letta.com/agents/${agentState.id}`
         : null;
-      const backfillLines = [
-        "Resumed agent",
+      const statusLines = [
+        `Connecting to last used agent in ${shortCwd}`,
+        agentState?.name ? `→ Agent: ${agentState.name}` : "",
         agentUrl ? `→ ${agentUrl}` : "",
+        "→ Use /pinned or /agents to switch agents",
       ].filter(Boolean);
-      buffersRef.current.byId.set(backfillStatusId, {
+      buffersRef.current.byId.set(statusId, {
         kind: "status",
-        id: backfillStatusId,
-        lines: backfillLines,
+        id: statusId,
+        lines: statusLines,
       });
-      // Insert at the beginning of the order array
-      buffersRef.current.order.unshift(backfillStatusId);
+      buffersRef.current.order.push(statusId);
 
       refreshDerived();
       commitEligibleLines(buffersRef.current);
@@ -3485,10 +3489,16 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /profile to bookmark this agent)";
+        : "Created a new agent (use /pin to save, /pinned or /agents to switch)";
+
+      const agentNameLine =
+        !continueSession && agentState?.name
+          ? `→ Agent: ${agentState.name} (use /name to rename)`
+          : "";
 
       const statusLines = [
         resumedMessage,
+        agentNameLine,
         agentUrl ? `→ ${agentUrl}` : "",
         ...hints,
       ].filter(Boolean);
