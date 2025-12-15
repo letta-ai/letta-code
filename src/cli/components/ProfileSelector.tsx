@@ -2,15 +2,14 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box, Text, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
-import { getProfiles } from "../commands/profile";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
 interface ProfileSelectorProps {
   currentAgentId: string;
-  onSelect: (agentId: string, profileName: string) => void;
-  onSave: (profileName: string) => void;
-  onDelete: (profileName: string) => void;
+  onSelect: (agentId: string) => void;
+  onUnpin: (agentId: string) => void;
   onCancel: () => void;
 }
 
@@ -19,6 +18,7 @@ interface ProfileData {
   agentId: string;
   agent: AgentState | null;
   error: string | null;
+  isPinned: boolean;
 }
 
 const DISPLAY_PAGE_SIZE = 5;
@@ -71,13 +71,12 @@ function formatModel(agent: AgentState): string {
   return "unknown";
 }
 
-type Mode = "browsing" | "saving" | "confirming-delete";
+type Mode = "browsing" | "confirming-delete";
 
 export const ProfileSelector = memo(function ProfileSelector({
   currentAgentId,
   onSelect,
-  onSave,
-  onDelete,
+  onUnpin,
   onCancel,
 }: ProfileSelectorProps) {
   const terminalWidth = useTerminalWidth();
@@ -86,17 +85,16 @@ export const ProfileSelector = memo(function ProfileSelector({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [mode, setMode] = useState<Mode>("browsing");
-  const [saveInput, setSaveInput] = useState("");
   const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(0);
 
-  // Load profiles and fetch agent data
+  // Load pinned agents and fetch agent data
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const profilesMap = getProfiles();
-      const profileNames = Object.keys(profilesMap).sort();
+      const mergedPinned = settingsManager.getMergedPinnedAgents();
+      const localPinned = settingsManager.getLocalPinnedAgents();
 
-      if (profileNames.length === 0) {
+      if (mergedPinned.length === 0) {
         setProfiles([]);
         setLoading(false);
         return;
@@ -104,16 +102,23 @@ export const ProfileSelector = memo(function ProfileSelector({
 
       const client = await getClient();
 
-      // Fetch agent data for each profile
-      const profileDataPromises = profileNames.map(async (name) => {
-        const agentId = profilesMap[name] as string;
+      // Fetch agent data for each pinned agent
+      const profileDataPromises = mergedPinned.map(async ({ agentId }) => {
+        const isPinned = localPinned.includes(agentId);
         try {
           const agent = await client.agents.retrieve(agentId, {
             include: ["agent.blocks"],
           });
-          return { name, agentId, agent, error: null };
+          // Use agent name from server
+          return { name: agent.name, agentId, agent, error: null, isPinned };
         } catch (_err) {
-          return { name, agentId, agent: null, error: "Agent not found" };
+          return {
+            name: agentId.slice(0, 12),
+            agentId,
+            agent: null,
+            error: "Agent not found",
+            isPinned,
+          };
         }
       });
 
@@ -144,31 +149,14 @@ export const ProfileSelector = memo(function ProfileSelector({
   useInput((input, key) => {
     if (loading) return;
 
-    // Handle save mode - capture text input inline (like ResumeSelector)
-    if (mode === "saving") {
-      if (key.return && saveInput.trim()) {
-        // onSave closes the selector
-        onSave(saveInput.trim());
-        return;
-      } else if (key.escape) {
-        setMode("browsing");
-        setSaveInput("");
-      } else if (key.backspace || key.delete) {
-        setSaveInput((prev) => prev.slice(0, -1));
-      } else if (input && !key.ctrl && !key.meta) {
-        setSaveInput((prev) => prev + input);
-      }
-      return;
-    }
-
     // Handle delete confirmation mode
     if (mode === "confirming-delete") {
       if (key.upArrow || key.downArrow) {
         setDeleteConfirmIndex((prev) => (prev === 0 ? 1 : 0));
       } else if (key.return) {
         if (deleteConfirmIndex === 0 && selectedProfile) {
-          // Yes - delete (onDelete closes the selector)
-          onDelete(selectedProfile.name);
+          // Yes - unpin (onUnpin closes the selector)
+          onUnpin(selectedProfile.agentId);
           return;
         } else {
           // No - cancel
@@ -187,13 +175,10 @@ export const ProfileSelector = memo(function ProfileSelector({
       setSelectedIndex((prev) => Math.min(pageProfiles.length - 1, prev + 1));
     } else if (key.return) {
       if (selectedProfile?.agent) {
-        onSelect(selectedProfile.agentId, selectedProfile.name);
+        onSelect(selectedProfile.agentId);
       }
     } else if (key.escape) {
       onCancel();
-    } else if (input === "s" || input === "S") {
-      setMode("saving");
-      setSaveInput("");
     } else if (input === "d" || input === "D") {
       if (selectedProfile) {
         setMode("confirming-delete");
@@ -211,44 +196,35 @@ export const ProfileSelector = memo(function ProfileSelector({
         setCurrentPage((prev) => prev + 1);
         setSelectedIndex(0);
       }
+    } else if (input === "p" || input === "P") {
+      if (selectedProfile) {
+        // Toggle pin/unpin for selected profile
+        if (selectedProfile.isPinned) {
+          settingsManager.unpinLocal(selectedProfile.agentId);
+        } else {
+          settingsManager.pinLocal(selectedProfile.agentId);
+        }
+      } else {
+        // No profiles - pin the current agent
+        settingsManager.pinLocal(currentAgentId);
+      }
+      // Reload profiles to reflect change
+      loadProfiles();
     }
   });
 
-  // Save mode UI
-  if (mode === "saving") {
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Box>
-          <Text bold color={colors.selector.title}>
-            Save Current Agent as Profile
-          </Text>
-        </Box>
-        <Box flexDirection="column">
-          <Text>Enter profile name (Esc to cancel):</Text>
-          <Box marginTop={1}>
-            <Text>&gt; </Text>
-            <Text>{saveInput}</Text>
-            <Text>█</Text>
-          </Box>
-        </Box>
-      </Box>
-    );
-  }
-
-  // Delete confirmation UI
+  // Unpin confirmation UI
   if (mode === "confirming-delete" && selectedProfile) {
-    const options = ["Yes, delete", "No, cancel"];
+    const options = ["Yes, unpin", "No, cancel"];
     return (
       <Box flexDirection="column" gap={1}>
         <Box>
           <Text bold color={colors.selector.title}>
-            Delete Profile
+            Unpin Agent
           </Text>
         </Box>
         <Box>
-          <Text>
-            Are you sure you want to delete profile "{selectedProfile.name}"?
-          </Text>
+          <Text>Unpin "{selectedProfile.name}" from all locations?</Text>
         </Box>
         <Box flexDirection="column" marginTop={1}>
           {options.map((option, index) => {
@@ -276,22 +252,22 @@ export const ProfileSelector = memo(function ProfileSelector({
     <Box flexDirection="column" gap={1}>
       <Box>
         <Text bold color={colors.selector.title}>
-          Profiles
+          Pinned Agents
         </Text>
       </Box>
 
       {/* Loading state */}
       {loading && (
         <Box>
-          <Text dimColor>Loading profiles...</Text>
+          <Text dimColor>Loading pinned agents...</Text>
         </Box>
       )}
 
       {/* Empty state */}
       {!loading && profiles.length === 0 && (
         <Box flexDirection="column">
-          <Text dimColor>No profiles saved.</Text>
-          <Text dimColor>Press S to save the current agent as a profile.</Text>
+          <Text dimColor>No agents pinned.</Text>
+          <Text dimColor>Press P to pin the current agent.</Text>
           <Box marginTop={1}>
             <Text dimColor>Esc to close</Text>
           </Box>
@@ -335,6 +311,9 @@ export const ProfileSelector = memo(function ProfileSelector({
                   >
                     {profile.name}
                   </Text>
+                  {profile.isPinned && (
+                    <Text color={colors.selector.itemCurrent}> (pinned)</Text>
+                  )}
                   <Text dimColor> · {displayId}</Text>
                   {isCurrent && (
                     <Text color={colors.selector.itemCurrent}> (current)</Text>
@@ -381,8 +360,7 @@ export const ProfileSelector = memo(function ProfileSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter load · S save · D delete · J/K page · Esc
-              close
+              ↑↓ navigate · Enter load · P pin/unpin · D unpin all · Esc close
             </Text>
           </Box>
         </Box>

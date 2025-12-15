@@ -23,6 +23,7 @@ import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
+import { settingsManager } from "../settings-manager";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -32,9 +33,11 @@ import {
 } from "../tools/manager";
 import {
   addCommandResult,
+  handlePin,
   handleProfileDelete,
   handleProfileSave,
   handleProfileUsage,
+  handleUnpin,
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
@@ -568,23 +571,27 @@ export default function App({
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
 
-      // Inject "showing N messages" status at the START of backfilled history
-      // Add status line showing resumed agent info
-      const backfillStatusId = `status-backfill-${Date.now().toString(36)}`;
+      // Add combined status at the END so user sees it without scrolling
+      const statusId = `status-resumed-${Date.now().toString(36)}`;
+      const cwd = process.cwd();
+      const shortCwd = cwd.startsWith(process.env.HOME || "")
+        ? `~${cwd.slice((process.env.HOME || "").length)}`
+        : cwd;
       const agentUrl = agentState?.id
         ? `https://app.letta.com/agents/${agentState.id}`
         : null;
-      const backfillLines = [
-        "Resumed agent",
+      const statusLines = [
+        `Connecting to last used agent in ${shortCwd}`,
+        agentState?.name ? `→ Agent: ${agentState.name}` : "",
         agentUrl ? `→ ${agentUrl}` : "",
+        "→ Use /pinned or /resume to switch agents",
       ].filter(Boolean);
-      buffersRef.current.byId.set(backfillStatusId, {
+      buffersRef.current.byId.set(statusId, {
         kind: "status",
-        id: backfillStatusId,
-        lines: backfillLines,
+        id: statusId,
+        lines: statusLines,
       });
-      // Insert at the beginning of the order array
-      buffersRef.current.order.unshift(backfillStatusId);
+      buffersRef.current.order.push(statusId);
 
       refreshDerived();
       commitEligibleLines(buffersRef.current);
@@ -1269,21 +1276,18 @@ export default function App({
   }, [streaming]);
 
   const handleAgentSelect = useCallback(
-    async (targetAgentId: string, opts?: { profileName?: string }) => {
+    async (targetAgentId: string, _opts?: { profileName?: string }) => {
       setAgentSelectorOpen(false);
 
       // Skip if already on this agent
       if (targetAgentId === agentId) {
-        const isProfileLoad = !!opts?.profileName;
-        const label = isProfileLoad ? opts.profileName : targetAgentId;
+        const label = agentName || targetAgentId.slice(0, 12);
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
-          input: isProfileLoad
-            ? `/profile load ${opts.profileName}`
-            : `/resume ${targetAgentId}`,
-          output: `Already on "${agentName || label}"`,
+          input: "/pinned",
+          output: `Already on "${label}"`,
           phase: "finished",
           success: true,
         });
@@ -1292,10 +1296,7 @@ export default function App({
         return;
       }
 
-      const isProfileLoad = !!opts?.profileName;
-      const inputCmd = isProfileLoad
-        ? `/profile load ${opts.profileName}`
-        : `/resume ${targetAgentId}`;
+      const inputCmd = "/pinned";
 
       setCommandRunning(true);
 
@@ -1328,9 +1329,7 @@ export default function App({
 
         // Build success command
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
-        const successOutput = isProfileLoad
-          ? `Loaded "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`
-          : `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
+        const successOutput = `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
         const successItem: StaticItem = {
           kind: "command",
           id: uid("cmd"),
@@ -1882,7 +1881,7 @@ export default function App({
         }
 
         // Special handling for /resume command - show session resume selector
-        if (msg.trim() === "/resume") {
+        if (msg.trim() === "/agents" || msg.trim() === "/resume") {
           setResumeSelectorOpen(true);
           return { submitted: true };
         }
@@ -1903,6 +1902,7 @@ export default function App({
             buffersRef,
             refreshDerived,
             agentId,
+            agentName: agentName || "",
             setCommandRunning,
             setAgentName,
           };
@@ -1965,6 +1965,42 @@ export default function App({
 
           // Unknown subcommand
           handleProfileUsage(profileCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /profiles and /pinned commands - open pinned agents selector
+        if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
+          setProfileSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /pin command - pin current agent to project (or globally with -g)
+        if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            agentName: agentName || "",
+            setCommandRunning,
+            setAgentName,
+          };
+          const argsStr = msg.trim().slice(4).trim();
+          await handlePin(profileCtx, msg, argsStr);
+          return { submitted: true };
+        }
+
+        // Special handling for /unpin command - unpin current agent from project (or globally with -g)
+        if (msg.trim() === "/unpin" || msg.trim().startsWith("/unpin ")) {
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            agentName: agentName || "",
+            setCommandRunning,
+            setAgentName,
+          };
+          const argsStr = msg.trim().slice(6).trim();
+          handleUnpin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
 
@@ -2511,6 +2547,7 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       agentId,
+      agentName,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
@@ -3468,8 +3505,21 @@ Plan file path: ${planFilePath}`;
         agentState,
         agentProvenance,
       );
+      // For resumed agents, show the agent name if it has one (profile name)
+      const resumedMessage = continueSession
+        ? agentState?.name
+          ? `Resumed **${agentState.name}**`
+          : "Resumed agent"
+        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
+
+      const agentNameLine =
+        !continueSession && agentState?.name
+          ? `→ Agent: ${agentState.name} (use /name to rename)`
+          : "";
+
       const statusLines = [
-        continueSession ? "Resumed agent" : "Created new agent",
+        resumedMessage,
+        agentNameLine,
         agentUrl ? `→ ${agentUrl}` : "",
         ...hints,
       ].filter(Boolean);
@@ -3663,39 +3713,24 @@ Plan file path: ${planFilePath}`;
             {profileSelectorOpen && (
               <ProfileSelector
                 currentAgentId={agentId}
-                onSelect={async (id, profileName) => {
+                onSelect={async (id) => {
                   setProfileSelectorOpen(false);
-                  await handleAgentSelect(id, { profileName });
+                  await handleAgentSelect(id);
                 }}
-                onSave={async (profileName) => {
+                onUnpin={(unpinAgentId) => {
                   setProfileSelectorOpen(false);
-                  const profileCtx: ProfileCommandContext = {
-                    buffersRef,
-                    refreshDerived,
-                    agentId,
-                    setCommandRunning,
-                    setAgentName,
-                  };
-                  await handleProfileSave(
-                    profileCtx,
-                    `/profile save ${profileName}`,
-                    profileName,
-                  );
-                }}
-                onDelete={(profileName) => {
-                  setProfileSelectorOpen(false);
-                  const profileCtx: ProfileCommandContext = {
-                    buffersRef,
-                    refreshDerived,
-                    agentId,
-                    setCommandRunning,
-                    setAgentName,
-                  };
-                  handleProfileDelete(
-                    profileCtx,
-                    `/profile delete ${profileName}`,
-                    profileName,
-                  );
+                  settingsManager.unpinBoth(unpinAgentId);
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/pinned",
+                    output: `Unpinned agent ${unpinAgentId.slice(0, 12)}`,
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
                 }}
                 onCancel={() => setProfileSelectorOpen(false)}
               />
