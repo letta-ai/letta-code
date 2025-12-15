@@ -114,7 +114,7 @@ export function SlashCommandAutocomplete({
   useInput((_input, key) => {
     if (!matches.length) return;
 
-    const maxIndex = Math.min(matches.length, 10) - 1;
+    const maxIndex = matches.length - 1;
 
     if (key.upArrow) {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
@@ -150,14 +150,11 @@ export function SlashCommandAutocomplete({
       <Text dimColor>
         ↑↓ navigate, Tab/Enter select
       </Text>
-      {matches.slice(0, 10).map((item, idx) => (
-        <Text key={item.cmd} color={idx === selectedIndex ? colors.status.success : undefined} bold={idx === selectedIndex}>
+      {matches.map((item, idx) => (
+        <Text key={item.cmd} color={idx === selectedIndex ? colors.command.selected : undefined} bold={idx === selectedIndex}>
           {idx === selectedIndex ? "▶ " : "  "}{item.cmd.padEnd(14)} <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
         </Text>
       ))}
-      {matches.length > 10 && (
-        <Text dimColor>... and {matches.length - 10} more</Text>
-      )}
     </Box>
   );
 }
