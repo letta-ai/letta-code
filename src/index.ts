@@ -687,7 +687,18 @@ async function main() {
           }
         }
 
-        // Priority 2: Check if --new flag was passed or user chose "Create new" from selector
+        // Priority 3: Resume agent selected from startup profile selector
+        if (!agent && selectedProfileAgentId) {
+          try {
+            agent = await client.agents.retrieve(selectedProfileAgentId);
+          } catch (error) {
+            console.error(
+              `Selected profile agent ${selectedProfileAgentId} not found (error: ${JSON.stringify(error)}), creating new one...`,
+            );
+          }
+        }
+
+        // Priority 4: Check if --new flag was passed or user chose "Create new" from selector
         if (!agent && (forceNew || userChoseNew)) {
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
@@ -706,8 +717,9 @@ async function main() {
           setAgentProvenance(result.provenance);
         }
 
-        // Priority 3: Try to resume from project settings (.letta/settings.local.json)
-        if (!agent) {
+        // Priority 5: Try to resume from project settings LRU (.letta/settings.local.json)
+        // Only if no profile was explicitly selected
+        if (!agent && !selectedProfileAgentId) {
           await settingsManager.loadLocalProjectSettings();
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
@@ -725,7 +737,7 @@ async function main() {
           }
         }
 
-        // Priority 4: Try to reuse global lastAgent if --continue flag is passed
+        // Priority 6: Try to reuse global lastAgent if --continue flag is passed
         if (!agent && continueSession && settings.lastAgent) {
           try {
             agent = await client.agents.retrieve(settings.lastAgent);
@@ -737,7 +749,7 @@ async function main() {
           }
         }
 
-        // Priority 5: Create a new agent
+        // Priority 7: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
