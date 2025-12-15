@@ -578,7 +578,7 @@ export default function App({
         `Connecting to last used agent in ${shortCwd}`,
         agentState?.name ? `→ Agent: ${agentState.name}` : "",
         agentUrl ? `→ ${agentUrl}` : "",
-        "→ Use /pinned or /agents to switch agents",
+        "→ Use /pinned or /resume to switch agents",
       ].filter(Boolean);
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -3489,7 +3489,7 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /pin to save, /pinned or /agents to switch)";
+        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
 
       const agentNameLine =
         !continueSession && agentState?.name

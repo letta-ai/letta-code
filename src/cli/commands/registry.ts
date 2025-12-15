@@ -121,7 +121,7 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/agents": {
+  "/resume": {
     desc: "Browse and switch to another agent",
     handler: () => {
       // Handled specially in App.tsx to show agent selector
