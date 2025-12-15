@@ -825,8 +825,9 @@ export default function App({
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
-                // Check if approval is incomplete (missing name or arguments)
-                if (!approvalItem.toolName || !approvalItem.toolArgs) {
+                // Check if approval is incomplete (missing name)
+                // Note: toolArgs can be empty string for tools with no arguments (e.g., EnterPlanMode)
+                if (!approvalItem.toolName) {
                   return {
                     approval: approvalItem,
                     permission: {
