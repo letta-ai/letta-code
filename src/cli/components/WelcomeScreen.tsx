@@ -1,11 +1,48 @@
+import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
-import Link from "ink-link";
+
 import type { AgentProvenance } from "../../agent/create";
+import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { asciiLogo } from "./AsciiArt";
 import { colors } from "./colors";
+
+/**
+ * Convert absolute path to use ~ for home directory
+ */
+function toTildePath(absolutePath: string): string {
+  const home = homedir();
+  if (absolutePath.startsWith(home)) {
+    return `~${absolutePath.slice(home.length)}`;
+  }
+  return absolutePath;
+}
+
+/**
+ * Determine the auth method used
+ */
+function getAuthMethod(): "url" | "api-key" | "oauth" {
+  // Check if custom URL is being used
+  if (process.env.LETTA_BASE_URL) {
+    return "url";
+  }
+  // Check if API key from env
+  if (process.env.LETTA_API_KEY) {
+    return "api-key";
+  }
+  // Check settings for refresh token (OAuth)
+  const settings = settingsManager.getSettings();
+  if (settings.refreshToken) {
+    return "oauth";
+  }
+  // Check if API key stored in settings
+  if (settings.env?.LETTA_API_KEY) {
+    return "api-key";
+  }
+  return "oauth"; // default
+}
 
 type LoadingState =
   | "assembling"
@@ -96,35 +133,33 @@ export function WelcomeScreen({
   loadingState,
   continueSession,
   agentState,
-  agentProvenance,
-  terminalWidth: frozenWidth,
+  agentProvenance: _agentProvenance,
 }: {
   loadingState: LoadingState;
   continueSession?: boolean;
   agentState?: Letta.AgentState | null;
   agentProvenance?: AgentProvenance | null;
-  terminalWidth?: number;
 }) {
-  const currentWidth = useTerminalWidth();
-  const terminalWidth = frozenWidth ?? currentWidth;
+  // Keep hook call for potential future responsive behavior
+  useTerminalWidth();
   const cwd = process.cwd();
   const version = getVersion();
-  const agentId = agentState?.id;
 
   const logoLines = asciiLogo.trim().split("\n");
-  const isMedium = terminalWidth >= 80;
+  const tildePath = toTildePath(cwd);
 
-  const statusMessage = getStatusMessage(
-    loadingState,
-    !!continueSession,
-    agentId,
-  );
-  const pathLine = isMedium ? `${cwd}` : cwd;
-  const agentUrl = agentId ? `https://app.letta.com/agents/${agentId}` : null;
-  const hints =
-    loadingState === "ready"
-      ? getAgentStatusHints(!!continueSession, agentState, agentProvenance)
-      : [];
+  // Get model from agent state - just the last part (after last /)
+  const fullModel = agentState?.model || agentState?.llm_config?.model;
+  const model = fullModel?.split("/").pop();
+
+  // Get auth method
+  const authMethod = getAuthMethod();
+  const authDisplay =
+    authMethod === "url"
+      ? process.env.LETTA_BASE_URL || "Custom URL"
+      : authMethod === "api-key"
+        ? "API key auth"
+        : "OAuth";
 
   return (
     <Box flexDirection="row" marginTop={1}>
@@ -140,46 +175,31 @@ export function WelcomeScreen({
 
       {/* Right column: Text info */}
       <Box flexDirection="column" marginTop={0}>
-        <Text bold color={colors.welcome.accent}>
-          Letta Code v{version}
+        {/* Row 1: Letta Code + version */}
+        <Box>
+          <Text bold>Letta Code</Text>
+          <Text color="gray"> v{version}</Text>
+        </Box>
+        {/* Row 2: model · auth (or just auth while loading) */}
+        <Text color="gray">
+          {model ? `${model} · ${authDisplay}` : authDisplay}
         </Text>
-        <Text dimColor>{pathLine}</Text>
-        {statusMessage && (
-          <Text dimColor>
-            {statusMessage}
-            {loadingState === "ready" && agentUrl && (
-              <>
-                {": "}
-                <Link url={agentUrl}>
-                  <Text dimColor>{agentUrl}</Text>
-                </Link>
-              </>
-            )}
-          </Text>
-        )}
-        {hints.map((hint, idx) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: Hint lines are static and never reorder
-          <Text key={idx} dimColor>
-            {hint}
-          </Text>
-        ))}
+        {/* Row 3: loading status, then path once ready */}
+        <Text color="gray">
+          {loadingState === "ready"
+            ? tildePath
+            : getLoadingMessage(loadingState, !!continueSession)}
+        </Text>
       </Box>
     </Box>
   );
 }
 
-function getStatusMessage(
+function getLoadingMessage(
   loadingState: LoadingState,
   continueSession: boolean,
-  agentId?: string,
 ): string {
   switch (loadingState) {
-    case "ready":
-      return continueSession && agentId
-        ? "Resumed agent"
-        : agentId
-          ? "Created a new agent"
-          : "Ready to go!";
     case "initializing":
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
@@ -187,14 +207,14 @@ function getStatusMessage(
     case "upserting":
       return "Upserting tools...";
     case "linking":
-      return "Attaching Letta Code tools...";
+      return "Attaching tools...";
     case "unlinking":
-      return "Removing Letta Code tools...";
+      return "Removing tools...";
     case "importing":
-      return "Importing agent from template...";
+      return "Importing agent...";
     case "checking":
       return "Checking for pending approvals...";
     default:
-      return "";
+      return "Loading...";
   }
 }
