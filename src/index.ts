@@ -8,7 +8,7 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
-import { loadTools, upsertToolsToServer } from "./tools/manager";
+import { loadTools, upsertToolsIfNeeded } from "./tools/manager";
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -431,7 +431,7 @@ async function main() {
     );
     await loadTools(modelForTools);
     const client = await getClient();
-    await upsertToolsToServer(client);
+    await upsertToolsIfNeeded(client, baseURL);
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
@@ -573,7 +573,7 @@ async function main() {
         }
 
         setLoadingState("upserting");
-        await upsertToolsToServer(client);
+        await upsertToolsIfNeeded(client, baseURL);
 
         // Handle --link/--unlink after upserting tools
         if (shouldLink || shouldUnlink) {

@@ -19,6 +19,8 @@ export interface Settings {
   refreshToken?: string;
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
+  // Tool upsert cache: maps serverUrl -> hash of upserted tools
+  toolUpsertHashes?: Record<string, string>;
 }
 
 export interface ProjectSettings {
