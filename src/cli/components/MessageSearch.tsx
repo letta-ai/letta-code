@@ -38,6 +38,28 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
 }
 
 /**
+ * Format a timestamp in local timezone
+ */
+function formatLocalTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+
+  const date = new Date(dateStr);
+  // Format: "Dec 15, 6:30 PM" or "Dec 15, 2024, 6:30 PM" depending on year
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  
+  const options: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  
+  return date.toLocaleString(undefined, options);
+}
+
+/**
  * Truncate text to fit width, adding ellipsis if needed
  */
 function truncateText(text: string, maxWidth: number): string {
@@ -109,10 +131,13 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       const client = clientRef.current || (await getClient());
       clientRef.current = client;
 
-      const searchResults = await client.messages.search({
-        query: query.trim(),
-        search_mode: mode,
-        limit: SEARCH_LIMIT,
+      // Direct API call since client.messages.search doesn't exist yet in SDK
+      const searchResults = await client.post<MessageSearchResponse>("/v1/messages/search", {
+        body: {
+          query: query.trim(),
+          search_mode: mode,
+          limit: SEARCH_LIMIT,
+        },
       });
 
       setResults(searchResults);
@@ -273,7 +298,7 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
             const isSelected = index === selectedIndex;
             const messageText = getMessageText(msg);
             // All messages have a date field
-            const msgWithDate = msg as { date?: string };
+            const msgWithDate = msg as { date?: string; created_at?: string; agent_id?: string };
             const timestamp = msgWithDate.date
               ? formatRelativeTime(msgWithDate.date)
               : "";
@@ -281,6 +306,8 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
               "_message",
               "",
             );
+            const agentId = msgWithDate.agent_id || "unknown";
+            const createdAt = formatLocalTime(msgWithDate.created_at);
 
             // Calculate available width for message text
             const metaWidth = timestamp.length + msgType.length + 10; // padding
@@ -318,6 +345,8 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
                   <Text dimColor>
                     {msgType}
                     {timestamp && ` · ${timestamp}`}
+                    {agentId && ` · agent: ${agentId}`}
+                    {createdAt && ` · ${createdAt}`}
                   </Text>
                 </Box>
               </Box>
