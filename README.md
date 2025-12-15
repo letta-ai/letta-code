@@ -6,7 +6,7 @@ Letta Code is a memory-first coding harness, built on top of the Letta API. Inst
 
 **Read more about how to use Letta Code on the [official docs page](https://docs.letta.com/letta-code).**
 
-![](https://github.com/letta-ai/letta-code/raw/update-readme/assets/demo.gif)
+![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
 ## Get started
 
@@ -33,10 +33,9 @@ Over time, the agent will update its memory as it learns. To actively guide your
 ```bash
 > /remember [optional instructions on what to remember]
 ```
-
-Skills are reusable modules that teach your agent new capabilities. They’re automatically discovered from your project’s `.skills` directory and loaded into the agent’s memory at session start. The easiest way to create a skill is using the interactive skill creation mode:
+Letta Code works with skills (reusable modules that teach your agent new capabilities in a `.skills` directory), but additionally supports [skill learning](https://www.letta.com/blog/skill-learning). You can ask your agent to learn a skill from it's current trajectory with the command: 
 ```bash
-> /skill
+> /skill [optional instructions on what skill to learn]
 ```
 
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
