@@ -24,14 +24,14 @@ Navigate to your project directory and run `letta` (see various command-line opt
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
 
 **Claude Code / Codex / Gemini CLI** (Session-Based)
-- You work in independent sessions
-- Context = messages in the current session
-- No persistent learning between sessions
+- Sessions are independent
+- No learning between sessions
+- Context = messages in the current session + `AGENTS.md`
 - Relationship: Every conversation is like meeting a new contractor
 
 **Letta Code** (Agent-Based)
-- You work with the same long-lived agent across sessions
-- The agent has persistent memory and learns over time
+- Same agent across sessions
+- Persistent memory and learning over time
 - `/clear` resets the session (clears current in-context messages), but memory persists
 - Relationship: Like having a coworker or mentee that learns and remembers
 
