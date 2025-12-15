@@ -122,10 +122,10 @@ export const commands: Record<string, Command> = {
     },
   },
   "/resume": {
-    desc: "Resume a previous agent session",
+    desc: "Browse and switch to another agent",
     handler: () => {
-      // Handled specially in App.tsx to show resume selector
-      return "Opening session selector...";
+      // Handled specially in App.tsx to show agent selector
+      return "Opening agent selector...";
     },
   },
   "/search": {
@@ -135,11 +135,25 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
-  "/profile": {
-    desc: "Manage local profiles (save/load/delete)",
+  "/pin": {
+    desc: "Pin current agent globally (use -l for local only)",
     handler: () => {
-      // Handled specially in App.tsx for profile management
-      return "Managing profiles...";
+      // Handled specially in App.tsx
+      return "Pinning agent...";
+    },
+  },
+  "/unpin": {
+    desc: "Unpin current agent globally (use -l for local only)",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Unpinning agent...";
+    },
+  },
+  "/pinned": {
+    desc: "Show pinned agents",
+    handler: () => {
+      // Handled specially in App.tsx to open pinned agents selector
+      return "Opening pinned agents...";
     },
   },
 };

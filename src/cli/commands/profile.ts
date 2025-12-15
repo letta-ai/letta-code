@@ -19,6 +19,7 @@ export interface ProfileCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   agentId: string;
+  agentName: string;
   setCommandRunning: (running: boolean) => void;
   setAgentName: (name: string) => void;
 }
@@ -69,10 +70,15 @@ export function updateCommandResult(
   refreshDerived();
 }
 
-// Get profiles from local settings
+// Get all profiles (merged from global + local, local takes precedence)
 export function getProfiles(): Record<string, string> {
-  const localSettings = settingsManager.getLocalProjectSettings();
-  return localSettings.profiles || {};
+  const merged = settingsManager.getMergedProfiles();
+  // Convert array format back to Record
+  const result: Record<string, string> = {};
+  for (const profile of merged) {
+    result[profile.name] = profile.agentId;
+  }
+  return result;
 }
 
 // Check if a profile exists, returns error message if not found
@@ -159,19 +165,15 @@ export async function handleProfileSave(
     await client.agents.update(ctx.agentId, { name: profileName });
     ctx.setAgentName(profileName);
 
-    // Save profile to local settings
-    const profiles = getProfiles();
-    const updatedProfiles = { ...profiles, [profileName]: ctx.agentId };
-    settingsManager.updateLocalProjectSettings({
-      profiles: updatedProfiles,
-    });
+    // Save profile to BOTH local and global settings
+    settingsManager.saveProfile(profileName, ctx.agentId);
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `Saved profile "${profileName}" (agent ${ctx.agentId})`,
+      `Pinned "${profileName}" locally and globally.`,
       true,
     );
   } catch (error) {
@@ -293,4 +295,153 @@ export function handleProfileUsage(
     "Usage: /profile [save|load|delete] <name>\n  /profile - list profiles\n  /profile save <name> - save current agent\n  /profile load <name> - load a profile\n  /profile delete <name> - delete a profile",
     false,
   );
+}
+
+// Parse /pin or /unpin args: [-l|--local] [name]
+// Default is global, use -l for local-only
+function parsePinArgs(argsStr: string): { local: boolean; name?: string } {
+  const parts = argsStr.trim().split(/\s+/).filter(Boolean);
+  let local = false;
+  let name: string | undefined;
+
+  for (const part of parts) {
+    if (part === "-l" || part === "--local") {
+      local = true;
+    } else if (!name) {
+      name = part;
+    }
+  }
+
+  return { local, name };
+}
+
+// /pin [-l] [name] - Pin the current agent globally (or locally with -l)
+// If name is provided, renames the agent first
+export async function handlePin(
+  ctx: ProfileCommandContext,
+  msg: string,
+  argsStr: string,
+): Promise<void> {
+  const { local, name } = parsePinArgs(argsStr);
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+
+  // If user provided a name, rename the agent first
+  if (name && name !== ctx.agentName) {
+    try {
+      const { getClient } = await import("../../agent/client");
+      const client = await getClient();
+      await client.agents.update(ctx.agentId, { name });
+      ctx.setAgentName(name);
+    } catch (error) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        `Failed to rename agent: ${error}`,
+        false,
+      );
+      return;
+    }
+  }
+
+  const displayName = name || ctx.agentName || ctx.agentId.slice(0, 12);
+
+  if (local) {
+    // Pin locally only
+    if (localPinned.includes(ctx.agentId)) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "This agent is already pinned to this project.",
+        false,
+      );
+      return;
+    }
+    settingsManager.pinLocal(ctx.agentId);
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Pinned "${displayName}" to this project.`,
+      true,
+    );
+  } else {
+    // Pin globally (default)
+    if (globalPinned.includes(ctx.agentId)) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "This agent is already pinned globally.",
+        false,
+      );
+      return;
+    }
+    settingsManager.pinGlobal(ctx.agentId);
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Pinned "${displayName}" globally.`,
+      true,
+    );
+  }
+}
+
+// /unpin [-l] - Unpin the current agent globally (or locally with -l)
+export function handleUnpin(
+  ctx: ProfileCommandContext,
+  msg: string,
+  argsStr: string,
+): void {
+  const { local } = parsePinArgs(argsStr);
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const displayName = ctx.agentName || ctx.agentId.slice(0, 12);
+
+  if (local) {
+    // Unpin locally only
+    if (!localPinned.includes(ctx.agentId)) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "This agent isn't pinned to this project.",
+        false,
+      );
+      return;
+    }
+
+    settingsManager.unpinLocal(ctx.agentId);
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Unpinned "${displayName}" from this project.`,
+      true,
+    );
+  } else {
+    // Unpin globally (default)
+    if (!globalPinned.includes(ctx.agentId)) {
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "This agent isn't pinned globally.",
+        false,
+      );
+      return;
+    }
+
+    settingsManager.unpinGlobal(ctx.agentId);
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Unpinned "${displayName}" globally.`,
+      true,
+    );
+  }
 }

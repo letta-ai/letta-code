@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import Link from "ink-link";
 import { useMemo } from "react";
-import { getProfiles } from "../commands/profile";
+import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
@@ -26,14 +26,12 @@ export function CommandPreview({
   agentName?: string | null;
   serverUrl?: string;
 }) {
-  // Look up if current agent is saved as a profile
-  const profileName = useMemo(() => {
-    if (!agentId) return null;
-    const profiles = getProfiles();
-    for (const [name, id] of Object.entries(profiles)) {
-      if (id === agentId) return name;
-    }
-    return null;
+  // Check if current agent is pinned
+  const isPinned = useMemo(() => {
+    if (!agentId) return false;
+    const localPinned = settingsManager.getLocalPinnedAgents();
+    const globalPinned = settingsManager.getGlobalPinnedAgents();
+    return localPinned.includes(agentId) || globalPinned.includes(agentId);
   }, [agentId]);
 
   if (!currentInput.startsWith("/")) {
@@ -62,10 +60,10 @@ export function CommandPreview({
           <Box>
             <Text color="gray">Current agent: </Text>
             <Text bold>{agentName || "Unnamed"}</Text>
-            {profileName ? (
-              <Text color="green"> (profile: {profileName} ✓)</Text>
+            {isPinned ? (
+              <Text color="green"> (pinned ✓)</Text>
             ) : (
-              <Text color="gray"> (type /profile to pin agent)</Text>
+              <Text color="gray"> (type /pin to pin agent)</Text>
             )}
           </Box>
           <Box>

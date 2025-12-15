@@ -10,7 +10,9 @@ export interface Settings {
   lastAgent: string | null;
   tokenStreaming: boolean;
   enableSleeptime: boolean;
-  globalSharedBlockIds: Record<string, string>;
+  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
+  profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
+  pinnedAgents?: string[]; // Array of agent IDs pinned globally
   permissions?: PermissionRules;
   env?: Record<string, string>;
   // OAuth token management
@@ -26,7 +28,8 @@ export interface ProjectSettings {
 export interface LocalProjectSettings {
   lastAgent: string | null;
   permissions?: PermissionRules;
-  profiles?: Record<string, string>; // profileName -> agentId
+  profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
+  pinnedAgents?: string[]; // Array of agent IDs pinned locally
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -382,6 +385,212 @@ class SettingsManager {
       console.error("Error saving local project settings:", error);
       throw error;
     }
+  }
+
+  // =====================================================================
+  // Profile Management Helpers
+  // =====================================================================
+
+  /**
+   * Get globally pinned agent IDs from ~/.letta/settings.json
+   * Migrates from old profiles format if needed.
+   */
+  getGlobalPinnedAgents(): string[] {
+    const settings = this.getSettings();
+    // Migrate from old format if needed
+    if (settings.profiles && !settings.pinnedAgents) {
+      const agentIds = Object.values(settings.profiles);
+      this.updateSettings({ pinnedAgents: agentIds, profiles: undefined });
+      return agentIds;
+    }
+    return settings.pinnedAgents || [];
+  }
+
+  /**
+   * Get locally pinned agent IDs from .letta/settings.local.json
+   * Migrates from old profiles format if needed.
+   */
+  getLocalPinnedAgents(workingDirectory: string = process.cwd()): string[] {
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    // Migrate from old format if needed
+    if (localSettings.profiles && !localSettings.pinnedAgents) {
+      const agentIds = Object.values(localSettings.profiles);
+      this.updateLocalProjectSettings(
+        { pinnedAgents: agentIds, profiles: undefined },
+        workingDirectory,
+      );
+      return agentIds;
+    }
+    return localSettings.pinnedAgents || [];
+  }
+
+  /**
+   * Get merged pinned agents (local + global), deduped.
+   * Returns array of { agentId, isLocal }.
+   */
+  getMergedPinnedAgents(
+    workingDirectory: string = process.cwd(),
+  ): Array<{ agentId: string; isLocal: boolean }> {
+    const globalAgents = this.getGlobalPinnedAgents();
+    const localAgents = this.getLocalPinnedAgents(workingDirectory);
+
+    const result: Array<{ agentId: string; isLocal: boolean }> = [];
+    const seenAgentIds = new Set<string>();
+
+    // Add local agents first (they take precedence)
+    for (const agentId of localAgents) {
+      result.push({ agentId, isLocal: true });
+      seenAgentIds.add(agentId);
+    }
+
+    // Add global agents that aren't also local
+    for (const agentId of globalAgents) {
+      if (!seenAgentIds.has(agentId)) {
+        result.push({ agentId, isLocal: false });
+        seenAgentIds.add(agentId);
+      }
+    }
+
+    return result;
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  getGlobalProfiles(): Record<string, string> {
+    return this.getSettings().profiles || {};
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  getLocalProfiles(
+    workingDirectory: string = process.cwd(),
+  ): Record<string, string> {
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return localSettings.profiles || {};
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  getMergedProfiles(
+    workingDirectory: string = process.cwd(),
+  ): Array<{ name: string; agentId: string; isLocal: boolean }> {
+    const merged = this.getMergedPinnedAgents(workingDirectory);
+    return merged.map(({ agentId, isLocal }) => ({
+      name: "", // Name will be fetched from server
+      agentId,
+      isLocal,
+    }));
+  }
+
+  /**
+   * Pin an agent to both local AND global settings
+   */
+  pinBoth(agentId: string, workingDirectory: string = process.cwd()): void {
+    // Update global
+    const globalAgents = this.getGlobalPinnedAgents();
+    if (!globalAgents.includes(agentId)) {
+      this.updateSettings({ pinnedAgents: [...globalAgents, agentId] });
+    }
+
+    // Update local
+    const localAgents = this.getLocalPinnedAgents(workingDirectory);
+    if (!localAgents.includes(agentId)) {
+      this.updateLocalProjectSettings(
+        { pinnedAgents: [...localAgents, agentId] },
+        workingDirectory,
+      );
+    }
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  saveProfile(
+    _name: string,
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    this.pinBoth(agentId, workingDirectory);
+  }
+
+  /**
+   * Pin an agent locally (to this project)
+   */
+  pinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
+    const localAgents = this.getLocalPinnedAgents(workingDirectory);
+    if (!localAgents.includes(agentId)) {
+      this.updateLocalProjectSettings(
+        { pinnedAgents: [...localAgents, agentId] },
+        workingDirectory,
+      );
+    }
+  }
+
+  /**
+   * Unpin an agent locally (from this project only)
+   */
+  unpinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
+    const localAgents = this.getLocalPinnedAgents(workingDirectory);
+    this.updateLocalProjectSettings(
+      { pinnedAgents: localAgents.filter((id) => id !== agentId) },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Pin an agent globally
+   */
+  pinGlobal(agentId: string): void {
+    const globalAgents = this.getGlobalPinnedAgents();
+    if (!globalAgents.includes(agentId)) {
+      this.updateSettings({ pinnedAgents: [...globalAgents, agentId] });
+    }
+  }
+
+  /**
+   * Unpin an agent globally
+   */
+  unpinGlobal(agentId: string): void {
+    const globalAgents = this.getGlobalPinnedAgents();
+    this.updateSettings({
+      pinnedAgents: globalAgents.filter((id) => id !== agentId),
+    });
+  }
+
+  /**
+   * Unpin an agent from both local and global settings
+   */
+  unpinBoth(agentId: string, workingDirectory: string = process.cwd()): void {
+    this.unpinLocal(agentId, workingDirectory);
+    this.unpinGlobal(agentId);
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  deleteProfile(
+    _name: string,
+    _workingDirectory: string = process.cwd(),
+  ): void {
+    // This no longer makes sense with the new model
+    // Would need an agentId to unpin
+    console.warn("deleteProfile is deprecated, use unpinBoth(agentId) instead");
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  pinProfile(
+    _name: string,
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    this.pinLocal(agentId, workingDirectory);
+  }
+
+  // DEPRECATED: Keep for backwards compatibility
+  unpinProfile(_name: string, _workingDirectory: string = process.cwd()): void {
+    // This no longer makes sense with the new model
+    console.warn("unpinProfile is deprecated, use unpinLocal(agentId) instead");
+  }
+
+  /**
+   * Check if local .letta directory exists (indicates existing project)
+   */
+  hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
+    const dirPath = join(workingDirectory, ".letta");
+    return exists(dirPath);
   }
 
   /**
