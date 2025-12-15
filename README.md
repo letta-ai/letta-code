@@ -20,10 +20,22 @@ npm install -g @letta-ai/letta-code
 ```
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)):
 
-## Memory and Skill Learning
+## Philosophy 
+Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
 
-All agents in Letta are **stateful**: they maintain context forever and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks).
+**Claude Code / Codex / Gemini CLI** (Session-Based)
+- Sessions are independent
+- No learning between sessions
+- Context = messages in the current session + `AGENTS.md`
+- Relationship: Every conversation is like meeting a new contractor
 
+**Letta Code** (Agent-Based)
+- Same agent across sessions
+- Persistent memory and learning over time
+- `/clear` resets the session (clears current in-context messages), but memory persists
+- Relationship: Like having a coworker or mentee that learns and remembers
+
+## Agent Memory & Learning
 If you’re using Letta Code for the first time, you will likely want to run the `/init` command to initialize the agent’s memory system:
 ```bash
 > /init
