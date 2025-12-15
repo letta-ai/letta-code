@@ -48,7 +48,7 @@ function formatLocalTime(dateStr: string | null | undefined): string {
   // Format: "Dec 15, 6:30 PM" or "Dec 15, 2024, 6:30 PM" depending on year
   const now = new Date();
   const sameYear = date.getFullYear() === now.getFullYear();
-  
+
   const options: Intl.DateTimeFormatOptions = {
     month: "short",
     day: "numeric",
@@ -56,7 +56,7 @@ function formatLocalTime(dateStr: string | null | undefined): string {
     hour: "numeric",
     minute: "2-digit",
   };
-  
+
   return date.toLocaleString(undefined, options);
 }
 
@@ -133,13 +133,16 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       clientRef.current = client;
 
       // Direct API call since client.messages.search doesn't exist yet in SDK
-      const searchResults = await client.post<MessageSearchResponse>("/v1/messages/search", {
-        body: {
-          query: query.trim(),
-          search_mode: mode,
-          limit: SEARCH_LIMIT,
+      const searchResults = await client.post<MessageSearchResponse>(
+        "/v1/messages/search",
+        {
+          body: {
+            query: query.trim(),
+            search_mode: mode,
+            limit: SEARCH_LIMIT,
+          },
         },
-      });
+      );
 
       setResults(searchResults);
       setCurrentPage(0);
@@ -299,7 +302,11 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
             const isSelected = index === selectedIndex;
             const messageText = getMessageText(msg);
             // All messages have a date field
-            const msgWithDate = msg as { date?: string; created_at?: string; agent_id?: string };
+            const msgWithDate = msg as {
+              date?: string;
+              created_at?: string;
+              agent_id?: string;
+            };
             const timestamp = msgWithDate.date
               ? formatRelativeTime(msgWithDate.date)
               : "";
