@@ -296,10 +296,12 @@ export function handleProfileUsage(
   );
 }
 
-// /pin - Pin the current agent to this project
+// /pin [name] - Pin the current agent to this project
+// If name is provided and agent isn't a profile yet, creates the profile first
 export async function handlePinProfile(
   ctx: ProfileCommandContext,
   msg: string,
+  nameArg?: string,
 ): Promise<void> {
   // Check if current agent is already a profile (has a name in any profile)
   const globalProfiles = settingsManager.getGlobalProfiles();
@@ -329,17 +331,30 @@ export async function handlePinProfile(
 
   if (!profileName) {
     // Agent isn't saved as a profile yet
-    addCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      msg,
-      "This agent isn't saved as a profile yet. Use /profile save <name> first.",
-      false,
-    );
+    if (nameArg) {
+      // User provided a name - create profile and pin it
+      settingsManager.saveProfile(nameArg, ctx.agentId);
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        `Created and pinned profile "${nameArg}" to this project.`,
+        true,
+      );
+    } else {
+      // No name provided - suggest using /pin <name>
+      addCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        msg,
+        "This agent isn't saved as a profile yet. Use /pin <name> to create and pin it.",
+        false,
+      );
+    }
     return;
   }
 
-  // Pin the profile
+  // Pin the existing profile
   settingsManager.pinProfile(profileName, ctx.agentId);
   addCommandResult(
     ctx.buffersRef,

@@ -1970,7 +1970,7 @@ export default function App({
         }
 
         // Special handling for /pin command - pin current agent to project
-        if (msg.trim() === "/pin") {
+        if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -1978,7 +1978,8 @@ export default function App({
             setCommandRunning,
             setAgentName,
           };
-          await handlePinProfile(profileCtx, msg);
+          const nameArg = msg.trim().slice(4).trim() || undefined;
+          await handlePinProfile(profileCtx, msg, nameArg);
           return { submitted: true };
         }
 

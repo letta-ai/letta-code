@@ -143,7 +143,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent profile to this project",
+    desc: "Pin current agent to this project (use /pin <name> to create and pin)",
     handler: () => {
       // Handled specially in App.tsx for pinning profiles
       return "Pinning profile...";
