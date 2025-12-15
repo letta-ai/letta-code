@@ -300,7 +300,7 @@ export const ProfileSelector = memo(function ProfileSelector({
     <Box flexDirection="column" gap={1}>
       <Box>
         <Text bold color={colors.selector.title}>
-          Profiles
+          Pinned Agents
         </Text>
       </Box>
 

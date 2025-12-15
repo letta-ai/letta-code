@@ -56,8 +56,8 @@ function formatModel(agent: AgentState): string {
 function getLabel(option: ProfileOption): string {
   const parts: string[] = [];
   if (option.isLru) parts.push("last used");
-  if (option.isLocal) parts.push("pinned to project");
-  if (parts.length === 0 && !option.name) parts.push("profile not saved");
+  if (option.isLocal) parts.push("pinned");
+  else if (option.name) parts.push("global");
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 

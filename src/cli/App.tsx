@@ -32,11 +32,11 @@ import {
 } from "../tools/manager";
 import {
   addCommandResult,
-  handlePinProfile,
+  handlePin,
   handleProfileDelete,
   handleProfileSave,
   handleProfileUsage,
-  handleUnpinProfile,
+  handleUnpin,
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
@@ -1898,6 +1898,7 @@ export default function App({
             buffersRef,
             refreshDerived,
             agentId,
+            agentName: agentName || "",
             setCommandRunning,
             setAgentName,
           };
@@ -1963,36 +1964,39 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /profiles command - open profile selector
-        if (msg.trim() === "/profiles") {
+        // Special handling for /profiles and /pinned commands - open pinned agents selector
+        if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
           setProfileSelectorOpen(true);
           return { submitted: true };
         }
 
-        // Special handling for /pin command - pin current agent to project
+        // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
             agentId,
+            agentName: agentName || "",
             setCommandRunning,
             setAgentName,
           };
-          const nameArg = msg.trim().slice(4).trim() || undefined;
-          await handlePinProfile(profileCtx, msg, nameArg);
+          const argsStr = msg.trim().slice(4).trim();
+          await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
 
-        // Special handling for /unpin command - unpin current agent from project
-        if (msg.trim() === "/unpin") {
+        // Special handling for /unpin command - unpin current agent from project (or globally with -g)
+        if (msg.trim() === "/unpin" || msg.trim().startsWith("/unpin ")) {
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
             agentId,
+            agentName: agentName || "",
             setCommandRunning,
             setAgentName,
           };
-          handleUnpinProfile(profileCtx, msg);
+          const argsStr = msg.trim().slice(6).trim();
+          handleUnpin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
 
@@ -2539,6 +2543,7 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       agentId,
+      agentName,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
@@ -3694,6 +3699,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef,
                     refreshDerived,
                     agentId,
+                    agentName: agentName || "",
                     setCommandRunning,
                     setAgentName,
                   };
@@ -3709,6 +3715,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef,
                     refreshDerived,
                     agentId,
+                    agentName: agentName || "",
                     setCommandRunning,
                     setAgentName,
                   };

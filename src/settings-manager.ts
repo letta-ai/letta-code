@@ -487,6 +487,23 @@ class SettingsManager {
   }
 
   /**
+   * Pin an agent globally (add to global settings only)
+   */
+  pinGlobal(name: string, agentId: string): void {
+    const globalProfiles = this.getGlobalProfiles();
+    this.updateSettings({ profiles: { ...globalProfiles, [name]: agentId } });
+  }
+
+  /**
+   * Unpin an agent globally (remove from global settings only)
+   */
+  unpinGlobal(name: string): void {
+    const globalProfiles = this.getGlobalProfiles();
+    const { [name]: _, ...remainingProfiles } = globalProfiles;
+    this.updateSettings({ profiles: remainingProfiles });
+  }
+
+  /**
    * Delete a profile from both local and global settings
    */
   deleteProfile(name: string, workingDirectory: string = process.cwd()): void {

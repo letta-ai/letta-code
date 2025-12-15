@@ -143,24 +143,31 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent to this project (use /pin <name> to create and pin)",
+    desc: "Pin current agent locally (use -g for global, <name> to rename)",
     handler: () => {
-      // Handled specially in App.tsx for pinning profiles
-      return "Pinning profile...";
+      // Handled specially in App.tsx
+      return "Pinning agent...";
     },
   },
   "/unpin": {
-    desc: "Unpin agent profile from this project",
+    desc: "Unpin current agent locally (use -g for global)",
     handler: () => {
-      // Handled specially in App.tsx for unpinning profiles
-      return "Unpinning profile...";
+      // Handled specially in App.tsx
+      return "Unpinning agent...";
+    },
+  },
+  "/pinned": {
+    desc: "Show pinned agents",
+    handler: () => {
+      // Handled specially in App.tsx to open pinned agents selector
+      return "Opening pinned agents...";
     },
   },
   "/profiles": {
-    desc: "Open profile selector",
+    desc: "Show pinned agents (alias for /pinned)",
     handler: () => {
       // Handled specially in App.tsx to open profile selector
-      return "Opening profile selector...";
+      return "Opening pinned agents...";
     },
   },
 };
