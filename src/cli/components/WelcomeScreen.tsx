@@ -119,7 +119,7 @@ export function WelcomeScreen({
     !!continueSession,
     agentId,
   );
-  const pathLine = isMedium ? `Running in ${cwd}` : cwd;
+  const pathLine = isMedium ? `${cwd}` : cwd;
   const agentUrl = agentId ? `https://app.letta.com/agents/${agentId}` : null;
   const hints =
     loadingState === "ready"
