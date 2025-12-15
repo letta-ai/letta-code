@@ -156,6 +156,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 `;
 }
 
+// Check if plan file exists
+function planFileExists(): boolean {
+  const planFilePath = permissionMode.getPlanFilePath();
+  return !!planFilePath && existsSync(planFilePath);
+}
+
 // Read plan content from the plan file
 function readPlanFile(): string {
   const planFilePath = permissionMode.getPlanFilePath();
@@ -825,8 +831,9 @@ export default function App({
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
-                // Check if approval is incomplete (missing name or arguments)
-                if (!approvalItem.toolName || !approvalItem.toolArgs) {
+                // Check if approval is incomplete (missing name)
+                // Note: toolArgs can be empty string for tools with no arguments (e.g., EnterPlanMode)
+                if (!approvalItem.toolName) {
                   return {
                     approval: approvalItem,
                     permission: {
@@ -3250,6 +3257,20 @@ ${recentCommits}
     },
     [pendingApprovals, approvalResults, sendAllResults],
   );
+
+  // Auto-reject ExitPlanMode if plan file doesn't exist
+  useEffect(() => {
+    const currentIndex = approvalResults.length;
+    const approval = pendingApprovals[currentIndex];
+    if (approval?.toolName === "ExitPlanMode" && !planFileExists()) {
+      const planFilePath = permissionMode.getPlanFilePath();
+      handlePlanKeepPlanning(
+        `You must write your plan to the plan file before exiting plan mode.\n` +
+          `Plan file path: ${planFilePath || "not set"}\n` +
+          `Use the Write tool to create your plan, then call ExitPlanMode again.`,
+      );
+    }
+  }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
