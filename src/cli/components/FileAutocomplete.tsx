@@ -1,19 +1,11 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
+import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { colors } from "./colors";
+import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
-interface FileMatch {
-  path: string;
-  type: "file" | "dir" | "url";
-}
-
-interface FileAutocompleteProps {
-  currentInput: string;
-  cursorPosition?: number;
-  onSelect?: (path: string) => void;
-  onActiveChange?: (isActive: boolean) => void;
-}
+interface FileAutocompleteProps extends AutocompleteProps {}
 
 export function FileAutocomplete({
   currentInput,
@@ -23,9 +15,17 @@ export function FileAutocomplete({
 }: FileAutocompleteProps) {
   const [matches, setMatches] = useState<FileMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  // Use shared navigation hook (with manual active state management due to async loading)
+  const { selectedIndex } = useAutocompleteNavigation({
+    matches,
+    maxVisible: 10,
+    onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
+    manageActiveState: false, // We manage active state manually due to async loading
+    disabled: isLoading,
+  });
 
   // Extract the text after the "@" symbol where the cursor is positioned
   const extractSearchQuery = useCallback(
@@ -75,25 +75,6 @@ export function FileAutocomplete({
     [],
   );
 
-  // Handle keyboard navigation
-  useInput((_input, key) => {
-    if (!matches.length || isLoading) return;
-
-    const maxIndex = Math.min(matches.length, 10) - 1;
-
-    if (key.upArrow) {
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
-    } else if (key.downArrow) {
-      setSelectedIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
-    } else if ((key.tab || key.return) && onSelect) {
-      // Insert selected file path on Tab or Enter
-      const selected = matches[selectedIndex];
-      if (selected) {
-        onSelect(selected.path);
-      }
-    }
-  });
-
   useEffect(() => {
     // Clear any existing debounce timeout
     if (debounceTimeout.current) {
@@ -104,7 +85,6 @@ export function FileAutocomplete({
 
     if (!result) {
       setMatches([]);
-      setSelectedIndex(0);
       onActiveChange?.(false);
       return;
     }
@@ -120,7 +100,6 @@ export function FileAutocomplete({
       // Always hide if there's more non-whitespace content after, or another @
       if (afterSpace.trim().length > 0 || afterSpace.includes("@")) {
         setMatches([]);
-        setSelectedIndex(0);
         onActiveChange?.(false);
         return;
       }
@@ -131,7 +110,6 @@ export function FileAutocomplete({
         // Show the selected file (non-interactive)
         if (matches[0]?.path !== query) {
           setMatches([{ path: query, type: "file" }]);
-          setSelectedIndex(0);
         }
         onActiveChange?.(false); // Don't block Enter key
         return;
@@ -139,7 +117,6 @@ export function FileAutocomplete({
 
       // No valid selection was made, hide
       setMatches([]);
-      setSelectedIndex(0);
       onActiveChange?.(false);
       return;
     }
@@ -151,13 +128,11 @@ export function FileAutocomplete({
       searchFiles("", false) // Don't do deep search for empty query
         .then((results) => {
           setMatches(results);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
         })
         .catch(() => {
           setMatches([]);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(false);
         });
@@ -167,7 +142,6 @@ export function FileAutocomplete({
     // Check if it's a URL pattern (no debounce)
     if (query.startsWith("http://") || query.startsWith("https://")) {
       setMatches([{ path: query, type: "url" }]);
-      setSelectedIndex(0);
       onActiveChange?.(true);
       return;
     }
@@ -182,7 +156,6 @@ export function FileAutocomplete({
       searchFiles(query, true) // Enable deep search
         .then((results) => {
           setMatches(results);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
           // Remember this query had valid matches
@@ -192,7 +165,6 @@ export function FileAutocomplete({
         })
         .catch(() => {
           setMatches([]);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(false);
         });

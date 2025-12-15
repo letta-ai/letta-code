@@ -1,19 +1,11 @@
-import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Box, Text } from "ink";
+import { useCallback, useEffect, useState } from "react";
 import { commands } from "../commands/registry";
+import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { colors } from "./colors";
+import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-interface CommandMatch {
-  cmd: string;
-  desc: string;
-}
-
-interface SlashCommandAutocompleteProps {
-  currentInput: string;
-  cursorPosition?: number;
-  onSelect?: (command: string) => void;
-  onActiveChange?: (isActive: boolean) => void;
-}
+interface SlashCommandAutocompleteProps extends AutocompleteProps {}
 
 // Compute filtered command list (excluding hidden commands)
 const allCommands: CommandMatch[] = Object.entries(commands)
@@ -31,8 +23,12 @@ export function SlashCommandAutocomplete({
   onActiveChange,
 }: SlashCommandAutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const prevMatchCountRef = useRef(0);
+
+  const { selectedIndex } = useAutocompleteNavigation({
+    matches,
+    onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
+    onActiveChange,
+  });
 
   // Extract the text after the "/" symbol where the cursor is positioned
   const extractSearchQuery = useCallback(
@@ -68,7 +64,6 @@ export function SlashCommandAutocomplete({
 
     if (!result) {
       setMatches([]);
-      setSelectedIndex(0);
       return;
     }
 
@@ -77,7 +72,6 @@ export function SlashCommandAutocomplete({
     // If there's a space after the command, user has moved on - hide autocomplete
     if (hasSpaceAfter) {
       setMatches([]);
-      setSelectedIndex(0);
       return;
     }
 
@@ -97,37 +91,7 @@ export function SlashCommandAutocomplete({
     }
 
     setMatches(newMatches);
-    
-    // Reset selected index when matches change
-    if (newMatches.length !== prevMatchCountRef.current) {
-      setSelectedIndex(0);
-      prevMatchCountRef.current = newMatches.length;
-    }
   }, [currentInput, cursorPosition, extractSearchQuery]);
-
-  // Notify parent about active state changes
-  useEffect(() => {
-    onActiveChange?.(matches.length > 0);
-  }, [matches.length, onActiveChange]);
-
-  // Handle keyboard navigation
-  useInput((_input, key) => {
-    if (!matches.length) return;
-
-    const maxIndex = matches.length - 1;
-
-    if (key.upArrow) {
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
-    } else if (key.downArrow) {
-      setSelectedIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
-    } else if ((key.tab || key.return) && onSelect) {
-      // Insert selected command on Tab or Enter
-      const selected = matches[selectedIndex];
-      if (selected) {
-        onSelect(selected.cmd);
-      }
-    }
-  });
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
