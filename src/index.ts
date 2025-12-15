@@ -17,10 +17,8 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Auto-resume project agent (from .letta/settings.local.json)
-  letta --new           Create a new agent (reuses global persona/human blocks)
-  letta --fresh-blocks  Create a new agent with all new memory blocks
-  letta --continue      Resume global last agent (deprecated, use project-based)
+  letta                 Resume from profile or create new agent (shows selector)
+  letta --new           Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -32,11 +30,9 @@ USAGE
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
-  --new                 Create new agent (reuses global blocks like persona/human)
-  --fresh-blocks        Force create all new memory blocks (isolate from other agents)
+  --new                 Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
-  -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
   -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
@@ -48,30 +44,31 @@ OPTIONS
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
 
-
 BEHAVIOR
-  By default, letta auto-resumes the last agent used in the current directory
-  (stored in .letta/settings.local.json).
+  On startup, Letta Code checks for saved profiles:
+  - If profiles exist, you'll be prompted to select one or create a new agent
+  - Profiles can be "pinned" to specific projects for quick access
+  - Use /profile save <name> to bookmark your current agent
 
-  Memory blocks (persona, human, project, skills) are shared between agents:
-  - Global blocks (persona, human) are shared across all agents
-  - Local blocks (project, skills) are shared within the current directory
-
-  Use --new to create a new agent that reuses your global persona/human blocks.
-  Use --fresh-blocks to create a completely isolated agent with new blocks.
+  Profiles are stored in:
+  - Global: ~/.letta/settings.json (available everywhere)
+  - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
 
 EXAMPLES
   # when installed as an executable
-  letta                    # Auto-resume project agent or create new
-  letta --new              # New agent, keeps your persona/human blocks
-  letta --fresh-blocks     # New agent, all blocks fresh (full isolation)
-  letta --agent agent_123
+  letta                    # Show profile selector or create new
+  letta --new              # Create new agent directly
+  letta --agent agent_123  # Open specific agent
 
   # inside the interactive session
-  /logout               # Clear credentials and exit
+  /profile save MyAgent    # Save current agent as profile
+  /profiles                # Open profile selector
+  /pin                     # Pin current profile to project
+  /unpin                   # Unpin profile from project
+  /logout                  # Clear credentials and exit
 
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -450,6 +447,9 @@ async function main() {
   const AppModule = await import("./cli/App");
   const App = AppModule.default;
 
+  // Import profile selector component
+  const { ProfileSelectionInline } = await import("./cli/profile-selection");
+
   function LoadingApp({
     continueSession,
     forceNew,
@@ -476,6 +476,7 @@ async function main() {
     fromAfFile?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
+      | "selecting"
       | "assembling"
       | "upserting"
       | "linking"
@@ -484,7 +485,7 @@ async function main() {
       | "initializing"
       | "checking"
       | "ready"
-    >("assembling");
+    >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
@@ -492,9 +493,53 @@ async function main() {
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
 
+    // Profile selection state
+    const [showProfileSelector, setShowProfileSelector] = useState(false);
+    const [selectedProfileAgentId, setSelectedProfileAgentId] = useState<
+      string | null
+    >(null);
+    const [userChoseNew, setUserChoseNew] = useState(false);
+    const [lruAgentId, setLruAgentId] = useState<string | null>(null);
+    const [checkingProfiles, setCheckingProfiles] = useState(true);
+
+    // Check if we should show profile selector on mount
     useEffect(() => {
+      async function checkProfiles() {
+        // Skip selector for explicit flags
+        if (forceNew || agentIdArg || fromAfFile) {
+          setCheckingProfiles(false);
+          setLoadingState("assembling");
+          return;
+        }
+
+        // Load settings
+        await settingsManager.loadLocalProjectSettings();
+        const localSettings = settingsManager.getLocalProjectSettings();
+        const globalProfiles = settingsManager.getGlobalProfiles();
+        const localProfiles = localSettings.profiles || {};
+        const hasProfiles =
+          Object.keys(globalProfiles).length > 0 ||
+          Object.keys(localProfiles).length > 0;
+        const lru = localSettings.lastAgent || null;
+
+        setLruAgentId(lru);
+        setCheckingProfiles(false);
+
+        // Show selector if there are choices
+        if (hasProfiles || lru) {
+          setShowProfileSelector(true);
+        } else {
+          setLoadingState("assembling");
+        }
+      }
+      checkProfiles();
+    }, [forceNew, agentIdArg, fromAfFile]);
+
+    // Main initialization effect - runs after profile selection
+    useEffect(() => {
+      if (loadingState !== "assembling") return;
+
       async function init() {
-        setLoadingState("assembling");
         const client = await getClient();
 
         // Determine which agent we'll be using (before loading tools)
@@ -510,10 +555,24 @@ async function main() {
           }
         }
 
-        // Priority 2: Skip resume if --new flag
-        if (!resumingAgentId && !forceNew) {
-          // Priority 3: Try project settings
-          await settingsManager.loadLocalProjectSettings();
+        // Priority 2: Profile selected from startup selector
+        if (!resumingAgentId && selectedProfileAgentId) {
+          try {
+            await client.agents.retrieve(selectedProfileAgentId);
+            resumingAgentId = selectedProfileAgentId;
+          } catch {
+            // Agent no longer exists
+          }
+        }
+
+        // Priority 3: Skip further resume if --new flag or user chose "Create new"
+        if (
+          !resumingAgentId &&
+          !forceNew &&
+          !userChoseNew &&
+          !selectedProfileAgentId
+        ) {
+          // Try project settings (LRU)
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
@@ -633,8 +692,8 @@ async function main() {
           }
         }
 
-        // Priority 2: Check if --new flag was passed (skip all resume logic)
-        if (!agent && forceNew) {
+        // Priority 2: Check if --new flag was passed or user chose "Create new" from selector
+        if (!agent && (forceNew || userChoseNew)) {
           // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
@@ -757,11 +816,9 @@ async function main() {
         }
 
         // Check if we're resuming an existing agent
-        const localProjectSettings = settingsManager.getLocalProjectSettings();
+        // Note: userChoseNew means user explicitly chose "Create new" from profile selector
         const isResumingProject =
-          !forceNew &&
-          localProjectSettings?.lastAgent &&
-          agent.id === localProjectSettings.lastAgent;
+          !forceNew && !userChoseNew && !!resumingAgentId; // Only true if we actually resumed from an existing agent
         const resuming = !!(continueSession || agentIdArg || isResumingProject);
         setIsResumingSession(resuming);
 
@@ -783,15 +840,46 @@ async function main() {
       forceNew,
       freshBlocks,
       agentIdArg,
+      selectedProfileAgentId,
+      userChoseNew,
       model,
       system,
       fromAfFile,
+      loadingState,
     ]);
+
+    // Handle profile selection
+    const handleProfileSelect = (agentId: string) => {
+      setSelectedProfileAgentId(agentId);
+      setShowProfileSelector(false);
+      setLoadingState("assembling");
+    };
+
+    const handleCreateNew = () => {
+      setUserChoseNew(true);
+      setShowProfileSelector(false);
+      setLoadingState("assembling");
+    };
+
+    // Show profile selector during "selecting" state (including while checking)
+    if (
+      loadingState === "selecting" &&
+      (checkingProfiles || showProfileSelector)
+    ) {
+      return React.createElement(ProfileSelectionInline, {
+        lruAgentId,
+        loading: checkingProfiles,
+        onSelect: handleProfileSelect,
+        onCreateNew: handleCreateNew,
+        onExit: () => process.exit(0),
+      });
+    }
 
     if (!agentId) {
       return React.createElement(App, {
         agentId: "loading",
-        loadingState,
+        loadingState:
+          loadingState === "selecting" ? "assembling" : loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? [],
@@ -804,7 +892,7 @@ async function main() {
     return React.createElement(App, {
       agentId,
       agentState,
-      loadingState,
+      loadingState: loadingState === "selecting" ? "assembling" : loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? [],

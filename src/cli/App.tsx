@@ -32,9 +32,11 @@ import {
 } from "../tools/manager";
 import {
   addCommandResult,
+  handlePinProfile,
   handleProfileDelete,
   handleProfileSave,
   handleProfileUsage,
+  handleUnpinProfile,
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
@@ -1961,6 +1963,38 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /profiles command - open profile selector
+        if (msg.trim() === "/profiles") {
+          setProfileSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /pin command - pin current agent to project
+        if (msg.trim() === "/pin") {
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            setCommandRunning,
+            setAgentName,
+          };
+          await handlePinProfile(profileCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /unpin command - unpin current agent from project
+        if (msg.trim() === "/unpin") {
+          const profileCtx: ProfileCommandContext = {
+            buffersRef,
+            refreshDerived,
+            agentId,
+            setCommandRunning,
+            setAgentName,
+          };
+          handleUnpinProfile(profileCtx, msg);
+          return { submitted: true };
+        }
+
         // Special handling for /bashes command - show background shell processes
         if (msg.trim() === "/bashes") {
           const { backgroundProcesses } = await import(
@@ -3447,8 +3481,15 @@ Plan file path: ${planFilePath}`;
         agentState,
         agentProvenance,
       );
+      // For resumed agents, show the agent name if it has one (profile name)
+      const resumedMessage = continueSession
+        ? agentState?.name
+          ? `Resumed **${agentState.name}**`
+          : "Resumed agent"
+        : "Created a new agent (use `/profile` to bookmark this agent)";
+
       const statusLines = [
-        continueSession ? "Resumed agent" : "Created new agent",
+        resumedMessage,
         agentUrl ? `→ ${agentUrl}` : "",
         ...hints,
       ].filter(Boolean);

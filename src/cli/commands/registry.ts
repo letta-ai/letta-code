@@ -142,6 +142,27 @@ export const commands: Record<string, Command> = {
       return "Managing profiles...";
     },
   },
+  "/pin": {
+    desc: "Pin current agent profile to this project",
+    handler: () => {
+      // Handled specially in App.tsx for pinning profiles
+      return "Pinning profile...";
+    },
+  },
+  "/unpin": {
+    desc: "Unpin agent profile from this project",
+    handler: () => {
+      // Handled specially in App.tsx for unpinning profiles
+      return "Unpinning profile...";
+    },
+  },
+  "/profiles": {
+    desc: "Open profile selector",
+    handler: () => {
+      // Handled specially in App.tsx to open profile selector
+      return "Opening profile selector...";
+    },
+  },
 };
 
 /**

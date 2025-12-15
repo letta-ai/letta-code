@@ -2,6 +2,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box, Text, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
+import { settingsManager } from "../../settings-manager";
 import { getProfiles } from "../commands/profile";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -19,6 +20,7 @@ interface ProfileData {
   agentId: string;
   agent: AgentState | null;
   error: string | null;
+  isPinned: boolean;
 }
 
 const DISPLAY_PAGE_SIZE = 5;
@@ -95,6 +97,7 @@ export const ProfileSelector = memo(function ProfileSelector({
     try {
       const profilesMap = getProfiles();
       const profileNames = Object.keys(profilesMap).sort();
+      const localProfiles = settingsManager.getLocalProfiles();
 
       if (profileNames.length === 0) {
         setProfiles([]);
@@ -107,13 +110,20 @@ export const ProfileSelector = memo(function ProfileSelector({
       // Fetch agent data for each profile
       const profileDataPromises = profileNames.map(async (name) => {
         const agentId = profilesMap[name] as string;
+        const isPinned = Object.values(localProfiles).includes(agentId);
         try {
           const agent = await client.agents.retrieve(agentId, {
             include: ["agent.blocks"],
           });
-          return { name, agentId, agent, error: null };
+          return { name, agentId, agent, error: null, isPinned };
         } catch (_err) {
-          return { name, agentId, agent: null, error: "Agent not found" };
+          return {
+            name,
+            agentId,
+            agent: null,
+            error: "Agent not found",
+            isPinned,
+          };
         }
       });
 
@@ -210,6 +220,20 @@ export const ProfileSelector = memo(function ProfileSelector({
       if (currentPage < totalPages - 1) {
         setCurrentPage((prev) => prev + 1);
         setSelectedIndex(0);
+      }
+    } else if (input === "p" || input === "P") {
+      // Toggle pin/unpin for selected profile
+      if (selectedProfile) {
+        if (selectedProfile.isPinned) {
+          settingsManager.unpinProfile(selectedProfile.name);
+        } else {
+          settingsManager.pinProfile(
+            selectedProfile.name,
+            selectedProfile.agentId,
+          );
+        }
+        // Reload profiles to reflect change
+        loadProfiles();
       }
     }
   });
@@ -335,6 +359,9 @@ export const ProfileSelector = memo(function ProfileSelector({
                   >
                     {profile.name}
                   </Text>
+                  {profile.isPinned && (
+                    <Text color={colors.selector.itemCurrent}> (pinned)</Text>
+                  )}
                   <Text dimColor> · {displayId}</Text>
                   {isCurrent && (
                     <Text color={colors.selector.itemCurrent}> (current)</Text>
@@ -381,8 +408,8 @@ export const ProfileSelector = memo(function ProfileSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter load · S save · D delete · J/K page · Esc
-              close
+              ↑↓ navigate · Enter load · S save · D delete · P pin/unpin · J/K
+              page · Esc close
             </Text>
           </Box>
         </Box>

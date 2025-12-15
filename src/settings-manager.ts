@@ -10,7 +10,8 @@ export interface Settings {
   lastAgent: string | null;
   tokenStreaming: boolean;
   enableSleeptime: boolean;
-  globalSharedBlockIds: Record<string, string>;
+  globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
+  profiles?: Record<string, string>; // profileName -> agentId (global profiles)
   permissions?: PermissionRules;
   env?: Record<string, string>;
   // OAuth token management
@@ -382,6 +383,133 @@ class SettingsManager {
       console.error("Error saving local project settings:", error);
       throw error;
     }
+  }
+
+  // =====================================================================
+  // Profile Management Helpers
+  // =====================================================================
+
+  /**
+   * Get global profiles from ~/.letta/settings.json
+   */
+  getGlobalProfiles(): Record<string, string> {
+    return this.getSettings().profiles || {};
+  }
+
+  /**
+   * Get local profiles from .letta/settings.local.json (pinned to project)
+   */
+  getLocalProfiles(
+    workingDirectory: string = process.cwd(),
+  ): Record<string, string> {
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    return localSettings.profiles || {};
+  }
+
+  /**
+   * Get merged profiles (local + global), deduped by agent ID.
+   * Local profiles take precedence over global ones with same agent ID.
+   * Returns array of { name, agentId, isLocal } sorted for display.
+   */
+  getMergedProfiles(
+    workingDirectory: string = process.cwd(),
+  ): Array<{ name: string; agentId: string; isLocal: boolean }> {
+    const globalProfiles = this.getGlobalProfiles();
+    const localProfiles = this.getLocalProfiles(workingDirectory);
+
+    // Build result with local profiles first
+    const result: Array<{ name: string; agentId: string; isLocal: boolean }> =
+      [];
+    const seenAgentIds = new Set<string>();
+
+    // Add local profiles first (they take precedence)
+    for (const [name, agentId] of Object.entries(localProfiles)) {
+      result.push({ name, agentId, isLocal: true });
+      seenAgentIds.add(agentId);
+    }
+
+    // Add global profiles that don't conflict with local ones
+    for (const [name, agentId] of Object.entries(globalProfiles)) {
+      if (!seenAgentIds.has(agentId)) {
+        result.push({ name, agentId, isLocal: false });
+        seenAgentIds.add(agentId);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Save a profile to both local AND global settings
+   */
+  saveProfile(
+    name: string,
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    // Update global profiles
+    const globalProfiles = this.getGlobalProfiles();
+    this.updateSettings({ profiles: { ...globalProfiles, [name]: agentId } });
+
+    // Update local profiles (pinned to project)
+    const localProfiles = this.getLocalProfiles(workingDirectory);
+    this.updateLocalProjectSettings(
+      { profiles: { ...localProfiles, [name]: agentId } },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Pin a global profile to the local project
+   */
+  pinProfile(
+    name: string,
+    agentId: string,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const localProfiles = this.getLocalProfiles(workingDirectory);
+    this.updateLocalProjectSettings(
+      { profiles: { ...localProfiles, [name]: agentId } },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Unpin a profile from the local project (remove from local settings only)
+   */
+  unpinProfile(name: string, workingDirectory: string = process.cwd()): void {
+    const localProfiles = this.getLocalProfiles(workingDirectory);
+    const { [name]: _, ...remainingProfiles } = localProfiles;
+    this.updateLocalProjectSettings(
+      { profiles: remainingProfiles },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Delete a profile from both local and global settings
+   */
+  deleteProfile(name: string, workingDirectory: string = process.cwd()): void {
+    // Remove from global
+    const globalProfiles = this.getGlobalProfiles();
+    const { [name]: _g, ...remainingGlobal } = globalProfiles;
+    this.updateSettings({ profiles: remainingGlobal });
+
+    // Remove from local
+    const localProfiles = this.getLocalProfiles(workingDirectory);
+    const { [name]: _l, ...remainingLocal } = localProfiles;
+    this.updateLocalProjectSettings(
+      { profiles: remainingLocal },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Check if local .letta directory exists (indicates existing project)
+   */
+  hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
+    const dirPath = join(workingDirectory, ".letta");
+    return exists(dirPath);
   }
 
   /**

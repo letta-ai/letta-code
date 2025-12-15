@@ -69,10 +69,15 @@ export function updateCommandResult(
   refreshDerived();
 }
 
-// Get profiles from local settings
+// Get all profiles (merged from global + local, local takes precedence)
 export function getProfiles(): Record<string, string> {
-  const localSettings = settingsManager.getLocalProjectSettings();
-  return localSettings.profiles || {};
+  const merged = settingsManager.getMergedProfiles();
+  // Convert array format back to Record
+  const result: Record<string, string> = {};
+  for (const profile of merged) {
+    result[profile.name] = profile.agentId;
+  }
+  return result;
 }
 
 // Check if a profile exists, returns error message if not found
@@ -159,19 +164,15 @@ export async function handleProfileSave(
     await client.agents.update(ctx.agentId, { name: profileName });
     ctx.setAgentName(profileName);
 
-    // Save profile to local settings
-    const profiles = getProfiles();
-    const updatedProfiles = { ...profiles, [profileName]: ctx.agentId };
-    settingsManager.updateLocalProjectSettings({
-      profiles: updatedProfiles,
-    });
+    // Save profile to BOTH local and global settings
+    settingsManager.saveProfile(profileName, ctx.agentId);
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `Saved profile "${profileName}" (agent ${ctx.agentId})`,
+      `Saved profile "${profileName}" (pinned to project + available globally)`,
       true,
     );
   } catch (error) {
@@ -292,5 +293,97 @@ export function handleProfileUsage(
     msg,
     "Usage: /profile [save|load|delete] <name>\n  /profile - list profiles\n  /profile save <name> - save current agent\n  /profile load <name> - load a profile\n  /profile delete <name> - delete a profile",
     false,
+  );
+}
+
+// /pin - Pin the current agent to this project
+export async function handlePinProfile(
+  ctx: ProfileCommandContext,
+  msg: string,
+): Promise<void> {
+  // Check if current agent is already a profile (has a name in any profile)
+  const globalProfiles = settingsManager.getGlobalProfiles();
+  const localProfiles = settingsManager.getLocalProfiles();
+
+  // Find profile name for current agent
+  let profileName: string | null = null;
+  for (const [name, agentId] of Object.entries(globalProfiles)) {
+    if (agentId === ctx.agentId) {
+      profileName = name;
+      break;
+    }
+  }
+
+  // Check if already pinned locally
+  const isAlreadyPinned = Object.values(localProfiles).includes(ctx.agentId);
+  if (isAlreadyPinned) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "This agent is already pinned to this project.",
+      false,
+    );
+    return;
+  }
+
+  if (!profileName) {
+    // Agent isn't saved as a profile yet
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "This agent isn't saved as a profile yet. Use /profile save <name> first.",
+      false,
+    );
+    return;
+  }
+
+  // Pin the profile
+  settingsManager.pinProfile(profileName, ctx.agentId);
+  addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Pinned profile "${profileName}" to this project.`,
+    true,
+  );
+}
+
+// /unpin - Unpin the current agent from this project
+export function handleUnpinProfile(
+  ctx: ProfileCommandContext,
+  msg: string,
+): void {
+  const localProfiles = settingsManager.getLocalProfiles();
+
+  // Find profile name for current agent in local profiles
+  let profileName: string | null = null;
+  for (const [name, agentId] of Object.entries(localProfiles)) {
+    if (agentId === ctx.agentId) {
+      profileName = name;
+      break;
+    }
+  }
+
+  if (!profileName) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "This agent isn't pinned to this project.",
+      false,
+    );
+    return;
+  }
+
+  // Unpin the profile
+  settingsManager.unpinProfile(profileName);
+  addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Unpinned profile "${profileName}" from this project.`,
+    true,
   );
 }
