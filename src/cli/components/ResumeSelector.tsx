@@ -237,7 +237,7 @@ export function ResumeSelector({
     <Box flexDirection="column" gap={1}>
       <Box>
         <Text bold color={colors.selector.title}>
-          Resume Session (showing most recent agents)
+          Browsing Agents (sorting by last run)
         </Text>
       </Box>
 

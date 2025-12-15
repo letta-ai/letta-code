@@ -121,11 +121,11 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/resume": {
-    desc: "Resume a previous agent session",
+  "/agents": {
+    desc: "Browse and switch to another agent",
     handler: () => {
-      // Handled specially in App.tsx to show resume selector
-      return "Opening session selector...";
+      // Handled specially in App.tsx to show agent selector
+      return "Opening agent selector...";
     },
   },
   "/search": {

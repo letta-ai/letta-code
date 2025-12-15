@@ -191,7 +191,7 @@ function ProfileSelectionUI({
       <Box height={1} />
 
       {loading ? (
-        <Text dimColor>Loading profiles...</Text>
+        <Text dimColor>Loading pinned agents...</Text>
       ) : (
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
