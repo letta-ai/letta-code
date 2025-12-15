@@ -1,7 +1,7 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
-import { CommandPreview } from "./CommandPreview";
+import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 // Only show token count when it exceeds this threshold
@@ -117,7 +117,7 @@ export function Input({
         />
       </Box>
       {value.startsWith("/") ? (
-        <CommandPreview currentInput={value} />
+        <SlashCommandAutocomplete currentInput={value} />
       ) : (
         <Box justifyContent="space-between">
           <Text dimColor>{footerText}</Text>

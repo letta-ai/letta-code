@@ -453,6 +453,35 @@ export function Input({
     setCursorPos(newCursorPos);
   };
 
+  // Handle slash command selection from autocomplete
+  const handleCommandSelect = (selectedCommand: string) => {
+    // Find the "/" at start of input and replace the command
+    const slashIndex = value.indexOf("/");
+    if (slashIndex === -1) return;
+
+    const beforeSlash = value.slice(0, slashIndex);
+    const afterSlash = value.slice(slashIndex + 1);
+    const spaceIndex = afterSlash.indexOf(" ");
+
+    let newValue: string;
+    let newCursorPos: number;
+
+    // Replace the command part with the selected command
+    if (spaceIndex === -1) {
+      // No space after /command, replace to end
+      newValue = `${beforeSlash}${selectedCommand} `;
+      newCursorPos = newValue.length;
+    } else {
+      // Space exists, replace only the command part
+      const afterCommand = afterSlash.slice(spaceIndex);
+      newValue = `${beforeSlash}${selectedCommand}${afterCommand}`;
+      newCursorPos = beforeSlash.length + selectedCommand.length;
+    }
+
+    setValue(newValue);
+    setCursorPos(newCursorPos);
+  };
+
   // Get display name and color for permission mode
   const getModeInfo = () => {
     switch (currentMode) {
@@ -542,10 +571,8 @@ export function Input({
           currentInput={value}
           cursorPosition={currentCursorPosition}
           onFileSelect={handleFileSelect}
+          onCommandSelect={handleCommandSelect}
           onAutocompleteActiveChange={setIsAutocompleteActive}
-          agentId={agentId}
-          agentName={agentName}
-          serverUrl={serverUrl}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>
