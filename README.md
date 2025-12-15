@@ -6,7 +6,7 @@ Letta Code is a memory-first coding harness, built on top of the Letta API. Inst
 
 **Read more about how to use Letta Code on the [official docs page](https://docs.letta.com/letta-code).**
 
-![](https://github.com/letta-ai/letta-code/blob/update-gif/assets/letta-code-demo.gif)
+![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
 ## Get started
 
