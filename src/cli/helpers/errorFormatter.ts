@@ -1,5 +1,42 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 
+const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
+
+/**
+ * Check if the error is a credit exhaustion error (402 with not-enough-credits)
+ */
+function isCreditExhaustedError(e: APIError): boolean {
+  // Check status code
+  if (e.status !== 402) return false;
+
+  // Check for "not-enough-credits" in various places it could appear
+  const errorBody = e.error;
+  if (errorBody && typeof errorBody === "object") {
+    // Check reasons array: {"error":"Rate limited","reasons":["not-enough-credits"]}
+    if ("reasons" in errorBody && Array.isArray(errorBody.reasons)) {
+      if (errorBody.reasons.includes("not-enough-credits")) {
+        return true;
+      }
+    }
+    // Check nested error.reasons
+    if ("error" in errorBody && typeof errorBody.error === "object") {
+      const nested = errorBody.error as Record<string, unknown>;
+      if ("reasons" in nested && Array.isArray(nested.reasons)) {
+        if (nested.reasons.includes("not-enough-credits")) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // Also check the message for "not-enough-credits" as a fallback
+  if (e.message?.includes("not-enough-credits")) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Extract comprehensive error details from any error object
  * Handles APIError, Error, and other error types consistently
@@ -11,6 +48,10 @@ export function formatErrorDetails(e: unknown, agentId?: string): string {
 
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
+    // Check for credit exhaustion error first - provide a friendly message
+    if (isCreditExhaustedError(e)) {
+      return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;
+    }
     // Check for nested error structure: e.error.error
     if (e.error && typeof e.error === "object" && "error" in e.error) {
       const errorData = e.error.error;

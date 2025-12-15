@@ -59,15 +59,15 @@ export function CommandPreview({
       ))}
       {showBottomBar && (
         <Box marginTop={1} flexDirection="column">
-          <Text>
-            <Text dimColor>Current agent: </Text>
+          <Box>
+            <Text color="gray">Current agent: </Text>
             <Text bold>{agentName || "Unnamed"}</Text>
             {profileName ? (
               <Text color="green"> (profile: {profileName} ✓)</Text>
             ) : (
-              <Text dimColor> (type /profile to pin agent)</Text>
+              <Text color="gray"> (type /profile to pin agent)</Text>
             )}
-          </Text>
+          </Box>
           <Box>
             <Text dimColor>{agentId}</Text>
             {isCloudUser && (
