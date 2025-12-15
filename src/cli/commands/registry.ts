@@ -135,13 +135,6 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
-  "/profile": {
-    desc: "Manage local profiles (save/load/delete)",
-    handler: () => {
-      // Handled specially in App.tsx for profile management
-      return "Managing profiles...";
-    },
-  },
   "/pin": {
     desc: "Pin current agent locally (use -g for global, <name> to rename)",
     handler: () => {
@@ -160,13 +153,6 @@ export const commands: Record<string, Command> = {
     desc: "Show pinned agents",
     handler: () => {
       // Handled specially in App.tsx to open pinned agents selector
-      return "Opening pinned agents...";
-    },
-  },
-  "/profiles": {
-    desc: "Show pinned agents (alias for /pinned)",
-    handler: () => {
-      // Handled specially in App.tsx to open profile selector
       return "Opening pinned agents...";
     },
   },
