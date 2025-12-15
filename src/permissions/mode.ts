@@ -124,6 +124,11 @@ class PermissionModeManager {
           "Grep",
           "NotebookRead",
           "TodoWrite",
+          // Plan mode tools (must allow exit!)
+          "ExitPlanMode",
+          "exit_plan_mode",
+          "AskUserQuestion",
+          "ask_user_question",
           // Codex toolset (snake_case)
           "read_file",
           "list_dir",
