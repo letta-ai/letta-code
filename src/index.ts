@@ -123,7 +123,6 @@ async function main() {
         version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
-        "fresh-blocks": { type: "boolean" },
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
@@ -190,7 +189,6 @@ async function main() {
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
-  const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
@@ -453,7 +451,6 @@ async function main() {
   function LoadingApp({
     continueSession,
     forceNew,
-    freshBlocks,
     initBlocks,
     baseTools,
     agentIdArg,
@@ -465,7 +462,6 @@ async function main() {
   }: {
     continueSession: boolean;
     forceNew: boolean;
-    freshBlocks: boolean;
     initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
@@ -670,7 +666,6 @@ async function main() {
           agent = result.agent;
           setAgentProvenance({
             isNew: true,
-            freshBlocks: true,
             blocks: [],
           });
         }
@@ -694,14 +689,12 @@ async function main() {
 
         // Priority 2: Check if --new flag was passed or user chose "Create new" from selector
         if (!agent && (forceNew || userChoseNew)) {
-          // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
             undefined,
             model,
             undefined,
             updateArgs,
-            freshBlocks, // Only create new blocks if --fresh-blocks passed
             skillsDirectory,
             true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
@@ -752,7 +745,6 @@ async function main() {
             model,
             undefined,
             updateArgs,
-            false, // Don't force new blocks when auto-creating (reuse shared blocks)
             skillsDirectory,
             true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
@@ -838,7 +830,6 @@ async function main() {
     }, [
       continueSession,
       forceNew,
-      freshBlocks,
       agentIdArg,
       selectedProfileAgentId,
       userChoseNew,
@@ -906,7 +897,6 @@ async function main() {
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,
       forceNew: forceNew,
-      freshBlocks: freshBlocks,
       initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,

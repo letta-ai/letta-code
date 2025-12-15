@@ -33,7 +33,6 @@ export interface BlockProvenance {
  */
 export interface AgentProvenance {
   isNew: true;
-  freshBlocks: boolean;
   blocks: BlockProvenance[];
 }
 
@@ -50,7 +49,6 @@ export async function createAgent(
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
-  forceNewBlocks = false,
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
@@ -271,7 +269,6 @@ export async function createAgent(
   // Build provenance info
   const provenance: AgentProvenance = {
     isNew: true,
-    freshBlocks: forceNewBlocks,
     blocks: blockProvenance,
   };
 
