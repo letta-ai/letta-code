@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
@@ -16,7 +16,7 @@ interface SlashCommandAutocompleteProps {
 }
 
 // Compute filtered command list (excluding hidden commands)
-const allCommands = Object.entries(commands)
+const allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
   .map(([cmd, { desc }]) => ({
     cmd,
@@ -30,27 +30,26 @@ export function SlashCommandAutocomplete({
   onSelect,
   onActiveChange,
 }: SlashCommandAutocompleteProps) {
+  const [matches, setMatches] = useState<CommandMatch[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const prevMatchCountRef = useRef(0);
 
   // Extract the text after the "/" symbol where the cursor is positioned
   const extractSearchQuery = useCallback(
     (
       input: string,
       cursor: number,
-    ): { query: string; hasSpaceAfter: boolean; slashIndex: number } | null => {
+    ): { query: string; hasSpaceAfter: boolean } | null => {
       // Only trigger if input starts with "/"
       if (!input.startsWith("/")) return null;
 
-      const slashIndex = 0;
-
       // Find the end of this /command (next space or end of string)
-      const afterSlash = input.slice(slashIndex + 1);
+      const afterSlash = input.slice(1);
       const spaceIndex = afterSlash.indexOf(" ");
-      const endPos =
-        spaceIndex === -1 ? input.length : slashIndex + 1 + spaceIndex;
+      const endPos = spaceIndex === -1 ? input.length : 1 + spaceIndex;
 
       // Check if cursor is within this /command
-      if (cursor < slashIndex || cursor > endPos) {
+      if (cursor < 0 || cursor > endPos) {
         return null;
       }
 
@@ -58,42 +57,53 @@ export function SlashCommandAutocomplete({
       const query = spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
       const hasSpaceAfter = spaceIndex !== -1;
 
-      return { query, hasSpaceAfter, slashIndex };
+      return { query, hasSpaceAfter };
     },
     [],
   );
 
-  // Filter commands based on query
-  const matches = useMemo((): CommandMatch[] => {
+  // Update matches when input changes
+  useEffect(() => {
     const result = extractSearchQuery(currentInput, cursorPosition);
 
-    if (!result) return [];
+    if (!result) {
+      setMatches([]);
+      setSelectedIndex(0);
+      return;
+    }
 
     const { query, hasSpaceAfter } = result;
 
     // If there's a space after the command, user has moved on - hide autocomplete
     if (hasSpaceAfter) {
-      return [];
+      setMatches([]);
+      setSelectedIndex(0);
+      return;
     }
+
+    let newMatches: CommandMatch[];
 
     // If query is empty (just typed "/"), show all commands
     if (query.length === 0) {
-      return allCommands;
+      newMatches = allCommands;
+    } else {
+      // Filter commands that contain the query (case-insensitive)
+      // Match against the command name without the leading "/"
+      const lowerQuery = query.toLowerCase();
+      newMatches = allCommands.filter((item) => {
+        const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
+        return cmdName.includes(lowerQuery);
+      });
     }
 
-    // Filter commands that contain the query (case-insensitive)
-    // Match against the command name without the leading "/"
-    const lowerQuery = query.toLowerCase();
-    return allCommands.filter((item) => {
-      const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
-      return cmdName.includes(lowerQuery);
-    });
+    setMatches(newMatches);
+    
+    // Reset selected index when matches change
+    if (newMatches.length !== prevMatchCountRef.current) {
+      setSelectedIndex(0);
+      prevMatchCountRef.current = newMatches.length;
+    }
   }, [currentInput, cursorPosition, extractSearchQuery]);
-
-  // Reset selected index when matches change
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [matches.length]);
 
   // Notify parent about active state changes
   useEffect(() => {
@@ -138,22 +148,12 @@ export function SlashCommandAutocomplete({
       marginBottom={1}
     >
       <Text dimColor>
-        Slash commands (↑↓ to navigate, Tab/Enter to select):
+        ↑↓ navigate, Tab/Enter select
       </Text>
       {matches.slice(0, 10).map((item, idx) => (
-        <Box key={item.cmd} flexDirection="row" gap={1}>
-          <Text
-            color={idx === selectedIndex ? colors.status.success : undefined}
-            bold={idx === selectedIndex}
-          >
-            {idx === selectedIndex ? "▶ " : "  "}
-            {"⚡"}
-          </Text>
-          <Text bold={idx === selectedIndex}>
-            {item.cmd.padEnd(15)}{" "}
-            <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
-          </Text>
-        </Box>
+        <Text key={item.cmd} color={idx === selectedIndex ? colors.status.success : undefined} bold={idx === selectedIndex}>
+          {idx === selectedIndex ? "▶ " : "  "}{item.cmd.padEnd(14)} <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
+        </Text>
       ))}
       {matches.length > 10 && (
         <Text dimColor>... and {matches.length - 10} more</Text>

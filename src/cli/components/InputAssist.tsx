@@ -82,6 +82,43 @@ function AgentInfoBar({
 }
 
 /**
+ * Wrapper for slash command mode - shows autocomplete + agent info
+ */
+function SlashCommandAssist({
+  currentInput,
+  cursorPosition,
+  onCommandSelect,
+  onAutocompleteActiveChange,
+  agentId,
+  agentName,
+  serverUrl,
+}: {
+  currentInput: string;
+  cursorPosition: number;
+  onCommandSelect: (command: string) => void;
+  onAutocompleteActiveChange: (isActive: boolean) => void;
+  agentId?: string;
+  agentName?: string | null;
+  serverUrl?: string;
+}) {
+  return (
+    <Box flexDirection="column">
+      <SlashCommandAutocomplete
+        currentInput={currentInput}
+        cursorPosition={cursorPosition}
+        onSelect={onCommandSelect}
+        onActiveChange={onAutocompleteActiveChange}
+      />
+      <AgentInfoBar
+        agentId={agentId}
+        agentName={agentName}
+        serverUrl={serverUrl}
+      />
+    </Box>
+  );
+}
+
+/**
  * Shows contextual assistance below the input:
  * - File autocomplete when "@" is detected
  * - Slash command autocomplete when "/" is detected
@@ -112,19 +149,15 @@ export function InputAssist({
   // Show slash command autocomplete when input starts with /
   if (currentInput.startsWith("/")) {
     return (
-      <>
-        <SlashCommandAutocomplete
-          currentInput={currentInput}
-          cursorPosition={cursorPosition}
-          onSelect={onCommandSelect}
-          onActiveChange={onAutocompleteActiveChange}
-        />
-        <AgentInfoBar
-          agentId={agentId}
-          agentName={agentName}
-          serverUrl={serverUrl}
-        />
-      </>
+      <SlashCommandAssist
+        currentInput={currentInput}
+        cursorPosition={cursorPosition}
+        onCommandSelect={onCommandSelect}
+        onAutocompleteActiveChange={onAutocompleteActiveChange}
+        agentId={agentId}
+        agentName={agentName}
+        serverUrl={serverUrl}
+      />
     );
   }
 
