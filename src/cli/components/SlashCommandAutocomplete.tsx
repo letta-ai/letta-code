@@ -1,11 +1,9 @@
 import { Box, Text } from "ink";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { colors } from "./colors";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
-
-interface SlashCommandAutocompleteProps extends AutocompleteProps {}
 
 // Compute filtered command list (excluding hidden commands)
 const allCommands: CommandMatch[] = Object.entries(commands)
@@ -16,12 +14,35 @@ const allCommands: CommandMatch[] = Object.entries(commands)
   }))
   .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
+// Extract the text after the "/" symbol where the cursor is positioned
+function extractSearchQuery(
+  input: string,
+  cursor: number,
+): { query: string; hasSpaceAfter: boolean } | null {
+  if (!input.startsWith("/")) return null;
+
+  const afterSlash = input.slice(1);
+  const spaceIndex = afterSlash.indexOf(" ");
+  const endPos = spaceIndex === -1 ? input.length : 1 + spaceIndex;
+
+  // Check if cursor is within this /command
+  if (cursor < 0 || cursor > endPos) {
+    return null;
+  }
+
+  const query =
+    spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
+  const hasSpaceAfter = spaceIndex !== -1;
+
+  return { query, hasSpaceAfter };
+}
+
 export function SlashCommandAutocomplete({
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
   onActiveChange,
-}: SlashCommandAutocompleteProps) {
+}: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
 
   const { selectedIndex } = useAutocompleteNavigation({
@@ -29,35 +50,6 @@ export function SlashCommandAutocomplete({
     onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
     onActiveChange,
   });
-
-  // Extract the text after the "/" symbol where the cursor is positioned
-  const extractSearchQuery = useCallback(
-    (
-      input: string,
-      cursor: number,
-    ): { query: string; hasSpaceAfter: boolean } | null => {
-      // Only trigger if input starts with "/"
-      if (!input.startsWith("/")) return null;
-
-      // Find the end of this /command (next space or end of string)
-      const afterSlash = input.slice(1);
-      const spaceIndex = afterSlash.indexOf(" ");
-      const endPos = spaceIndex === -1 ? input.length : 1 + spaceIndex;
-
-      // Check if cursor is within this /command
-      if (cursor < 0 || cursor > endPos) {
-        return null;
-      }
-
-      // Get text after "/" until next space or end
-      const query =
-        spaceIndex === -1 ? afterSlash : afterSlash.slice(0, spaceIndex);
-      const hasSpaceAfter = spaceIndex !== -1;
-
-      return { query, hasSpaceAfter };
-    },
-    [],
-  );
 
   // Update matches when input changes
   useEffect(() => {
@@ -92,7 +84,7 @@ export function SlashCommandAutocomplete({
     }
 
     setMatches(newMatches);
-  }, [currentInput, cursorPosition, extractSearchQuery]);
+  }, [currentInput, cursorPosition]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {

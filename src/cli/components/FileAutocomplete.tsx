@@ -1,18 +1,61 @@
 import { Box, Text } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { colors } from "./colors";
 import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
-interface FileAutocompleteProps extends AutocompleteProps {}
+// Extract the text after the "@" symbol where the cursor is positioned
+function extractSearchQuery(
+  input: string,
+  cursor: number,
+): { query: string; hasSpaceAfter: boolean; atIndex: number } | null {
+  // Find all @ positions
+  const atPositions: number[] = [];
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === "@") {
+      // Only count @ at start or after space
+      if (i === 0 || input[i - 1] === " ") {
+        atPositions.push(i);
+      }
+    }
+  }
+
+  if (atPositions.length === 0) return null;
+
+  // Find which @ the cursor is in
+  let atIndex = -1;
+  for (const pos of atPositions) {
+    // Find the end of this @reference (next space or end of string)
+    const afterAt = input.slice(pos + 1);
+    const spaceIndex = afterAt.indexOf(" ");
+    const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
+
+    // Check if cursor is within this @reference
+    if (cursor >= pos && cursor <= endPos) {
+      atIndex = pos;
+      break;
+    }
+  }
+
+  // If cursor is not in any @reference, don't show autocomplete
+  if (atIndex === -1) return null;
+
+  // Get text after "@" until next space or end
+  const afterAt = input.slice(atIndex + 1);
+  const spaceIndex = afterAt.indexOf(" ");
+  const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
+  const hasSpaceAfter = spaceIndex !== -1;
+
+  return { query, hasSpaceAfter, atIndex };
+}
 
 export function FileAutocomplete({
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
   onActiveChange,
-}: FileAutocompleteProps) {
+}: AutocompleteProps) {
   const [matches, setMatches] = useState<FileMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
@@ -26,54 +69,6 @@ export function FileAutocomplete({
     manageActiveState: false, // We manage active state manually due to async loading
     disabled: isLoading,
   });
-
-  // Extract the text after the "@" symbol where the cursor is positioned
-  const extractSearchQuery = useCallback(
-    (
-      input: string,
-      cursor: number,
-    ): { query: string; hasSpaceAfter: boolean; atIndex: number } | null => {
-      // Find all @ positions
-      const atPositions: number[] = [];
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "@") {
-          // Only count @ at start or after space
-          if (i === 0 || input[i - 1] === " ") {
-            atPositions.push(i);
-          }
-        }
-      }
-
-      if (atPositions.length === 0) return null;
-
-      // Find which @ the cursor is in
-      let atIndex = -1;
-      for (const pos of atPositions) {
-        // Find the end of this @reference (next space or end of string)
-        const afterAt = input.slice(pos + 1);
-        const spaceIndex = afterAt.indexOf(" ");
-        const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
-
-        // Check if cursor is within this @reference
-        if (cursor >= pos && cursor <= endPos) {
-          atIndex = pos;
-          break;
-        }
-      }
-
-      // If cursor is not in any @reference, don't show autocomplete
-      if (atIndex === -1) return null;
-
-      // Get text after "@" until next space or end
-      const afterAt = input.slice(atIndex + 1);
-      const spaceIndex = afterAt.indexOf(" ");
-      const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
-      const hasSpaceAfter = spaceIndex !== -1;
-
-      return { query, hasSpaceAfter, atIndex };
-    },
-    [],
-  );
 
   useEffect(() => {
     // Clear any existing debounce timeout
@@ -180,7 +175,6 @@ export function FileAutocomplete({
     currentInput,
     cursorPosition,
     onActiveChange,
-    extractSearchQuery,
     lastValidQuery,
     matches[0]?.path,
   ]);

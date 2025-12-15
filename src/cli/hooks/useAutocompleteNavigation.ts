@@ -19,8 +19,6 @@ interface UseAutocompleteNavigationOptions<T> {
 interface UseAutocompleteNavigationResult {
   /** Currently selected index */
   selectedIndex: number;
-  /** Reset the selected index (e.g., when matches change) */
-  resetSelection: () => void;
 }
 
 /**
@@ -71,10 +69,5 @@ export function useAutocompleteNavigation<T>({
     }
   });
 
-  const resetSelection = () => setSelectedIndex(0);
-
-  return {
-    selectedIndex,
-    resetSelection,
-  };
+  return { selectedIndex };
 }
