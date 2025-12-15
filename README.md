@@ -1,5 +1,7 @@
 # Letta Code (Research Preview)
 
+[![npm](https://img.shields.io/npm/v/@letta-ai/letta-code.svg?style=flat-square)](https://www.npmjs.com/package/@letta-ai/letta-code) [![Discord](https://img.shields.io/badge/discord-join-blue?style=flat-square&logo=discord)](https://discord.gg/letta)
+
 Letta Code is a self-improving, stateful coding agent that can learn from experience and improve with use. You can use Letta Code as a general purpose **CLI harness** to connect any Letta agent (even non-coding agents!) to your local dev environment.
 
 Letta Code is fully **open source** and **model agnostic** - supporting Claude Sonnet/Opus, GPT-5, Gemini 3 Pro, GLM-4.6, and more.
