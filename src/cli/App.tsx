@@ -33,7 +33,6 @@ import {
 import {
   addCommandResult,
   handleProfileDelete,
-  handleProfileList,
   handleProfileSave,
   handleProfileUsage,
   type ProfileCommandContext,
@@ -49,6 +48,7 @@ import { Input } from "./components/InputRich";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
+import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
@@ -363,6 +363,9 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+
+  // Profile selector state
+  const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1264,6 +1267,26 @@ export default function App({
     async (targetAgentId: string, opts?: { profileName?: string }) => {
       setAgentSelectorOpen(false);
 
+      // Skip if already on this agent
+      if (targetAgentId === agentId) {
+        const isProfileLoad = !!opts?.profileName;
+        const label = isProfileLoad ? opts.profileName : targetAgentId;
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: isProfileLoad
+            ? `/profile load ${opts.profileName}`
+            : `/resume ${targetAgentId}`,
+          output: `Already on "${agentName || label}"`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+        return;
+      }
+
       const isProfileLoad = !!opts?.profileName;
       const inputCmd = isProfileLoad
         ? `/profile load ${opts.profileName}`
@@ -1352,7 +1375,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId],
+    [refreshDerived, agentId, agentName],
   );
 
   const onSubmit = useCallback(
@@ -1879,9 +1902,9 @@ export default function App({
             setAgentName,
           };
 
-          // /profile - list all profiles
+          // /profile - open profile selector
           if (!subcommand) {
-            handleProfileList(profileCtx, msg);
+            setProfileSelectorOpen(true);
             return { submitted: true };
           }
 
@@ -3515,6 +3538,7 @@ Plan file path: ${planFilePath}`;
                 !systemPromptSelectorOpen &&
                 !agentSelectorOpen &&
                 !resumeSelectorOpen &&
+                !profileSelectorOpen &&
                 !messageSearchOpen
               }
               streaming={
@@ -3588,6 +3612,48 @@ Plan file path: ${planFilePath}`;
                   await handleAgentSelect(id);
                 }}
                 onCancel={() => setResumeSelectorOpen(false)}
+              />
+            )}
+
+            {/* Profile Selector - conditionally mounted as overlay */}
+            {profileSelectorOpen && (
+              <ProfileSelector
+                currentAgentId={agentId}
+                onSelect={async (id, profileName) => {
+                  setProfileSelectorOpen(false);
+                  await handleAgentSelect(id, { profileName });
+                }}
+                onSave={async (profileName) => {
+                  setProfileSelectorOpen(false);
+                  const profileCtx: ProfileCommandContext = {
+                    buffersRef,
+                    refreshDerived,
+                    agentId,
+                    setCommandRunning,
+                    setAgentName,
+                  };
+                  await handleProfileSave(
+                    profileCtx,
+                    `/profile save ${profileName}`,
+                    profileName,
+                  );
+                }}
+                onDelete={(profileName) => {
+                  setProfileSelectorOpen(false);
+                  const profileCtx: ProfileCommandContext = {
+                    buffersRef,
+                    refreshDerived,
+                    agentId,
+                    setCommandRunning,
+                    setAgentName,
+                  };
+                  handleProfileDelete(
+                    profileCtx,
+                    `/profile delete ${profileName}`,
+                    profileName,
+                  );
+                }}
+                onCancel={() => setProfileSelectorOpen(false)}
               />
             )}
 

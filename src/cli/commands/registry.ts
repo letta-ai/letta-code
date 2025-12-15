@@ -73,7 +73,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/toolset": {
-    desc: "Switch toolset (codex/default)",
+    desc: "Switch toolset",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
@@ -87,7 +87,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/download": {
-    desc: "Download agent file locally",
+    desc: "Download AgentFile (.af)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Downloading agent file...";
@@ -115,7 +115,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/remember": {
-    desc: "Remember something from the conversation (optionally: /remember <what to remember>)",
+    desc: "Remember something from the conversation",
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
