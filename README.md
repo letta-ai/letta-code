@@ -20,7 +20,15 @@ npm install -g @letta-ai/letta-code
 ```
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)):
 
-## Memory and Skill Learning
+## Philosophy 
+Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, you interact with persisted agents that you can treat a mentee. You can pin your go-to agents with `/pin` and reset your current agent's in-context messages with `/clear` to switch topics without creating a new agent.
+
+To view your persisted agents, you can do 
+```
+> /pinned 
+```
+
+## Training Agents 
 
 All agents in Letta are **stateful**: they maintain context forever and can self-edit their own [memory blocks](https://www.letta.com/blog/memory-blocks).
 
