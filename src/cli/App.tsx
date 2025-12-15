@@ -3486,7 +3486,7 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use `/profile` to bookmark this agent)";
+        : "Created a new agent (use /profile to bookmark this agent)";
 
       const statusLines = [
         resumedMessage,

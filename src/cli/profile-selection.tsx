@@ -270,7 +270,7 @@ function ProfileSelectionUI({
                 {selectedIndex === totalItems - 1 ? "→ " : "  "}
                 Create a new agent
               </Text>
-              <Text dimColor> (`--new`)</Text>
+              <Text dimColor> (--new)</Text>
             </Box>
           </Box>
 
