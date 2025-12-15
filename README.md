@@ -35,7 +35,7 @@ Letta Code is built around long-lived agents that persist across sessions and im
 - `/clear` resets the session (clears current in-context messages), but memory persists
 - Relationship: Like having a coworker or mentee that learns and remembers
 
-## Training Agents 
+## Agent Memory & Learning
 If you’re using Letta Code for the first time, you will likely want to run the `/init` command to initialize the agent’s memory system:
 ```bash
 > /init
