@@ -1,6 +1,7 @@
 import type { Letta } from "@letta-ai/letta-client";
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, Text, useInput } from "ink";
+import Link from "ink-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -294,7 +295,7 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       {/* Results list */}
       {!loading && results.length > 0 && (
         <Box flexDirection="column">
-          {pageResults.map((msg, index) => {
+          {pageResults.map((msg: MessageSearchResponse, index: number) => {
             const isSelected = index === selectedIndex;
             const messageText = getMessageText(msg);
             // All messages have a date field
@@ -345,9 +346,16 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
                   <Text dimColor>
                     {msgType}
                     {timestamp && ` · ${timestamp}`}
-                    {agentId && ` · agent: ${agentId}`}
-                    {createdAt && ` · ${createdAt}`}
                   </Text>
+                  {agentId && (
+                    <>
+                      <Text dimColor> · agent: </Text>
+                      <Link url={`https://app.letta.com/agents/${agentId}`}>
+                        <Text color={colors.link.text}>{agentId}</Text>
+                      </Link>
+                    </>
+                  )}
+                  {createdAt && <Text dimColor> · {createdAt}</Text>}
                 </Box>
               </Box>
             );
