@@ -298,75 +298,80 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       {/* Results list */}
       {!loading && results.length > 0 && (
         <Box flexDirection="column">
-          {pageResults.map((msg: MessageSearchResponse, index: number) => {
-            const isSelected = index === selectedIndex;
-            const messageText = getMessageText(msg);
-            // All messages have a date field
-            const msgWithDate = msg as {
-              date?: string;
-              created_at?: string;
-              agent_id?: string;
-            };
-            const timestamp = msgWithDate.date
-              ? formatRelativeTime(msgWithDate.date)
-              : "";
-            const msgType = (msg.message_type || "unknown").replace(
-              "_message",
-              "",
-            );
-            const agentId = msgWithDate.agent_id || "unknown";
-            const createdAt = formatLocalTime(msgWithDate.created_at);
+          {pageResults.map(
+            (msg: MessageSearchResponse[number], index: number) => {
+              const isSelected = index === selectedIndex;
+              const messageText = getMessageText(msg);
+              // All messages have a date field
+              const msgWithDate = msg as {
+                date?: string;
+                created_at?: string;
+                agent_id?: string;
+              };
+              const timestamp = msgWithDate.date
+                ? formatRelativeTime(msgWithDate.date)
+                : "";
+              const msgType = (msg.message_type || "unknown").replace(
+                "_message",
+                "",
+              );
+              const agentId = msgWithDate.agent_id || "unknown";
+              const createdAt = formatLocalTime(msgWithDate.created_at);
 
-            // Calculate available width for message text
-            const metaWidth = timestamp.length + msgType.length + 10; // padding
-            const availableWidth = Math.max(20, terminalWidth - metaWidth - 4);
-            const displayText = truncateText(
-              messageText.replace(/\n/g, " "),
-              availableWidth,
-            );
+              // Calculate available width for message text
+              const metaWidth = timestamp.length + msgType.length + 10; // padding
+              const availableWidth = Math.max(
+                20,
+                terminalWidth - metaWidth - 4,
+              );
+              const displayText = truncateText(
+                messageText.replace(/\n/g, " "),
+                availableWidth,
+              );
 
-            // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
-            const msgId = "id" in msg ? String(msg.id) : "result";
-            const uniqueKey = `${msgId}-${startIndex + index}`;
+              // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
+              const msgId = "id" in msg ? String(msg.id) : "result";
+              const uniqueKey = `${msgId}-${startIndex + index}`;
 
-            return (
-              <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
-                <Box flexDirection="row">
-                  <Text
-                    color={
-                      isSelected ? colors.selector.itemHighlighted : undefined
-                    }
-                  >
-                    {isSelected ? ">" : " "}
-                  </Text>
-                  <Text> </Text>
-                  <Text
-                    bold={isSelected}
-                    color={
-                      isSelected ? colors.selector.itemHighlighted : undefined
-                    }
-                  >
-                    {displayText}
-                  </Text>
+              return (
+                <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
+                  <Box flexDirection="row">
+                    <Text
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
+                    >
+                      {isSelected ? ">" : " "}
+                    </Text>
+                    <Text> </Text>
+                    <Text
+                      bold={isSelected}
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
+                    >
+                      {displayText}
+                    </Text>
+                  </Box>
+                  <Box flexDirection="row" marginLeft={2}>
+                    <Text dimColor>
+                      {msgType}
+                      {timestamp && ` · ${timestamp}`}
+                    </Text>
+                    {agentId && (
+                      <>
+                        <Text dimColor> · agent: </Text>
+                        <Link url={`https://app.letta.com/agents/${agentId}`}>
+                          <Text color={colors.link.text}>{agentId}</Text>
+                        </Link>
+                      </>
+                    )}
+                    {createdAt && <Text dimColor> · {createdAt}</Text>}
+                  </Box>
                 </Box>
-                <Box flexDirection="row" marginLeft={2}>
-                  <Text dimColor>
-                    {msgType}
-                    {timestamp && ` · ${timestamp}`}
-                  </Text>
-                  {agentId && (
-                    <>
-                      <Text dimColor> · agent: </Text>
-                      <Link url={`https://app.letta.com/agents/${agentId}`}>
-                        <Text color={colors.link.text}>{agentId}</Text>
-                      </Link>
-                    </>
-                  )}
-                  {createdAt && <Text dimColor> · {createdAt}</Text>}
-                </Box>
-              </Box>
-            );
-          })}
+              );
+            },
+          )}
         </Box>
       )}
 
