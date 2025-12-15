@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import Link from "ink-link";
+import { useMemo } from "react";
+import { getProfiles } from "../commands/profile";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
 
@@ -24,6 +26,16 @@ export function CommandPreview({
   agentName?: string | null;
   serverUrl?: string;
 }) {
+  // Look up if current agent is saved as a profile
+  const profileName = useMemo(() => {
+    if (!agentId) return null;
+    const profiles = getProfiles();
+    for (const [name, id] of Object.entries(profiles)) {
+      if (id === agentId) return name;
+    }
+    return null;
+  }, [agentId]);
+
   if (!currentInput.startsWith("/")) {
     return null;
   }
@@ -46,21 +58,32 @@ export function CommandPreview({
         </Box>
       ))}
       {showBottomBar && (
-        <Box
-          marginTop={1}
-          paddingTop={1}
-          borderTop
-          borderColor="gray"
-          flexDirection="column"
-        >
-          {agentName && <Text dimColor>Agent: {agentName}</Text>}
-          {isCloudUser ? (
-            <Link url={`https://app.letta.com/agents/${agentId}`}>
-              <Text dimColor>View agent in ADE</Text>
-            </Link>
-          ) : (
-            <Text dimColor>Connected to agent located at {serverUrl}</Text>
-          )}
+        <Box marginTop={1} flexDirection="column">
+          <Box>
+            <Text color="gray">Current agent: </Text>
+            <Text bold>{agentName || "Unnamed"}</Text>
+            {profileName ? (
+              <Text color="green"> (profile: {profileName} ✓)</Text>
+            ) : (
+              <Text color="gray"> (type /profile to pin agent)</Text>
+            )}
+          </Box>
+          <Box>
+            <Text dimColor>{agentId}</Text>
+            {isCloudUser && (
+              <>
+                <Text dimColor> · </Text>
+                <Link url={`https://app.letta.com/agents/${agentId}`}>
+                  <Text color={colors.link.text}>Open in ADE ↗</Text>
+                </Link>
+                <Text dimColor>· </Text>
+                <Link url="https://app.letta.com/settings/organization/usage">
+                  <Text color={colors.link.text}>View usage ↗</Text>
+                </Link>
+              </>
+            )}
+            {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
+          </Box>
         </Box>
       )}
     </Box>

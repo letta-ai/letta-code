@@ -92,6 +92,7 @@ export function ResumeSelector({
 
       const agentList = await client.agents.list({
         limit: FETCH_PAGE_SIZE,
+        tags: ["origin:letta-code"],
         include: ["agent.blocks"],
         order: "desc",
         order_by: "last_run_completion",
@@ -236,7 +237,7 @@ export function ResumeSelector({
     <Box flexDirection="column" gap={1}>
       <Box>
         <Text bold color={colors.selector.title}>
-          Resume Session
+          Resume Session (showing most recent agents)
         </Text>
       </Box>
 
@@ -356,7 +357,8 @@ export function ResumeSelector({
           </Box>
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter select · J/K page · Type + Enter to search
+              ↑↓ navigate · Enter to switch agents · J/K page · Type + Enter to
+              search
             </Text>
           </Box>
         </Box>
