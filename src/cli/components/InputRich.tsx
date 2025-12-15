@@ -573,6 +573,9 @@ export function Input({
           onFileSelect={handleFileSelect}
           onCommandSelect={handleCommandSelect}
           onAutocompleteActiveChange={setIsAutocompleteActive}
+          agentId={agentId}
+          agentName={agentName}
+          serverUrl={serverUrl}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>
