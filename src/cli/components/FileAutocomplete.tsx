@@ -204,22 +204,25 @@ export function FileAutocomplete({
       {matches.length > 0 ? (
         <>
           {matches.slice(0, 10).map((item, idx) => (
-            <Box key={item.path} flexDirection="row" gap={1}>
+            <Text
+              key={item.path}
+              color={
+                idx === selectedIndex ? colors.command.selected : undefined
+              }
+              bold={idx === selectedIndex}
+            >
+              {idx === selectedIndex ? "▶ " : "  "}
               <Text
                 color={
-                  idx === selectedIndex
-                    ? colors.status.success
-                    : item.type === "dir"
-                      ? colors.status.processing
-                      : undefined
+                  idx !== selectedIndex && item.type === "dir"
+                    ? colors.status.processing
+                    : undefined
                 }
-                bold={idx === selectedIndex}
               >
-                {idx === selectedIndex ? "▶ " : "  "}
                 {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
-              </Text>
-              <Text bold={idx === selectedIndex}>{item.path}</Text>
-            </Box>
+              </Text>{" "}
+              {item.path}
+            </Text>
           ))}
           {matches.length > 10 && (
             <Text dimColor>... and {matches.length - 10} more</Text>
