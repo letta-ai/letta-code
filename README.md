@@ -4,11 +4,9 @@
 
 Letta Code is a memory-first coding harness, built on top of the Letta API. Instead of working in independent sessions, you work with a persisted agent that learns over time and is portable across models (Claude Sonnet/Opus, GPT-5, Gemini 3 Pro, GLM-4.6, and more).
 
-![](https://github.com/letta-ai/letta-code/raw/update-readme/assets/demo.gif)
-
 **Read more about how to use Letta Code on the [official docs page](https://docs.letta.com/letta-code).**
 
-<img width="1713" height="951" alt="letta-code" src="https://github.com/user-attachments/assets/ae546e96-368a-4a7b-9397-3963a35c8d6b" />
+![](https://github.com/letta-ai/letta-code/raw/update-readme/assets/demo.gif)
 
 ## Get started
 
