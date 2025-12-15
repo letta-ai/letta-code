@@ -8,7 +8,7 @@ Letta Code is fully **open source** and **model agnostic** - supporting Claude S
 
 **Read more about how to use Letta Code on the [official docs page](https://docs.letta.com/letta-code).**
 
-<img width="1713" height="951" alt="letta-code" src="https://github.com/user-attachments/assets/ae546e96-368a-4a7b-9397-3963a35c8d6b" />
+![](https://github.com/letta-ai/letta-code/raw/main/assets/demo.gif)
 
 > [!IMPORTANT]
 > Letta Code is a **research preview** in active development, and may have bugs or unexpected issues. To learn more about the roadmap and chat with the dev team, visit our [Discord](https://discord.gg/letta). Contributions welcome, join the fun.
