@@ -31,12 +31,92 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   const listItemRegex = /^(\s*)([*\-+]|\d+\.)\s+(.*)$/;
   const blockquoteRegex = /^>\s*(.*)$/;
   const hrRegex = /^[-*_]{3,}$/;
+  const tableRowRegex = /^\|(.+)\|$/;
+  const tableSeparatorRegex = /^\|[\s:]*[-]+[\s:]*(\|[\s:]*[-]+[\s:]*)+\|$/;
 
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
   let _codeBlockLang = "";
 
-  lines.forEach((line, index) => {
+  // Helper function to parse table cells from a row
+  const parseTableCells = (row: string): string[] => {
+    return row
+      .slice(1, -1) // Remove leading and trailing |
+      .split("|")
+      .map((cell) => cell.trim());
+  };
+
+  // Helper function to render a table
+  const renderTable = (
+    tableLines: string[],
+    startIndex: number,
+  ): React.ReactNode => {
+    if (tableLines.length < 2 || !tableLines[0]) return null;
+
+    const headerRow = parseTableCells(tableLines[0]);
+    const bodyRows = tableLines.slice(2).map(parseTableCells); // Skip separator row
+
+    // Calculate column widths
+    const colWidths = headerRow.map((header, colIdx) => {
+      const bodyMax = bodyRows.reduce((max, row) => {
+        const cell = row[colIdx] || "";
+        return Math.max(max, cell.length);
+      }, 0);
+      return Math.max(header.length, bodyMax, 3); // Minimum 3 chars
+    });
+
+    const totalWidth = colWidths.reduce((sum, w) => sum + w + 3, 0) + 1; // +3 for " │ " separators
+
+    return (
+      <Box key={`table-${startIndex}`} flexDirection="column" marginY={0}>
+        {/* Header row */}
+        <Box flexDirection="row">
+          <Text dimColor={dimColor}>│</Text>
+          {headerRow.map((cell, idx) => (
+            <Box key={`h-${idx}`} flexDirection="row">
+              <Text bold dimColor={dimColor}>
+                {" "}
+                {cell.padEnd(colWidths[idx] ?? 3)}
+              </Text>
+              <Text dimColor={dimColor}> │</Text>
+            </Box>
+          ))}
+        </Box>
+        {/* Separator */}
+        <Box flexDirection="row">
+          <Text dimColor={dimColor}>├</Text>
+          {colWidths.map((width, idx) => (
+            <Box key={`s-${idx}`} flexDirection="row">
+              <Text dimColor={dimColor}>{"─".repeat(width + 2)}</Text>
+              <Text dimColor={dimColor}>
+                {idx < colWidths.length - 1 ? "┼" : "┤"}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+        {/* Body rows */}
+        {bodyRows.map((row, rowIdx) => (
+          <Box key={`r-${rowIdx}`} flexDirection="row">
+            <Text dimColor={dimColor}>│</Text>
+            {row.map((cell, colIdx) => (
+              <Box key={`c-${colIdx}`} flexDirection="row">
+                <Text dimColor={dimColor}>
+                  {" "}
+                  {(cell || "").padEnd(colWidths[colIdx] || 3)}
+                </Text>
+                <Text dimColor={dimColor}> │</Text>
+              </Box>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    );
+  };
+
+  // Use index-based loop to handle multi-line elements (tables)
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] as string; // Safe: index < lines.length
     const key = `line-${index}`;
 
     // Handle code blocks
@@ -66,13 +146,15 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         codeBlockContent = [];
         _codeBlockLang = "";
       }
-      return;
+      index++;
+      continue;
     }
 
     // If we're inside a code block, collect the content
     if (inCodeBlock) {
       codeBlockContent.push(line);
-      return;
+      index++;
+      continue;
     }
 
     // Check for headers
@@ -110,7 +192,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       }
 
       contentBlocks.push(<Box key={key}>{headerElement}</Box>);
-      return;
+      index++;
+      continue;
     }
 
     // Check for list items
@@ -125,9 +208,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       const marker = listMatch[2];
       const content = listMatch[3];
 
-      // Determine if it's ordered or unordered list
-      const isOrdered = /^\d+\./.test(marker);
-      const bullet = isOrdered ? `${marker} ` : "• ";
+      // Preserve original marker for copy-paste compatibility
+      const bullet = `${marker} `;
       const bulletWidth = bullet.length;
 
       contentBlocks.push(
@@ -142,7 +224,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
           </Box>
         </Box>,
       );
-      return;
+      index++;
+      continue;
     }
 
     // Check for blockquotes
@@ -156,7 +239,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
           </Text>
         </Box>,
       );
-      return;
+      index++;
+      continue;
     }
 
     // Check for horizontal rules
@@ -166,13 +250,42 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
           <Text dimColor>───────────────────────────────</Text>
         </Box>,
       );
-      return;
+      index++;
+      continue;
+    }
+
+    // Check for tables (must have | at start and end, and next line should be separator)
+    const nextLine = lines[index + 1];
+    if (
+      tableRowRegex.test(line) &&
+      nextLine &&
+      tableSeparatorRegex.test(nextLine)
+    ) {
+      // Collect all table lines
+      const tableLines: string[] = [line];
+      let tableIdx = index + 1;
+      while (tableIdx < lines.length) {
+        const tableLine = lines[tableIdx];
+        if (!tableLine || !tableRowRegex.test(tableLine)) break;
+        tableLines.push(tableLine);
+        tableIdx++;
+      }
+      // Also accept separator-only lines
+      if (tableLines.length >= 2) {
+        const tableElement = renderTable(tableLines, index);
+        if (tableElement) {
+          contentBlocks.push(tableElement);
+        }
+        index = tableIdx;
+        continue;
+      }
     }
 
     // Empty lines
     if (line.trim() === "") {
       contentBlocks.push(<Box key={key} height={1} />);
-      return;
+      index++;
+      continue;
     }
 
     // Regular paragraph text with optional hanging indent for wrapped lines
@@ -195,7 +308,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         )}
       </Box>,
     );
-  });
+    index++;
+  }
 
   // Handle unclosed code block at end of input
   if (inCodeBlock && codeBlockContent.length > 0) {
