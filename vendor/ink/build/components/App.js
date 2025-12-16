@@ -24,7 +24,12 @@ export default class App extends PureComponent {
         error: undefined,
     };
     rawModeEnabledCount = 0;
-    internal_eventEmitter = new EventEmitter();
+    // Increase max listeners to accommodate multiple useInput hooks across components
+    internal_eventEmitter = (() => {
+        const emitter = new EventEmitter();
+        emitter.setMaxListeners(20);
+        return emitter;
+    })();
     isRawModeSupported() {
         return this.props.stdin.isTTY;
     }

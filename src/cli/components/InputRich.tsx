@@ -1,7 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
-import { stdin } from "process";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
@@ -14,10 +13,6 @@ import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
-
-// Increase max listeners to accommodate multiple useInput hooks
-// (5 in this component + autocomplete components)
-stdin.setMaxListeners(20);
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
