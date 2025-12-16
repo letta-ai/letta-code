@@ -1,6 +1,7 @@
 import type { Letta } from "@letta-ai/letta-client";
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, Text, useInput } from "ink";
+import Link from "ink-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -35,6 +36,28 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
   return `${diffWeeks}w ago`;
+}
+
+/**
+ * Format a timestamp in local timezone
+ */
+function formatLocalTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+
+  const date = new Date(dateStr);
+  // Format: "Dec 15, 6:30 PM" or "Dec 15, 2024, 6:30 PM" depending on year
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+
+  const options: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  };
+
+  return date.toLocaleString(undefined, options);
 }
 
 /**
@@ -109,11 +132,17 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       const client = clientRef.current || (await getClient());
       clientRef.current = client;
 
-      const searchResults = await client.messages.search({
-        query: query.trim(),
-        search_mode: mode,
-        limit: SEARCH_LIMIT,
-      });
+      // Direct API call since client.messages.search doesn't exist yet in SDK
+      const searchResults = await client.post<MessageSearchResponse>(
+        "/v1/messages/search",
+        {
+          body: {
+            query: query.trim(),
+            search_mode: mode,
+            limit: SEARCH_LIMIT,
+          },
+        },
+      );
 
       setResults(searchResults);
       setCurrentPage(0);
@@ -269,60 +298,80 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
       {/* Results list */}
       {!loading && results.length > 0 && (
         <Box flexDirection="column">
-          {pageResults.map((msg, index) => {
-            const isSelected = index === selectedIndex;
-            const messageText = getMessageText(msg);
-            // All messages have a date field
-            const msgWithDate = msg as { date?: string };
-            const timestamp = msgWithDate.date
-              ? formatRelativeTime(msgWithDate.date)
-              : "";
-            const msgType = (msg.message_type || "unknown").replace(
-              "_message",
-              "",
-            );
+          {pageResults.map(
+            (msg: MessageSearchResponse[number], index: number) => {
+              const isSelected = index === selectedIndex;
+              const messageText = getMessageText(msg);
+              // All messages have a date field
+              const msgWithDate = msg as {
+                date?: string;
+                created_at?: string;
+                agent_id?: string;
+              };
+              const timestamp = msgWithDate.date
+                ? formatRelativeTime(msgWithDate.date)
+                : "";
+              const msgType = (msg.message_type || "unknown").replace(
+                "_message",
+                "",
+              );
+              const agentId = msgWithDate.agent_id || "unknown";
+              const createdAt = formatLocalTime(msgWithDate.created_at);
 
-            // Calculate available width for message text
-            const metaWidth = timestamp.length + msgType.length + 10; // padding
-            const availableWidth = Math.max(20, terminalWidth - metaWidth - 4);
-            const displayText = truncateText(
-              messageText.replace(/\n/g, " "),
-              availableWidth,
-            );
+              // Calculate available width for message text
+              const metaWidth = timestamp.length + msgType.length + 10; // padding
+              const availableWidth = Math.max(
+                20,
+                terminalWidth - metaWidth - 4,
+              );
+              const displayText = truncateText(
+                messageText.replace(/\n/g, " "),
+                availableWidth,
+              );
 
-            // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
-            const msgId = "id" in msg ? String(msg.id) : "result";
-            const uniqueKey = `${msgId}-${startIndex + index}`;
+              // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
+              const msgId = "id" in msg ? String(msg.id) : "result";
+              const uniqueKey = `${msgId}-${startIndex + index}`;
 
-            return (
-              <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
-                <Box flexDirection="row">
-                  <Text
-                    color={
-                      isSelected ? colors.selector.itemHighlighted : undefined
-                    }
-                  >
-                    {isSelected ? ">" : " "}
-                  </Text>
-                  <Text> </Text>
-                  <Text
-                    bold={isSelected}
-                    color={
-                      isSelected ? colors.selector.itemHighlighted : undefined
-                    }
-                  >
-                    {displayText}
-                  </Text>
+              return (
+                <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
+                  <Box flexDirection="row">
+                    <Text
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
+                    >
+                      {isSelected ? ">" : " "}
+                    </Text>
+                    <Text> </Text>
+                    <Text
+                      bold={isSelected}
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
+                    >
+                      {displayText}
+                    </Text>
+                  </Box>
+                  <Box flexDirection="row" marginLeft={2}>
+                    <Text dimColor>
+                      {msgType}
+                      {timestamp && ` · ${timestamp}`}
+                    </Text>
+                    {agentId && (
+                      <>
+                        <Text dimColor> · agent: </Text>
+                        <Link url={`https://app.letta.com/agents/${agentId}`}>
+                          <Text color={colors.link.text}>{agentId}</Text>
+                        </Link>
+                      </>
+                    )}
+                    {createdAt && <Text dimColor> · {createdAt}</Text>}
+                  </Box>
                 </Box>
-                <Box flexDirection="row" marginLeft={2}>
-                  <Text dimColor>
-                    {msgType}
-                    {timestamp && ` · ${timestamp}`}
-                  </Text>
-                </Box>
-              </Box>
-            );
-          })}
+              );
+            },
+          )}
         </Box>
       )}
 
