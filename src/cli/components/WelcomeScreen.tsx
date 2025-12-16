@@ -3,6 +3,7 @@ import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
 
 import type { AgentProvenance } from "../../agent/create";
+import { isProjectBlock } from "../../agent/memory";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -84,10 +85,46 @@ export function getAgentStatusHints(
     return hints;
   }
 
-  // For new agents, just show memory block labels
-  if (agentProvenance && agentProvenance.blocks.length > 0) {
-    const blockLabels = agentProvenance.blocks.map((b) => b.label).join(", ");
-    hints.push(`→ Memory blocks: ${blockLabels}`);
+  // For new agents with provenance, show block sources
+  if (agentProvenance) {
+    // Blocks reused from existing storage
+    const reusedGlobalBlocks = agentProvenance.blocks
+      .filter((b) => b.source === "global")
+      .map((b) => b.label);
+    const reusedProjectBlocks = agentProvenance.blocks
+      .filter((b) => b.source === "project")
+      .map((b) => b.label);
+
+    // New blocks - categorize by where they'll be stored
+    // (project blocks → .letta/, others → ~/.letta/)
+    const newBlocks = agentProvenance.blocks.filter((b) => b.source === "new");
+    const newGlobalBlocks = newBlocks
+      .filter((b) => !isProjectBlock(b.label))
+      .map((b) => b.label);
+    const newProjectBlocks = newBlocks
+      .filter((b) => isProjectBlock(b.label))
+      .map((b) => b.label);
+
+    if (reusedGlobalBlocks.length > 0) {
+      hints.push(
+        `→ Reusing from global (~/.letta/): ${reusedGlobalBlocks.join(", ")}`,
+      );
+    }
+    if (newGlobalBlocks.length > 0) {
+      hints.push(
+        `→ Created in global (~/.letta/): ${newGlobalBlocks.join(", ")}`,
+      );
+    }
+    if (reusedProjectBlocks.length > 0) {
+      hints.push(
+        `→ Reusing from project (.letta/): ${reusedProjectBlocks.join(", ")}`,
+      );
+    }
+    if (newProjectBlocks.length > 0) {
+      hints.push(
+        `→ Created in project (.letta/): ${newProjectBlocks.join(", ")}`,
+      );
+    }
   }
 
   return hints;

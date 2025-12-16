@@ -6,7 +6,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,4 +56,6 @@ await Bun.$`chmod +x letta.js`;
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log(`   Size: ${(await Bun.file(outputPath).size / 1024).toFixed(0)}KB`);
+console.log(
+  `   Size: ${((await Bun.file(outputPath).size) / 1024).toFixed(0)}KB`,
+);

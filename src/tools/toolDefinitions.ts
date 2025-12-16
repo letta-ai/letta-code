@@ -25,6 +25,7 @@ import SearchFileContentGeminiDescription from "./descriptions/SearchFileContent
 import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
+import TaskDescription from "./descriptions/Task.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import WriteDescription from "./descriptions/Write.md";
@@ -57,6 +58,7 @@ import { search_file_content } from "./impl/SearchFileContentGemini";
 import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { skill } from "./impl/Skill";
+import { task } from "./impl/Task";
 import { todo_write } from "./impl/TodoWrite";
 import { update_plan } from "./impl/UpdatePlan";
 import { write } from "./impl/Write";
@@ -89,6 +91,7 @@ import SearchFileContentGeminiSchema from "./schemas/SearchFileContentGemini.jso
 import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
+import TaskSchema from "./schemas/Task.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import WriteSchema from "./schemas/Write.json";
@@ -168,6 +171,11 @@ const toolDefinitions = {
     schema: SkillSchema,
     description: SkillDescription.trim(),
     impl: skill as unknown as ToolImplementation,
+  },
+  Task: {
+    schema: TaskSchema,
+    description: TaskDescription.trim(),
+    impl: task as unknown as ToolImplementation,
   },
   TodoWrite: {
     schema: TodoWriteSchema,

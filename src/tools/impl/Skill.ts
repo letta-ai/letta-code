@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getClient } from "../../agent/client";
 import {
   getCurrentAgentId,
-  getCurrentClient,
   getSkillsDirectory,
   setHasLoadedSkills,
 } from "../../agent/context";
@@ -128,7 +128,7 @@ async function readSkillContent(
  * Get skills directory, trying multiple sources
  */
 async function getResolvedSkillsDir(
-  client: ReturnType<typeof getCurrentClient>,
+  client: Awaited<ReturnType<typeof getClient>>,
   agentId: string,
 ): Promise<string> {
   let skillsDir = getSkillsDirectory();
@@ -176,7 +176,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
   try {
     // Get current agent context
-    const client = getCurrentClient();
+    const client = await getClient();
     const agentId = getCurrentAgentId();
 
     // Handle refresh command
