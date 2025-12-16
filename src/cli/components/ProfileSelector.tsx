@@ -198,11 +198,11 @@ export const ProfileSelector = memo(function ProfileSelector({
       }
     } else if (input === "p" || input === "P") {
       if (selectedProfile) {
-        // Toggle pin/unpin for selected profile
+        // Unpin from current scope
         if (selectedProfile.isLocal) {
           settingsManager.unpinLocal(selectedProfile.agentId);
         } else {
-          settingsManager.pinLocal(selectedProfile.agentId);
+          settingsManager.unpinGlobal(selectedProfile.agentId);
         }
       } else {
         // No profiles - pin the current agent
@@ -360,7 +360,7 @@ export const ProfileSelector = memo(function ProfileSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter load · P pin/unpin · D unpin all · Esc close
+              ↑↓ navigate · Enter load · P unpin · D unpin all · Esc close
             </Text>
           </Box>
         </Box>
