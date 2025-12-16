@@ -31,6 +31,7 @@ export function InputAssist({
   agentId,
   agentName,
   serverUrl,
+  workingDirectory,
 }: InputAssistProps) {
   const showFileAutocomplete = currentInput.includes("@");
   const showCommandAutocomplete =
@@ -68,6 +69,8 @@ export function InputAssist({
           cursorPosition={cursorPosition}
           onSelect={onCommandSelect}
           onActiveChange={onAutocompleteActiveChange}
+          agentId={agentId}
+          workingDirectory={workingDirectory}
         />
         <AgentInfoBar
           agentId={agentId}
@@ -77,11 +80,6 @@ export function InputAssist({
       </Box>
     );
   }
-
-  // No assistance needed
-  return null;
-}
-
 
   // No assistance needed
   return null;
