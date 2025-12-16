@@ -2020,6 +2020,96 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /link command - attach all Letta Code tools (deprecated)
+        if (msg.trim() === "/link" || msg.trim().startsWith("/link ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Attaching Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { linkToolsToAgent } = await import("../agent/modify");
+            const result = await linkToolsToAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to link tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /unlink command - remove all Letta Code tools (deprecated)
+        if (msg.trim() === "/unlink" || msg.trim().startsWith("/unlink ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Removing Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { unlinkToolsFromAgent } = await import("../agent/modify");
+            const result = await unlinkToolsFromAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to unlink tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
