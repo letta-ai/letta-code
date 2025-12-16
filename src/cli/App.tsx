@@ -471,7 +471,7 @@ export default function App({
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
-  // Note: refs are intentionally excluded from deps - they're stable objects
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const isAgentBusy = useCallback(() => {
     return (
       streamingRef.current ||
@@ -1301,7 +1301,13 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming, agentName],
+    [
+      appendError,
+      refreshDerived,
+      refreshDerivedThrottled,
+      setStreaming,
+      agentName,
+    ],
   );
 
   const handleExit = useCallback(() => {
@@ -1523,6 +1529,7 @@ export default function App({
     [refreshDerived, agentId, agentName, setCommandRunning],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
@@ -2752,6 +2759,8 @@ ${recentCommits}
       handleAgentSelect,
       tokenStreamingEnabled,
       isAgentBusy,
+      setStreaming,
+      setCommandRunning,
     ],
   );
 
@@ -2945,6 +2954,7 @@ ${recentCommits}
       refreshDerived,
       appendError,
       agentName,
+      setStreaming,
     ],
   );
 
@@ -2989,6 +2999,7 @@ ${recentCommits}
     sendAllResults,
     appendError,
     isExecutingTool,
+    setStreaming,
   ]);
 
   const handleApproveAlways = useCallback(
@@ -3081,6 +3092,7 @@ ${recentCommits}
       appendError,
       isExecutingTool,
       agentName,
+      setStreaming,
     ],
   );
 
@@ -3451,6 +3463,7 @@ ${recentCommits}
       appendError,
       refreshDerived,
       agentName,
+      setStreaming,
     ],
   );
 
