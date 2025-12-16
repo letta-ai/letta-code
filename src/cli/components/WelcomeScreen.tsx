@@ -48,8 +48,7 @@ function getAuthMethod(): "url" | "api-key" | "oauth" {
 type LoadingState =
   | "assembling"
   | "upserting"
-  | "linking"
-  | "unlinking"
+  | "updating_tools"
   | "importing"
   | "initializing"
   | "checking"
@@ -207,10 +206,8 @@ function getLoadingMessage(
       return "Assembling tools...";
     case "upserting":
       return "Upserting tools...";
-    case "linking":
-      return "Attaching tools...";
-    case "unlinking":
-      return "Removing tools...";
+    case "updating_tools":
+      return "Updating tools...";
     case "importing":
       return "Importing agent...";
     case "checking":
