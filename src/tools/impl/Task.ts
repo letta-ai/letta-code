@@ -7,6 +7,11 @@
 
 import { getAllSubagentConfigs } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
+import {
+  completeSubagent,
+  generateSubagentId,
+  registerSubagent,
+} from "../../cli/helpers/subagentState.js";
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {
@@ -14,21 +19,7 @@ interface TaskArgs {
   prompt: string;
   description: string;
   model?: string;
-}
-
-/**
- * Format args for display (truncate prompt)
- */
-function formatTaskArgs(args: TaskArgs): string {
-  const parts: string[] = [];
-  parts.push(`subagent_type="${args.subagent_type}"`);
-  parts.push(`description="${args.description}"`);
-  // Truncate prompt for display
-  const promptPreview =
-    args.prompt.length > 20 ? `${args.prompt.slice(0, 17)}...` : args.prompt;
-  parts.push(`prompt="${promptPreview}"`);
-  if (args.model) parts.push(`model="${args.model}"`);
-  return parts.join(", ");
+  toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
 }
 
 /**
@@ -42,10 +33,7 @@ export async function task(args: TaskArgs): Promise<string> {
     "Task",
   );
 
-  const { subagent_type, prompt, description, model } = args;
-
-  // Print Task header FIRST so subagent output appears below it
-  console.log(`\n● Task(${formatTaskArgs(args)})\n`);
+  const { subagent_type, prompt, description, model, toolCallId } = args;
 
   // Get all available subagent configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
@@ -56,13 +44,23 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Error: Invalid subagent type "${subagent_type}". Available types: ${available}`;
   }
 
+  // Register subagent with state store for UI display
+  const subagentId = generateSubagentId();
+  registerSubagent(subagentId, subagent_type, description, toolCallId);
+
   try {
     const result = await spawnSubagent(
       subagent_type,
       prompt,
-      description,
       model,
+      subagentId,
     );
+
+    // Mark subagent as completed in state store
+    completeSubagent(subagentId, {
+      success: result.success,
+      error: result.error,
+    });
 
     if (!result.success) {
       return `Error: ${result.error || "Subagent execution failed"}`;
@@ -70,6 +68,8 @@ export async function task(args: TaskArgs): Promise<string> {
 
     return result.report;
   } catch (error) {
-    return `Error: ${error instanceof Error ? error.message : String(error)}`;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    completeSubagent(subagentId, { success: false, error: errorMessage });
+    return `Error: ${errorMessage}`;
   }
 }

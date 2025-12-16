@@ -9,19 +9,16 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import {
+  addToolCall,
+  updateSubagent,
+} from "../../cli/helpers/subagentState.js";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
+import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** ANSI escape codes for console output */
-const ANSI_DIM = "\x1b[2m";
-const ANSI_RESET = "\x1b[0m";
 
 // ============================================================================
 // Types
@@ -54,35 +51,10 @@ interface ExecutionState {
 // ============================================================================
 
 /**
- * Format tool arguments for display (truncated)
+ * Record a tool call to the state store
  */
-function formatToolArgs(argsStr: string): string {
-  try {
-    const args = JSON.parse(argsStr);
-    const entries = Object.entries(args)
-      .filter(([_, value]) => value !== undefined && value !== null)
-      .slice(0, 2); // Show max 2 args
-
-    if (entries.length === 0) return "";
-
-    return entries
-      .map(([key, value]) => {
-        let displayValue = String(value);
-        if (displayValue.length > 100) {
-          displayValue = `${displayValue.slice(0, 97)}...`;
-        }
-        return `${key}: "${displayValue}"`;
-      })
-      .join(", ");
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Display a tool call to the console
- */
-function displayToolCall(
+function recordToolCall(
+  subagentId: string,
   toolCallId: string,
   toolName: string,
   toolArgs: string,
@@ -90,35 +62,7 @@ function displayToolCall(
 ): void {
   if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
   displayedToolCalls.add(toolCallId);
-
-  const formattedArgs = formatToolArgs(toolArgs);
-  if (formattedArgs) {
-    console.log(`${ANSI_DIM}     ${toolName}(${formattedArgs})${ANSI_RESET}`);
-  } else {
-    console.log(`${ANSI_DIM}     ${toolName}()${ANSI_RESET}`);
-  }
-}
-
-/**
- * Format completion stats for display
- */
-function formatCompletionStats(
-  toolCount: number,
-  totalTokens: number,
-  durationMs: number,
-): string {
-  const tokenStr =
-    totalTokens >= 1000
-      ? `${(totalTokens / 1000).toFixed(1)}k`
-      : String(totalTokens);
-
-  const durationSec = durationMs / 1000;
-  const durationStr =
-    durationSec >= 60
-      ? `${Math.floor(durationSec / 60)}m ${Math.round(durationSec % 60)}s`
-      : `${durationSec.toFixed(1)}s`;
-
-  return `${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens · ${durationStr}`;
+  addToolCall(subagentId, toolCallId, toolName, toolArgs);
 }
 
 /**
@@ -128,11 +72,12 @@ function handleInitEvent(
   event: { agent_id?: string },
   state: ExecutionState,
   baseURL: string,
+  subagentId: string,
 ): void {
   if (event.agent_id) {
     state.agentId = event.agent_id;
     const agentURL = `${baseURL}/agents/${event.agent_id}`;
-    console.log(`${ANSI_DIM}  ⎿  Subagent: ${agentURL}${ANSI_RESET}`);
+    updateSubagent(subagentId, { agentURL });
   }
 }
 
@@ -171,10 +116,12 @@ function handleApprovalRequestEvent(
 function handleAutoApprovalEvent(
   event: { tool_call_id?: string; tool_name?: string; tool_args?: string },
   state: ExecutionState,
+  subagentId: string,
 ): void {
   const { tool_call_id, tool_name, tool_args = "{}" } = event;
   if (tool_call_id && tool_name) {
-    displayToolCall(
+    recordToolCall(
+      subagentId,
       tool_call_id,
       tool_name,
       tool_args,
@@ -194,6 +141,7 @@ function handleResultEvent(
     usage?: { total_tokens?: number };
   },
   state: ExecutionState,
+  subagentId: string,
 ): void {
   state.finalResult = event.result || "";
   state.resultStats = {
@@ -204,21 +152,25 @@ function handleResultEvent(
   if (event.is_error) {
     state.finalError = event.result || "Unknown error";
   } else {
-    // Display any pending tool calls that weren't auto-approved
+    // Record any pending tool calls that weren't auto-approved
     for (const [id, { name, args }] of state.pendingToolCalls.entries()) {
       if (name && !state.displayedToolCalls.has(id)) {
-        displayToolCall(id, name, args || "{}", state.displayedToolCalls);
+        recordToolCall(
+          subagentId,
+          id,
+          name,
+          args || "{}",
+          state.displayedToolCalls,
+        );
       }
     }
-
-    // Display completion stats
-    const statsStr = formatCompletionStats(
-      state.displayedToolCalls.size,
-      state.resultStats.totalTokens,
-      state.resultStats.durationMs,
-    );
-    console.log(`${ANSI_DIM}      ⎿  Done (${statsStr})${ANSI_RESET}`);
   }
+
+  // Update state store with final stats
+  updateSubagent(subagentId, {
+    totalTokens: state.resultStats.totalTokens,
+    durationMs: state.resultStats.durationMs,
+  });
 }
 
 /**
@@ -228,13 +180,14 @@ function processStreamEvent(
   line: string,
   state: ExecutionState,
   baseURL: string,
+  subagentId: string,
 ): void {
   try {
     const event = JSON.parse(line);
 
     switch (event.type) {
       case "init":
-        handleInitEvent(event, state, baseURL);
+        handleInitEvent(event, state, baseURL, subagentId);
         break;
 
       case "message":
@@ -244,11 +197,11 @@ function processStreamEvent(
         break;
 
       case "auto_approval":
-        handleAutoApprovalEvent(event, state);
+        handleAutoApprovalEvent(event, state, subagentId);
         break;
 
       case "result":
-        handleResultEvent(event, state);
+        handleResultEvent(event, state, subagentId);
         break;
 
       case "error":
@@ -329,10 +282,14 @@ function buildSubagentArgs(
     args.push("--permission-mode", currentMode);
   }
 
-  // Inherit permission rules from parent (--allowedTools/--disallowedTools)
+  // Inherit permission rules from parent (CLI + session rules)
   const parentAllowedTools = cliPermissions.getAllowedTools();
-  if (parentAllowedTools.length > 0) {
-    args.push("--allowedTools", parentAllowedTools.join(","));
+  const sessionAllowRules = sessionPermissions.getRules().allow || [];
+  const combinedAllowedTools = [
+    ...new Set([...parentAllowedTools, ...sessionAllowRules]),
+  ];
+  if (combinedAllowedTools.length > 0) {
+    args.push("--allowedTools", combinedAllowedTools.join(","));
   }
   const parentDisallowedTools = cliPermissions.getDisallowedTools();
   if (parentDisallowedTools.length > 0) {
@@ -370,6 +327,7 @@ async function executeSubagent(
   model: string,
   userPrompt: string,
   baseURL: string,
+  subagentId: string,
 ): Promise<SubagentResult> {
   try {
     const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
@@ -401,7 +359,7 @@ async function executeSubagent(
 
     rl.on("line", (line: string) => {
       stdoutChunks.push(Buffer.from(`${line}\n`));
-      processStreamEvent(line, state, baseURL);
+      processStreamEvent(line, state, baseURL, subagentId);
     });
 
     proc.stderr.on("data", (data: Buffer) => {
@@ -483,14 +441,14 @@ function getBaseURL(): string {
  *
  * @param type - Subagent type (e.g., "code-reviewer", "explore")
  * @param prompt - The task prompt for the subagent
- * @param description - Short description for display
  * @param userModel - Optional model override from the parent agent
+ * @param subagentId - ID for tracking in the state store (registered by Task tool)
  */
 export async function spawnSubagent(
   type: string,
   prompt: string,
-  description: string,
-  userModel?: string,
+  userModel: string | undefined,
+  subagentId: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -507,14 +465,15 @@ export async function spawnSubagent(
   const model = userModel || config.recommendedModel;
   const baseURL = getBaseURL();
 
-  // Print subagent header before execution starts
-  console.log(`${ANSI_DIM}✻ ${type}(${description})${ANSI_RESET}`);
-
-  const result = await executeSubagent(type, config, model, prompt, baseURL);
-
-  if (!result.success && result.error) {
-    console.log(`${ANSI_DIM}      ⎿  Error: ${result.error}${ANSI_RESET}`);
-  }
+  // Execute subagent - state updates are handled via the state store
+  const result = await executeSubagent(
+    type,
+    config,
+    model,
+    prompt,
+    baseURL,
+    subagentId,
+  );
 
   return result;
 }

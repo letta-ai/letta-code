@@ -829,12 +829,13 @@ function flattenToolResponse(result: unknown): string {
  *
  * @param name - The name of the tool to execute
  * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
 export async function executeTool(
   name: string,
   args: ToolArgs,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; toolCallId?: string },
 ): Promise<ToolExecutionResult> {
   const internalName = resolveInternalToolName(name);
   if (!internalName) {
@@ -853,13 +854,20 @@ export async function executeTool(
   }
 
   try {
-    // Inject abort signal for tools that support it (currently Bash) without altering schemas
-    const argsWithSignal =
-      internalName === "Bash" && options?.signal
-        ? { ...args, signal: options.signal }
-        : args;
+    // Inject options for tools that support them without altering schemas
+    let enhancedArgs = args;
 
-    const result = await tool.fn(argsWithSignal);
+    // Inject abort signal for Bash tool
+    if (internalName === "Bash" && options?.signal) {
+      enhancedArgs = { ...enhancedArgs, signal: options.signal };
+    }
+
+    // Inject toolCallId for Task tool (for linking subagents to their parent tool call)
+    if (internalName === "Task" && options?.toolCallId) {
+      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
+    const result = await tool.fn(enhancedArgs);
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

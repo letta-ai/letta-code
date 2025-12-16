@@ -58,6 +58,8 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
+import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
+import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
 import { SubagentManager } from "./components/SubagentManager";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
@@ -81,7 +83,17 @@ import {
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "./helpers/subagentAggregation";
+import {
+  clearCompletedSubagents,
+  clearSubagentsByIds,
+} from "./helpers/subagentState";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -183,15 +195,6 @@ function readPlanFile(): string {
   }
 }
 
-// Fancy UI tools require specialized dialogs instead of the standard ApprovalDialog
-function isFancyUITool(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
-}
-
 // Extract questions from AskUserQuestion tool args
 function getQuestionsFromApproval(approval: ApprovalRequest) {
   const parsed = safeJsonParseOr<Record<string, unknown>>(
@@ -229,6 +232,20 @@ type StaticItem =
         agentProvenance?: AgentProvenance | null;
         terminalWidth: number;
       };
+    }
+  | {
+      kind: "subagent_group";
+      id: string;
+      agents: Array<{
+        id: string;
+        type: string;
+        description: string;
+        status: "completed" | "error";
+        toolCount: number;
+        totalTokens: number;
+        agentURL: string | null;
+        error?: string;
+      }>;
     }
   | Line;
 
@@ -463,6 +480,24 @@ export default function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
+    let firstTaskIndex = -1;
+
+    // Check if there are any in-progress Task tool_calls
+    const hasInProgress = hasInProgressTaskToolCalls(
+      b.order,
+      b.byId,
+      emittedIdsRef.current,
+    );
+
+    // Collect finished Task tool_calls for grouping
+    const finishedTaskToolCalls = collectFinishedTaskToolCalls(
+      b.order,
+      b.byId,
+      emittedIdsRef.current,
+      hasInProgress,
+    );
+
+    // Commit regular lines (non-Task tools)
     for (const id of b.order) {
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
@@ -480,11 +515,39 @@ export default function App({
         }
         continue;
       }
+      // Handle Task tool_calls specially - track position but don't add individually
+      if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
+        if (firstTaskIndex === -1 && finishedTaskToolCalls.length > 0) {
+          firstTaskIndex = newlyCommitted.length;
+        }
+        continue;
+      }
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
       }
     }
+
+    // If we collected Task tool_calls (all are finished), create a subagent_group
+    if (finishedTaskToolCalls.length > 0) {
+      // Mark all as emitted
+      for (const tc of finishedTaskToolCalls) {
+        emittedIdsRef.current.add(tc.lineId);
+      }
+
+      const groupItem = createSubagentGroupItem(finishedTaskToolCalls);
+
+      // Insert at the position of the first Task tool_call
+      newlyCommitted.splice(
+        firstTaskIndex >= 0 ? firstTaskIndex : newlyCommitted.length,
+        0,
+        groupItem,
+      );
+
+      // Clear these agents from the subagent store
+      clearSubagentsByIds(groupItem.agents.map((a) => a.id));
+    }
+
     if (newlyCommitted.length > 0) {
       setStaticItems((prev) => [...prev, ...newlyCommitted]);
     }
@@ -689,6 +752,9 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+
+        // Clear completed subagents from the UI when starting a new turn
+        clearCompletedSubagents();
 
         while (true) {
           // Check if cancelled before starting new stream
@@ -926,6 +992,7 @@ export default function App({
                 const result = await executeTool(
                   ac.approval.toolName,
                   parsedArgs,
+                  { toolCallId: ac.approval.toolCallId },
                 );
 
                 // Update buffers with tool return for UI
@@ -3515,7 +3582,11 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Always show tool calls in progress
+        // Skip Task tool_calls - SubagentGroupDisplay handles them
+        if (ln.name && isTaskTool(ln.name)) {
+          return false;
+        }
+        // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
@@ -3617,6 +3688,8 @@ Plan file path: ${planFilePath}`;
               <AssistantMessage line={item} />
             ) : item.kind === "tool_call" ? (
               <ToolCallMessage line={item} />
+            ) : item.kind === "subagent_group" ? (
+              <SubagentGroupStatic agents={item.agents} />
             ) : item.kind === "error" ? (
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
@@ -3666,6 +3739,9 @@ Plan file path: ${planFilePath}`;
                 ))}
               </Box>
             )}
+
+            {/* Subagent group display - shows running/completed subagents */}
+            <SubagentGroupDisplay />
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
