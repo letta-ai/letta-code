@@ -17,6 +17,7 @@
 
 import { Box, Text, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
+import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
   type SubagentState,
@@ -25,24 +26,6 @@ import {
 } from "../helpers/subagentState.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-function formatStats(
-  toolCount: number,
-  totalTokens: number,
-  isRunning: boolean,
-): string {
-  // Show "—" for tokens while running since we only get usage at the end
-  const tokenStr = isRunning
-    ? "—"
-    : totalTokens >= 1000
-      ? `${(totalTokens / 1000).toFixed(1)}k`
-      : String(totalTokens);
-  return `${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens`;
-}
 
 function formatToolArgs(argsStr: string): string {
   try {
@@ -78,8 +61,7 @@ interface AgentRowProps {
 }
 
 const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
-  const treeChar = isLast ? "└─" : "├─";
-  const continueChar = isLast ? "   " : "│  ";
+  const { treeChar, continueChar } = getTreeChars(isLast);
 
   const getDotElement = () => {
     switch (agent.status) {
@@ -163,7 +145,6 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
     </Box>
   );
 });
-
 AgentRow.displayName = "AgentRow";
 
 interface GroupHeaderProps {

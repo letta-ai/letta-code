@@ -15,6 +15,7 @@
 
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
 import { colors } from "./colors.js";
 
 // ============================================================================
@@ -37,18 +38,6 @@ interface SubagentGroupStaticProps {
 }
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-function formatStats(toolCount: number, totalTokens: number): string {
-  const tokenStr =
-    totalTokens >= 1000
-      ? `${(totalTokens / 1000).toFixed(1)}k`
-      : String(totalTokens);
-  return `${toolCount} tool use${toolCount !== 1 ? "s" : ""} · ${tokenStr} tokens`;
-}
-
-// ============================================================================
 // Subcomponents
 // ============================================================================
 
@@ -58,8 +47,7 @@ interface AgentRowProps {
 }
 
 const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
-  const treeChar = isLast ? "└─" : "├─";
-  const continueChar = isLast ? "   " : "│  ";
+  const { treeChar, continueChar } = getTreeChars(isLast);
 
   const dotColor =
     agent.status === "completed"
