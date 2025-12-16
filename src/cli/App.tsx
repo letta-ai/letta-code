@@ -382,7 +382,7 @@ export default function App({
     string | null
   >("default");
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | null
+    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | "none" | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
@@ -1763,94 +1763,6 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /link command - attach Letta Code tools
-        if (msg.trim() === "/link") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Attaching Letta Code tools to agent...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const result = await linkToolsToAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /unlink command - remove Letta Code tools
-        if (msg.trim() === "/unlink") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Removing Letta Code tools from agent...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const result = await unlinkToolsFromAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
         // Special handling for /rename command - rename the agent
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
@@ -3094,7 +3006,8 @@ ${recentCommits}
           | "codex_snake"
           | "default"
           | "gemini"
-          | "gemini_snake" = isOpenAIModel(selectedModel.handle ?? "")
+          | "gemini_snake"
+          | "none" = isOpenAIModel(selectedModel.handle ?? "")
           ? "codex"
           : isGeminiModel(selectedModel.handle ?? "")
             ? "gemini"
@@ -3106,6 +3019,7 @@ ${recentCommits}
           | "default"
           | "gemini"
           | "gemini_snake"
+          | "none"
           | null = null;
         if (currentToolset !== targetToolset) {
           const { switchToolsetForModel } = await import("../tools/toolset");
@@ -3248,7 +3162,8 @@ ${recentCommits}
         | "codex_snake"
         | "default"
         | "gemini"
-        | "gemini_snake",
+        | "gemini_snake"
+        | "none",
     ) => {
       setToolsetSelectorOpen(false);
 

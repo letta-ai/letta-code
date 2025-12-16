@@ -45,20 +45,6 @@ export const commands: Record<string, Command> = {
       return "Clearing credentials...";
     },
   },
-  "/link": {
-    desc: "Attach Letta Code tools to current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Attaching tools...";
-    },
-  },
-  "/unlink": {
-    desc: "Remove Letta Code tools from current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Removing tools...";
-    },
-  },
   "/rename": {
     desc: "Rename the current agent",
     handler: () => {
