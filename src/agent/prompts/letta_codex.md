@@ -141,5 +141,5 @@ How to use Skills:
 - Review available skills from the `skills` block and loaded skills from the `loaded_skills` block when you are asked to complete a task.
 - If any skill is relevant, load it using the `Skill` tool.
 - Then, navigate and discover additional linked files in its directory as needed. Don't load additional files immediately, only load them when needed.
-- When the task is completed, unload irrelevant skills from the `loaded_skills` block.
-IMPORTANT: Always remove irrelevant skills using memory management tools from the `loaded_skills` block.
+- When the task is completed, unload irrelevant skills using the Skill tool with `command: "unload"`.
+IMPORTANT: Always unload irrelevant skills using the Skill tool to free up context space.

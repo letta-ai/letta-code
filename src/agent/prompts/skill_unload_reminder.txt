@@ -1,6 +1,5 @@
 <system-reminder>
 The `loaded_skills` block has at least one skill loaded. You should:
 1. Check if loaded skills are relevant for the current task.
-2. For any skills that are irrelevant, unload them using the `memory` tool.
-If the block will be empty after unloading, add a "[CURRENTLY EMPTY]" tag.
+2. For any skills that are irrelevant, unload them using the `Skill` tool with `command: "unload"`.
 </system-reminder>

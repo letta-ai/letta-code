@@ -17,6 +17,12 @@ export const PROJECT_BLOCK_LABELS = [
 ] as const;
 
 /**
+ * Block labels that should be read-only (agent cannot modify via memory tools).
+ * These blocks are managed by specific tools (e.g., Skill tool for skills/loaded_skills).
+ */
+export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+
+/**
  * Check if a block label is a project-level block
  */
 export function isProjectBlock(label: string): boolean {
@@ -77,13 +83,19 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
       }
       const { frontmatter, body } = parseMdxFrontmatter(content);
 
+      const label = frontmatter.label || filename.replace(".mdx", "");
       const block: CreateBlock = {
-        label: frontmatter.label || filename.replace(".mdx", ""),
+        label,
         value: body,
       };
 
       if (frontmatter.description) {
         block.description = frontmatter.description;
+      }
+
+      // Set read-only for skills blocks (managed by Skill tool, not memory tools)
+      if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
+        block.read_only = true;
       }
 
       memoryBlocks.push(block);
