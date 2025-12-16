@@ -465,6 +465,7 @@ export default function App({
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
+  // Note: refs are intentionally excluded from deps - they're stable objects
   const isAgentBusy = useCallback(() => {
     return (
       streamingRef.current ||
@@ -472,7 +473,7 @@ export default function App({
       commandRunningRef.current ||
       abortControllerRef.current !== null
     );
-  }, [isExecutingTool, streamingRef, commandRunningRef]);
+  }, [isExecutingTool]);
 
   // Helper to wrap async handlers that need to close overlay and lock input
   // Closes overlay and sets commandRunning before executing, releases lock in finally
