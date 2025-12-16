@@ -157,6 +157,13 @@ export const commands: Record<string, Command> = {
       return "Opening pinned agents...";
     },
   },
+  "/subagents": {
+    desc: "Manage custom subagents",
+    handler: () => {
+      // Handled specially in App.tsx to open SubagentManager component
+      return "Opening subagent manager...";
+    },
+  },
 };
 
 /**

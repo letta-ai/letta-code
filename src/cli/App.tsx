@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import { setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
@@ -57,6 +58,7 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
+import { SubagentManager } from "./components/SubagentManager";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -292,6 +294,13 @@ export default function App({
     }
   }, [initialAgentState]);
 
+  // Set agent context for tools (especially Task tool)
+  useEffect(() => {
+    if (agentId) {
+      setCurrentAgentId(agentId);
+    }
+  }, [agentId]);
+
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
 
@@ -360,6 +369,8 @@ export default function App({
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const [agentDescription, setAgentDescription] = useState<string | null>(null);
+  const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
   const currentModelLabel =
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
@@ -372,6 +383,9 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+
+  // Subagent manager state (for /subagents command)
+  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
 
   // Profile selector state
   const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
@@ -390,6 +404,9 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Track if we've sent the session context for this CLI session
+  const hasSentSessionContextRef = useRef(false);
 
   // Show exit stats on exit
   const [showExitStats, setShowExitStats] = useState(false);
@@ -617,6 +634,11 @@ export default function App({
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
           setAgentName(agent.name);
+          setAgentDescription(agent.description ?? null);
+          // Get last message timestamp from agent state if available
+          const lastRunCompletion = (agent as { last_run_completion?: string })
+            .last_run_completion;
+          setAgentLastRunAt(lastRunCompletion ?? null);
 
           // Detect current toolset from attached tools
           const { detectToolsetFromAgent } = await import("../tools/toolset");
@@ -1481,6 +1503,12 @@ export default function App({
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           setSystemPromptSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /subagents command - opens subagent manager
+        if (trimmed === "/subagents") {
+          setSubagentManagerOpen(true);
           return { submitted: true };
         }
 
@@ -2418,8 +2446,29 @@ ${recentCommits}
       // Prepend skill unload reminder if skills are loaded (using cached flag)
       const skillUnloadReminder = getSkillUnloadReminder();
 
-      // Combine reminders with content (plan mode first, then skill unload)
-      const allReminders = planModeReminder + skillUnloadReminder;
+      // Prepend session context on first message of CLI session (if enabled)
+      let sessionContextReminder = "";
+      const sessionContextEnabled = settingsManager.getSetting(
+        "sessionContextEnabled",
+      );
+      if (!hasSentSessionContextRef.current && sessionContextEnabled) {
+        const { buildSessionContext } = await import(
+          "./helpers/sessionContext"
+        );
+        sessionContextReminder = buildSessionContext({
+          agentInfo: {
+            id: agentId,
+            name: agentName,
+            description: agentDescription,
+            lastRunAt: agentLastRunAt,
+          },
+        });
+        hasSentSessionContextRef.current = true;
+      }
+
+      // Combine reminders with content (session context first, then plan mode, then skill unload)
+      const allReminders =
+        sessionContextReminder + planModeReminder + skillUnloadReminder;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -2553,6 +2602,8 @@ ${recentCommits}
       refreshDerived,
       agentId,
       agentName,
+      agentDescription,
+      agentLastRunAt,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
@@ -3700,6 +3751,11 @@ Plan file path: ${planFilePath}`;
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
               />
+            )}
+
+            {/* Subagent Manager - for managing custom subagents */}
+            {subagentManagerOpen && (
+              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}
