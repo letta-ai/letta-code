@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box, Text, Transform } from "ink";
 import type React from "react";
 import { colors } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
@@ -9,11 +9,30 @@ interface MarkdownDisplayProps {
   hangingIndent?: number; // indent for wrapped lines within a paragraph
 }
 
+// Regex patterns for markdown elements (defined outside component to avoid re-creation)
+const headerRegex = /^(#{1,6})\s+(.*)$/;
+const codeBlockRegex = /^```(\w*)?$/;
+const listItemRegex = /^(\s*)([*\-+]|\d+\.)\s+(.*)$/;
+const blockquoteRegex = /^>\s*(.*)$/;
+const hrRegex = /^[-*_]{3,}$/;
+const tableRowRegex = /^\|(.+)\|$/;
+const tableSeparatorRegex = /^\|[\s:]*[-]+[\s:]*(\|[\s:]*[-]+[\s:]*)+\|$/;
+
+// Header styles lookup
+const headerStyles: Record<
+  number,
+  { bold?: boolean; italic?: boolean; color?: string }
+> = {
+  1: { bold: true, color: colors.heading.primary },
+  2: { bold: true, color: colors.heading.secondary },
+  3: { bold: true },
+};
+const defaultHeaderStyle = { italic: true };
+
 /**
  * Renders full markdown content using pure Ink components.
  * Based on Gemini CLI's approach - NO ANSI codes, NO marked-terminal!
  */
-import { Transform } from "ink";
 
 export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   text,
@@ -25,18 +44,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   const lines = text.split("\n");
   const contentBlocks: React.ReactNode[] = [];
 
-  // Regex patterns for markdown elements
-  const headerRegex = /^(#{1,6})\s+(.*)$/;
-  const codeBlockRegex = /^```(\w*)?$/;
-  const listItemRegex = /^(\s*)([*\-+]|\d+\.)\s+(.*)$/;
-  const blockquoteRegex = /^>\s*(.*)$/;
-  const hrRegex = /^[-*_]{3,}$/;
-  const tableRowRegex = /^\|(.+)\|$/;
-  const tableSeparatorRegex = /^\|[\s:]*[-]+[\s:]*(\|[\s:]*[-]+[\s:]*)+\|$/;
-
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
-  let _codeBlockLang = "";
 
   // Helper function to parse table cells from a row
   const parseTableCells = (row: string): string[] => {
@@ -65,14 +74,13 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       return Math.max(header.length, bodyMax, 3); // Minimum 3 chars
     });
 
-    const totalWidth = colWidths.reduce((sum, w) => sum + w + 3, 0) + 1; // +3 for " │ " separators
-
     return (
       <Box key={`table-${startIndex}`} flexDirection="column" marginY={0}>
         {/* Header row */}
         <Box flexDirection="row">
           <Text dimColor={dimColor}>│</Text>
           {headerRow.map((cell, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static table content
             <Box key={`h-${idx}`} flexDirection="row">
               <Text bold dimColor={dimColor}>
                 {" "}
@@ -86,6 +94,7 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         <Box flexDirection="row">
           <Text dimColor={dimColor}>├</Text>
           {colWidths.map((width, idx) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static table content
             <Box key={`s-${idx}`} flexDirection="row">
               <Text dimColor={dimColor}>{"─".repeat(width + 2)}</Text>
               <Text dimColor={dimColor}>
@@ -96,9 +105,11 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         </Box>
         {/* Body rows */}
         {bodyRows.map((row, rowIdx) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static table content
           <Box key={`r-${rowIdx}`} flexDirection="row">
             <Text dimColor={dimColor}>│</Text>
             {row.map((cell, colIdx) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static table content
               <Box key={`c-${colIdx}`} flexDirection="row">
                 <Text dimColor={dimColor}>
                   {" "}
@@ -120,31 +131,19 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     const key = `line-${index}`;
 
     // Handle code blocks
-    if (line.match(codeBlockRegex)) {
+    if (codeBlockRegex.test(line)) {
       if (!inCodeBlock) {
-        // Start of code block
-        const match = line.match(codeBlockRegex);
-        _codeBlockLang = match?.[1] || "";
         inCodeBlock = true;
         codeBlockContent = [];
       } else {
-        // End of code block
         inCodeBlock = false;
-
-        // Render the code block
         const code = codeBlockContent.join("\n");
-
-        // For now, use simple colored text for code blocks
-        // TODO: Could parse cli-highlight output and convert ANSI to Ink components
-        // but for MVP, just use a nice color like Gemini does
         contentBlocks.push(
           <Box key={key} paddingLeft={2}>
             <Text color={colors.code.inline}>{code}</Text>
           </Box>,
         );
-
         codeBlockContent = [];
-        _codeBlockLang = "";
       }
       index++;
       continue;
@@ -162,36 +161,15 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     if (headerMatch?.[1] && headerMatch[2] !== undefined) {
       const level = headerMatch[1].length;
       const content = headerMatch[2];
+      const style = headerStyles[level] ?? defaultHeaderStyle;
 
-      // Different styling for different header levels
-      let headerElement: React.ReactNode;
-      if (level === 1) {
-        headerElement = (
-          <Text bold color={colors.heading.primary}>
+      contentBlocks.push(
+        <Box key={key}>
+          <Text {...style}>
             <InlineMarkdown text={content} dimColor={dimColor} />
           </Text>
-        );
-      } else if (level === 2) {
-        headerElement = (
-          <Text bold color={colors.heading.secondary}>
-            <InlineMarkdown text={content} dimColor={dimColor} />
-          </Text>
-        );
-      } else if (level === 3) {
-        headerElement = (
-          <Text bold>
-            <InlineMarkdown text={content} dimColor={dimColor} />
-          </Text>
-        );
-      } else {
-        headerElement = (
-          <Text italic>
-            <InlineMarkdown text={content} dimColor={dimColor} />
-          </Text>
-        );
-      }
-
-      contentBlocks.push(<Box key={key}>{headerElement}</Box>);
+        </Box>,
+      );
       index++;
       continue;
     }
