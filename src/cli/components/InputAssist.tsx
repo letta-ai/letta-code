@@ -40,7 +40,11 @@ export function InputAssist({
     if (!showFileAutocomplete && !showCommandAutocomplete) {
       onAutocompleteActiveChange(false);
     }
-  }, [showFileAutocomplete, showCommandAutocomplete, onAutocompleteActiveChange]);
+  }, [
+    showFileAutocomplete,
+    showCommandAutocomplete,
+    onAutocompleteActiveChange,
+  ]);
 
   // Show file autocomplete when @ is present
   if (showFileAutocomplete) {
