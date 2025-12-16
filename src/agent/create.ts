@@ -7,14 +7,9 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  BlockResponse,
-  CreateBlock,
-} from "@letta-ai/letta-client/resources/blocks/blocks";
-import { settingsManager } from "../settings-manager";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
-import { getDefaultMemoryBlocks, isProjectBlock } from "./memory";
+import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
   getModelUpdateArgs,
@@ -38,7 +33,6 @@ export interface BlockProvenance {
  */
 export interface AgentProvenance {
   isNew: true;
-  freshBlocks: boolean;
   blocks: BlockProvenance[];
 }
 
@@ -55,7 +49,6 @@ export async function createAgent(
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
-  forceNewBlocks = false,
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
@@ -156,9 +149,6 @@ export async function createAgent(
       ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
       : defaultMemoryBlocks;
 
-  // Cache the formatted skills block value so we can update an existing block
-  let skillsBlockValue: string | undefined;
-
   // Resolve absolute path for skills directory
   const resolvedSkillsDirectory =
     skillsDirectory || join(process.cwd(), SKILLS_DIR);
@@ -180,7 +170,6 @@ export async function createAgent(
     if (skillsBlock) {
       const formatted = formatSkillsForMemory(skills, resolvedSkillsDirectory);
       skillsBlock.value = formatted;
-      skillsBlockValue = formatted;
     }
   } catch (error) {
     console.warn(
@@ -188,143 +177,24 @@ export async function createAgent(
     );
   }
 
-  // Load global shared memory blocks from user settings
-  const settings = settingsManager.getSettings();
-  const globalSharedBlockIds = settings.globalSharedBlockIds;
-
-  // Load project-local shared blocks from project settings
-  await settingsManager.loadProjectSettings();
-  const projectSettings = settingsManager.getProjectSettings();
-  const localSharedBlockIds = projectSettings.localSharedBlockIds;
-
-  // Retrieve existing blocks (both global and local) and match them with defaults
-  const existingBlocks = new Map<string, BlockResponse>();
-  // Track provenance: which blocks came from which source
+  // Track provenance: which blocks were created
+  // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
-  const globalBlockLabels = new Set<string>();
-  const projectBlockLabels = new Set<string>();
-
-  // Only load existing blocks if we're not forcing new blocks
-  if (!forceNewBlocks) {
-    // Load global blocks (persona, human)
-    for (const [label, blockId] of Object.entries(globalSharedBlockIds)) {
-      if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
-        continue;
-      }
-      try {
-        const block = await client.blocks.retrieve(blockId);
-        existingBlocks.set(label, block);
-        globalBlockLabels.add(label);
-      } catch {
-        // Block no longer exists, will create new one
-        console.warn(
-          `Global block ${label} (${blockId}) not found, will create new one`,
-        );
-      }
-    }
-
-    // Load local blocks (project, skills)
-    for (const [label, blockId] of Object.entries(localSharedBlockIds)) {
-      if (allowedBlockLabels && !allowedBlockLabels.has(label)) {
-        continue;
-      }
-      try {
-        const block = await client.blocks.retrieve(blockId);
-        existingBlocks.set(label, block);
-        projectBlockLabels.add(label);
-      } catch {
-        // Block no longer exists, will create new one
-        console.warn(
-          `Local block ${label} (${blockId}) not found, will create new one`,
-        );
-      }
-    }
-  }
-
-  // Separate blocks into existing (reuse) and new (create)
   const blockIds: string[] = [];
-  const blocksToCreate: Array<{ block: CreateBlock; label: string }> = [];
 
-  for (const defaultBlock of filteredMemoryBlocks) {
-    const existingBlock = existingBlocks.get(defaultBlock.label);
-    if (existingBlock?.id) {
-      // Reuse existing global/shared block, but refresh skills content if it changed
-      if (defaultBlock.label === "skills" && skillsBlockValue !== undefined) {
-        try {
-          await client.blocks.update(existingBlock.id, {
-            value: skillsBlockValue,
-          });
-        } catch (error) {
-          console.warn(
-            `Failed to update skills block ${existingBlock.id}:`,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
-      blockIds.push(existingBlock.id);
-      // Record provenance based on where it came from
-      if (globalBlockLabels.has(defaultBlock.label)) {
-        blockProvenance.push({ label: defaultBlock.label, source: "global" });
-      } else if (projectBlockLabels.has(defaultBlock.label)) {
-        blockProvenance.push({ label: defaultBlock.label, source: "project" });
-      }
-    } else {
-      // Need to create this block
-      blocksToCreate.push({
-        block: defaultBlock,
-        label: defaultBlock.label,
-      });
-    }
-  }
-
-  // Create new blocks and collect their IDs
-  const newGlobalBlockIds: Record<string, string> = {};
-  const newLocalBlockIds: Record<string, string> = {};
-
-  for (const { block, label } of blocksToCreate) {
+  // Create all blocks fresh for the new agent
+  for (const block of filteredMemoryBlocks) {
     try {
       const createdBlock = await client.blocks.create(block);
       if (!createdBlock.id) {
-        throw new Error(`Created block ${label} has no ID`);
+        throw new Error(`Created block ${block.label} has no ID`);
       }
       blockIds.push(createdBlock.id);
-
-      // Categorize based on block type defined in memory.ts
-      if (isProjectBlock(label)) {
-        newLocalBlockIds[label] = createdBlock.id;
-      } else {
-        newGlobalBlockIds[label] = createdBlock.id;
-      }
-
-      // Record as newly created
-      blockProvenance.push({ label, source: "new" });
+      blockProvenance.push({ label: block.label, source: "new" });
     } catch (error) {
-      console.error(`Failed to create block ${label}:`, error);
+      console.error(`Failed to create block ${block.label}:`, error);
       throw error;
     }
-  }
-
-  // Save newly created global block IDs to user settings
-  if (Object.keys(newGlobalBlockIds).length > 0) {
-    settingsManager.updateSettings({
-      globalSharedBlockIds: {
-        ...globalSharedBlockIds,
-        ...newGlobalBlockIds,
-      },
-    });
-  }
-
-  // Save newly created local block IDs to project settings
-  if (Object.keys(newLocalBlockIds).length > 0) {
-    settingsManager.updateProjectSettings(
-      {
-        localSharedBlockIds: {
-          ...localSharedBlockIds,
-          ...newLocalBlockIds,
-        },
-      },
-      process.cwd(),
-    );
   }
 
   // Get the model's context window from its configuration
@@ -368,8 +238,8 @@ export async function createAgent(
     include: ["agent.managed_group"],
   });
 
-  // Update persona block for sleeptime agent (only if persona was newly created, not shared)
-  if (enableSleeptime && newGlobalBlockIds.persona && fullAgent.managed_group) {
+  // Update persona block for sleeptime agent
+  if (enableSleeptime && fullAgent.managed_group) {
     // Find the sleeptime agent in the managed group by checking agent_type
     for (const groupAgentId of fullAgent.managed_group.agent_ids) {
       try {
@@ -396,7 +266,6 @@ export async function createAgent(
   // Build provenance info
   const provenance: AgentProvenance = {
     isNew: true,
-    freshBlocks: forceNewBlocks,
     blocks: blockProvenance,
   };
 

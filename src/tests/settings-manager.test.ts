@@ -45,7 +45,6 @@ describe("Settings Manager - Initialization", () => {
     // Settings should be accessible immediately after initialization
     const settings = settingsManager.getSettings();
     expect(settings).toBeDefined();
-    expect(settings.uiMode).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
     expect(settings.globalSharedBlockIds).toBeDefined();
     expect(typeof settings.globalSharedBlockIds).toBe("object");
@@ -55,7 +54,6 @@ describe("Settings Manager - Initialization", () => {
     // First initialize and set some settings
     await settingsManager.initialize();
     settingsManager.updateSettings({
-      uiMode: "rich",
       tokenStreaming: true,
       lastAgent: "agent-123",
     });
@@ -68,7 +66,6 @@ describe("Settings Manager - Initialization", () => {
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();
-    expect(settings.uiMode).toBe("rich");
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-123");
   });
@@ -110,35 +107,35 @@ describe("Settings Manager - Global Settings", () => {
   });
 
   test("Get specific setting", () => {
-    settingsManager.updateSettings({ uiMode: "rich" });
+    settingsManager.updateSettings({ tokenStreaming: true });
 
-    const uiMode = settingsManager.getSetting("uiMode");
-    expect(uiMode).toBe("rich");
+    const tokenStreaming = settingsManager.getSetting("tokenStreaming");
+    expect(tokenStreaming).toBe(true);
   });
 
   test("Update single setting", () => {
     // Verify initial state first
     const initialSettings = settingsManager.getSettings();
-    const initialUiMode = initialSettings.uiMode;
+    const initialLastAgent = initialSettings.lastAgent;
 
     settingsManager.updateSettings({ tokenStreaming: true });
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
-    expect(settings.uiMode).toBe(initialUiMode); // Other settings unchanged
+    expect(settings.lastAgent).toBe(initialLastAgent); // Other settings unchanged
   });
 
   test("Update multiple settings", () => {
     settingsManager.updateSettings({
-      uiMode: "rich",
       tokenStreaming: true,
       lastAgent: "agent-456",
+      enableSleeptime: true,
     });
 
     const settings = settingsManager.getSettings();
-    expect(settings.uiMode).toBe("rich");
     expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-456");
+    expect(settings.enableSleeptime).toBe(true);
   });
 
   test("Update global shared block IDs", () => {
@@ -187,7 +184,7 @@ describe("Settings Manager - Global Settings", () => {
 
   test("Settings persist to disk", async () => {
     settingsManager.updateSettings({
-      uiMode: "rich",
+      tokenStreaming: true,
       lastAgent: "agent-789",
     });
 
@@ -199,7 +196,7 @@ describe("Settings Manager - Global Settings", () => {
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();
-    expect(settings.uiMode).toBe("rich");
+    expect(settings.tokenStreaming).toBe(true);
     expect(settings.lastAgent).toBe("agent-789");
   });
 });
@@ -452,7 +449,7 @@ describe("Settings Manager - Reset", () => {
 
   test("Can reinitialize after reset", async () => {
     await settingsManager.initialize();
-    settingsManager.updateSettings({ uiMode: "rich" });
+    settingsManager.updateSettings({ tokenStreaming: true });
 
     // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -461,7 +458,7 @@ describe("Settings Manager - Reset", () => {
     await settingsManager.initialize();
 
     const settings = settingsManager.getSettings();
-    expect(settings.uiMode).toBe("rich");
+    expect(settings.tokenStreaming).toBe(true);
   });
 });
 
@@ -483,7 +480,6 @@ describe("Settings Manager - Edge Cases", () => {
 
     // Should have default values (not corrupt)
     expect(settings).toBeDefined();
-    expect(settings.uiMode).toBeDefined();
     expect(settings.tokenStreaming).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
   });
@@ -509,9 +505,9 @@ describe("Settings Manager - Edge Cases", () => {
     await settingsManager.initialize();
 
     settingsManager.updateSettings({
-      uiMode: "rich",
       tokenStreaming: true,
       lastAgent: "agent-1",
+      enableSleeptime: true,
     });
 
     // Partial update
@@ -520,8 +516,8 @@ describe("Settings Manager - Edge Cases", () => {
     });
 
     const settings = settingsManager.getSettings();
-    expect(settings.uiMode).toBe("rich"); // Preserved
     expect(settings.tokenStreaming).toBe(true); // Preserved
+    expect(settings.enableSleeptime).toBe(true); // Preserved
     expect(settings.lastAgent).toBe("agent-2"); // Updated
   });
 });

@@ -277,8 +277,9 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
     // Format tool denial errors more user-friendly
     if (isError && displayText.includes("request to call tool denied")) {
-      const match = displayText.match(/User reason: (.+)$/);
-      const reason = match ? match[1] : "(empty)";
+      // Use [\s\S]+ to match multiline reasons
+      const match = displayText.match(/User reason: ([\s\S]+)$/);
+      const reason = match?.[1]?.trim() || "(empty)";
       displayText = `User rejected the tool call with reason: ${reason}`;
     }
 

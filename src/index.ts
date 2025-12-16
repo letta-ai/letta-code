@@ -8,7 +8,7 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
-import { loadTools, upsertToolsToServer } from "./tools/manager";
+import { loadTools, upsertToolsIfNeeded } from "./tools/manager";
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -17,10 +17,8 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Auto-resume project agent (from .letta/settings.local.json)
-  letta --new           Create a new agent (reuses global persona/human blocks)
-  letta --fresh-blocks  Create a new agent with all new memory blocks
-  letta --continue      Resume global last agent (deprecated, use project-based)
+  letta                 Resume from profile or create new agent (shows selector)
+  letta --new           Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -32,11 +30,9 @@ USAGE
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
-  --new                 Create new agent (reuses global blocks like persona/human)
-  --fresh-blocks        Force create all new memory blocks (isolate from other agents)
+  --new                 Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
-  -c, --continue        Resume previous session (uses global lastAgent, deprecated)
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
   -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
@@ -46,31 +42,33 @@ OPTIONS
                         Default: text
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
-
+  --from-af <path>      Create agent from an AgentFile (.af) template
 
 BEHAVIOR
-  By default, letta auto-resumes the last agent used in the current directory
-  (stored in .letta/settings.local.json).
+  On startup, Letta Code checks for saved profiles:
+  - If profiles exist, you'll be prompted to select one or create a new agent
+  - Profiles can be "pinned" to specific projects for quick access
+  - Use /profile save <name> to bookmark your current agent
 
-  Memory blocks (persona, human, project, skills) are shared between agents:
-  - Global blocks (persona, human) are shared across all agents
-  - Local blocks (project, skills) are shared within the current directory
-
-  Use --new to create a new agent that reuses your global persona/human blocks.
-  Use --fresh-blocks to create a completely isolated agent with new blocks.
+  Profiles are stored in:
+  - Global: ~/.letta/settings.json (available everywhere)
+  - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
 
 EXAMPLES
   # when installed as an executable
-  letta                    # Auto-resume project agent or create new
-  letta --new              # New agent, keeps your persona/human blocks
-  letta --fresh-blocks     # New agent, all blocks fresh (full isolation)
-  letta --agent agent_123
+  letta                    # Show profile selector or create new
+  letta --new              # Create new agent directly
+  letta --agent agent_123  # Open specific agent
 
   # inside the interactive session
-  /logout               # Clear credentials and exit
+  /profile save MyAgent    # Save current agent as profile
+  /profiles                # Open profile selector
+  /pin                     # Pin current profile to project
+  /unpin                   # Unpin profile from project
+  /logout                  # Clear credentials and exit
 
   # headless with JSON output (includes stats)
   letta -p "hello" --output-format json
@@ -125,7 +123,6 @@ async function main() {
         version: { type: "boolean", short: "v" },
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
-        "fresh-blocks": { type: "boolean" },
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
@@ -144,6 +141,7 @@ async function main() {
         link: { type: "boolean" },
         unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
+        "from-af": { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -191,7 +189,6 @@ async function main() {
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
-  const freshBlocks = (values["fresh-blocks"] as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
@@ -200,6 +197,7 @@ async function main() {
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const fromAfFile = values["from-af"] as string | undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // --init-blocks only makes sense when creating a brand new agent
@@ -275,6 +273,30 @@ async function main() {
       console.error(
         `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${allValid.join(", ")}.`,
       );
+      process.exit(1);
+    }
+  }
+
+  // Validate --from-af flag
+  if (fromAfFile) {
+    if (specifiedAgentId) {
+      console.error("Error: --from-af cannot be used with --agent");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --from-af cannot be used with --continue");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --from-af cannot be used with --new");
+      process.exit(1);
+    }
+    // Verify file exists
+    const { resolve } = await import("node:path");
+    const { existsSync } = await import("node:fs");
+    const resolvedPath = resolve(fromAfFile);
+    if (!existsSync(resolvedPath)) {
+      console.error(`Error: AgentFile not found: ${resolvedPath}`);
       process.exit(1);
     }
   }
@@ -418,7 +440,7 @@ async function main() {
     );
     await loadTools(modelForTools);
     const client = await getClient();
-    await upsertToolsToServer(client);
+    await upsertToolsIfNeeded(client, baseURL);
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
@@ -435,7 +457,6 @@ async function main() {
   function LoadingApp({
     continueSession,
     forceNew,
-    freshBlocks,
     initBlocks,
     baseTools,
     agentIdArg,
@@ -443,10 +464,10 @@ async function main() {
     system,
     toolset,
     skillsDirectory,
+    fromAfFile,
   }: {
     continueSession: boolean;
     forceNew: boolean;
-    freshBlocks: boolean;
     initBlocks?: string[];
     baseTools?: string[];
     agentIdArg: string | null;
@@ -454,16 +475,19 @@ async function main() {
     system?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
+    fromAfFile?: string;
   }) {
     const [loadingState, setLoadingState] = useState<
+      | "selecting"
       | "assembling"
       | "upserting"
       | "linking"
       | "unlinking"
+      | "importing"
       | "initializing"
       | "checking"
       | "ready"
-    >("assembling");
+    >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
@@ -471,9 +495,21 @@ async function main() {
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
 
+    // Initialize on mount - no selector, just start immediately
     useEffect(() => {
-      async function init() {
+      async function checkAndStart() {
+        // Load settings
+        await settingsManager.loadLocalProjectSettings();
         setLoadingState("assembling");
+      }
+      checkAndStart();
+    }, []);
+
+    // Main initialization effect - runs after profile selection
+    useEffect(() => {
+      if (loadingState !== "assembling") return;
+
+      async function init() {
         const client = await getClient();
 
         // Determine which agent we'll be using (before loading tools)
@@ -489,10 +525,8 @@ async function main() {
           }
         }
 
-        // Priority 2: Skip resume if --new flag
+        // Priority 2: LRU from local settings (if not --new)
         if (!resumingAgentId && !forceNew) {
-          // Priority 3: Try project settings
-          await settingsManager.loadLocalProjectSettings();
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
@@ -500,11 +534,11 @@ async function main() {
               await client.agents.retrieve(localProjectSettings.lastAgent);
               resumingAgentId = localProjectSettings.lastAgent;
             } catch {
-              // Agent no longer exists
+              // Agent no longer exists, will create new
             }
           }
 
-          // Priority 4: Try global settings if --continue flag
+          // Priority 3: Try global settings if --continue flag
           if (!resumingAgentId && continueSession && settings.lastAgent) {
             try {
               await client.agents.retrieve(settings.lastAgent);
@@ -548,7 +582,7 @@ async function main() {
         }
 
         setLoadingState("upserting");
-        await upsertToolsToServer(client);
+        await upsertToolsIfNeeded(client, baseURL);
 
         // Handle --link/--unlink after upserting tools
         if (shouldLink || shouldUnlink) {
@@ -578,8 +612,24 @@ async function main() {
 
         let agent: AgentState | null = null;
 
-        // Priority 1: Try to use --agent specified ID
-        if (agentIdArg) {
+        // Priority 1: Import from AgentFile template
+        if (fromAfFile) {
+          setLoadingState("importing");
+          const { importAgentFromFile } = await import("./agent/import");
+          const result = await importAgentFromFile({
+            filePath: fromAfFile,
+            modelOverride: model,
+            stripMessages: true,
+          });
+          agent = result.agent;
+          setAgentProvenance({
+            isNew: true,
+            blocks: [],
+          });
+        }
+
+        // Priority 2: Try to use --agent specified ID
+        if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
             // console.log(`Using agent ${agentIdArg}...`);
@@ -595,18 +645,16 @@ async function main() {
           }
         }
 
-        // Priority 2: Check if --new flag was passed (skip all resume logic)
+        // Priority 3: Check if --new flag was passed - create new agent
         if (!agent && forceNew) {
-          // Create new agent (reuses global blocks unless --fresh-blocks passed)
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
             undefined,
             model,
             undefined,
             updateArgs,
-            freshBlocks, // Only create new blocks if --fresh-blocks passed
             skillsDirectory,
-            settings.parallelToolCalls,
+            true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
             initBlocks,
@@ -616,7 +664,7 @@ async function main() {
           setAgentProvenance(result.provenance);
         }
 
-        // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+        // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
         if (!agent) {
           await settingsManager.loadLocalProjectSettings();
           const localProjectSettings =
@@ -635,7 +683,7 @@ async function main() {
           }
         }
 
-        // Priority 4: Try to reuse global lastAgent if --continue flag is passed
+        // Priority 6: Try to reuse global lastAgent if --continue flag is passed
         if (!agent && continueSession && settings.lastAgent) {
           try {
             agent = await client.agents.retrieve(settings.lastAgent);
@@ -647,7 +695,7 @@ async function main() {
           }
         }
 
-        // Priority 5: Create a new agent
+        // Priority 7: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
@@ -655,9 +703,8 @@ async function main() {
             model,
             undefined,
             updateArgs,
-            false, // Don't force new blocks when auto-creating (reuse shared blocks)
             skillsDirectory,
-            settings.parallelToolCalls,
+            true, // parallelToolCalls always enabled
             sleeptimeFlag ?? settings.enableSleeptime,
             system,
             undefined,
@@ -719,11 +766,7 @@ async function main() {
         }
 
         // Check if we're resuming an existing agent
-        const localProjectSettings = settingsManager.getLocalProjectSettings();
-        const isResumingProject =
-          !forceNew &&
-          localProjectSettings?.lastAgent &&
-          agent.id === localProjectSettings.lastAgent;
+        const isResumingProject = !forceNew && !!resumingAgentId;
         const resuming = !!(continueSession || agentIdArg || isResumingProject);
         setIsResumingSession(resuming);
 
@@ -740,12 +783,24 @@ async function main() {
       }
 
       init();
-    }, [continueSession, forceNew, freshBlocks, agentIdArg, model, system]);
+    }, [
+      continueSession,
+      forceNew,
+      agentIdArg,
+      model,
+      system,
+      fromAfFile,
+      loadingState,
+    ]);
+
+    // Profile selector is no longer shown at startup
+    // Users can access it via /pinned or /agents commands
 
     if (!agentId) {
       return React.createElement(App, {
         agentId: "loading",
-        loadingState,
+        loadingState:
+          loadingState === "selecting" ? "assembling" : loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? [],
@@ -758,7 +813,7 @@ async function main() {
     return React.createElement(App, {
       agentId,
       agentState,
-      loadingState,
+      loadingState: loadingState === "selecting" ? "assembling" : loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? [],
@@ -772,7 +827,6 @@ async function main() {
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,
       forceNew: forceNew,
-      freshBlocks: freshBlocks,
       initBlocks: initBlocks,
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
@@ -780,6 +834,7 @@ async function main() {
       system: specifiedSystem,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
+      fromAfFile: fromAfFile,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard

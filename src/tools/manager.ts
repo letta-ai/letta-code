@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type Letta from "@letta-ai/letta-client";
 import {
   AuthenticationError,
@@ -648,6 +649,58 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
   }
 
   await attemptUpsert();
+}
+
+/**
+ * Compute a hash of all currently loaded tools for cache invalidation.
+ * Includes tool names and schemas to detect any changes.
+ */
+export function computeToolsHash(): string {
+  const toolData = Array.from(toolRegistry.entries())
+    .sort(([a], [b]) => a.localeCompare(b)) // deterministic order
+    .map(([name, tool]) => ({
+      name,
+      serverName: getServerToolName(name),
+      schema: tool.schema,
+    }));
+
+  return createHash("sha256")
+    .update(JSON.stringify(toolData))
+    .digest("hex")
+    .slice(0, 16); // short hash is sufficient
+}
+
+/**
+ * Upserts tools only if the tool definitions have changed since last upsert.
+ * Uses a hash of loaded tools cached in settings to skip redundant upserts.
+ *
+ * @param client - Letta client instance
+ * @param serverUrl - The server URL (used as cache key)
+ * @returns true if upsert was performed, false if skipped
+ */
+export async function upsertToolsIfNeeded(
+  client: Letta,
+  serverUrl: string,
+): Promise<boolean> {
+  const currentHash = computeToolsHash();
+
+  const { settingsManager } = await import("../settings-manager");
+  const cachedHashes = settingsManager.getSetting("toolUpsertHashes") || {};
+
+  if (cachedHashes[serverUrl] === currentHash) {
+    // Tools unchanged, skip upsert
+    return false;
+  }
+
+  // Perform upsert
+  await upsertToolsToServer(client);
+
+  // Save new hash
+  settingsManager.updateSettings({
+    toolUpsertHashes: { ...cachedHashes, [serverUrl]: currentHash },
+  });
+
+  return true;
 }
 
 /**

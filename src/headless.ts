@@ -66,6 +66,7 @@ export async function handleHeadlessCommand(
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
+      "from-af": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -108,6 +109,23 @@ export async function handleHeadlessCommand(
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const fromAfFile = values["from-af"] as string | undefined;
+
+  // Validate --from-af flag
+  if (fromAfFile) {
+    if (specifiedAgentId) {
+      console.error("Error: --from-af cannot be used with --agent");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --from-af cannot be used with --continue");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --from-af cannot be used with --new");
+      process.exit(1);
+    }
+  }
 
   if (initBlocksRaw && !forceNew) {
     console.error(
@@ -149,8 +167,19 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 1: Try to use --agent specified ID
-  if (specifiedAgentId) {
+  // Priority 1: Import from AgentFile template
+  if (fromAfFile) {
+    const { importAgentFromFile } = await import("./agent/import");
+    const result = await importAgentFromFile({
+      filePath: fromAfFile,
+      modelOverride: model,
+      stripMessages: true,
+    });
+    agent = result.agent;
+  }
+
+  // Priority 2: Try to use --agent specified ID
+  if (!agent && specifiedAgentId) {
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
     } catch (_error) {
@@ -158,7 +187,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 2: Check if --new flag was passed (skip all resume logic)
+  // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     const result = await createAgent(
@@ -166,9 +195,8 @@ export async function handleHeadlessCommand(
       model,
       undefined,
       updateArgs,
-      forceNew,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       initBlocks,
@@ -177,7 +205,7 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+  // Priority 4: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
     const localProjectSettings = settingsManager.getLocalProjectSettings();
@@ -192,7 +220,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 4: Try to reuse global lastAgent if --continue flag is passed
+  // Priority 5: Try to reuse global lastAgent if --continue flag is passed
   if (!agent && shouldContinue && settings.lastAgent) {
     try {
       agent = await client.agents.retrieve(settings.lastAgent);
@@ -203,7 +231,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 5: Create a new agent
+  // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
     const result = await createAgent(
@@ -211,9 +239,8 @@ export async function handleHeadlessCommand(
       model,
       undefined,
       updateArgs,
-      false,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       undefined,

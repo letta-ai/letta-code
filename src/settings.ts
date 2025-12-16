@@ -6,10 +6,7 @@ import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 
-export type UIMode = "simple" | "rich";
-
 export interface Settings {
-  uiMode: UIMode;
   lastAgent: string | null;
   tokenStreaming: boolean;
   globalSharedBlockIds: Record<string, string>; // label -> blockId mapping (persona, human; style moved to project settings)
@@ -23,7 +20,6 @@ export interface ProjectSettings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  uiMode: "simple",
   lastAgent: null,
   tokenStreaming: false,
   globalSharedBlockIds: {},
