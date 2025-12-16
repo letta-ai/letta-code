@@ -1,4 +1,5 @@
 import { Box } from "ink";
+import { useEffect } from "react";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
@@ -30,8 +31,19 @@ export function InputAssist({
   agentName,
   serverUrl,
 }: InputAssistProps) {
+  const showFileAutocomplete = currentInput.includes("@");
+  const showCommandAutocomplete =
+    !showFileAutocomplete && currentInput.startsWith("/");
+
+  // Reset active state when no autocomplete is being shown
+  useEffect(() => {
+    if (!showFileAutocomplete && !showCommandAutocomplete) {
+      onAutocompleteActiveChange(false);
+    }
+  }, [showFileAutocomplete, showCommandAutocomplete, onAutocompleteActiveChange]);
+
   // Show file autocomplete when @ is present
-  if (currentInput.includes("@")) {
+  if (showFileAutocomplete) {
     return (
       <FileAutocomplete
         currentInput={currentInput}
@@ -43,7 +55,7 @@ export function InputAssist({
   }
 
   // Show slash command autocomplete when input starts with /
-  if (currentInput.startsWith("/")) {
+  if (showCommandAutocomplete) {
     return (
       <Box flexDirection="column">
         <SlashCommandAutocomplete
