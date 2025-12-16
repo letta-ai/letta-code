@@ -763,7 +763,8 @@ async function main() {
         // 3. We're reusing a project agent (detected early as resumingAgentId)
         // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !forceNew && !!resumingAgentId;
-        const isReusingExistingAgent = !forceNew && !fromAfFile && agent && agent.id;
+        const isReusingExistingAgent =
+          !forceNew && !fromAfFile && agent && agent.id;
         const resuming = !!(
           continueSession ||
           agentIdArg ||
