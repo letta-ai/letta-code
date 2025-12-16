@@ -333,6 +333,22 @@ export function PasteAwareTextInput({
   }, [internal_eventEmitter]);
 
   const handleChange = (newValue: string) => {
+    // Drop lone escape characters that Ink's text input would otherwise insert;
+    // they are used as control keys for double-escape handling and should not
+    // mutate the input value.
+    const sanitizedValue = newValue.replaceAll("\u001b", "");
+    if (sanitizedValue !== newValue) {
+      // Keep caret in bounds after stripping control chars
+      const nextCaret = Math.min(caretOffsetRef.current, sanitizedValue.length);
+      setNudgeCursorOffset(nextCaret);
+      caretOffsetRef.current = nextCaret;
+      newValue = sanitizedValue;
+      // If nothing actually changed after stripping, bail out early
+      if (sanitizedValue === displayValue) {
+        return;
+      }
+    }
+
     // Heuristic: detect large additions that look like pastes
     const addedLen = newValue.length - displayValue.length;
     const lineDelta = countLines(newValue) - countLines(displayValue);
