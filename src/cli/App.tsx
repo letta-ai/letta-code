@@ -420,7 +420,7 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(),
+    getRandomThinkingMessage(agentName),
   );
 
   // Session stats tracking
@@ -1102,7 +1102,7 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage());
+              setThinkingMessage(getRandomThinkingMessage(agentName));
               refreshDerived();
 
               await processConversation([
@@ -2471,7 +2471,7 @@ ${recentCommits}
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       // Show streaming state immediately for responsiveness
       setStreaming(true);
       refreshDerived();
@@ -2747,7 +2747,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -2898,7 +2898,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage());
+          setThinkingMessage(getRandomThinkingMessage(agentName));
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -3277,7 +3277,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const decision = {
@@ -3386,7 +3386,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       refreshDerived();
 
       const decision = {
@@ -3452,7 +3452,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage());
+    setThinkingMessage(getRandomThinkingMessage(agentName));
     refreshDerived();
 
     const decision = {
