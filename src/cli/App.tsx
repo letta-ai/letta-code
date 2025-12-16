@@ -14,6 +14,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
+import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { setCurrentAgentId } from "../agent/context";
@@ -276,6 +277,11 @@ export default function App({
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
+  // Warm the model-access cache in the background so /model is fast on first open.
+  useEffect(() => {
+    prefetchAvailableModelHandles();
+  }, []);
+
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
