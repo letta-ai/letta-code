@@ -14,6 +14,10 @@ export interface AutocompleteProps {
   onSelect?: (value: string) => void;
   /** Callback when autocomplete active state changes */
   onActiveChange?: (isActive: boolean) => void;
+  /** Current agent ID for context-sensitive command filtering */
+  agentId?: string;
+  /** Working directory for local pin status checking */
+  workingDirectory?: string;
 }
 
 /**
