@@ -1,8 +1,9 @@
 // Import useInput from vendored Ink for bracketed paste support
+
+import { stdin } from "node:process";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
-import { stdin } from "process";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
