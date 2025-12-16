@@ -1264,7 +1264,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled],
+    [appendError, refreshDerived, refreshDerivedThrottled, agentName],
   );
 
   const handleExit = useCallback(() => {
@@ -2784,6 +2784,7 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
+      agentName,
     ],
   );
 
@@ -2919,6 +2920,7 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
+      agentName,
     ],
   );
 
@@ -3305,6 +3307,7 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
+      agentName,
     ],
   );
 
@@ -3402,7 +3405,13 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      agentName,
+    ],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -3467,7 +3476,13 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
+  }, [
+    pendingApprovals,
+    approvalResults,
+    sendAllResults,
+    refreshDerived,
+    agentName,
+  ]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
