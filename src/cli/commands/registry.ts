@@ -18,6 +18,7 @@ export const commands: Record<string, Command> = {
   },
   "/stream": {
     desc: "Toggle token streaming on/off",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx for live toggling
       return "Toggling token streaming...";
