@@ -14,11 +14,6 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
-On Arch Linux, the package can be installed via the [AUR](https://aur.archlinux.org/packages/letta-code):
-```bash
-yay -S letta-code # letta-code-git
-```
-
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
 > [!NOTE]
@@ -55,6 +50,12 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 ```
 
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
+
+Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
+```bash
+yay -S letta-code # release
+yay -S letta-code-git # nightly
+```
 
 ---
 
