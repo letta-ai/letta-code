@@ -757,9 +757,54 @@ async function main() {
         }
 
         // Check if we're resuming an existing agent
+        // We're resuming if:
+        // 1. We specified an agent ID via --agent flag (agentIdArg)
+        // 2. We used --continue flag (continueSession)
+        // 3. We're reusing a project agent (detected early as resumingAgentId)
+        // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !forceNew && !!resumingAgentId;
-        const resuming = !!(continueSession || agentIdArg || isResumingProject);
+        const isReusingExistingAgent = !forceNew && !fromAfFile && agent && agent.id;
+        const resuming = !!(
+          continueSession ||
+          agentIdArg ||
+          isResumingProject ||
+          isReusingExistingAgent
+        );
         setIsResumingSession(resuming);
+
+        // If resuming and a model or system prompt was specified, apply those changes
+        if (resuming && (model || system)) {
+          if (model) {
+            const { updateAgentLLMConfig } = await import("./agent/modify");
+            const { getModelUpdateArgs, resolveModel } = await import(
+              "./agent/model"
+            );
+            const modelHandle = resolveModel(model);
+            if (!modelHandle) {
+              console.error(`Error: Invalid model "${model}"`);
+              process.exit(1);
+            }
+            const updateArgs = getModelUpdateArgs(model);
+            await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+            // Refresh agent state after model update
+            agent = await client.agents.retrieve(agent.id);
+          }
+
+          if (system) {
+            const { updateAgentSystemPrompt } = await import("./agent/modify");
+            const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+            const systemPromptOption = SYSTEM_PROMPTS.find(
+              (p) => p.id === system,
+            );
+            if (!systemPromptOption) {
+              console.error(`Error: Invalid system prompt "${system}"`);
+              process.exit(1);
+            }
+            await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
+            // Refresh agent state after system prompt update
+            agent = await client.agents.retrieve(agent.id);
+          }
+        }
 
         // Get resume data (pending approval + message history) if resuming
         if (resuming) {
