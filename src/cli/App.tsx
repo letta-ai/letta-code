@@ -411,6 +411,17 @@ export default function App({
   // Profile selector state
   const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
 
+  // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
+  const anySelectorOpen =
+    modelSelectorOpen ||
+    toolsetSelectorOpen ||
+    systemPromptSelectorOpen ||
+    agentSelectorOpen ||
+    resumeSelectorOpen ||
+    profileSelectorOpen ||
+    messageSearchOpen ||
+    subagentManagerOpen;
+
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
@@ -1370,9 +1381,10 @@ export default function App({
 
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
+      // Close selector immediately
       setAgentSelectorOpen(false);
 
-      // Skip if already on this agent
+      // Skip if already on this agent (no async work needed, queue can proceed)
       if (targetAgentId === agentId) {
         const label = agentName || targetAgentId.slice(0, 12);
         const cmdId = uid("cmd");
@@ -1389,9 +1401,10 @@ export default function App({
         return;
       }
 
-      const inputCmd = "/pinned";
-
+      // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
+
+      const inputCmd = "/pinned";
 
       try {
         const client = await getClient();
@@ -2612,6 +2625,7 @@ ${recentCommits}
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
+      !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current // Don't dequeue if user just cancelled
     ) {
@@ -2628,6 +2642,7 @@ ${recentCommits}
     pendingApprovals,
     commandRunning,
     isExecutingTool,
+    anySelectorOpen,
   ]);
 
   // Helper to send all approval results when done
@@ -2952,7 +2967,10 @@ ${recentCommits}
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
+      // Close selector and lock input together (before any await) to prevent
+      // queue processing between selector close and commandRunning being set
       setModelSelectorOpen(false);
+      setCommandRunning(true);
 
       // Declare cmdId outside try block so it's accessible in catch
       let cmdId: string | null = null;
@@ -2989,9 +3007,6 @@ ${recentCommits}
         });
         buffersRef.current.order.push(cmdId);
         refreshDerived();
-
-        // Lock input during async operation
-        setCommandRunning(true);
 
         // Update the agent with new model and config args
         const { updateAgentLLMConfig } = await import("../agent/modify");
@@ -3078,7 +3093,10 @@ ${recentCommits}
 
   const handleSystemPromptSelect = useCallback(
     async (promptId: string) => {
+      // Close selector and lock input together (before any await) to prevent
+      // queue processing between selector close and commandRunning being set
       setSystemPromptSelectorOpen(false);
+      setCommandRunning(true);
 
       const cmdId = uid("cmd");
 
@@ -3111,9 +3129,6 @@ ${recentCommits}
         });
         buffersRef.current.order.push(cmdId);
         refreshDerived();
-
-        // Lock input during async operation
-        setCommandRunning(true);
 
         // Update the agent's system prompt
         const { updateAgentSystemPrompt } = await import("../agent/modify");
@@ -3171,7 +3186,10 @@ ${recentCommits}
         | "gemini_snake"
         | "none",
     ) => {
+      // Close selector and lock input together (before any await) to prevent
+      // queue processing between selector close and commandRunning being set
       setToolsetSelectorOpen(false);
+      setCommandRunning(true);
 
       const cmdId = uid("cmd");
 
@@ -3186,9 +3204,6 @@ ${recentCommits}
         });
         buffersRef.current.order.push(cmdId);
         refreshDerived();
-
-        // Lock input during async operation
-        setCommandRunning(true);
 
         // Force switch to the selected toolset
         const { forceToolsetSwitch } = await import("../tools/toolset");
@@ -3680,13 +3695,7 @@ Plan file path: ${planFilePath}`;
               visible={
                 !showExitStats &&
                 pendingApprovals.length === 0 &&
-                !modelSelectorOpen &&
-                !toolsetSelectorOpen &&
-                !systemPromptSelectorOpen &&
-                !agentSelectorOpen &&
-                !resumeSelectorOpen &&
-                !profileSelectorOpen &&
-                !messageSearchOpen
+                !anySelectorOpen
               }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
