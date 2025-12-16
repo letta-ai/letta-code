@@ -13,6 +13,12 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 ```bash
 npm install -g @letta-ai/letta-code
 ```
+
+On Arch Linux, the package can be installed via the [AUR](https://aur.archlinux.org/packages/letta-code):
+```bash
+yay -S letta-code # letta-code-git
+```
+
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
 > [!NOTE]
