@@ -94,6 +94,7 @@ import {
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
+import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
@@ -321,27 +322,26 @@ export default function App({
   }, [agentId]);
 
   // Whether a stream is in flight (disables input)
-  const [streaming, setStreamingState] = useState(false);
-  const streamingRef = useRef(false);
-  // Wrapper to keep ref and global flag in sync with state
-  const setStreaming = useCallback((value: boolean) => {
-    streamingRef.current = value;
-    if (value) globalAgentBusy = true;
-    setStreamingState(value);
-  }, []);
+  // Uses synced state to keep ref and global flag in sync
+  const [streaming, setStreaming, streamingRef] = useSyncedState(false, {
+    onTrue: () => {
+      globalAgentBusy = true;
+    },
+  });
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
-  const [commandRunning, setCommandRunningState] = useState(false);
-  const commandRunningRef = useRef(false);
-  // Wrapper to keep ref and global flag in sync with state
-  const setCommandRunning = useCallback((value: boolean) => {
-    commandRunningRef.current = value;
-    if (value) globalAgentBusy = true;
-    setCommandRunningState(value);
-  }, []);
+  // Uses synced state to keep ref and global flag in sync
+  const [commandRunning, setCommandRunning, commandRunningRef] = useSyncedState(
+    false,
+    {
+      onTrue: () => {
+        globalAgentBusy = true;
+      },
+    },
+  );
 
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
@@ -401,6 +401,7 @@ export default function App({
     | "subagent"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -475,6 +476,34 @@ export default function App({
   useEffect(() => {
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
+
+  // Helper to check if agent is busy (streaming, executing tool, or running command)
+  // Uses globalAgentBusy (module-level flag) as primary check since it's outside React closures.
+  // Also checks refs and state as backups.
+  const isAgentBusy = useCallback(() => {
+    return (
+      globalAgentBusy ||
+      streamingRef.current ||
+      isExecutingTool ||
+      commandRunningRef.current ||
+      abortControllerRef.current !== null
+    );
+  }, [isExecutingTool, streamingRef, commandRunningRef]);
+
+  // Helper to wrap async handlers that need to close overlay and lock input
+  // Closes overlay and sets commandRunning before executing, releases lock in finally
+  const withCommandLock = useCallback(
+    async (asyncFn: () => Promise<void>) => {
+      setActiveOverlay(null);
+      setCommandRunning(true);
+      try {
+        await asyncFn();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [setCommandRunning],
+  );
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -1281,7 +1310,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled],
+    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
   );
 
   const handleExit = useCallback(() => {
@@ -1378,6 +1407,7 @@ export default function App({
     appendError,
     isExecutingTool,
     refreshDerived,
+    setStreaming,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
@@ -1506,7 +1536,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId, agentName],
+    [refreshDerived, agentId, agentName, setCommandRunning],
   );
 
   const onSubmit = useCallback(
@@ -1552,21 +1582,13 @@ export default function App({
 
       // Queue message if agent is busy (streaming, executing tool, or running command)
       // This allows messages to queue up while agent is working
-      // Use globalAgentBusy (module-level flag) as primary check since it's outside React closures.
-      // Also check refs and state as backups.
-      const agentBusy =
-        globalAgentBusy ||
-        streamingRef.current ||
-        isExecutingTool ||
-        commandRunningRef.current ||
-        abortControllerRef.current !== null;
 
       // Reset cancellation flag before queue check - this ensures queued messages
       // can be dequeued even if the user just cancelled. The dequeue effect checks
       // userCancelledRef.current, so we must clear it here to prevent blocking.
       userCancelledRef.current = false;
 
-      if (agentBusy) {
+      if (isAgentBusy()) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
@@ -2644,6 +2666,7 @@ ${recentCommits}
       profileConfirmPending,
       handleAgentSelect,
       tokenStreamingEnabled,
+      isAgentBusy,
     ],
   );
 
@@ -3002,212 +3025,202 @@ ${recentCommits}
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
-      // Close selector and lock input together (before any await) to prevent
-      // queue processing between selector close and commandRunning being set
-      setActiveOverlay(null);
-      setCommandRunning(true);
+      await withCommandLock(async () => {
+        // Declare cmdId outside try block so it's accessible in catch
+        let cmdId: string | null = null;
 
-      // Declare cmdId outside try block so it's accessible in catch
-      let cmdId: string | null = null;
+        try {
+          // Find the selected model from models.json first (for loading message)
+          const { models } = await import("../agent/model");
+          const selectedModel = models.find((m) => m.id === modelId);
 
-      try {
-        // Find the selected model from models.json first (for loading message)
-        const { models } = await import("../agent/model");
-        const selectedModel = models.find((m) => m.id === modelId);
+          if (!selectedModel) {
+            // Create a failed command in the transcript
+            cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/model ${modelId}`,
+              output: `Model not found: ${modelId}`,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return;
+          }
 
-        if (!selectedModel) {
-          // Create a failed command in the transcript
+          // Immediately add command to transcript with "running" phase and loading message
           cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Model not found: ${modelId}`,
-            phase: "finished",
-            success: false,
+            output: `Switching model to ${selectedModel.label}...`,
+            phase: "running",
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
-        }
 
-        // Immediately add command to transcript with "running" phase and loading message
-        cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/model ${modelId}`,
-          output: `Switching model to ${selectedModel.label}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Update the agent with new model and config args
+          const { updateAgentLLMConfig } = await import("../agent/modify");
 
-        // Update the agent with new model and config args
-        const { updateAgentLLMConfig } = await import("../agent/modify");
-
-        const updatedConfig = await updateAgentLLMConfig(
-          agentId,
-          selectedModel.handle,
-          selectedModel.updateArgs,
-        );
-        setLlmConfig(updatedConfig);
-
-        // After switching models, only switch toolset if it actually changes
-        const { isOpenAIModel, isGeminiModel } = await import(
-          "../tools/manager"
-        );
-        const targetToolset:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none" = isOpenAIModel(selectedModel.handle ?? "")
-          ? "codex"
-          : isGeminiModel(selectedModel.handle ?? "")
-            ? "gemini"
-            : "default";
-
-        let toolsetName:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none"
-          | null = null;
-        if (currentToolset !== targetToolset) {
-          const { switchToolsetForModel } = await import("../tools/toolset");
-          toolsetName = await switchToolsetForModel(
-            selectedModel.handle ?? "",
+          const updatedConfig = await updateAgentLLMConfig(
             agentId,
+            selectedModel.handle,
+            selectedModel.updateArgs,
           );
-          setCurrentToolset(toolsetName);
-        }
+          setLlmConfig(updatedConfig);
 
-        // Update the same command with final result (include toolset info only if changed)
-        const autoToolsetLine = toolsetName
-          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
-          : null;
-        const outputLines = [
-          `Switched to ${selectedModel.label}`,
-          ...(autoToolsetLine ? [autoToolsetLine] : []),
-        ].join("\n");
+          // After switching models, only switch toolset if it actually changes
+          const { isOpenAIModel, isGeminiModel } = await import(
+            "../tools/manager"
+          );
+          const targetToolset:
+            | "codex"
+            | "codex_snake"
+            | "default"
+            | "gemini"
+            | "gemini_snake"
+            | "none" = isOpenAIModel(selectedModel.handle ?? "")
+            ? "codex"
+            : isGeminiModel(selectedModel.handle ?? "")
+              ? "gemini"
+              : "default";
 
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/model ${modelId}`,
-          output: outputLines,
-          phase: "finished",
-          success: true,
-        });
-        refreshDerived();
-      } catch (error) {
-        // Mark command as failed (only if cmdId was created)
-        const errorDetails = formatErrorDetails(error, agentId);
-        if (cmdId) {
+          let toolsetName:
+            | "codex"
+            | "codex_snake"
+            | "default"
+            | "gemini"
+            | "gemini_snake"
+            | "none"
+            | null = null;
+          if (currentToolset !== targetToolset) {
+            const { switchToolsetForModel } = await import("../tools/toolset");
+            toolsetName = await switchToolsetForModel(
+              selectedModel.handle ?? "",
+              agentId,
+            );
+            setCurrentToolset(toolsetName);
+          }
+
+          // Update the same command with final result (include toolset info only if changed)
+          const autoToolsetLine = toolsetName
+            ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
+            : null;
+          const outputLines = [
+            `Switched to ${selectedModel.label}`,
+            ...(autoToolsetLine ? [autoToolsetLine] : []),
+          ].join("\n");
+
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Failed to switch model: ${errorDetails}`,
+            output: outputLines,
             phase: "finished",
-            success: false,
+            success: true,
           });
           refreshDerived();
+        } catch (error) {
+          // Mark command as failed (only if cmdId was created)
+          const errorDetails = formatErrorDetails(error, agentId);
+          if (cmdId) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/model ${modelId}`,
+              output: `Failed to switch model: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          }
         }
-      } finally {
-        setCommandRunning(false);
-      }
+      });
     },
-    [agentId, refreshDerived, currentToolset],
+    [agentId, refreshDerived, currentToolset, withCommandLock],
   );
 
   const handleSystemPromptSelect = useCallback(
     async (promptId: string) => {
-      // Close selector and lock input together (before any await) to prevent
-      // queue processing between selector close and commandRunning being set
-      setActiveOverlay(null);
-      setCommandRunning(true);
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
 
-      const cmdId = uid("cmd");
+        try {
+          // Find the selected prompt
+          const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+          const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
 
-      try {
-        // Find the selected prompt
-        const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
-        const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
+          if (!selectedPrompt) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: `System prompt not found: ${promptId}`,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return;
+          }
 
-        if (!selectedPrompt) {
+          // Immediately add command to transcript with "running" phase
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/system ${promptId}`,
-            output: `System prompt not found: ${promptId}`,
-            phase: "finished",
-            success: false,
+            output: `Switching system prompt to ${selectedPrompt.label}...`,
+            phase: "running",
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
-        }
 
-        // Immediately add command to transcript with "running" phase
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/system ${promptId}`,
-          output: `Switching system prompt to ${selectedPrompt.label}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Update the agent's system prompt
+          const { updateAgentSystemPrompt } = await import("../agent/modify");
+          const result = await updateAgentSystemPrompt(
+            agentId,
+            selectedPrompt.content,
+          );
 
-        // Update the agent's system prompt
-        const { updateAgentSystemPrompt } = await import("../agent/modify");
-        const result = await updateAgentSystemPrompt(
-          agentId,
-          selectedPrompt.content,
-        );
-
-        if (result.success) {
-          setCurrentSystemPromptId(promptId);
+          if (result.success) {
+            setCurrentSystemPromptId(promptId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: `Switched system prompt to ${selectedPrompt.label}`,
+              phase: "finished",
+              success: true,
+            });
+          } else {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: result.message,
+              phase: "finished",
+              success: false,
+            });
+          }
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/system ${promptId}`,
-            output: `Switched system prompt to ${selectedPrompt.label}`,
-            phase: "finished",
-            success: true,
-          });
-        } else {
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/system ${promptId}`,
-            output: result.message,
+            output: `Failed to switch system prompt: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
+          refreshDerived();
         }
-        refreshDerived();
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/system ${promptId}`,
-          output: `Failed to switch system prompt: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
-      } finally {
-        setCommandRunning(false);
-      }
+      });
     },
-    [agentId, refreshDerived],
+    [agentId, refreshDerived, withCommandLock],
   );
 
   const handleToolsetSelect = useCallback(
@@ -3220,56 +3233,51 @@ ${recentCommits}
         | "gemini_snake"
         | "none",
     ) => {
-      // Close selector and lock input together (before any await) to prevent
-      // queue processing between selector close and commandRunning being set
-      setActiveOverlay(null);
-      setCommandRunning(true);
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
 
-      const cmdId = uid("cmd");
+        try {
+          // Immediately add command to transcript with "running" phase
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Switching toolset to ${toolsetId}...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
 
-      try {
-        // Immediately add command to transcript with "running" phase
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Switching toolset to ${toolsetId}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Force switch to the selected toolset
+          const { forceToolsetSwitch } = await import("../tools/toolset");
+          await forceToolsetSwitch(toolsetId, agentId);
+          setCurrentToolset(toolsetId);
 
-        // Force switch to the selected toolset
-        const { forceToolsetSwitch } = await import("../tools/toolset");
-        await forceToolsetSwitch(toolsetId, agentId);
-        setCurrentToolset(toolsetId);
-
-        // Update the command with final result
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Switched toolset to ${toolsetId}`,
-          phase: "finished",
-          success: true,
-        });
-        refreshDerived();
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Failed to switch toolset: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
-      } finally {
-        setCommandRunning(false);
-      }
+          // Update the command with final result
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Switched toolset to ${toolsetId}`,
+            phase: "finished",
+            success: true,
+          });
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Failed to switch toolset: ${errorDetails}`,
+            phase: "finished",
+            success: false,
+          });
+          refreshDerived();
+        }
+      });
     },
-    [agentId, refreshDerived],
+    [agentId, refreshDerived, withCommandLock],
   );
 
   // Handle escape when profile confirmation is pending
@@ -3761,7 +3769,7 @@ Plan file path: ${planFilePath}`;
                 }
                 currentEnableReasoner={llmConfig?.enable_reasoner}
                 onSelect={handleModelSelect}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -3770,7 +3778,7 @@ Plan file path: ${planFilePath}`;
               <ToolsetSelector
                 currentToolset={currentToolset ?? undefined}
                 onSelect={handleToolsetSelect}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -3779,7 +3787,7 @@ Plan file path: ${planFilePath}`;
               <SystemPromptSelector
                 currentPromptId={currentSystemPromptId ?? undefined}
                 onSelect={handleSystemPromptSelect}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -3788,13 +3796,13 @@ Plan file path: ${planFilePath}`;
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={handleAgentSelect}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Subagent Manager - for managing custom subagents */}
             {activeOverlay === "subagent" && (
-              <SubagentManager onClose={() => setActiveOverlay(null)} />
+              <SubagentManager onClose={closeOverlay} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}
@@ -3802,10 +3810,10 @@ Plan file path: ${planFilePath}`;
               <ResumeSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setActiveOverlay(null);
+                  closeOverlay();
                   await handleAgentSelect(id);
                 }}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
@@ -3814,11 +3822,11 @@ Plan file path: ${planFilePath}`;
               <ProfileSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setActiveOverlay(null);
+                  closeOverlay();
                   await handleAgentSelect(id);
                 }}
                 onUnpin={(unpinAgentId) => {
-                  setActiveOverlay(null);
+                  closeOverlay();
                   settingsManager.unpinBoth(unpinAgentId);
                   const cmdId = uid("cmd");
                   buffersRef.current.byId.set(cmdId, {
@@ -3832,13 +3840,13 @@ Plan file path: ${planFilePath}`;
                   buffersRef.current.order.push(cmdId);
                   refreshDerived();
                 }}
-                onCancel={() => setActiveOverlay(null)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
-              <MessageSearch onClose={() => setActiveOverlay(null)} />
+              <MessageSearch onClose={closeOverlay} />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
