@@ -109,6 +109,10 @@ const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
 const EAGER_CANCEL = true;
 
+// Module-level flag to track if agent is busy (streaming or running a command)
+// This is outside of React's closure system to ensure reliable checks across async operations
+let globalAgentBusy = false;
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -317,13 +321,27 @@ export default function App({
   }, [agentId]);
 
   // Whether a stream is in flight (disables input)
-  const [streaming, setStreaming] = useState(false);
+  const [streaming, setStreamingState] = useState(false);
+  const streamingRef = useRef(false);
+  // Wrapper to keep ref and global flag in sync with state
+  const setStreaming = useCallback((value: boolean) => {
+    streamingRef.current = value;
+    if (value) globalAgentBusy = true;
+    setStreamingState(value);
+  }, []);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
-  const [commandRunning, setCommandRunning] = useState(false);
+  const [commandRunning, setCommandRunningState] = useState(false);
+  const commandRunningRef = useRef(false);
+  // Wrapper to keep ref and global flag in sync with state
+  const setCommandRunning = useCallback((value: boolean) => {
+    commandRunningRef.current = value;
+    if (value) globalAgentBusy = true;
+    setCommandRunningState(value);
+  }, []);
 
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
@@ -1329,6 +1347,14 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
+      // Reset cancellation flag after cleanup is complete.
+      // This allows the dequeue effect to process any queued messages.
+      // We use setTimeout to ensure React state updates (setStreaming, etc.)
+      // have been processed before the dequeue effect runs.
+      setTimeout(() => {
+        userCancelledRef.current = false;
+      }, 0);
+
       return;
     } else {
       setInterruptRequested(true);
@@ -1366,6 +1392,13 @@ export default function App({
       setInterruptRequested(false);
     }
   }, [streaming]);
+
+  // Clear globalAgentBusy when agent becomes idle
+  useEffect(() => {
+    if (!streaming && !commandRunning && !isExecutingTool) {
+      globalAgentBusy = false;
+    }
+  }, [streaming, commandRunning, isExecutingTool]);
 
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
@@ -1519,7 +1552,14 @@ export default function App({
 
       // Queue message if agent is busy (streaming, executing tool, or running command)
       // This allows messages to queue up while agent is working
-      const agentBusy = streaming || isExecutingTool || commandRunning;
+      // Use globalAgentBusy (module-level flag) as primary check since it's outside React closures.
+      // Also check refs and state as backups.
+      const agentBusy =
+        globalAgentBusy ||
+        streamingRef.current ||
+        isExecutingTool ||
+        commandRunningRef.current ||
+        abortControllerRef.current !== null;
 
       // Reset cancellation flag before queue check - this ensures queued messages
       // can be dequeued even if the user just cancelled. The dequeue effect checks
@@ -1530,14 +1570,17 @@ export default function App({
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
-          // Always update snapshot to include ALL queued messages
-          queueSnapshotRef.current = [...newQueue];
+          // For slash commands, just queue and wait - don't interrupt the agent.
+          // For regular messages, cancel the stream so the new message can be sent.
+          const isSlashCommand = msg.startsWith("/");
 
-          // Only send cancel request when actually streaming
-          // For commandRunning (e.g., model/toolset selection), just queue the message
-          // and let it process naturally when the command completes
-          if (streaming && !waitingForQueueCancelRef.current) {
+          if (
+            !isSlashCommand &&
+            streamingRef.current &&
+            !waitingForQueueCancelRef.current
+          ) {
             waitingForQueueCancelRef.current = true;
+            queueSnapshotRef.current = [...newQueue];
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
