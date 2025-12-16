@@ -69,9 +69,9 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).not.toContain("foo");
   });
 
-  test("lists background processes with /bashes command", async () => {
+  test("lists background processes with /bg command", async () => {
     const result = await bash({
-      command: "/bashes",
+      command: "/bg",
       description: "List processes",
     });
 
