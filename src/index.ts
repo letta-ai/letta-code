@@ -422,6 +422,7 @@ async function main() {
   const shouldUnlink = values.unlink as boolean | undefined;
 
   // Validate --link/--unlink flags require --agent
+  // Validate --link/--unlink flags require --agent
   if (shouldLink || shouldUnlink) {
     if (!specifiedAgentId) {
       console.error(
@@ -481,8 +482,7 @@ async function main() {
       | "selecting"
       | "assembling"
       | "upserting"
-      | "linking"
-      | "unlinking"
+      | "updating_tools"
       | "importing"
       | "initializing"
       | "checking"
@@ -591,7 +591,7 @@ async function main() {
             process.exit(1);
           }
 
-          setLoadingState(shouldLink ? "linking" : "unlinking");
+          setLoadingState("updating_tools");
           const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
             "./agent/modify"
           );

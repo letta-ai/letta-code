@@ -8,7 +8,8 @@ type ToolsetId =
   | "codex_snake"
   | "default"
   | "gemini"
-  | "gemini_snake";
+  | "gemini_snake"
+  | "none";
 
 interface ToolsetOption {
   id: ToolsetId;
@@ -98,6 +99,13 @@ const toolsets: ToolsetOption[] = [
       "write_todos",
       "read_many_files",
     ],
+  },
+  {
+    id: "none",
+    label: "None (Disable Tools)",
+    description: "Remove all Letta Code tools from the agent",
+    tools: [],
+    isFeatured: true,
   },
 ];
 
