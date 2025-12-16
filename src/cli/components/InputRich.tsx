@@ -156,16 +156,8 @@ export function Input({
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
-
-        // If there are queued messages, load them into the input box
-        if (messageQueue && messageQueue.length > 0) {
-          const queueText = messageQueue.join("\n");
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
-          }
-        }
+        // Don't load queued messages into input - let the dequeue effect
+        // in App.tsx process them automatically after the interrupt completes.
         return;
       }
 
@@ -540,8 +532,8 @@ export function Input({
         </Box>
       )}
 
-      {/* Queue display - show when streaming with queued messages */}
-      {streaming && messageQueue && messageQueue.length > 0 && (
+      {/* Queue display - show whenever there are queued messages */}
+      {messageQueue && messageQueue.length > 0 && (
         <QueuedMessages messages={messageQueue} />
       )}
 
