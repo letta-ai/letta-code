@@ -9,16 +9,14 @@ Letta Code is a memory-first coding harness, built on top of the Letta API. Inst
 ![](https://github.com/letta-ai/letta-code/blob/main/assets/letta-code-demo.gif)
 
 ## Get started
-
-Requirements: 
-* [Node.js](https://nodejs.org/en/download) (version 18+)
-* A [Letta Developer Platform](https://app.letta.com/) account (or a [self-hosted Letta server](https://docs.letta.com/letta-code/configuration#self-hosted-server))
-
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
 ```bash
 npm install -g @letta-ai/letta-code
 ```
-Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)):
+Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
+
+> [!NOTE]
+>  By default, Letta Code will connect to the [Letta Developer Platform](https://app.letta.com/) (includes a free tier), which you can connect to via OAuth or setting a `LETTA_API_KEY`. You can also connect it to a [self-hosted Letta server](https://docs.letta.com/letta-code/configuration#self-hosted-server) by setting `LETTA_BASE_URL`
 
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.

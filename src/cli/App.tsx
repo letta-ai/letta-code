@@ -14,6 +14,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
+import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { setCurrentAgentId } from "../agent/context";
@@ -277,6 +278,11 @@ export default function App({
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
+  // Warm the model-access cache in the background so /model is fast on first open.
+  useEffect(() => {
+    prefetchAvailableModelHandles();
+  }, []);
+
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
@@ -424,7 +430,7 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(),
+    getRandomThinkingMessage(agentName),
   );
 
   // Session stats tracking
@@ -1133,7 +1139,7 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage());
+              setThinkingMessage(getRandomThinkingMessage(agentName));
               refreshDerived();
 
               await processConversation([
@@ -1295,7 +1301,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
+    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming, agentName],
   );
 
   const handleExit = useCallback(() => {
@@ -1635,6 +1641,17 @@ export default function App({
 
         // Special handling for /exit command - show stats and exit
         if (trimmed === "/exit") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "See ya!",
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           handleExit();
           return { submitted: true };
         }
@@ -2067,6 +2084,96 @@ export default function App({
           };
           const argsStr = msg.trim().slice(6).trim();
           handleUnpin(profileCtx, msg, argsStr);
+          return { submitted: true };
+        }
+
+        // Special handling for /link command - attach all Letta Code tools (deprecated)
+        if (msg.trim() === "/link" || msg.trim().startsWith("/link ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Attaching Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { linkToolsToAgent } = await import("../agent/modify");
+            const result = await linkToolsToAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to link tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /unlink command - remove all Letta Code tools (deprecated)
+        if (msg.trim() === "/unlink" || msg.trim().startsWith("/unlink ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Removing Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { unlinkToolsFromAgent } = await import("../agent/modify");
+            const result = await unlinkToolsFromAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to unlink tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
           return { submitted: true };
         }
 
@@ -2521,7 +2628,7 @@ ${recentCommits}
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       // Show streaming state immediately for responsiveness
       setStreaming(true);
       refreshDerived();
@@ -2800,7 +2907,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -2837,6 +2944,7 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
+      agentName,
     ],
   );
 
@@ -2951,7 +3059,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage());
+          setThinkingMessage(getRandomThinkingMessage(agentName));
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -2972,6 +3080,7 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
+      agentName,
     ],
   );
 
@@ -3313,7 +3422,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const decision = {
@@ -3341,6 +3450,7 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
+      agentName,
     ],
   );
 
@@ -3422,7 +3532,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       refreshDerived();
 
       const decision = {
@@ -3438,7 +3548,13 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      agentName,
+    ],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -3488,7 +3604,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage());
+    setThinkingMessage(getRandomThinkingMessage(agentName));
     refreshDerived();
 
     const decision = {
@@ -3503,7 +3619,13 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
+  }, [
+    pendingApprovals,
+    approvalResults,
+    sendAllResults,
+    refreshDerived,
+    agentName,
+  ]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
