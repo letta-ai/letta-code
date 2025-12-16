@@ -228,8 +228,8 @@ ${gitInfo.status}
     context += `
 ## Agent Information (i.e. information about you)
 - **Agent ID**: ${agentInfo.id}
-- **Agent name**: ${agentInfo.name || "(unnamed)"}
-- **Agent description**: ${agentInfo.description || "(no description)"}
+- **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
+- **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}
 - **Server location**: ${actualServerUrl}
 </system-reminder>`;
