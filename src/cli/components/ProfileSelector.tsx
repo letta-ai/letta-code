@@ -18,7 +18,7 @@ interface ProfileData {
   agentId: string;
   agent: AgentState | null;
   error: string | null;
-  isPinned: boolean;
+  isLocal: boolean; // true = project-level pin, false = global pin
 }
 
 const DISPLAY_PAGE_SIZE = 5;
@@ -92,7 +92,6 @@ export const ProfileSelector = memo(function ProfileSelector({
     setLoading(true);
     try {
       const mergedPinned = settingsManager.getMergedPinnedAgents();
-      const localPinned = settingsManager.getLocalPinnedAgents();
 
       if (mergedPinned.length === 0) {
         setProfiles([]);
@@ -103,24 +102,25 @@ export const ProfileSelector = memo(function ProfileSelector({
       const client = await getClient();
 
       // Fetch agent data for each pinned agent
-      const profileDataPromises = mergedPinned.map(async ({ agentId }) => {
-        const isPinned = localPinned.includes(agentId);
-        try {
-          const agent = await client.agents.retrieve(agentId, {
-            include: ["agent.blocks"],
-          });
-          // Use agent name from server
-          return { name: agent.name, agentId, agent, error: null, isPinned };
-        } catch (_err) {
-          return {
-            name: agentId.slice(0, 12),
-            agentId,
-            agent: null,
-            error: "Agent not found",
-            isPinned,
-          };
-        }
-      });
+      const profileDataPromises = mergedPinned.map(
+        async ({ agentId, isLocal }) => {
+          try {
+            const agent = await client.agents.retrieve(agentId, {
+              include: ["agent.blocks"],
+            });
+            // Use agent name from server
+            return { name: agent.name, agentId, agent, error: null, isLocal };
+          } catch (_err) {
+            return {
+              name: agentId.slice(0, 12),
+              agentId,
+              agent: null,
+              error: "Agent not found",
+              isLocal,
+            };
+          }
+        },
+      );
 
       const profileData = await Promise.all(profileDataPromises);
       setProfiles(profileData);
@@ -198,11 +198,11 @@ export const ProfileSelector = memo(function ProfileSelector({
       }
     } else if (input === "p" || input === "P") {
       if (selectedProfile) {
-        // Toggle pin/unpin for selected profile
-        if (selectedProfile.isPinned) {
+        // Unpin from current scope
+        if (selectedProfile.isLocal) {
           settingsManager.unpinLocal(selectedProfile.agentId);
         } else {
-          settingsManager.pinLocal(selectedProfile.agentId);
+          settingsManager.unpinGlobal(selectedProfile.agentId);
         }
       } else {
         // No profiles - pin the current agent
@@ -292,7 +292,11 @@ export const ProfileSelector = memo(function ProfileSelector({
             const displayId = truncateAgentId(profile.agentId, availableForId);
 
             return (
-              <Box key={profile.name} flexDirection="column" marginBottom={1}>
+              <Box
+                key={profile.agentId}
+                flexDirection="column"
+                marginBottom={1}
+              >
                 {/* Row 1: Selection indicator, profile name, and ID */}
                 <Box flexDirection="row">
                   <Text
@@ -311,10 +315,10 @@ export const ProfileSelector = memo(function ProfileSelector({
                   >
                     {profile.name}
                   </Text>
-                  {profile.isPinned && (
-                    <Text color={colors.selector.itemCurrent}> (pinned)</Text>
-                  )}
-                  <Text dimColor> · {displayId}</Text>
+                  <Text dimColor>
+                    {" "}
+                    · {profile.isLocal ? "project" : "global"} · {displayId}
+                  </Text>
                   {isCurrent && (
                     <Text color={colors.selector.itemCurrent}> (current)</Text>
                   )}
@@ -360,7 +364,7 @@ export const ProfileSelector = memo(function ProfileSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter load · P pin/unpin · D unpin all · Esc close
+              ↑↓ navigate · Enter load · P unpin · D unpin all · Esc close
             </Text>
           </Box>
         </Box>
