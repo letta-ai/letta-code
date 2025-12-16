@@ -249,13 +249,52 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
+  // Check if we're resuming an existing agent (not creating a new one)
+  const isResumingAgent = !!(
+    specifiedAgentId ||
+    shouldContinue ||
+    (!forceNew && !fromAfFile)
+  );
+
+  // If resuming and a model or system prompt was specified, apply those changes
+  if (isResumingAgent && (model || specifiedSystem)) {
+    if (model) {
+      const { updateAgentLLMConfig } = await import("./agent/modify");
+      const { resolveModel } = await import("./agent/model");
+      const modelHandle = resolveModel(model);
+      if (!modelHandle) {
+        console.error(`Error: Invalid model "${model}"`);
+        process.exit(1);
+      }
+      const updateArgs = getModelUpdateArgs(model);
+      await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+      // Refresh agent state after model update
+      agent = await client.agents.retrieve(agent.id);
+    }
+
+    if (specifiedSystem) {
+      const { updateAgentSystemPrompt } = await import("./agent/modify");
+      const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+      const systemPromptOption = SYSTEM_PROMPTS.find(
+        (p) => p.id === specifiedSystem,
+      );
+      if (!systemPromptOption) {
+        console.error(`Error: Invalid system prompt "${specifiedSystem}"`);
+        process.exit(1);
+      }
+      await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
+      // Refresh agent state after system prompt update
+      agent = await client.agents.retrieve(agent.id);
+    }
+  }
+
   // Save agent ID to both project and global settings
   await settingsManager.loadLocalProjectSettings();
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
 
-  // Set agent context for tools that need it (e.g., Skill tool)
-  setAgentContext(agent.id, client, skillsDirectory);
+  // Set agent context for tools that need it (e.g., Skill tool, Task tool)
+  setAgentContext(agent.id, skillsDirectory);
   await initializeLoadedSkillsFlag();
 
   // Re-discover skills and update the skills memory block
@@ -412,6 +451,7 @@ export async function handleHeadlessCommand(
                 type: "auto_approval",
                 tool_name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
+                tool_args: decision.approval.toolArgs,
               }),
             );
           }
@@ -658,6 +698,7 @@ export async function handleHeadlessCommand(
                         type: "auto_approval",
                         tool_name: nextName,
                         tool_call_id: id,
+                        tool_args: incomingArgs,
                         reason: permission.reason,
                         matched_rule: permission.matchedRule,
                       }),

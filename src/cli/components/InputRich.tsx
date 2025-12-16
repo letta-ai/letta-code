@@ -2,6 +2,7 @@
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
+import { stdin } from "process";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
@@ -14,12 +15,18 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 
+// Increase max listeners to accommodate multiple useInput hooks
+// (5 in this component + autocomplete components)
+stdin.setMaxListeners(20);
+
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const appVersion = getVersion();
 
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
+// Window for double-escape to clear input
+const ESC_CLEAR_WINDOW_MS = 2500;
 
 export function Input({
   visible = true,
@@ -164,12 +171,12 @@ export function Input({
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
-          // First escape - start 1-second timer
+          // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
             setEscapePressed(false);
-          }, 1000);
+          }, ESC_CLEAR_WINDOW_MS);
         }
       }
     }
@@ -454,32 +461,22 @@ export function Input({
   };
 
   // Handle slash command selection from autocomplete
-  const handleCommandSelect = (selectedCommand: string) => {
-    // Find the "/" at start of input and replace the command
-    const slashIndex = value.indexOf("/");
-    if (slashIndex === -1) return;
+  const handleCommandSelect = async (selectedCommand: string) => {
+    // For slash commands, submit immediately when selected from autocomplete
+    // This provides a better UX - selecting /model should open the model selector
+    const commandToSubmit = selectedCommand.trim();
 
-    const beforeSlash = value.slice(0, slashIndex);
-    const afterSlash = value.slice(slashIndex + 1);
-    const spaceIndex = afterSlash.indexOf(" ");
-
-    let newValue: string;
-    let newCursorPos: number;
-
-    // Replace the command part with the selected command
-    if (spaceIndex === -1) {
-      // No space after /command, replace to end
-      newValue = `${beforeSlash}${selectedCommand} `;
-      newCursorPos = newValue.length;
-    } else {
-      // Space exists, replace only the command part
-      const afterCommand = afterSlash.slice(spaceIndex);
-      newValue = `${beforeSlash}${selectedCommand}${afterCommand}`;
-      newCursorPos = beforeSlash.length + selectedCommand.length;
+    // Add to history if not a duplicate of the last entry
+    if (commandToSubmit && commandToSubmit !== history[history.length - 1]) {
+      setHistory([...history, commandToSubmit]);
     }
 
-    setValue(newValue);
-    setCursorPos(newCursorPos);
+    // Reset history navigation
+    setHistoryIndex(-1);
+    setTemporaryInput("");
+
+    setValue(""); // Clear immediately for responsiveness
+    await onSubmit(commandToSubmit);
   };
 
   // Get display name and color for permission mode

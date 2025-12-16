@@ -18,6 +18,7 @@ export const commands: Record<string, Command> = {
   },
   "/stream": {
     desc: "Toggle token streaming on/off",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx for live toggling
       return "Toggling token streaming...";
@@ -44,20 +45,6 @@ export const commands: Record<string, Command> = {
       return "Clearing credentials...";
     },
   },
-  "/link": {
-    desc: "Attach Letta Code tools to current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Attaching tools...";
-    },
-  },
-  "/unlink": {
-    desc: "Remove Letta Code tools from current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Removing tools...";
-    },
-  },
   "/rename": {
     desc: "Rename the current agent",
     handler: () => {
@@ -73,7 +60,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/toolset": {
-    desc: "Switch toolset",
+    desc: "Switch toolset (replaces /link and /unlink)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
@@ -93,7 +80,7 @@ export const commands: Record<string, Command> = {
       return "Downloading agent file...";
     },
   },
-  "/bashes": {
+  "/bg": {
     desc: "Show background shell processes",
     handler: () => {
       // Handled specially in App.tsx to show background processes
@@ -154,6 +141,13 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to open pinned agents selector
       return "Opening pinned agents...";
+    },
+  },
+  "/subagents": {
+    desc: "Manage custom subagents",
+    handler: () => {
+      // Handled specially in App.tsx to open SubagentManager component
+      return "Opening subagent manager...";
     },
   },
 };

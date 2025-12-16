@@ -1,16 +1,15 @@
 #!/usr/bin/env bun
 /**
  * Minimal example: Send an image to a Letta agent
- * 
+ *
  * Usage:
  *   bun examples/send-image.ts <agent-id> <image-path>
- * 
+ *
  * Example:
  *   bun examples/send-image.ts agent-123abc screenshot.png
  */
 
 import { readFileSync } from "node:fs";
-import { getClient } from "../src/agent/client";
 import { sendMessageStream } from "../src/agent/message";
 
 async function main() {

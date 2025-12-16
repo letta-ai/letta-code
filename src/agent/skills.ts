@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { parseFrontmatter } from "../utils/frontmatter";
 
 /**
  * Represents a skill that can be used by the agent
@@ -55,70 +56,7 @@ export const SKILLS_DIR = ".skills";
  */
 const SKILLS_BLOCK_CHAR_LIMIT = 20000;
 
-/**
- * Parse frontmatter and content from a markdown file
- */
-function parseFrontmatter(content: string): {
-  frontmatter: Record<string, string | string[]>;
-  body: string;
-} {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
-
-  if (!match || !match[1] || !match[2]) {
-    return { frontmatter: {}, body: content };
-  }
-
-  const frontmatterText = match[1];
-  const body = match[2];
-  const frontmatter: Record<string, string | string[]> = {};
-
-  // Parse YAML-like frontmatter (simple key: value pairs and arrays)
-  const lines = frontmatterText.split("\n");
-  let currentKey: string | null = null;
-  let currentArray: string[] = [];
-
-  for (const line of lines) {
-    // Check if this is an array item
-    if (line.trim().startsWith("-") && currentKey) {
-      const value = line.trim().slice(1).trim();
-      currentArray.push(value);
-      continue;
-    }
-
-    // If we were building an array, save it
-    if (currentKey && currentArray.length > 0) {
-      frontmatter[currentKey] = currentArray;
-      currentKey = null;
-      currentArray = [];
-    }
-
-    const colonIndex = line.indexOf(":");
-    if (colonIndex > 0) {
-      const key = line.slice(0, colonIndex).trim();
-      const value = line.slice(colonIndex + 1).trim();
-      currentKey = key;
-
-      if (value) {
-        // Simple key: value pair
-        frontmatter[key] = value;
-        currentKey = null;
-      } else {
-        // Might be starting an array
-        currentArray = [];
-      }
-    }
-  }
-
-  // Save any remaining array
-  if (currentKey && currentArray.length > 0) {
-    frontmatter[currentKey] = currentArray;
-  }
-
-  return { frontmatter, body: body.trim() };
-}
-
-/**
+/** origin/main
  * Discovers skills by recursively searching for SKILL.MD files
  * @param skillsPath - The directory to search for skills (default: .skills in current directory)
  * @returns A result containing discovered skills and any errors

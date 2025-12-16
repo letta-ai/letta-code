@@ -30,7 +30,8 @@ export type ToolsetName =
   | "codex_snake"
   | "default"
   | "gemini"
-  | "gemini_snake";
+  | "gemini_snake"
+  | "none";
 
 // Server-side/base tools that should stay attached regardless of Letta toolset
 export const BASE_TOOL_NAMES = ["memory", "web_search"];
@@ -130,7 +131,10 @@ export async function forceToolsetSwitch(
   clearTools();
 
   // Load the appropriate toolset
-  if (toolsetName === "codex") {
+  if (toolsetName === "none") {
+    // Just clear tools
+    clearTools();
+  } else if (toolsetName === "codex") {
     await loadSpecificTools([...CODEX_TOOLS]);
   } else if (toolsetName === "codex_snake") {
     await loadTools("openai/gpt-4");
@@ -146,9 +150,11 @@ export async function forceToolsetSwitch(
   const client = await getClient();
   await upsertToolsToServer(client);
 
-  // Remove old Letta tools and add new ones
+  // Remove old Letta tools and add new ones (or just remove if none)
   await unlinkToolsFromAgent(agentId);
-  await linkToolsToAgent(agentId);
+  if (toolsetName !== "none") {
+    await linkToolsToAgent(agentId);
+  }
 
   // Ensure base memory tool uses memory_apply_patch instead of legacy memory
   try {

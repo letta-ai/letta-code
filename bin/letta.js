@@ -8,9 +8,9 @@
  * when users install via npm/npx. Bun can still run this file.
  */
 
-import path from "path";
-import { fileURLToPath } from "url";
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

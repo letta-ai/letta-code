@@ -16,9 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
+import { setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
-import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -57,6 +57,9 @@ import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
+import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
+import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
+import { SubagentManager } from "./components/SubagentManager";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
@@ -79,7 +82,17 @@ import {
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
+import {
+  collectFinishedTaskToolCalls,
+  createSubagentGroupItem,
+  hasInProgressTaskToolCalls,
+} from "./helpers/subagentAggregation";
+import {
+  clearCompletedSubagents,
+  clearSubagentsByIds,
+} from "./helpers/subagentState";
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -181,15 +194,6 @@ function readPlanFile(): string {
   }
 }
 
-// Fancy UI tools require specialized dialogs instead of the standard ApprovalDialog
-function isFancyUITool(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
-}
-
 // Extract questions from AskUserQuestion tool args
 function getQuestionsFromApproval(approval: ApprovalRequest) {
   const parsed = safeJsonParseOr<Record<string, unknown>>(
@@ -228,6 +232,20 @@ type StaticItem =
         terminalWidth: number;
       };
     }
+  | {
+      kind: "subagent_group";
+      id: string;
+      agents: Array<{
+        id: string;
+        type: string;
+        description: string;
+        status: "completed" | "error";
+        toolCount: number;
+        totalTokens: number;
+        agentURL: string | null;
+        error?: string;
+      }>;
+    }
   | Line;
 
 export default function App({
@@ -246,8 +264,7 @@ export default function App({
   loadingState?:
     | "assembling"
     | "upserting"
-    | "linking"
-    | "unlinking"
+    | "updating_tools"
     | "importing"
     | "initializing"
     | "checking"
@@ -291,6 +308,13 @@ export default function App({
       setAgentState(initialAgentState);
     }
   }, [initialAgentState]);
+
+  // Set agent context for tools (especially Task tool)
+  useEffect(() => {
+    if (agentId) {
+      setCurrentAgentId(agentId);
+    }
+  }, [agentId]);
 
   // Whether a stream is in flight (disables input)
   const [streaming, setStreaming] = useState(false);
@@ -356,10 +380,18 @@ export default function App({
     string | null
   >("default");
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | null
+    | "codex"
+    | "codex_snake"
+    | "default"
+    | "gemini"
+    | "gemini_snake"
+    | "none"
+    | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const [agentDescription, setAgentDescription] = useState<string | null>(null);
+  const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
   const currentModelLabel =
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
@@ -372,6 +404,9 @@ export default function App({
   // Resume selector state
   const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+
+  // Subagent manager state (for /subagents command)
+  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
 
   // Profile selector state
   const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
@@ -390,6 +425,9 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Track if we've sent the session context for this CLI session
+  const hasSentSessionContextRef = useRef(false);
 
   // Show exit stats on exit
   const [showExitStats, setShowExitStats] = useState(false);
@@ -446,6 +484,24 @@ export default function App({
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
     const newlyCommitted: StaticItem[] = [];
+    let firstTaskIndex = -1;
+
+    // Check if there are any in-progress Task tool_calls
+    const hasInProgress = hasInProgressTaskToolCalls(
+      b.order,
+      b.byId,
+      emittedIdsRef.current,
+    );
+
+    // Collect finished Task tool_calls for grouping
+    const finishedTaskToolCalls = collectFinishedTaskToolCalls(
+      b.order,
+      b.byId,
+      emittedIdsRef.current,
+      hasInProgress,
+    );
+
+    // Commit regular lines (non-Task tools)
     for (const id of b.order) {
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
@@ -463,11 +519,39 @@ export default function App({
         }
         continue;
       }
+      // Handle Task tool_calls specially - track position but don't add individually
+      if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
+        if (firstTaskIndex === -1 && finishedTaskToolCalls.length > 0) {
+          firstTaskIndex = newlyCommitted.length;
+        }
+        continue;
+      }
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
       }
     }
+
+    // If we collected Task tool_calls (all are finished), create a subagent_group
+    if (finishedTaskToolCalls.length > 0) {
+      // Mark all as emitted
+      for (const tc of finishedTaskToolCalls) {
+        emittedIdsRef.current.add(tc.lineId);
+      }
+
+      const groupItem = createSubagentGroupItem(finishedTaskToolCalls);
+
+      // Insert at the position of the first Task tool_call
+      newlyCommitted.splice(
+        firstTaskIndex >= 0 ? firstTaskIndex : newlyCommitted.length,
+        0,
+        groupItem,
+      );
+
+      // Clear these agents from the subagent store
+      clearSubagentsByIds(groupItem.agents.map((a) => a.id));
+    }
+
     if (newlyCommitted.length > 0) {
       setStaticItems((prev) => [...prev, ...newlyCommitted]);
     }
@@ -617,6 +701,11 @@ export default function App({
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
           setAgentName(agent.name);
+          setAgentDescription(agent.description ?? null);
+          // Get last message timestamp from agent state if available
+          const lastRunCompletion = (agent as { last_run_completion?: string })
+            .last_run_completion;
+          setAgentLastRunAt(lastRunCompletion ?? null);
 
           // Detect current toolset from attached tools
           const { detectToolsetFromAgent } = await import("../tools/toolset");
@@ -667,6 +756,9 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+
+        // Clear completed subagents from the UI when starting a new turn
+        clearCompletedSubagents();
 
         while (true) {
           // Check if cancelled before starting new stream
@@ -904,6 +996,7 @@ export default function App({
                 const result = await executeTool(
                   ac.approval.toolName,
                   parsedArgs,
+                  { toolCallId: ac.approval.toolCallId },
                 );
 
                 // Update buffers with tool return for UI
@@ -1457,9 +1550,14 @@ export default function App({
       // This ensures that after an interrupt, new messages can be sent
       userCancelledRef.current = false;
 
+      let aliasedMsg = msg;
+      if (msg === "exit" || msg === "quit") {
+        aliasedMsg = "/exit";
+      }
+
       // Handle commands (messages starting with "/")
-      if (msg.startsWith("/")) {
-        const trimmed = msg.trim();
+      if (aliasedMsg.startsWith("/")) {
+        const trimmed = aliasedMsg.trim();
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
@@ -1476,6 +1574,12 @@ export default function App({
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           setSystemPromptSelectorOpen(true);
+          return { submitted: true };
+        }
+
+        // Special handling for /subagents command - opens subagent manager
+        if (trimmed === "/subagents") {
+          setSubagentManagerOpen(true);
           return { submitted: true };
         }
 
@@ -1645,94 +1749,6 @@ export default function App({
               success: true,
             });
             buffersRef.current.order.push(cmdId);
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /link command - attach Letta Code tools
-        if (msg.trim() === "/link") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Attaching Letta Code tools to agent...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const result = await linkToolsToAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /unlink command - remove Letta Code tools
-        if (msg.trim() === "/unlink") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Removing Letta Code tools from agent...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const result = await unlinkToolsFromAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
             refreshDerived();
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
@@ -2004,8 +2020,8 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /bashes command - show background shell processes
-        if (msg.trim() === "/bashes") {
+        // Special handling for /bg command - show background shell processes
+        if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
             "../tools/impl/process_manager"
           );
@@ -2413,8 +2429,29 @@ ${recentCommits}
       // Prepend skill unload reminder if skills are loaded (using cached flag)
       const skillUnloadReminder = getSkillUnloadReminder();
 
-      // Combine reminders with content (plan mode first, then skill unload)
-      const allReminders = planModeReminder + skillUnloadReminder;
+      // Prepend session context on first message of CLI session (if enabled)
+      let sessionContextReminder = "";
+      const sessionContextEnabled = settingsManager.getSetting(
+        "sessionContextEnabled",
+      );
+      if (!hasSentSessionContextRef.current && sessionContextEnabled) {
+        const { buildSessionContext } = await import(
+          "./helpers/sessionContext"
+        );
+        sessionContextReminder = buildSessionContext({
+          agentInfo: {
+            id: agentId,
+            name: agentName,
+            description: agentDescription,
+            lastRunAt: agentLastRunAt,
+          },
+        });
+        hasSentSessionContextRef.current = true;
+      }
+
+      // Combine reminders with content (session context first, then plan mode, then skill unload)
+      const allReminders =
+        sessionContextReminder + planModeReminder + skillUnloadReminder;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -2548,6 +2585,8 @@ ${recentCommits}
       refreshDerived,
       agentId,
       agentName,
+      agentDescription,
+      agentLastRunAt,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
@@ -2971,7 +3010,8 @@ ${recentCommits}
           | "codex_snake"
           | "default"
           | "gemini"
-          | "gemini_snake" = isOpenAIModel(selectedModel.handle ?? "")
+          | "gemini_snake"
+          | "none" = isOpenAIModel(selectedModel.handle ?? "")
           ? "codex"
           : isGeminiModel(selectedModel.handle ?? "")
             ? "gemini"
@@ -2983,6 +3023,7 @@ ${recentCommits}
           | "default"
           | "gemini"
           | "gemini_snake"
+          | "none"
           | null = null;
         if (currentToolset !== targetToolset) {
           const { switchToolsetForModel } = await import("../tools/toolset");
@@ -3125,7 +3166,8 @@ ${recentCommits}
         | "codex_snake"
         | "default"
         | "gemini"
-        | "gemini_snake",
+        | "gemini_snake"
+        | "none",
     ) => {
       setToolsetSelectorOpen(false);
 
@@ -3459,7 +3501,11 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Always show tool calls in progress
+        // Skip Task tool_calls - SubagentGroupDisplay handles them
+        if (ln.name && isTaskTool(ln.name)) {
+          return false;
+        }
+        // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
@@ -3514,7 +3560,7 @@ Plan file path: ${planFilePath}`;
 
       const agentNameLine =
         !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /name to rename)`
+          ? `→ Agent: ${agentState.name} (use /rename to rename)`
           : "";
 
       const statusLines = [
@@ -3561,6 +3607,8 @@ Plan file path: ${planFilePath}`;
               <AssistantMessage line={item} />
             ) : item.kind === "tool_call" ? (
               <ToolCallMessage line={item} />
+            ) : item.kind === "subagent_group" ? (
+              <SubagentGroupStatic agents={item.agents} />
             ) : item.kind === "error" ? (
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
@@ -3610,6 +3658,9 @@ Plan file path: ${planFilePath}`;
                 ))}
               </Box>
             )}
+
+            {/* Subagent group display - shows running/completed subagents */}
+            <SubagentGroupDisplay />
 
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
@@ -3695,6 +3746,11 @@ Plan file path: ${planFilePath}`;
                 onSelect={handleAgentSelect}
                 onCancel={() => setAgentSelectorOpen(false)}
               />
+            )}
+
+            {/* Subagent Manager - for managing custom subagents */}
+            {subagentManagerOpen && (
+              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}

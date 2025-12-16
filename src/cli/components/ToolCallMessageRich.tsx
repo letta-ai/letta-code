@@ -1,8 +1,15 @@
 import { Box, Text } from "ink";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
+import {
+  getDisplayToolName,
+  isPlanTool,
+  isTaskTool,
+  isTodoTool,
+} from "../helpers/toolNameMapping.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { PlanRenderer } from "./PlanRenderer.js";
@@ -17,19 +24,6 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
-};
-
-// BlinkDot component copied verbatim from old codebase
-const BlinkDot: React.FC<{ color?: string }> = ({
-  color = colors.tool.pending,
-}) => {
-  const [on, setOn] = useState(true);
-  useEffect(() => {
-    const t = setInterval(() => setOn((v) => !v), 400);
-    return () => clearInterval(t);
-  }, []);
-  // Visible = colored dot; Off = space (keeps width/alignment)
-  return <Text color={color}>{on ? "●" : " "}</Text>;
 };
 
 /**
@@ -49,58 +43,13 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const rawName = line.name ?? "?";
   const argsText = line.argsText ?? "...";
 
-  // Apply tool name remapping from old codebase
-  let displayName = rawName;
-  // Anthropic toolset
-  if (displayName === "write") displayName = "Write";
-  else if (displayName === "edit" || displayName === "multi_edit")
-    displayName = "Edit";
-  else if (displayName === "read") displayName = "Read";
-  else if (displayName === "bash") displayName = "Bash";
-  else if (displayName === "grep") displayName = "Grep";
-  else if (displayName === "glob") displayName = "Glob";
-  else if (displayName === "ls") displayName = "LS";
-  else if (displayName === "todo_write") displayName = "TODO";
-  else if (displayName === "TodoWrite") displayName = "TODO";
-  else if (displayName === "EnterPlanMode") displayName = "Planning";
-  else if (displayName === "ExitPlanMode") displayName = "Planning";
-  else if (displayName === "AskUserQuestion") displayName = "Question";
-  // Codex toolset (snake_case)
-  else if (displayName === "update_plan") displayName = "Planning";
-  else if (displayName === "shell_command") displayName = "Shell";
-  else if (displayName === "shell") displayName = "Shell";
-  else if (displayName === "read_file") displayName = "Read";
-  else if (displayName === "list_dir") displayName = "LS";
-  else if (displayName === "grep_files") displayName = "Grep";
-  else if (displayName === "apply_patch") displayName = "Patch";
-  // Codex toolset (PascalCase)
-  else if (displayName === "UpdatePlan") displayName = "Planning";
-  else if (displayName === "ShellCommand") displayName = "Shell";
-  else if (displayName === "Shell") displayName = "Shell";
-  else if (displayName === "ReadFile") displayName = "Read";
-  else if (displayName === "ListDir") displayName = "LS";
-  else if (displayName === "GrepFiles") displayName = "Grep";
-  else if (displayName === "ApplyPatch") displayName = "Patch";
-  // Gemini toolset (snake_case)
-  else if (displayName === "run_shell_command") displayName = "Shell";
-  else if (displayName === "list_directory") displayName = "LS";
-  else if (displayName === "search_file_content") displayName = "Grep";
-  else if (displayName === "write_todos") displayName = "TODO";
-  else if (displayName === "read_many_files") displayName = "Read Multiple";
-  // Gemini toolset (PascalCase)
-  else if (displayName === "RunShellCommand") displayName = "Shell";
-  else if (displayName === "ListDirectory") displayName = "LS";
-  else if (displayName === "SearchFileContent") displayName = "Grep";
-  else if (displayName === "WriteTodos") displayName = "TODO";
-  else if (displayName === "ReadManyFiles") displayName = "Read Multiple";
-  // Additional tools
-  else if (displayName === "Replace" || displayName === "replace")
-    displayName = "Edit";
-  else if (displayName === "WriteFile" || displayName === "write_file")
-    displayName = "Write";
-  else if (displayName === "KillBash") displayName = "Kill Shell";
-  else if (displayName === "BashOutput") displayName = "Shell Output";
-  else if (displayName === "MultiEdit") displayName = "Edit";
+  // Task tool - handled by SubagentGroupDisplay, don't render here
+  if (isTaskTool(rawName)) {
+    return null;
+  }
+
+  // Apply tool name remapping
+  const displayName = getDisplayToolName(rawName);
 
   // Format arguments for display using the old formatting logic
   const formatted = formatArgsDisplay(argsText);
@@ -177,14 +126,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       typeof v === "object" && v !== null;
 
     // Check if this is a todo_write tool with successful result
-    const isTodoTool =
-      rawName === "todo_write" ||
-      rawName === "TodoWrite" ||
-      rawName === "write_todos" ||
-      rawName === "WriteTodos" ||
-      displayName === "TODO";
-
-    if (isTodoTool && line.resultOk !== false && line.argsText) {
+    if (
+      isTodoTool(rawName, displayName) &&
+      line.resultOk !== false &&
+      line.argsText
+    ) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
@@ -220,12 +166,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     }
 
     // Check if this is an update_plan tool with successful result
-    const isPlanTool =
-      rawName === "update_plan" ||
-      rawName === "UpdatePlan" ||
-      displayName === "Planning";
-
-    if (isPlanTool && line.resultOk !== false && line.argsText) {
+    if (
+      isPlanTool(rawName, displayName) &&
+      line.resultOk !== false &&
+      line.argsText
+    ) {
       try {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.plan && Array.isArray(parsedArgs.plan)) {

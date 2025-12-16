@@ -5,6 +5,7 @@ import {
   PermissionDeniedError,
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
+import { getAllSubagentConfigs } from "../agent/subagents";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -60,9 +61,10 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   // "MultiEdit",
   // "LS",
   "Read",
+  "Skill",
+  "Task",
   "TodoWrite",
   "Write",
-  "Skill",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
@@ -74,6 +76,7 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "apply_patch",
   "update_plan",
   "Skill",
+  "Task",
 ];
 
 export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
@@ -87,6 +90,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "write_todos",
   "read_many_files",
   "Skill",
+  "Task",
 ];
 
 // PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
@@ -129,6 +133,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
   Skill: { requiresApproval: false },
+  Task: { requiresApproval: true },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
   shell_command: { requiresApproval: true },
@@ -400,6 +405,16 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
  */
 export async function loadTools(modelIdentifier?: string): Promise<void> {
   const { toolFilter } = await import("./filter");
+
+  // Get all subagents (built-in + custom) to inject into Task description
+  const allSubagentConfigs = await getAllSubagentConfigs();
+  const discoveredSubagents = Object.entries(allSubagentConfigs).map(
+    ([name, config]) => ({
+      name,
+      description: config.description,
+      recommendedModel: config.recommendedModel,
+    }),
+  );
   const filterActive = toolFilter.isActive();
 
   let baseToolNames: ToolName[];
@@ -433,9 +448,18 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
         throw new Error(`Tool implementation not found for ${name}`);
       }
 
+      // For Task tool, inject discovered subagent descriptions
+      let description = definition.description;
+      if (name === "Task" && discoveredSubagents.length > 0) {
+        description = injectSubagentsIntoTaskDescription(
+          description,
+          discoveredSubagents,
+        );
+      }
+
       const toolSchema: ToolSchema = {
         name,
-        description: definition.description,
+        description,
         input_schema: definition.schema,
       };
 
@@ -474,6 +498,46 @@ export function isGeminiModel(modelIdentifier: string): boolean {
     modelIdentifier.startsWith("google/") ||
     modelIdentifier.startsWith("google_ai/")
   );
+}
+
+/**
+ * Inject discovered subagent descriptions into the Task tool description
+ */
+function injectSubagentsIntoTaskDescription(
+  baseDescription: string,
+  subagents: Array<{
+    name: string;
+    description: string;
+    recommendedModel: string;
+  }>,
+): string {
+  if (subagents.length === 0) {
+    return baseDescription;
+  }
+
+  // Build subagents section
+  const agentsSection = subagents
+    .map((agent) => {
+      return `### ${agent.name}
+- **Purpose**: ${agent.description}
+- **Recommended model**: ${agent.recommendedModel}`;
+    })
+    .join("\n\n");
+
+  // Insert before ## Usage section
+  const usageMarker = "## Usage";
+  const usageIndex = baseDescription.indexOf(usageMarker);
+
+  if (usageIndex === -1) {
+    // Fallback: append at the end
+    return `${baseDescription}\n\n## Available Agents\n\n${agentsSection}`;
+  }
+
+  // Insert agents section before ## Usage
+  const before = baseDescription.slice(0, usageIndex);
+  const after = baseDescription.slice(usageIndex);
+
+  return `${before}## Available Agents\n\n${agentsSection}\n\n${after}`;
 }
 
 /**
@@ -765,12 +829,13 @@ function flattenToolResponse(result: unknown): string {
  *
  * @param name - The name of the tool to execute
  * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
 export async function executeTool(
   name: string,
   args: ToolArgs,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; toolCallId?: string },
 ): Promise<ToolExecutionResult> {
   const internalName = resolveInternalToolName(name);
   if (!internalName) {
@@ -789,13 +854,20 @@ export async function executeTool(
   }
 
   try {
-    // Inject abort signal for tools that support it (currently Bash) without altering schemas
-    const argsWithSignal =
-      internalName === "Bash" && options?.signal
-        ? { ...args, signal: options.signal }
-        : args;
+    // Inject options for tools that support them without altering schemas
+    let enhancedArgs = args;
 
-    const result = await tool.fn(argsWithSignal);
+    // Inject abort signal for Bash tool
+    if (internalName === "Bash" && options?.signal) {
+      enhancedArgs = { ...enhancedArgs, signal: options.signal };
+    }
+
+    // Inject toolCallId for Task tool (for linking subagents to their parent tool call)
+    if (internalName === "Task" && options?.toolCallId) {
+      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
+    const result = await tool.fn(enhancedArgs);
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;

@@ -345,6 +345,17 @@
     }
   },
   {
+    "id": "kimi-k2-thinking",
+    "handle": "openrouter/moonshotai/kimi-k2-thinking",
+    "label": "Kimi K2 Thinking",
+    "description": "Kimi's K2 model with advanced thinking capabilities",
+    "updateArgs": {
+      "context_window": 256000,
+      "max_output_tokens": 16000,
+      "temperature": 1.0
+    }
+  },
+  {
     "id": "deepseek-chat-v3.1",
     "handle": "openrouter/deepseek/deepseek-chat-v3.1",
     "label": "DeepSeek Chat V3.1",
