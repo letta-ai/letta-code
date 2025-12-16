@@ -1527,8 +1527,10 @@ export default function App({
           // Always update snapshot to include ALL queued messages
           queueSnapshotRef.current = [...newQueue];
 
-          // If this is the first queued message, send cancel request
-          if (!waitingForQueueCancelRef.current) {
+          // Only send cancel request when actually streaming
+          // For commandRunning (e.g., model/toolset selection), just queue the message
+          // and let it process naturally when the command completes
+          if (streaming && !waitingForQueueCancelRef.current) {
             waitingForQueueCancelRef.current = true;
 
             // Send cancel request to backend (fire-and-forget)
