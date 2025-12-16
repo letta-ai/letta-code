@@ -259,17 +259,25 @@ export async function handleHeadlessCommand(
   // If resuming and a model or system prompt was specified, apply those changes
   if (isResumingAgent && (model || specifiedSystem)) {
     if (model) {
-      const { updateAgentLLMConfig } = await import("./agent/modify");
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
       if (!modelHandle) {
         console.error(`Error: Invalid model "${model}"`);
         process.exit(1);
       }
-      const updateArgs = getModelUpdateArgs(model);
-      await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-      // Refresh agent state after model update
-      agent = await client.agents.retrieve(agent.id);
+
+      // Optimization: Skip update if agent is already using the specified model
+      const currentModel = agent.llm_config?.model;
+      const currentEndpointType = agent.llm_config?.model_endpoint_type;
+      const currentHandle = `${currentEndpointType}/${currentModel}`;
+
+      if (currentHandle !== modelHandle) {
+        const { updateAgentLLMConfig } = await import("./agent/modify");
+        const updateArgs = getModelUpdateArgs(model);
+        await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+        // Refresh agent state after model update
+        agent = await client.agents.retrieve(agent.id);
+      }
     }
 
     if (specifiedSystem) {
