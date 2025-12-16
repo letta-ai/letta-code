@@ -20,6 +20,8 @@ const appVersion = getVersion();
 
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
+// Window for double-escape to clear input
+const ESC_CLEAR_WINDOW_MS = 2500;
 
 export function Input({
   visible = true,
@@ -164,12 +166,12 @@ export function Input({
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
-          // First escape - start 1-second timer
+          // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
             setEscapePressed(false);
-          }, 1000);
+          }, ESC_CLEAR_WINDOW_MS);
         }
       }
     }
