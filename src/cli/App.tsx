@@ -3519,7 +3519,7 @@ Plan file path: ${planFilePath}`;
 
       const agentNameLine =
         !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /name to rename)`
+          ? `→ Agent: ${agentState.name} (use /rename to rename)`
           : "";
 
       const statusLines = [
