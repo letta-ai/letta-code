@@ -48,8 +48,7 @@ function getAuthMethod(): "url" | "api-key" | "oauth" {
 type LoadingState =
   | "assembling"
   | "upserting"
-  | "linking"
-  | "unlinking"
+  | "updating_tools"
   | "importing"
   | "initializing"
   | "checking"
