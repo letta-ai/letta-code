@@ -12,6 +12,9 @@ import StdoutContext from './StdoutContext.js';
 const tab = '\t';
 const shiftTab = '\u001B[Z';
 const escape = '\u001B';
+// Maximum number of event listeners to allow on stdin and internal_eventEmitter.
+const MAX_INPUT_LISTENERS = 20;
+
 export default class App extends PureComponent {
     static displayName = 'InternalApp';
     static getDerivedStateFromError(error) {
@@ -27,7 +30,7 @@ export default class App extends PureComponent {
     // Increase max listeners to accommodate multiple useInput hooks across components
     internal_eventEmitter = (() => {
         const emitter = new EventEmitter();
-        emitter.setMaxListeners(20);
+        emitter.setMaxListeners(MAX_INPUT_LISTENERS);
         return emitter;
     })();
     isRawModeSupported() {
@@ -44,7 +47,7 @@ export default class App extends PureComponent {
         cliCursor.hide(this.props.stdout);
         // Increase max listeners on stdin to accommodate multiple useInput hooks
         if (this.props.stdin?.setMaxListeners) {
-            this.props.stdin.setMaxListeners(20);
+            this.props.stdin.setMaxListeners(MAX_INPUT_LISTENERS);
         }
     }
     componentWillUnmount() {
@@ -67,7 +70,7 @@ export default class App extends PureComponent {
             }
         }
         // Increase max listeners on stdin to accommodate multiple useInput hooks
-        stdin.setMaxListeners(20);
+        stdin.setMaxListeners(MAX_INPUT_LISTENERS);
         stdin.setEncoding('utf8');
         if (isEnabled) {
             if (this.rawModeEnabledCount === 0) {
