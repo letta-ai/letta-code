@@ -2104,8 +2104,8 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /bashes command - show background shell processes
-        if (msg.trim() === "/bashes") {
+        // Special handling for /bg command - show background shell processes
+        if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
             "../tools/impl/process_manager"
           );

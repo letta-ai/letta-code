@@ -35,7 +35,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
 
-  if (command === "/bashes") {
+  if (command === "/bg") {
     const processes = Array.from(backgroundProcesses.entries());
     if (processes.length === 0) {
       return {
