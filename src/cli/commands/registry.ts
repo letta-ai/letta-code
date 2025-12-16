@@ -60,7 +60,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/toolset": {
-    desc: "Switch toolset",
+    desc: "Switch toolset (replaces /link and /unlink)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";

@@ -422,6 +422,7 @@ async function main() {
   const shouldUnlink = values.unlink as boolean | undefined;
 
   // Validate --link/--unlink flags require --agent
+  // Validate --link/--unlink flags require --agent
   if (shouldLink || shouldUnlink) {
     if (!specifiedAgentId) {
       console.error(

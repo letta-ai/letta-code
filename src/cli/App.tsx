@@ -19,7 +19,6 @@ import { getClient } from "../agent/client";
 import { setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
-import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -265,8 +264,7 @@ export default function App({
   loadingState?:
     | "assembling"
     | "upserting"
-    | "linking"
-    | "unlinking"
+    | "updating_tools"
     | "importing"
     | "initializing"
     | "checking"
@@ -382,7 +380,13 @@ export default function App({
     string | null
   >("default");
   const [currentToolset, setCurrentToolset] = useState<
-    "codex" | "codex_snake" | "default" | "gemini" | "gemini_snake" | "none" | null
+    | "codex"
+    | "codex_snake"
+    | "default"
+    | "gemini"
+    | "gemini_snake"
+    | "none"
+    | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
