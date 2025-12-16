@@ -313,7 +313,6 @@ function buildSubagentArgs(
 ): string[] {
   const args: string[] = [
     "--new",
-    "--fresh-blocks",
     "--system",
     type,
     "--model",
