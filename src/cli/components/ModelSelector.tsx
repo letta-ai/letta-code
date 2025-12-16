@@ -148,7 +148,8 @@ export function ModelSelector({
     }
   }, [visibleModels, currentModel]);
 
-  const hasMoreModels = !showAll && filteredModels.length > visibleModels.length;
+  const hasMoreModels =
+    !showAll && filteredModels.length > visibleModels.length;
   const totalItems = hasMoreModels
     ? visibleModels.length + 1
     : visibleModels.length;
@@ -199,7 +200,9 @@ export function ModelSelector({
         </Text>
         {!isLoading && !refreshing && (
           <Text dimColor>
-            {isCached ? "Cached models (press 'r' to refresh)" : "Press 'r' to refresh"}
+            {isCached
+              ? "Cached models (press 'r' to refresh)"
+              : "Press 'r' to refresh"}
           </Text>
         )}
       </Box>
