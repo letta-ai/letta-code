@@ -15,6 +15,7 @@ import {
 } from "../../cli/helpers/subagentState.js";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
+import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
@@ -281,10 +282,14 @@ function buildSubagentArgs(
     args.push("--permission-mode", currentMode);
   }
 
-  // Inherit permission rules from parent (--allowedTools/--disallowedTools)
+  // Inherit permission rules from parent (CLI + session rules)
   const parentAllowedTools = cliPermissions.getAllowedTools();
-  if (parentAllowedTools.length > 0) {
-    args.push("--allowedTools", parentAllowedTools.join(","));
+  const sessionAllowRules = sessionPermissions.getRules().allow || [];
+  const combinedAllowedTools = [
+    ...new Set([...parentAllowedTools, ...sessionAllowRules]),
+  ];
+  if (combinedAllowedTools.length > 0) {
+    args.push("--allowedTools", combinedAllowedTools.join(","));
   }
   const parentDisallowedTools = cliPermissions.getDisallowedTools();
   if (parentDisallowedTools.length > 0) {
