@@ -1521,6 +1521,11 @@ export default function App({
       // This allows messages to queue up while agent is working
       const agentBusy = streaming || isExecutingTool || commandRunning;
 
+      // Reset cancellation flag before queue check - this ensures queued messages
+      // can be dequeued even if the user just cancelled. The dequeue effect checks
+      // userCancelledRef.current, so we must clear it here to prevent blocking.
+      userCancelledRef.current = false;
+
       if (agentBusy) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
@@ -1549,9 +1554,8 @@ export default function App({
         return { submitted: true }; // Clears input
       }
 
-      // Reset cancellation flag when starting new submission
-      // This ensures that after an interrupt, new messages can be sent
-      userCancelledRef.current = false;
+      // Note: userCancelledRef.current was already reset above before the queue check
+      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       let aliasedMsg = msg;
       if (msg === "exit" || msg === "quit") {
