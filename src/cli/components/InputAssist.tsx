@@ -13,6 +13,7 @@ interface InputAssistProps {
   agentId?: string;
   agentName?: string | null;
   serverUrl?: string;
+  workingDirectory?: string;
 }
 
 /**
@@ -76,6 +77,11 @@ export function InputAssist({
       </Box>
     );
   }
+
+  // No assistance needed
+  return null;
+}
+
 
   // No assistance needed
   return null;

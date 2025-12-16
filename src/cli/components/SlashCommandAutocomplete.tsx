@@ -42,8 +42,40 @@ export function SlashCommandAutocomplete({
   cursorPosition = currentInput.length,
   onSelect,
   onActiveChange,
+  agentId,
+  workingDirectory = process.cwd(),
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
+
+  // Check pin status to conditionally show/hide pin/unpin commands
+  const allCommands = useMemo(() => {
+    if (!agentId) return baseCommands;
+
+    try {
+      const globalPinned = settingsManager.getGlobalPinnedAgents();
+      const localPinned = settingsManager.getLocalPinnedAgents(workingDirectory);
+      
+      const isPinnedGlobally = globalPinned.includes(agentId);
+      const isPinnedLocally = localPinned.includes(agentId);
+      const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
+      const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+
+      return baseCommands.filter((cmd) => {
+        // Hide /pin if agent is pinned both locally AND globally
+        if (cmd.cmd === "/pin" && isPinnedBoth) {
+          return false;
+        }
+        // Hide /unpin if agent is not pinned anywhere
+        if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+          return false;
+        }
+        return true;
+      });
+    } catch (error) {
+      // If settings aren't loaded, just show all commands
+      return baseCommands;
+    }
+  }, [agentId, workingDirectory]);
 
   const { selectedIndex } = useAutocompleteNavigation({
     matches,

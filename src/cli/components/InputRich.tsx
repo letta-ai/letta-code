@@ -573,6 +573,7 @@ export function Input({
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          workingDirectory={process.cwd()}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>
