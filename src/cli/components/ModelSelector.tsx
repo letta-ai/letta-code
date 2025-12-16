@@ -1,7 +1,11 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getClient } from "../../agent/client";
+import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+  getAvailableModelsCacheInfo,
+} from "../../agent/available-models";
 import { models } from "../../agent/model";
 import { colors } from "./colors";
 
@@ -14,49 +18,6 @@ type UiModel = {
   isFeatured?: boolean;
   updateArgs?: Record<string, unknown>;
 };
-
-// Cache for available models with 5 minute TTL
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-let modelsCache: {
-  data: Set<string>;
-  timestamp: number;
-} | null = null;
-
-/**
- * Fetch available models from the API with caching
- */
-async function fetchAvailableModelsWithCache(): Promise<Set<string>> {
-  const now = Date.now();
-
-  // Return cached data if still valid
-  if (modelsCache && now - modelsCache.timestamp < CACHE_TTL_MS) {
-    return modelsCache.data;
-  }
-
-  // Fetch fresh data
-  const client = await getClient();
-  const modelsList = await client.models.list();
-
-  // Create a set of available model handles for fast lookup
-  const availableHandles = new Set(
-    modelsList.map((m) => m.handle).filter((h): h is string => !!h),
-  );
-
-  // Update cache
-  modelsCache = {
-    data: availableHandles,
-    timestamp: now,
-  };
-
-  return availableHandles;
-}
-
-/**
- * Clear the models cache (useful for forcing a refresh)
- */
-export function clearModelsCache(): void {
-  modelsCache = null;
-}
 
 interface ModelSelectorProps {
   currentModel?: string;
@@ -74,34 +35,47 @@ export function ModelSelector({
   const typedModels = models as UiModel[];
   const [showAll, setShowAll] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [availableModels, setAvailableModels] = useState<Set<string> | null>(
-    null,
-  );
+  // undefined: not loaded yet (show spinner)
+  // Set<string>: loaded and filtered
+  // null: error fallback (show all models + warning)
+  const [availableModels, setAvailableModels] = useState<
+    Set<string> | null | undefined
+  >(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch available models from the API (with caching)
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
     try {
       if (forceRefresh) {
-        clearModelsCache();
-        setRefreshing(true);
-        setError(null);
+        clearAvailableModelsCache();
+        if (mountedRef.current) {
+          setRefreshing(true);
+          setError(null);
+        }
       }
 
-      const now = Date.now();
-      const wasCached =
-        modelsCache !== null && now - modelsCache.timestamp < CACHE_TTL_MS;
+      const cacheInfoBefore = getAvailableModelsCacheInfo();
+      const result = await getAvailableModelHandles({ forceRefresh });
 
-      const availableHandles = await fetchAvailableModelsWithCache();
+      if (!mountedRef.current) return;
 
-      setAvailableModels(availableHandles);
-      setIsCached(!forceRefresh && wasCached);
+      setAvailableModels(result.handles);
+      setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load models");
       setIsLoading(false);
       setRefreshing(false);
@@ -116,12 +90,11 @@ export function ModelSelector({
 
   // Filter models based on availability
   const filteredModels = useMemo(() => {
-    // If loading or error (with fallback), show all models
-    if (availableModels === null) {
-      return typedModels;
-    }
-
-    // Filter to only show models the user has access to
+    // Not loaded yet: render nothing (avoid briefly showing unfiltered models)
+    if (availableModels === undefined) return [];
+    // Error fallback: show all models with warning
+    if (availableModels === null) return typedModels;
+    // Loaded: filter to only show models the user has access to
     return typedModels.filter((model) => availableModels.has(model.handle));
   }, [typedModels, availableModels]);
 
@@ -189,7 +162,8 @@ export function ModelSelector({
         }
       }
     },
-    { isActive: !isLoading && !refreshing },
+    // Keep active so ESC and 'r' work while loading.
+    { isActive: true },
   );
 
   return (
