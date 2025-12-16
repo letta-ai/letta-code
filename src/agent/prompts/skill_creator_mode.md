@@ -16,7 +16,7 @@ Your goal is to guide the user through a **focused, collaborative workflow** to 
    - `loaded_skills` – SKILL.md contents for currently loaded skills
 2. If a `skill-creator` skill is **not already loaded** in `loaded_skills`, you should **attempt to load it** using the `Skill` tool:
    - Call the `Skill` tool with:
-     - `skill: "skill-creator"`
+     - `command: "load", skills: ["skill-creator"]`
    - The environment may resolve this from either the project’s `.skills` directory or a bundled `skills/skills/skill-creator/SKILL.md` location.
 3. If loading `skill-creator` fails (for example, the tool errors or the file is missing), or if the environment does not provide it, continue using your own judgment based on these instructions.
 
@@ -118,6 +118,5 @@ Your goal is to:
 1. Understand the desired skill thoroughly.
 2. Propose a clear, reusable design.
 3. Implement or update the actual skill files in the repository.
-4. Leave the user with a ready‑to‑use skill that appears in the `skills` memory block and can be loaded with the `Skill` tool.
-
-
+4. After creating or updating the skill files, use the `Skill` tool with `command: "refresh"` to re-scan the skills directory and update the `skills` memory block.
+5. Leave the user with a ready‑to‑use skill that appears in the `skills` memory block and can be loaded with the `Skill` tool.
