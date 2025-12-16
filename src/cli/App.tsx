@@ -1591,6 +1591,17 @@ export default function App({
 
         // Special handling for /exit command - show stats and exit
         if (trimmed === "/exit") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "See ya!",
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           handleExit();
           return { submitted: true };
         }
