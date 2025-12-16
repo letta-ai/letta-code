@@ -1,4 +1,5 @@
 // Import useInput from vendored Ink for bracketed paste support
+import { stdin } from "node:process";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
@@ -568,6 +569,7 @@ export function Input({
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          workingDirectory={process.cwd()}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>
