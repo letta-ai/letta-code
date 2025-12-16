@@ -139,7 +139,8 @@ How to store Skills:
 How to use Skills:
 - Skills are automatically discovered on bootup.
 - Review available skills from the `skills` block and loaded skills from the `loaded_skills` block when you are asked to complete a task.
-- If any skill is relevant, load it using the `Skill` tool.
+- If any skill is relevant, load it using the `Skill` tool with `command: "load"`.
 - Then, navigate and discover additional linked files in its directory as needed. Don't load additional files immediately, only load them when needed.
-- When the task is completed, unload irrelevant skills from the `loaded_skills` block.
-IMPORTANT: Always remove irrelevant skills using memory management tools from the `loaded_skills` block.
+- When the task is completed, unload irrelevant skills using the Skill tool with `command: "unload"`.
+- After creating a new skill, use `command: "refresh"` to re-scan the skills directory and update the available skills list.
+IMPORTANT: Always unload irrelevant skills using the Skill tool to free up context space.
