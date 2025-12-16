@@ -118,6 +118,5 @@ Your goal is to:
 1. Understand the desired skill thoroughly.
 2. Propose a clear, reusable design.
 3. Implement or update the actual skill files in the repository.
-4. Leave the user with a ready‑to‑use skill that appears in the `skills` memory block and can be loaded with the `Skill` tool.
-
-
+4. After creating or updating the skill files, use the `Skill` tool with `command: "refresh"` to re-scan the skills directory and update the `skills` memory block.
+5. Leave the user with a ready‑to‑use skill that appears in the `skills` memory block and can be loaded with the `Skill` tool.

@@ -6,12 +6,16 @@ import {
   getSkillsDirectory,
   setHasLoadedSkills,
 } from "../../agent/context";
-import { SKILLS_DIR } from "../../agent/skills";
+import {
+  discoverSkills,
+  formatSkillsForMemory,
+  SKILLS_DIR,
+} from "../../agent/skills";
 import { validateRequiredParams } from "./validation.js";
 
 interface SkillArgs {
-  command: "load" | "unload";
-  skills: string[];
+  command: "load" | "unload" | "refresh";
+  skills?: string[];
 }
 
 interface SkillResult {
@@ -120,18 +124,54 @@ async function readSkillContent(
   }
 }
 
-export async function skill(args: SkillArgs): Promise<SkillResult> {
-  validateRequiredParams(args, ["command", "skills"], "Skill");
-  const { command, skills: skillIds } = args;
+/**
+ * Get skills directory, trying multiple sources
+ */
+async function getResolvedSkillsDir(
+  client: ReturnType<typeof getCurrentClient>,
+  agentId: string,
+): Promise<string> {
+  let skillsDir = getSkillsDirectory();
 
-  if (!Array.isArray(skillIds) || skillIds.length === 0) {
-    throw new Error("Skill tool requires a non-empty 'skills' array");
+  if (!skillsDir) {
+    // Try to extract from skills block
+    try {
+      const skillsBlock = await client.agents.blocks.retrieve("skills", {
+        agent_id: agentId,
+      });
+      if (skillsBlock?.value) {
+        skillsDir = extractSkillsDir(skillsBlock.value);
+      }
+    } catch {
+      // Skills block doesn't exist, will fall back to default
+    }
   }
 
-  if (command !== "load" && command !== "unload") {
+  if (!skillsDir) {
+    // Fall back to default .skills directory in cwd
+    skillsDir = join(process.cwd(), SKILLS_DIR);
+  }
+
+  return skillsDir;
+}
+
+export async function skill(args: SkillArgs): Promise<SkillResult> {
+  validateRequiredParams(args, ["command"], "Skill");
+  const { command, skills: skillIds } = args;
+
+  if (command !== "load" && command !== "unload" && command !== "refresh") {
     throw new Error(
-      `Invalid command "${command}". Must be "load" or "unload".`,
+      `Invalid command "${command}". Must be "load", "unload", or "refresh".`,
     );
+  }
+
+  // For load/unload, skills array is required
+  if (command !== "refresh") {
+    if (!Array.isArray(skillIds) || skillIds.length === 0) {
+      throw new Error(
+        `Skill tool requires a non-empty 'skills' array for "${command}" command`,
+      );
+    }
   }
 
   try {
@@ -139,7 +179,35 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const client = getCurrentClient();
     const agentId = getCurrentAgentId();
 
-    // Retrieve the loaded_skills block
+    // Handle refresh command
+    if (command === "refresh") {
+      const skillsDir = await getResolvedSkillsDir(client, agentId);
+
+      // Discover skills from directory
+      const { skills, errors } = await discoverSkills(skillsDir);
+
+      // Log any errors
+      if (errors.length > 0) {
+        for (const error of errors) {
+          console.warn(
+            `Skill discovery error: ${error.path}: ${error.message}`,
+          );
+        }
+      }
+
+      // Format and update the skills block
+      const formattedSkills = formatSkillsForMemory(skills, skillsDir);
+      await client.agents.blocks.update("skills", {
+        agent_id: agentId,
+        value: formattedSkills,
+      });
+
+      return {
+        message: `Refreshed skills list: found ${skills.length} skill(s)${errors.length > 0 ? `, ${errors.length} error(s)` : ""}`,
+      };
+    }
+
+    // Retrieve the loaded_skills block for load/unload
     let loadedSkillsBlock: Awaited<
       ReturnType<typeof client.agents.blocks.retrieve>
     >;
@@ -153,35 +221,18 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       );
     }
 
-    // Determine skills directory
-    let skillsDir = getSkillsDirectory();
-
-    if (!skillsDir) {
-      // Try to extract from skills block
-      try {
-        const skillsBlock = await client.agents.blocks.retrieve("skills", {
-          agent_id: agentId,
-        });
-        if (skillsBlock?.value) {
-          skillsDir = extractSkillsDir(skillsBlock.value);
-        }
-      } catch {
-        // Skills block doesn't exist, will fall back to default
-      }
-    }
-
-    if (!skillsDir) {
-      // Fall back to default .skills directory in cwd
-      skillsDir = join(process.cwd(), SKILLS_DIR);
-    }
+    const skillsDir = await getResolvedSkillsDir(client, agentId);
 
     let currentValue = loadedSkillsBlock.value?.trim() || "";
     const loadedSkillIds = getLoadedSkillIds(currentValue);
     const results: string[] = [];
 
+    // skillIds is guaranteed to be non-empty for load/unload (validated above)
+    const skillsToProcess = skillIds as string[];
+
     if (command === "load") {
       // Load skills
-      for (const skillId of skillIds) {
+      for (const skillId of skillsToProcess) {
         if (loadedSkillIds.includes(skillId)) {
           results.push(`"${skillId}" already loaded`);
           continue;
@@ -222,7 +273,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       const skillBoundaries = parseLoadedSkills(currentValue);
 
       // Sort skills to unload by their position (descending) so we can remove from end first
-      const sortedSkillsToUnload = skillIds
+      const sortedSkillsToUnload = skillsToProcess
         .filter((id) => skillBoundaries.has(id))
         .sort((a, b) => {
           const boundaryA = skillBoundaries.get(a);
@@ -230,7 +281,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
           return (boundaryB?.start || 0) - (boundaryA?.start || 0);
         });
 
-      for (const skillId of skillIds) {
+      for (const skillId of skillsToProcess) {
         if (!loadedSkillIds.includes(skillId)) {
           results.push(`"${skillId}" not loaded`);
           continue;
