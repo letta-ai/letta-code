@@ -10,6 +10,7 @@ export interface Settings {
   lastAgent: string | null;
   tokenStreaming: boolean;
   enableSleeptime: boolean;
+  sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
@@ -38,6 +39,7 @@ const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
   enableSleeptime: false,
+  sessionContextEnabled: true,
   globalSharedBlockIds: {},
 };
 
