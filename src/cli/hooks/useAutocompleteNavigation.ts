@@ -27,7 +27,7 @@ interface UseAutocompleteNavigationResult {
  */
 export function useAutocompleteNavigation<T>({
   matches,
-  maxVisible = 10,
+  maxVisible,
   onSelect,
   onActiveChange,
   manageActiveState = true,
@@ -55,7 +55,11 @@ export function useAutocompleteNavigation<T>({
   useInput((_input, key) => {
     if (!matches.length || disabled) return;
 
-    const maxIndex = Math.min(matches.length, maxVisible) - 1;
+    // If maxVisible is set, limit navigation to visible items; otherwise navigate all
+    const maxIndex =
+      maxVisible !== undefined
+        ? Math.min(matches.length, maxVisible) - 1
+        : matches.length - 1;
 
     if (key.upArrow) {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
