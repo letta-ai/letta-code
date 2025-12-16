@@ -361,7 +361,9 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
                     {agentId && (
                       <>
                         <Text dimColor> · agent: </Text>
-                        <Link url={`https://app.letta.com/agents/${agentId}`}>
+                        <Link
+                          url={`https://app.letta.com/projects/default-project/agents/${agentId}?searchTerm=${encodeURIComponent(activeQuery)}&messageId=${msgId}`}
+                        >
                           <Text color={colors.link.text}>{agentId}</Text>
                         </Link>
                       </>
