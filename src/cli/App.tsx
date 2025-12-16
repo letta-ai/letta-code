@@ -360,6 +360,8 @@ export default function App({
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
+  const [agentDescription, setAgentDescription] = useState<string | null>(null);
+  const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
   const currentModelLabel =
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
@@ -390,6 +392,9 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Track if we've sent the session context for this CLI session
+  const hasSentSessionContextRef = useRef(false);
 
   // Show exit stats on exit
   const [showExitStats, setShowExitStats] = useState(false);
@@ -617,6 +622,11 @@ export default function App({
           const agent = await client.agents.retrieve(agentId);
           setLlmConfig(agent.llm_config);
           setAgentName(agent.name);
+          setAgentDescription(agent.description ?? null);
+          // Get last message timestamp from agent state if available
+          const lastRunCompletion = (agent as { last_run_completion?: string })
+            .last_run_completion;
+          setAgentLastRunAt(lastRunCompletion ?? null);
 
           // Detect current toolset from attached tools
           const { detectToolsetFromAgent } = await import("../tools/toolset");
@@ -2418,8 +2428,29 @@ ${recentCommits}
       // Prepend skill unload reminder if skills are loaded (using cached flag)
       const skillUnloadReminder = getSkillUnloadReminder();
 
-      // Combine reminders with content (plan mode first, then skill unload)
-      const allReminders = planModeReminder + skillUnloadReminder;
+      // Prepend session context on first message of CLI session (if enabled)
+      let sessionContextReminder = "";
+      const sessionContextEnabled = settingsManager.getSetting(
+        "sessionContextEnabled",
+      );
+      if (!hasSentSessionContextRef.current && sessionContextEnabled) {
+        const { buildSessionContext } = await import(
+          "./helpers/sessionContext"
+        );
+        sessionContextReminder = buildSessionContext({
+          agentInfo: {
+            id: agentId,
+            name: agentName,
+            description: agentDescription,
+            lastRunAt: agentLastRunAt,
+          },
+        });
+        hasSentSessionContextRef.current = true;
+      }
+
+      // Combine reminders with content (session context first, then plan mode, then skill unload)
+      const allReminders =
+        sessionContextReminder + planModeReminder + skillUnloadReminder;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -2553,6 +2584,8 @@ ${recentCommits}
       refreshDerived,
       agentId,
       agentName,
+      agentDescription,
+      agentLastRunAt,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
