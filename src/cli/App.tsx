@@ -371,11 +371,23 @@ export default function App({
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
 
-  // Model selector state
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
-  const [systemPromptSelectorOpen, setSystemPromptSelectorOpen] =
-    useState(false);
+  // Overlay/selector state - only one can be open at a time
+  type ActiveOverlay =
+    | "model"
+    | "toolset"
+    | "system"
+    | "agent"
+    | "resume"
+    | "profile"
+    | "search"
+    | "subagent"
+    | null;
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+
+  // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
+  const anySelectorOpen = activeOverlay !== null;
+
+  // Other model/agent state
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
@@ -397,30 +409,6 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
-
-  // Agent selector state
-  const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
-
-  // Resume selector state
-  const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
-  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
-
-  // Subagent manager state (for /subagents command)
-  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
-
-  // Profile selector state
-  const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
-
-  // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
-  const anySelectorOpen =
-    modelSelectorOpen ||
-    toolsetSelectorOpen ||
-    systemPromptSelectorOpen ||
-    agentSelectorOpen ||
-    resumeSelectorOpen ||
-    profileSelectorOpen ||
-    messageSearchOpen ||
-    subagentManagerOpen;
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -1382,7 +1370,7 @@ export default function App({
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
       // Close selector immediately
-      setAgentSelectorOpen(false);
+      setActiveOverlay(null);
 
       // Skip if already on this agent (no async work needed, queue can proceed)
       if (targetAgentId === agentId) {
@@ -1576,25 +1564,25 @@ export default function App({
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
-          setModelSelectorOpen(true);
+          setActiveOverlay("model");
           return { submitted: true };
         }
 
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
-          setToolsetSelectorOpen(true);
+          setActiveOverlay("toolset");
           return { submitted: true };
         }
 
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
-          setSystemPromptSelectorOpen(true);
+          setActiveOverlay("system");
           return { submitted: true };
         }
 
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
-          setSubagentManagerOpen(true);
+          setActiveOverlay("subagent");
           return { submitted: true };
         }
 
@@ -1913,13 +1901,13 @@ export default function App({
 
         // Special handling for /resume command - show session resume selector
         if (msg.trim() === "/agents" || msg.trim() === "/resume") {
-          setResumeSelectorOpen(true);
+          setActiveOverlay("resume");
           return { submitted: true };
         }
 
         // Special handling for /search command - show message search
         if (msg.trim() === "/search") {
-          setMessageSearchOpen(true);
+          setActiveOverlay("search");
           return { submitted: true };
         }
 
@@ -1940,7 +1928,7 @@ export default function App({
 
           // /profile - open profile selector
           if (!subcommand) {
-            setProfileSelectorOpen(true);
+            setActiveOverlay("profile");
             return { submitted: true };
           }
 
@@ -2001,7 +1989,7 @@ export default function App({
 
         // Special handling for /profiles and /pinned commands - open pinned agents selector
         if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
-          setProfileSelectorOpen(true);
+          setActiveOverlay("profile");
           return { submitted: true };
         }
 
@@ -2969,7 +2957,7 @@ ${recentCommits}
     async (modelId: string) => {
       // Close selector and lock input together (before any await) to prevent
       // queue processing between selector close and commandRunning being set
-      setModelSelectorOpen(false);
+      setActiveOverlay(null);
       setCommandRunning(true);
 
       // Declare cmdId outside try block so it's accessible in catch
@@ -3084,7 +3072,6 @@ ${recentCommits}
           refreshDerived();
         }
       } finally {
-        // Unlock input
         setCommandRunning(false);
       }
     },
@@ -3095,7 +3082,7 @@ ${recentCommits}
     async (promptId: string) => {
       // Close selector and lock input together (before any await) to prevent
       // queue processing between selector close and commandRunning being set
-      setSystemPromptSelectorOpen(false);
+      setActiveOverlay(null);
       setCommandRunning(true);
 
       const cmdId = uid("cmd");
@@ -3188,7 +3175,7 @@ ${recentCommits}
     ) => {
       // Close selector and lock input together (before any await) to prevent
       // queue processing between selector close and commandRunning being set
-      setToolsetSelectorOpen(false);
+      setActiveOverlay(null);
       setCommandRunning(true);
 
       const cmdId = uid("cmd");
@@ -3232,7 +3219,6 @@ ${recentCommits}
         });
         refreshDerived();
       } finally {
-        // Unlock input
         setCommandRunning(false);
       }
     },
@@ -3719,7 +3705,7 @@ Plan file path: ${planFilePath}`;
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
-            {modelSelectorOpen && (
+            {activeOverlay === "model" && (
               <ModelSelector
                 currentModel={
                   llmConfig?.model_endpoint_type && llmConfig?.model
@@ -3728,64 +3714,64 @@ Plan file path: ${planFilePath}`;
                 }
                 currentEnableReasoner={llmConfig?.enable_reasoner}
                 onSelect={handleModelSelect}
-                onCancel={() => setModelSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* Toolset Selector - conditionally mounted as overlay */}
-            {toolsetSelectorOpen && (
+            {activeOverlay === "toolset" && (
               <ToolsetSelector
                 currentToolset={currentToolset ?? undefined}
                 onSelect={handleToolsetSelect}
-                onCancel={() => setToolsetSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* System Prompt Selector - conditionally mounted as overlay */}
-            {systemPromptSelectorOpen && (
+            {activeOverlay === "system" && (
               <SystemPromptSelector
                 currentPromptId={currentSystemPromptId ?? undefined}
                 onSelect={handleSystemPromptSelect}
-                onCancel={() => setSystemPromptSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* Agent Selector - conditionally mounted as overlay */}
-            {agentSelectorOpen && (
+            {activeOverlay === "agent" && (
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={handleAgentSelect}
-                onCancel={() => setAgentSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* Subagent Manager - for managing custom subagents */}
-            {subagentManagerOpen && (
-              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
+            {activeOverlay === "subagent" && (
+              <SubagentManager onClose={() => setActiveOverlay(null)} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}
-            {resumeSelectorOpen && (
+            {activeOverlay === "resume" && (
               <ResumeSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setResumeSelectorOpen(false);
+                  setActiveOverlay(null);
                   await handleAgentSelect(id);
                 }}
-                onCancel={() => setResumeSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* Profile Selector - conditionally mounted as overlay */}
-            {profileSelectorOpen && (
+            {activeOverlay === "profile" && (
               <ProfileSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setProfileSelectorOpen(false);
+                  setActiveOverlay(null);
                   await handleAgentSelect(id);
                 }}
                 onUnpin={(unpinAgentId) => {
-                  setProfileSelectorOpen(false);
+                  setActiveOverlay(null);
                   settingsManager.unpinBoth(unpinAgentId);
                   const cmdId = uid("cmd");
                   buffersRef.current.byId.set(cmdId, {
@@ -3799,13 +3785,13 @@ Plan file path: ${planFilePath}`;
                   buffersRef.current.order.push(cmdId);
                   refreshDerived();
                 }}
-                onCancel={() => setProfileSelectorOpen(false)}
+                onCancel={() => setActiveOverlay(null)}
               />
             )}
 
             {/* Message Search - conditionally mounted as overlay */}
-            {messageSearchOpen && (
-              <MessageSearch onClose={() => setMessageSearchOpen(false)} />
+            {activeOverlay === "search" && (
+              <MessageSearch onClose={() => setActiveOverlay(null)} />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
