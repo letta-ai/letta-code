@@ -110,10 +110,6 @@ const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
 const EAGER_CANCEL = true;
 
-// Module-level flag to track if agent is busy (streaming or running a command)
-// This is outside of React's closure system to ensure reliable checks across async operations
-let globalAgentBusy = false;
-
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -322,26 +318,16 @@ export default function App({
   }, [agentId]);
 
   // Whether a stream is in flight (disables input)
-  // Uses synced state to keep ref and global flag in sync
-  const [streaming, setStreaming, streamingRef] = useSyncedState(false, {
-    onTrue: () => {
-      globalAgentBusy = true;
-    },
-  });
+  // Uses synced state to keep ref in sync for reliable async checks
+  const [streaming, setStreaming, streamingRef] = useSyncedState(false);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
-  // Uses synced state to keep ref and global flag in sync
-  const [commandRunning, setCommandRunning, commandRunningRef] = useSyncedState(
-    false,
-    {
-      onTrue: () => {
-        globalAgentBusy = true;
-      },
-    },
-  );
+  // Uses synced state to keep ref in sync for reliable async checks
+  const [commandRunning, setCommandRunning, commandRunningRef] =
+    useSyncedState(false);
 
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
@@ -478,11 +464,9 @@ export default function App({
   }, [restoreQueueOnCancel]);
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
-  // Uses globalAgentBusy (module-level flag) as primary check since it's outside React closures.
-  // Also checks refs and state as backups.
+  // Uses refs for synchronous access outside React's closure system
   const isAgentBusy = useCallback(() => {
     return (
-      globalAgentBusy ||
       streamingRef.current ||
       isExecutingTool ||
       commandRunningRef.current ||
@@ -1422,13 +1406,6 @@ export default function App({
       setInterruptRequested(false);
     }
   }, [streaming]);
-
-  // Clear globalAgentBusy when agent becomes idle
-  useEffect(() => {
-    if (!streaming && !commandRunning && !isExecutingTool) {
-      globalAgentBusy = false;
-    }
-  }, [streaming, commandRunning, isExecutingTool]);
 
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
