@@ -293,8 +293,8 @@ export async function handleHeadlessCommand(
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
 
-  // Set agent context for tools that need it (e.g., Skill tool)
-  setAgentContext(agent.id, client, skillsDirectory);
+  // Set agent context for tools that need it (e.g., Skill tool, Task tool)
+  setAgentContext(agent.id, skillsDirectory);
   await initializeLoadedSkillsFlag();
 
   // Re-discover skills and update the skills memory block
@@ -451,6 +451,7 @@ export async function handleHeadlessCommand(
                 type: "auto_approval",
                 tool_name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
+                tool_args: decision.approval.toolArgs,
               }),
             );
           }
@@ -697,6 +698,7 @@ export async function handleHeadlessCommand(
                         type: "auto_approval",
                         tool_name: nextName,
                         tool_call_id: id,
+                        tool_args: incomingArgs,
                         reason: permission.reason,
                         matched_rule: permission.matchedRule,
                       }),

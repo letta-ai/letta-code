@@ -49,6 +49,11 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const rawName = line.name ?? "?";
   const argsText = line.argsText ?? "...";
 
+  // Task tool handles its own display via console.log - suppress UI rendering entirely
+  if (rawName === "Task" || rawName === "task") {
+    return null;
+  }
+
   // Apply tool name remapping from old codebase
   let displayName = rawName;
   // Anthropic toolset
