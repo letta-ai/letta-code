@@ -292,7 +292,11 @@ export const ProfileSelector = memo(function ProfileSelector({
             const displayId = truncateAgentId(profile.agentId, availableForId);
 
             return (
-              <Box key={profile.agentId} flexDirection="column" marginBottom={1}>
+              <Box
+                key={profile.agentId}
+                flexDirection="column"
+                marginBottom={1}
+              >
                 {/* Row 1: Selection indicator, profile name, and ID */}
                 <Box flexDirection="row">
                   <Text
