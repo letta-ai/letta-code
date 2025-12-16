@@ -1458,7 +1458,7 @@ export default function App({
       userCancelledRef.current = false;
 
       let aliasedMsg = msg;
-      if (msg === "exit") {
+      if (msg === "exit" || msg === "quit") {
         aliasedMsg = "/exit";
       }
 
