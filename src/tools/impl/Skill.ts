@@ -128,7 +128,7 @@ async function readSkillContent(
  * Get skills directory, trying multiple sources
  */
 async function getResolvedSkillsDir(
-  client: ReturnType<typeof getCurrentClient>,
+  client: Awaited<ReturnType<typeof getClient>>,
   agentId: string,
 ): Promise<string> {
   let skillsDir = getSkillsDirectory();
