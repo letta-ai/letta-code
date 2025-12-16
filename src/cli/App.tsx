@@ -1469,9 +1469,14 @@ export default function App({
       // This ensures that after an interrupt, new messages can be sent
       userCancelledRef.current = false;
 
+      let aliasedMsg = msg;
+      if (msg === "exit" || msg === "quit") {
+        aliasedMsg = "/exit";
+      }
+
       // Handle commands (messages starting with "/")
-      if (msg.startsWith("/")) {
-        const trimmed = msg.trim();
+      if (aliasedMsg.startsWith("/")) {
+        const trimmed = aliasedMsg.trim();
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
@@ -3532,7 +3537,7 @@ Plan file path: ${planFilePath}`;
 
       const agentNameLine =
         !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /name to rename)`
+          ? `→ Agent: ${agentState.name} (use /rename to rename)`
           : "";
 
       const statusLines = [
