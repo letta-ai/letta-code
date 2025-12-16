@@ -533,11 +533,6 @@ export default function App({
         continue;
       }
       if ("phase" in ln && ln.phase === "finished") {
-        // Skip empty reasoning blocks to prevent stray "Thinking..." indicators
-        if (ln.kind === "reasoning" && (!ln.text || ln.text.trim() === "")) {
-          emittedIdsRef.current.add(id);
-          continue;
-        }
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
       }
