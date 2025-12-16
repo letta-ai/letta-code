@@ -10,7 +10,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { getClient } from "../src/agent/client";
 import { sendMessageStream } from "../src/agent/message";
 
 async function main() {
