@@ -42,6 +42,10 @@ export default class App extends PureComponent {
     }
     componentDidMount() {
         cliCursor.hide(this.props.stdout);
+        // Increase max listeners on stdin to accommodate multiple useInput hooks
+        if (this.props.stdin?.setMaxListeners) {
+            this.props.stdin.setMaxListeners(20);
+        }
     }
     componentWillUnmount() {
         cliCursor.show(this.props.stdout);
@@ -62,6 +66,8 @@ export default class App extends PureComponent {
                 throw new Error('Raw mode is not supported on the stdin provided to Ink.\nRead about how to prevent this error on https://github.com/vadimdemedes/ink/#israwmodesupported');
             }
         }
+        // Increase max listeners on stdin to accommodate multiple useInput hooks
+        stdin.setMaxListeners(20);
         stdin.setEncoding('utf8');
         if (isEnabled) {
             if (this.rawModeEnabledCount === 0) {
