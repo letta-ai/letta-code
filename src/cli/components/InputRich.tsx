@@ -529,8 +529,8 @@ export function Input({
         </Box>
       )}
 
-      {/* Queue display - show when streaming with queued messages */}
-      {streaming && messageQueue && messageQueue.length > 0 && (
+      {/* Queue display - show whenever there are queued messages */}
+      {messageQueue && messageQueue.length > 0 && (
         <QueuedMessages messages={messageQueue} />
       )}
 
