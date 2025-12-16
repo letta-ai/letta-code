@@ -59,6 +59,22 @@ export const commands: Record<string, Command> = {
       return "Updating description...";
     },
   },
+  "/link": {
+    desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Linking tools...";
+    },
+  },
+  "/unlink": {
+    desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Unlinking tools...";
+    },
+  },
   "/toolset": {
     desc: "Switch toolset (replaces /link and /unlink)",
     handler: () => {

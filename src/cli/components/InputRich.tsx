@@ -1,5 +1,6 @@
 // Import useInput from vendored Ink for bracketed paste support
 
+import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
@@ -16,10 +17,6 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 
-// Increase max listeners to accommodate multiple useInput hooks
-// (5 in this component + autocomplete components)
-stdin.setMaxListeners(20);
-
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const appVersion = getVersion();
@@ -28,6 +25,14 @@ const appVersion = getVersion();
 const COUNTER_VISIBLE_THRESHOLD = 1000;
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+
+// Increase max listeners to accommodate multiple useInput hooks
+// (5 in this component + autocomplete components)
+stdin.setMaxListeners(20);
+
+// Also set default max listeners on EventEmitter prototype to prevent warnings
+// from any EventEmitters that might not have their limit set properly
+EventEmitter.defaultMaxListeners = 20;
 
 export function Input({
   visible = true,
@@ -574,6 +579,7 @@ export function Input({
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          workingDirectory={process.cwd()}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>
