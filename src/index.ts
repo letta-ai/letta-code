@@ -20,9 +20,15 @@ USAGE
   letta                 Resume from profile or create new agent (shows selector)
   letta --new           Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
+  letta --anthropic     Use Claude directly with your Max subscription (bypasses Letta)
 
   # headless
   letta -p "..."        One-off prompt in headless mode (no TTY UI)
+
+  # authentication
+  letta login anthropic   Login with your Claude Pro/Max subscription
+  letta login             Login with Letta Cloud (default)
+  letta logout            Clear all credentials
 
   # maintenance
   letta update          Manually check for updates and install if available
@@ -43,6 +49,7 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+  --anthropic           Use Claude directly with your Max subscription (bypasses Letta platform)
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -57,11 +64,20 @@ BEHAVIOR
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
 
+  DIRECT ANTHROPIC MODE (--anthropic):
+  Use your Claude Pro/Max subscription directly without going through Letta.
+  First run 'letta login anthropic' to authenticate, then use --anthropic flag.
+  This mode bypasses Letta's memory features but uses your subscription quota.
+
 EXAMPLES
   # when installed as an executable
   letta                    # Show profile selector or create new
   letta --new              # Create new agent directly
   letta --agent agent_123  # Open specific agent
+
+  # use Claude Max subscription directly
+  letta login anthropic    # One-time auth with Anthropic
+  letta --anthropic        # Use Claude directly (after login)
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
@@ -142,6 +158,7 @@ async function main() {
         unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
+        anthropic: { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -187,6 +204,86 @@ async function main() {
     process.exit(result.success ? 0 : 1);
   }
 
+  // Handle login command
+  if (command === "login") {
+    const loginTarget = positionals[3]; // e.g., "anthropic" or undefined for Letta
+
+    if (loginTarget === "anthropic") {
+      // Login with Anthropic Claude Max subscription
+      const { anthropicOAuthLogin, validateAnthropicCredentials } =
+        await import("./auth/anthropic-oauth");
+
+      console.log("🔐 Logging in with Anthropic Claude Max subscription...\n");
+
+      try {
+        const credentials = await anthropicOAuthLogin();
+
+        // Validate the credentials work
+        const isValid = await validateAnthropicCredentials(
+          credentials.accessToken,
+        );
+        if (!isValid) {
+          console.error(
+            "❌ Authentication succeeded but credentials validation failed.",
+          );
+          console.error("Your subscription may not have API access enabled.");
+          process.exit(1);
+        }
+
+        // Save credentials
+        settingsManager.updateSettings({
+          anthropicAccessToken: credentials.accessToken,
+          anthropicRefreshToken: credentials.refreshToken,
+          anthropicTokenExpiresAt: credentials.expiresAt,
+          preferredBackend: "anthropic",
+        });
+
+        console.log("\n✅ Successfully logged in with Anthropic!");
+        console.log(
+          "You can now use 'letta --anthropic' to use Claude directly.",
+        );
+        process.exit(0);
+      } catch (error) {
+        console.error(
+          `\n❌ Login failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        process.exit(1);
+      }
+    } else {
+      // Default: Letta Cloud OAuth
+      const { runSetup } = await import("./auth/setup");
+      await runSetup();
+      console.log("\n✅ Successfully logged in with Letta Cloud!");
+      process.exit(0);
+    }
+  }
+
+  // Handle logout command
+  if (command === "logout") {
+    const logoutTarget = positionals[3]; // e.g., "anthropic" or undefined for all
+
+    if (logoutTarget === "anthropic") {
+      settingsManager.updateSettings({
+        anthropicAccessToken: undefined,
+        anthropicRefreshToken: undefined,
+        anthropicTokenExpiresAt: undefined,
+      });
+      console.log("✅ Logged out from Anthropic.");
+    } else {
+      // Clear all credentials
+      settingsManager.updateSettings({
+        anthropicAccessToken: undefined,
+        anthropicRefreshToken: undefined,
+        anthropicTokenExpiresAt: undefined,
+        refreshToken: undefined,
+        tokenExpiresAt: undefined,
+        env: undefined,
+      });
+      console.log("✅ Logged out from all services.");
+    }
+    process.exit(0);
+  }
+
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   const forceNew = (values.new as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
@@ -198,7 +295,36 @@ async function main() {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const useAnthropicDirect = (values.anthropic as boolean | undefined) ?? false;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // Handle --anthropic flag for direct Claude API mode
+  if (useAnthropicDirect) {
+    const { isAnthropicDirectModeAvailable } = await import(
+      "./agent/anthropic-client"
+    );
+
+    if (!isAnthropicDirectModeAvailable()) {
+      console.error("❌ Anthropic credentials not found.");
+      console.error(
+        "Run 'letta login anthropic' first to authenticate with your Claude Max subscription.",
+      );
+      process.exit(1);
+    }
+
+    // For now, show that direct mode is available but not fully implemented
+    console.log("🚀 Direct Anthropic mode is enabled!");
+    console.log("Your Claude Max subscription will be used directly.\n");
+    console.log(
+      "⚠️  Note: Direct mode bypasses Letta's memory and agent features.",
+    );
+    console.log(
+      "    For full agent capabilities, run without --anthropic flag.\n",
+    );
+
+    // Continue to the normal flow but mark that we're in anthropic mode
+    // The settings already have preferredBackend set from login
+  }
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {

@@ -16,12 +16,18 @@ export interface Settings {
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
   permissions?: PermissionRules;
   env?: Record<string, string>;
-  // OAuth token management
+  // Letta OAuth token management
   refreshToken?: string;
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
   // Tool upsert cache: maps serverUrl -> hash of upserted tools
   toolUpsertHashes?: Record<string, string>;
+  // Anthropic OAuth credentials (for direct Claude Max subscription usage)
+  anthropicAccessToken?: string;
+  anthropicRefreshToken?: string;
+  anthropicTokenExpiresAt?: number; // Unix timestamp in milliseconds
+  // Preferred backend: "letta" (default) or "anthropic" (direct API)
+  preferredBackend?: "letta" | "anthropic";
 }
 
 export interface ProjectSettings {
