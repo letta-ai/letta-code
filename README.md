@@ -50,6 +50,13 @@ Letta Code works with skills (reusable modules that teach your agent new capabil
 
 Read the docs to learn more about [skills and skill learning](https://docs.letta.com/letta-code/skills).
 
+Community maintained packages are available for Arch Linux users on the [AUR](https://aur.archlinux.org/packages/letta-code):
+```bash
+yay -S letta-code # release
+yay -S letta-code-git # nightly
+yay -S letta-code-bin # prebuilt release
+```
+
 ---
 
 Made with 💜 in San Francisco
