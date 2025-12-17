@@ -21,10 +21,8 @@ export async function multi_edit(
 ): Promise<MultiEditResult> {
   validateRequiredParams(args, ["file_path", "edits"], "MultiEdit");
   const { file_path, edits } = args;
-  const userCwd = process.env.USER_CWD || process.cwd();
-  const resolvedPath = path.isAbsolute(file_path)
-    ? file_path
-    : path.resolve(userCwd, file_path);
+  if (!path.isAbsolute(file_path))
+    throw new Error(`File path must be absolute, got: ${file_path}`);
   if (!edits || edits.length === 0) throw new Error("No edits provided");
   for (let i = 0; i < edits.length; i++) {
     const edit = edits[i];
@@ -42,7 +40,7 @@ export async function multi_edit(
       );
   }
   try {
-    let content = await fs.readFile(resolvedPath, "utf-8");
+    let content = await fs.readFile(file_path, "utf-8");
     const appliedEdits: string[] = [];
     for (let i = 0; i < edits.length; i++) {
       const edit = edits[i];
@@ -72,12 +70,12 @@ export async function multi_edit(
         `Replaced "${old_string.substring(0, 50)}${old_string.length > 50 ? "..." : ""}" with "${new_string.substring(0, 50)}${new_string.length > 50 ? "..." : ""}"`,
       );
     }
-    await fs.writeFile(resolvedPath, content, "utf-8");
+    await fs.writeFile(file_path, content, "utf-8");
     const editList = appliedEdits
       .map((edit, i) => `${i + 1}. ${edit}`)
       .join("\n");
     return {
-      message: `Applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${resolvedPath}:\n${editList}`,
+      message: `Applied ${edits.length} edit${edits.length !== 1 ? "s" : ""} to ${file_path}:\n${editList}`,
       edits_applied: edits.length,
     };
   } catch (error) {
@@ -85,13 +83,14 @@ export async function multi_edit(
     const code = String(err?.code ?? "");
     const message = String(err?.message ?? "");
     if (code === "ENOENT") {
+      const userCwd = process.env.USER_CWD || process.cwd();
       throw new Error(
-        `File does not exist. Attempted path: ${resolvedPath}. Current working directory: ${userCwd}`,
+        `File does not exist. Current working directory: ${userCwd}`,
       );
     } else if (code === "EACCES")
-      throw new Error(`Permission denied: ${resolvedPath}`);
+      throw new Error(`Permission denied: ${file_path}`);
     else if (code === "EISDIR")
-      throw new Error(`Path is a directory: ${resolvedPath}`);
+      throw new Error(`Path is a directory: ${file_path}`);
     else if (message) throw new Error(message);
     else throw new Error(`Failed to edit file: ${String(err)}`);
   }
