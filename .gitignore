@@ -1,4 +1,4 @@
-# Legacy Letta Code local settings
+# Letta Code local settings
 .letta/settings.local.json
 .letta
 # User-defined skills
@@ -10,7 +10,6 @@ bun.lockb
 bin/
 letta.js
 letta.js.map
-letta
 .DS_Store
 
 # Logs
