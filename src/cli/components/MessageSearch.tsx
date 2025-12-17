@@ -330,7 +330,7 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
               );
 
               // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
-              const msgId = "id" in msg ? String(msg.id) : "result";
+              const msgId = "message_id" in msg ? String(msg.message_id) : "result";
               const uniqueKey = `${msgId}-${startIndex + index}`;
 
               return (
