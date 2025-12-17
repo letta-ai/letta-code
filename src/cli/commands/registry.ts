@@ -166,6 +166,13 @@ export const commands: Record<string, Command> = {
       return "Opening subagent manager...";
     },
   },
+  "/feedback": {
+    desc: "Send feedback to the Letta team",
+    handler: () => {
+      // Handled specially in App.tsx to send feedback request
+      return "Sending feedback...";
+    },
+  },
 };
 
 /**
