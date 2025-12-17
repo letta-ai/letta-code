@@ -458,10 +458,10 @@ export function Input({
     setCursorPos(newCursorPos);
   };
 
-  // Handle slash command selection from autocomplete
+  // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = async (selectedCommand: string) => {
-    // For slash commands, submit immediately when selected from autocomplete
-    // This provides a better UX - selecting /model should open the model selector
+    // For slash commands, submit immediately when selected via Enter
+    // This provides a better UX - pressing Enter on /model should open the model selector
     const commandToSubmit = selectedCommand.trim();
 
     // Add to history if not a duplicate of the last entry
@@ -475,6 +475,14 @@ export function Input({
 
     setValue(""); // Clear immediately for responsiveness
     await onSubmit(commandToSubmit);
+  };
+
+  // Handle slash command autocomplete (Tab key - fill text only)
+  const handleCommandAutocomplete = (selectedCommand: string) => {
+    // Just fill in the command text without executing
+    // User can then press Enter to execute or continue typing arguments
+    setValue(selectedCommand);
+    setCursorPos(selectedCommand.length);
   };
 
   // Get display name and color for permission mode
@@ -567,6 +575,7 @@ export function Input({
           cursorPosition={currentCursorPosition}
           onFileSelect={handleFileSelect}
           onCommandSelect={handleCommandSelect}
+          onCommandAutocomplete={handleCommandAutocomplete}
           onAutocompleteActiveChange={setIsAutocompleteActive}
           agentId={agentId}
           agentName={agentName}

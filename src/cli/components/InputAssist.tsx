@@ -9,6 +9,7 @@ interface InputAssistProps {
   cursorPosition: number;
   onFileSelect: (path: string) => void;
   onCommandSelect: (command: string) => void;
+  onCommandAutocomplete: (command: string) => void;
   onAutocompleteActiveChange: (isActive: boolean) => void;
   agentId?: string;
   agentName?: string | null;
@@ -27,6 +28,7 @@ export function InputAssist({
   cursorPosition,
   onFileSelect,
   onCommandSelect,
+  onCommandAutocomplete,
   onAutocompleteActiveChange,
   agentId,
   agentName,
@@ -68,6 +70,7 @@ export function InputAssist({
           currentInput={currentInput}
           cursorPosition={cursorPosition}
           onSelect={onCommandSelect}
+          onAutocomplete={onCommandAutocomplete}
           onActiveChange={onAutocompleteActiveChange}
           agentId={agentId}
           workingDirectory={workingDirectory}

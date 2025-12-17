@@ -6,8 +6,10 @@ interface UseAutocompleteNavigationOptions<T> {
   matches: T[];
   /** Maximum number of visible items (for wrapping navigation) */
   maxVisible?: number;
-  /** Callback when an item is selected via Tab or Enter */
+  /** Callback when an item is selected via Tab (autocomplete only) or Enter (when onAutocomplete is not provided) */
   onSelect?: (item: T) => void;
+  /** Callback when an item is autocompleted via Tab (fill text without executing) */
+  onAutocomplete?: (item: T) => void;
   /** Callback when active state changes (has matches or not) */
   onActiveChange?: (isActive: boolean) => void;
   /** Skip automatic active state management (for components with async loading) */
@@ -29,6 +31,7 @@ export function useAutocompleteNavigation<T>({
   matches,
   maxVisible,
   onSelect,
+  onAutocomplete,
   onActiveChange,
   manageActiveState = true,
   disabled = false,
@@ -65,7 +68,17 @@ export function useAutocompleteNavigation<T>({
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
     } else if (key.downArrow) {
       setSelectedIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
-    } else if ((key.tab || key.return) && onSelect) {
+    } else if (key.tab) {
+      const selected = matches[selectedIndex];
+      if (selected) {
+        // Tab: use onAutocomplete if provided, otherwise fall back to onSelect
+        if (onAutocomplete) {
+          onAutocomplete(selected);
+        } else if (onSelect) {
+          onSelect(selected);
+        }
+      }
+    } else if (key.return && onSelect) {
       const selected = matches[selectedIndex];
       if (selected) {
         onSelect(selected);
