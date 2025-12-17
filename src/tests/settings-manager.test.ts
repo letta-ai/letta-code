@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "../settings-manager";
+import { deleteSecureTokens, isKeychainAvailable } from "../utils/secrets.js";
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;
@@ -94,8 +95,24 @@ describe("Settings Manager - Initialization", () => {
 // ============================================================================
 
 describe("Settings Manager - Global Settings", () => {
+  let keychainSupported: boolean = false;
+
   beforeEach(async () => {
     await settingsManager.initialize();
+    // Check if secrets are available on this system
+    keychainSupported = await isKeychainAvailable();
+
+    if (keychainSupported) {
+      // Clean up any existing test tokens
+      await deleteSecureTokens();
+    }
+  });
+
+  afterEach(async () => {
+    if (keychainSupported) {
+      // Clean up after each test
+      await deleteSecureTokens();
+    }
   });
 
   test("Get settings returns a copy", () => {
@@ -168,37 +185,40 @@ describe("Settings Manager - Global Settings", () => {
     });
   });
 
-  test("Get settings with secure tokens (async method)", async () => {
-    // This test verifies the async method that includes keychain tokens
-    // Since keychain may not be available in test environment, we mainly test that it doesn't throw
-    settingsManager.updateSettings({
-      env: {
-        LETTA_API_KEY: "sk-test-async-123",
-        CUSTOM_VAR: "async-value",
-      },
-      refreshToken: "rt-test-refresh",
-      tokenExpiresAt: Date.now() + 3600000,
-    });
+  test.skipIf(!keychainSupported)(
+    "Get settings with secure tokens (async method)",
+    async () => {
+      // This test verifies the async method that includes keychain tokens
+      // Since keychain may not be available in test environment, we mainly test that it doesn't throw
+      settingsManager.updateSettings({
+        env: {
+          LETTA_API_KEY: "sk-test-async-123",
+          CUSTOM_VAR: "async-value",
+        },
+        refreshToken: "rt-test-refresh",
+        tokenExpiresAt: Date.now() + 3600000,
+      });
 
-    const settingsWithTokens =
-      await settingsManager.getSettingsWithSecureTokens();
+      const settingsWithTokens =
+        await settingsManager.getSettingsWithSecureTokens();
 
-    // Should include the environment variables and other settings
-    expect(settingsWithTokens.env?.CUSTOM_VAR).toBe("async-value");
-    expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
+      // Should include the environment variables and other settings
+      expect(settingsWithTokens.env?.CUSTOM_VAR).toBe("async-value");
+      expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
 
-    // API key and refresh token behavior depends on secrets availability
-    // If secrets are available, tokens should be included; if not, they fall back to settings
-    // Since secrets may not be available in test environment, we check that tokens exist somewhere
-    expect(
-      typeof settingsWithTokens.env?.LETTA_API_KEY === "string" ||
-        settingsWithTokens.env?.LETTA_API_KEY === "sk-test-async-123",
-    ).toBe(true);
-    expect(
-      typeof settingsWithTokens.refreshToken === "string" ||
-        settingsWithTokens.refreshToken === "rt-test-refresh",
-    ).toBe(true);
-  });
+      // API key and refresh token behavior depends on secrets availability
+      // If secrets are available, tokens should be included; if not, they fall back to settings
+      // Since secrets may not be available in test environment, we check that tokens exist somewhere
+      expect(
+        typeof settingsWithTokens.env?.LETTA_API_KEY === "string" ||
+          settingsWithTokens.env?.LETTA_API_KEY === "sk-test-async-123",
+      ).toBe(true);
+      expect(
+        typeof settingsWithTokens.refreshToken === "string" ||
+          settingsWithTokens.refreshToken === "rt-test-refresh",
+      ).toBe(true);
+    },
+  );
 
   test("LETTA_BASE_URL should not be cached in settings", () => {
     // This test verifies that LETTA_BASE_URL is NOT persisted to settings
