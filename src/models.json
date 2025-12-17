@@ -373,6 +373,14 @@
     "updateArgs": { "context_window": 180000, "temperature": 1.0 }
   },
   {
+    "id": "gemini-3-flash",
+    "handle": "google_ai/gemini-3-flash-preview",
+    "label": "Gemini 3 Flash",
+    "description": "Google's fastest Gemini 3 model",
+    "isFeatured": true,
+    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+  },
+  {
     "id": "gemini-flash",
     "handle": "google_ai/gemini-2.5-flash",
     "label": "Gemini 2.5 Flash",
