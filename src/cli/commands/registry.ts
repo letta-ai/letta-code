@@ -173,6 +173,13 @@ export const commands: Record<string, Command> = {
       return "Sending feedback...";
     },
   },
+  "/memory": {
+    desc: "View agent memory blocks",
+    handler: () => {
+      // Handled specially in App.tsx to open memory viewer
+      return "Opening memory viewer...";
+    },
+  },
 };
 
 /**
