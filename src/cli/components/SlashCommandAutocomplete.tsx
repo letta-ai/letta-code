@@ -42,6 +42,7 @@ export function SlashCommandAutocomplete({
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
+  onAutocomplete,
   onActiveChange,
   agentId,
   workingDirectory = process.cwd(),
@@ -82,6 +83,7 @@ export function SlashCommandAutocomplete({
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
+    onAutocomplete: onAutocomplete ? (item) => onAutocomplete(item.cmd) : undefined,
     onActiveChange,
   });
 
@@ -138,7 +140,7 @@ export function SlashCommandAutocomplete({
       paddingX={1}
       marginBottom={1}
     >
-      <Text dimColor>↑↓ navigate, Tab/Enter select</Text>
+      <Text dimColor>↑↓ navigate, Tab autocomplete, Enter execute</Text>
       {matches.map((item, idx) => (
         <Text
           key={item.cmd}
