@@ -148,16 +148,19 @@ export function MemoryViewer({
         {/* Header */}
         <Box flexDirection="row" justifyContent="space-between">
           <Box flexDirection="row" gap={1}>
+            <Text>Viewing the </Text>
             <Text bold color={colors.selector.title}>
               {detailBlock.label}
             </Text>
-            {detailBlock.read_only && <Text dimColor>(read-only)</Text>}
+            <Text> block</Text>
+            {detailBlock.read_only && <Text dimColor> (read-only)</Text>}
           </Box>
           <Text dimColor>
             {formatCharCount(charCount, detailBlock.limit ?? null)}
           </Text>
         </Box>
         <Text dimColor>↑↓/jk to scroll • ESC to go back</Text>
+        <Text dimColor>Click to view/edit in the ADE</Text>
 
         {/* Description (up to 3 lines) */}
         {descriptionLines.length > 0 && (
@@ -218,6 +221,7 @@ export function MemoryViewer({
         )}
       </Box>
       <Text dimColor>↑↓/jk to navigate • Enter to view • ESC to close</Text>
+      <Text dimColor>Click to view/edit in the ADE</Text>
 
       {/* Block list */}
       <Box flexDirection="column" gap={1}>
