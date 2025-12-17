@@ -33,6 +33,10 @@ export async function list_dir(
   validateRequiredParams(args, ["dir_path"], "list_dir");
 
   const { dir_path, offset = 1, limit = 25, depth = 2 } = args;
+  const userCwd = process.env.USER_CWD || process.cwd();
+  const resolvedPath = path.isAbsolute(dir_path)
+    ? dir_path
+    : path.resolve(userCwd, dir_path);
 
   if (offset < 1) {
     throw new Error("offset must be a 1-indexed entry number");
@@ -46,12 +50,8 @@ export async function list_dir(
     throw new Error("depth must be greater than zero");
   }
 
-  if (!path.isAbsolute(dir_path)) {
-    throw new Error("dir_path must be an absolute path");
-  }
-
-  const entries = await listDirSlice(dir_path, offset, limit, depth);
-  const output = [`Absolute path: ${dir_path}`, ...entries];
+  const entries = await listDirSlice(resolvedPath, offset, limit, depth);
+  const output = [`Absolute path: ${resolvedPath}`, ...entries];
 
   return { content: output.join("\n") };
 }

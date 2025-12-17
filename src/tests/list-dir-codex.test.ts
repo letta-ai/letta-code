@@ -116,10 +116,21 @@ describe("list_dir codex tool", () => {
     expect(result.content).toContain("mydir/");
   });
 
-  test("throws error for non-absolute path", async () => {
-    await expect(list_dir({ dir_path: "relative/path" })).rejects.toThrow(
-      "dir_path must be an absolute path",
+  test("accepts relative paths", async () => {
+    const relDir = await fs.mkdtemp(
+      path.join(process.cwd(), "list-dir-relative-test-"),
     );
+    await fs.writeFile(path.join(relDir, "file.txt"), "content");
+
+    const relativePath = path.relative(process.cwd(), relDir);
+    expect(path.isAbsolute(relativePath)).toBe(false);
+
+    const result = await list_dir({ dir_path: relativePath });
+
+    expect(result.content).toContain(`Absolute path: ${relDir}`);
+    expect(result.content).toContain("file.txt");
+
+    await fs.rm(relDir, { recursive: true, force: true });
   });
 
   test("throws error for offset < 1", async () => {
