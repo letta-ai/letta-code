@@ -55,7 +55,8 @@ if (content.startsWith("#!")) {
  * ref: https://sambal.org/2014/02/passing-options-node-shebang-line/
  */
 const withShebang = `#!/bin/sh
-":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"\n${content}`;
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"
+${content}`;
 await Bun.write(outputPath, withShebang);
 
 // Make executable
