@@ -48,6 +48,7 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { FeedbackDialog } from "./components/FeedbackDialog";
 import { Input } from "./components/InputRich";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -391,6 +392,7 @@ export default function App({
     | "profile"
     | "search"
     | "subagent"
+    | "feedback"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -2536,6 +2538,12 @@ ${recentCommits}
           return { submitted: true };
         }
 
+        // Special handling for /feedback command - open feedback dialog
+        if (trimmed === "/feedback") {
+          setActiveOverlay("feedback");
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
@@ -3380,6 +3388,81 @@ ${recentCommits}
   );
 
   // Handle escape when profile confirmation is pending
+  const handleFeedbackSubmit = useCallback(
+    async (message: string) => {
+      closeOverlay();
+
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
+
+        try {
+          // Immediately add command to transcript with "running" phase
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: "Sending feedback...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          const settings = settingsManager.getSettings();
+          const baseURL =
+            process.env.LETTA_BASE_URL ||
+            settings.env?.LETTA_BASE_URL ||
+            "https://api.letta.com";
+          const apiKey =
+            process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+          // Send feedback request manually since it's not in the SDK
+          const response = await fetch(`${baseURL}/v1/metadata/feedback`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "X-Letta-Source": "letta-code",
+            },
+            body: JSON.stringify({
+              message: message,
+              feature: "letta-code",
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+              `Failed to send feedback (${response.status}): ${errorText}`,
+            );
+          }
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output:
+              "Thank you for your feedback! Your message has been sent to the Letta team.",
+            phase: "finished",
+            success: true,
+          });
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: `Failed to send feedback: ${errorDetails}`,
+            phase: "finished",
+            success: false,
+          });
+          refreshDerived();
+        }
+      });
+    },
+    [agentId, refreshDerived, withCommandLock, closeOverlay],
+  );
+
   const handleProfileEscapeCancel = useCallback(() => {
     if (profileConfirmPending) {
       const { cmdId, name } = profileConfirmPending;
@@ -3960,6 +4043,14 @@ Plan file path: ${planFilePath}`;
             {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
               <MessageSearch onClose={closeOverlay} />
+            )}
+
+            {/* Feedback Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "feedback" && (
+              <FeedbackDialog
+                onSubmit={handleFeedbackSubmit}
+                onCancel={closeOverlay}
+              />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
