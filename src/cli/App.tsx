@@ -1681,7 +1681,7 @@ export default function App({
           try {
             const { settingsManager } = await import("../settings-manager");
             const currentSettings =
-              settingsManager.getSettingsWithSecureTokens();
+              await settingsManager.getSettingsWithSecureTokens();
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
