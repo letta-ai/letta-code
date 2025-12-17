@@ -1,9 +1,9 @@
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
-import { colors } from "./colors";
+import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 // Compute filtered command list (excluding hidden commands)
@@ -42,6 +42,7 @@ export function SlashCommandAutocomplete({
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
+  onAutocomplete,
   onActiveChange,
   agentId,
   workingDirectory = process.cwd(),
@@ -82,6 +83,9 @@ export function SlashCommandAutocomplete({
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
+    onAutocomplete: onAutocomplete
+      ? (item) => onAutocomplete(item.cmd)
+      : undefined,
     onActiveChange,
   });
 
@@ -131,25 +135,13 @@ export function SlashCommandAutocomplete({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-      marginBottom={1}
-    >
-      <Text dimColor>↑↓ navigate, Tab/Enter select</Text>
+    <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
       {matches.map((item, idx) => (
-        <Text
-          key={item.cmd}
-          color={idx === selectedIndex ? colors.command.selected : undefined}
-          bold={idx === selectedIndex}
-        >
-          {idx === selectedIndex ? "▶ " : "  "}
+        <AutocompleteItem key={item.cmd} selected={idx === selectedIndex}>
           {item.cmd.padEnd(14)}{" "}
           <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
-        </Text>
+        </AutocompleteItem>
       ))}
-    </Box>
+    </AutocompleteBox>
   );
 }

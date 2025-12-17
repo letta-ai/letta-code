@@ -1,7 +1,8 @@
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
+import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
 import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
@@ -189,29 +190,19 @@ export function FileAutocomplete({
     return null;
   }
 
+  const header = (
+    <>
+      File/URL autocomplete (↑↓ navigate, Tab/Enter select):
+      {isLoading && " Searching..."}
+    </>
+  );
+
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-      marginBottom={1}
-    >
-      <Text dimColor>
-        File/URL autocomplete (↑↓ to navigate, Tab/Enter to select):
-        {isLoading && " Searching..."}
-      </Text>
+    <AutocompleteBox header={header}>
       {matches.length > 0 ? (
         <>
           {matches.slice(0, 10).map((item, idx) => (
-            <Text
-              key={item.path}
-              color={
-                idx === selectedIndex ? colors.command.selected : undefined
-              }
-              bold={idx === selectedIndex}
-            >
-              {idx === selectedIndex ? "▶ " : "  "}
+            <AutocompleteItem key={item.path} selected={idx === selectedIndex}>
               <Text
                 color={
                   idx !== selectedIndex && item.type === "dir"
@@ -222,7 +213,7 @@ export function FileAutocomplete({
                 {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
               </Text>{" "}
               {item.path}
-            </Text>
+            </AutocompleteItem>
           ))}
           {matches.length > 10 && (
             <Text dimColor>... and {matches.length - 10} more</Text>
@@ -231,6 +222,6 @@ export function FileAutocomplete({
       ) : (
         isLoading && <Text dimColor>Searching...</Text>
       )}
-    </Box>
+    </AutocompleteBox>
   );
 }
