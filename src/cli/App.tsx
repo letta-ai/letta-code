@@ -3737,8 +3737,8 @@ Plan file path: ${planFilePath}`;
       const statusLines = [
         resumedMessage,
         agentNameLine,
-        agentUrl ? `→ ${agentUrl}` : "",
         ...hints,
+        agentUrl ? `→ ${agentUrl}` : "",
       ].filter(Boolean);
 
       buffersRef.current.byId.set(statusId, {
