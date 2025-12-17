@@ -180,7 +180,8 @@ describe("Settings Manager - Global Settings", () => {
       tokenExpiresAt: Date.now() + 3600000,
     });
 
-    const settingsWithTokens = await settingsManager.getSettingsWithSecureTokens();
+    const settingsWithTokens =
+      await settingsManager.getSettingsWithSecureTokens();
 
     // Should include the environment variables and other settings
     expect(settingsWithTokens.env?.CUSTOM_VAR).toBe("async-value");
@@ -191,11 +192,11 @@ describe("Settings Manager - Global Settings", () => {
     // Since secrets may not be available in test environment, we check that tokens exist somewhere
     expect(
       typeof settingsWithTokens.env?.LETTA_API_KEY === "string" ||
-      settingsWithTokens.env?.LETTA_API_KEY === "sk-test-async-123"
+        settingsWithTokens.env?.LETTA_API_KEY === "sk-test-async-123",
     ).toBe(true);
     expect(
       typeof settingsWithTokens.refreshToken === "string" ||
-      settingsWithTokens.refreshToken === "rt-test-refresh"
+        settingsWithTokens.refreshToken === "rt-test-refresh",
     ).toBe(true);
   });
 

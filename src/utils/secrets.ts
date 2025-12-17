@@ -1,7 +1,8 @@
+/// <reference types="bun-types" />
 // src/utils/secrets.ts
 // Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
 
-let secrets: any = null;
+let secrets: typeof Bun.secrets;
 let secretsAvailable = false;
 
 // Try to import Bun's secrets API, fallback if unavailable
@@ -39,7 +40,9 @@ export async function setApiKey(apiKey: string): Promise<void> {
       });
       return;
     } catch (error) {
-      console.warn(`Failed to store API key in secrets, using fallback: ${error}`);
+      console.warn(
+        `Failed to store API key in secrets, using fallback: ${error}`,
+      );
     }
   }
 
@@ -79,7 +82,9 @@ export async function setRefreshToken(refreshToken: string): Promise<void> {
       });
       return;
     } catch (error) {
-      console.warn(`Failed to store refresh token in secrets, using fallback: ${error}`);
+      console.warn(
+        `Failed to store refresh token in secrets, using fallback: ${error}`,
+      );
     }
   }
 
@@ -116,8 +121,12 @@ export async function getSecureTokens(): Promise<SecureTokens> {
   ]);
 
   return {
-    apiKey: apiKey.status === "fulfilled" ? apiKey.value || undefined : undefined,
-    refreshToken: refreshToken.status === "fulfilled" ? refreshToken.value || undefined : undefined,
+    apiKey:
+      apiKey.status === "fulfilled" ? apiKey.value || undefined : undefined,
+    refreshToken:
+      refreshToken.status === "fulfilled"
+        ? refreshToken.value || undefined
+        : undefined,
   };
 }
 
@@ -184,10 +193,7 @@ export async function deleteRefreshToken(): Promise<void> {
  * Remove all tokens from system secrets
  */
 export async function deleteSecureTokens(): Promise<void> {
-  await Promise.allSettled([
-    deleteApiKey(),
-    deleteRefreshToken(),
-  ]);
+  await Promise.allSettled([deleteApiKey(), deleteRefreshToken()]);
 }
 
 /**

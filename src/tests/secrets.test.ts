@@ -1,19 +1,19 @@
 // src/tests/keychain.test.ts
 // Tests for secrets utility functions
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  setApiKey,
-  getApiKey,
-  setRefreshToken,
-  getRefreshToken,
-  getSecureTokens,
-  setSecureTokens,
   deleteApiKey,
   deleteRefreshToken,
   deleteSecureTokens,
+  getApiKey,
+  getRefreshToken,
+  getSecureTokens,
   isKeychainAvailable,
   type SecureTokens,
+  setApiKey,
+  setRefreshToken,
+  setSecureTokens,
 } from "../utils/secrets";
 
 describe("Secrets utilities", () => {
@@ -41,36 +41,45 @@ describe("Secrets utilities", () => {
     expect(typeof available).toBe("boolean");
   });
 
-  test.skipIf(!keychainSupported)("can store and retrieve API key", async () => {
-    const testApiKey = "sk-test-api-key-12345";
+  test.skipIf(!keychainSupported)(
+    "can store and retrieve API key",
+    async () => {
+      const testApiKey = "sk-test-api-key-12345";
 
-    await setApiKey(testApiKey);
-    const retrievedApiKey = await getApiKey();
+      await setApiKey(testApiKey);
+      const retrievedApiKey = await getApiKey();
 
-    expect(retrievedApiKey).toBe(testApiKey);
-  });
+      expect(retrievedApiKey).toBe(testApiKey);
+    },
+  );
 
-  test.skipIf(!keychainSupported)("can store and retrieve refresh token", async () => {
-    const testRefreshToken = "rt-test-refresh-token-67890";
+  test.skipIf(!keychainSupported)(
+    "can store and retrieve refresh token",
+    async () => {
+      const testRefreshToken = "rt-test-refresh-token-67890";
 
-    await setRefreshToken(testRefreshToken);
-    const retrievedRefreshToken = await getRefreshToken();
+      await setRefreshToken(testRefreshToken);
+      const retrievedRefreshToken = await getRefreshToken();
 
-    expect(retrievedRefreshToken).toBe(testRefreshToken);
-  });
+      expect(retrievedRefreshToken).toBe(testRefreshToken);
+    },
+  );
 
-  test.skipIf(!keychainSupported)("can store and retrieve both tokens together", async () => {
-    const tokens: SecureTokens = {
-      apiKey: "sk-test-api-key-combined",
-      refreshToken: "rt-test-refresh-token-combined",
-    };
+  test.skipIf(!keychainSupported)(
+    "can store and retrieve both tokens together",
+    async () => {
+      const tokens: SecureTokens = {
+        apiKey: "sk-test-api-key-combined",
+        refreshToken: "rt-test-refresh-token-combined",
+      };
 
-    await setSecureTokens(tokens);
-    const retrievedTokens = await getSecureTokens();
+      await setSecureTokens(tokens);
+      const retrievedTokens = await getSecureTokens();
 
-    expect(retrievedTokens.apiKey).toBe(tokens.apiKey);
-    expect(retrievedTokens.refreshToken).toBe(tokens.refreshToken);
-  });
+      expect(retrievedTokens.apiKey).toBe(tokens.apiKey);
+      expect(retrievedTokens.refreshToken).toBe(tokens.refreshToken);
+    },
+  );
 
   test.skipIf(!keychainSupported)("can delete API key", async () => {
     const testApiKey = "sk-test-api-key-delete";
@@ -113,19 +122,22 @@ describe("Secrets utilities", () => {
     expect(retrievedTokens.refreshToken).toBeUndefined();
   });
 
-  test.skipIf(!keychainSupported)("returns null for non-existent tokens", async () => {
-    // Ensure no tokens exist
-    await deleteSecureTokens();
+  test.skipIf(!keychainSupported)(
+    "returns null for non-existent tokens",
+    async () => {
+      // Ensure no tokens exist
+      await deleteSecureTokens();
 
-    const apiKey = await getApiKey();
-    const refreshToken = await getRefreshToken();
-    const tokens = await getSecureTokens();
+      const apiKey = await getApiKey();
+      const refreshToken = await getRefreshToken();
+      const tokens = await getSecureTokens();
 
-    expect(apiKey).toBe(null);
-    expect(refreshToken).toBe(null);
-    expect(tokens.apiKey).toBeUndefined();
-    expect(tokens.refreshToken).toBeUndefined();
-  });
+      expect(apiKey).toBe(null);
+      expect(refreshToken).toBe(null);
+      expect(tokens.apiKey).toBeUndefined();
+      expect(tokens.refreshToken).toBeUndefined();
+    },
+  );
 
   test.skipIf(!keychainSupported)("handles partial token storage", async () => {
     // Store only API key

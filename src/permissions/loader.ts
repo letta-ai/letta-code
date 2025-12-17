@@ -33,7 +33,11 @@ export async function loadPermissions(
 
   // Load in reverse precedence order (lowest to highest)
   const sources = [
-    join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta", "settings.json"), // User
+    join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "letta",
+      "settings.json",
+    ), // User
     join(homedir(), ".letta", "settings.json"), // User Legacy
     join(workingDirectory, ".letta", "settings.json"), // Project
     join(workingDirectory, ".letta", "settings.local.json"), // Local
@@ -94,7 +98,11 @@ export async function savePermissionRule(
   let settingsPath: string;
   switch (scope) {
     case "user":
-      settingsPath = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta", "settings.json");
+      settingsPath = join(
+        process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+        "letta",
+        "settings.json",
+      );
       break;
     case "project":
       settingsPath = join(workingDirectory, ".letta", "settings.json");

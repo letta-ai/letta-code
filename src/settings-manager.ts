@@ -6,11 +6,11 @@ import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
-  getSecureTokens,
-  setSecureTokens,
   deleteSecureTokens,
+  getSecureTokens,
   isKeychainAvailable,
   type SecureTokens,
+  setSecureTokens,
 } from "./utils/secrets.js";
 
 export interface Settings {
@@ -114,8 +114,12 @@ class SettingsManager {
     try {
       const available = await this.isKeychainAvailable();
       if (!available) {
-        console.warn("⚠️  System secrets are not available - using fallback storage");
-        console.warn("   This may occur when running in Node.js or restricted environments");
+        console.warn(
+          "⚠️  System secrets are not available - using fallback storage",
+        );
+        console.warn(
+          "   This may occur when running in Node.js or restricted environments",
+        );
       }
     } catch (error) {
       console.warn("⚠️  Could not check secrets availability:", error);
@@ -157,7 +161,8 @@ class SettingsManager {
 
             if (updatedSettings.env?.LETTA_API_KEY) {
               const { LETTA_API_KEY: _, ...otherEnv } = updatedSettings.env;
-              updatedSettings.env = Object.keys(otherEnv).length > 0 ? otherEnv : undefined;
+              updatedSettings.env =
+                Object.keys(otherEnv).length > 0 ? otherEnv : undefined;
             }
 
             this.settings = updatedSettings;
@@ -169,7 +174,9 @@ class SettingsManager {
             console.warn("Tokens will remain in settings file for persistence");
           }
         } else {
-          console.warn("Secrets not available - tokens will remain in settings file for persistence");
+          console.warn(
+            "Secrets not available - tokens will remain in settings file for persistence",
+          );
         }
       }
     } catch (error) {
@@ -205,21 +212,23 @@ class SettingsManager {
     }
 
     // Fallback to tokens in settings file if secrets are not available
-    const fallbackRefreshToken = !secureTokens.refreshToken && baseSettings.refreshToken
-      ? baseSettings.refreshToken
-      : secureTokens.refreshToken;
+    const fallbackRefreshToken =
+      !secureTokens.refreshToken && baseSettings.refreshToken
+        ? baseSettings.refreshToken
+        : secureTokens.refreshToken;
 
-    const fallbackApiKey = !secureTokens.apiKey && baseSettings.env?.LETTA_API_KEY
-      ? baseSettings.env.LETTA_API_KEY
-      : secureTokens.apiKey;
+    const fallbackApiKey =
+      !secureTokens.apiKey && baseSettings.env?.LETTA_API_KEY
+        ? baseSettings.env.LETTA_API_KEY
+        : secureTokens.apiKey;
 
     return {
       ...baseSettings,
       env: {
         ...baseSettings.env,
-        ...(fallbackApiKey && { LETTA_API_KEY: fallbackApiKey })
+        ...(fallbackApiKey && { LETTA_API_KEY: fallbackApiKey }),
       },
-      refreshToken: fallbackRefreshToken
+      refreshToken: fallbackRefreshToken,
     };
   }
 
@@ -257,7 +266,7 @@ class SettingsManager {
     this.settings = {
       ...this.settings,
       ...otherUpdates,
-      ...(updatedEnv && { env: { ...this.settings.env, ...updatedEnv } })
+      ...(updatedEnv && { env: { ...this.settings.env, ...updatedEnv } }),
     };
 
     // Handle secure tokens in keychain
@@ -283,7 +292,9 @@ class SettingsManager {
   /**
    * Persist settings and tokens, with fallback for secrets unavailability
    */
-  private async persistSettingsAndTokens(secureTokens: SecureTokens): Promise<void> {
+  private async persistSettingsAndTokens(
+    secureTokens: SecureTokens,
+  ): Promise<void> {
     const secretsAvailable = await this.isKeychainAvailable();
 
     if (secretsAvailable && Object.keys(secureTokens).length > 0) {
@@ -291,19 +302,25 @@ class SettingsManager {
       try {
         await Promise.all([
           this.persistSettings(),
-          this.setSecureTokens(secureTokens)
+          this.setSecureTokens(secureTokens),
         ]);
         return;
       } catch (error) {
-        console.warn('Failed to store tokens in secrets, falling back to settings file');
+        console.warn(
+          "Failed to store tokens in secrets, falling back to settings file:",
+          error,
+        );
         // Continue to fallback logic below
       }
     }
 
     if (Object.keys(secureTokens).length > 0) {
       // Fallback: store tokens in settings file
-      console.warn('Secrets not available, storing tokens in settings file for persistence');
+      console.warn(
+        "Secrets not available, storing tokens in settings file for persistence",
+      );
 
+      // biome-ignore lint/style/noNonNullAssertion: at this point will always exist
       const fallbackSettings: Settings = { ...this.settings! };
 
       if (secureTokens.refreshToken) {
@@ -313,7 +330,7 @@ class SettingsManager {
       if (secureTokens.apiKey) {
         fallbackSettings.env = {
           ...fallbackSettings.env,
-          LETTA_API_KEY: secureTokens.apiKey
+          LETTA_API_KEY: secureTokens.apiKey,
         };
       }
 
@@ -414,8 +431,10 @@ class SettingsManager {
     if (!this.settings) return;
 
     const settingsPath = this.getSettingsPath();
-    const dirPath = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta");
-
+    const dirPath = join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "letta",
+    );
 
     try {
       if (!exists(dirPath)) {
@@ -467,7 +486,11 @@ class SettingsManager {
   }
 
   private getSettingsPath(): string {
-    return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta", "settings.json");
+    return join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "letta",
+      "settings.json",
+    );
   }
 
   private getProjectSettingsPath(workingDirectory: string): string {
@@ -811,7 +834,7 @@ class SettingsManager {
     try {
       return await getSecureTokens();
     } catch (error) {
-      console.warn('Failed to retrieve tokens from secrets:', error);
+      console.warn("Failed to retrieve tokens from secrets:", error);
       return {};
     }
   }
@@ -822,14 +845,18 @@ class SettingsManager {
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
     const available = await this.isKeychainAvailable();
     if (!available) {
-      console.warn('Secrets not available, tokens will use fallback storage (not persistent across restarts)');
+      console.warn(
+        "Secrets not available, tokens will use fallback storage (not persistent across restarts)",
+      );
       return;
     }
 
     try {
       await setSecureTokens(tokens);
     } catch (error) {
-      console.warn('Failed to store tokens in secrets, falling back to settings file');
+      console.warn(
+        "Failed to store tokens in secrets, falling back to settings file",
+      );
       // Let the caller handle the fallback by throwing again
       throw error;
     }
@@ -847,7 +874,7 @@ class SettingsManager {
     try {
       await deleteSecureTokens();
     } catch (error) {
-      console.warn('Failed to delete tokens from secrets:', error);
+      console.warn("Failed to delete tokens from secrets:", error);
       // Continue anyway as the tokens might not exist
     }
   }
@@ -878,14 +905,17 @@ class SettingsManager {
         // Clear API key from env if present
         if (updatedSettings.env?.LETTA_API_KEY) {
           const { LETTA_API_KEY: _, ...otherEnv } = updatedSettings.env;
-          updatedSettings.env = Object.keys(otherEnv).length > 0 ? otherEnv : undefined;
+          updatedSettings.env =
+            Object.keys(otherEnv).length > 0 ? otherEnv : undefined;
         }
 
         this.settings = updatedSettings;
         await this.persistSettings();
       }
 
-      console.log("Successfully logged out and cleared all authentication data");
+      console.log(
+        "Successfully logged out and cleared all authentication data",
+      );
     } catch (error) {
       console.error("Error during logout:", error);
       throw error;
