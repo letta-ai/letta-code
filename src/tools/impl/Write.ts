@@ -13,31 +13,33 @@ interface WriteResult {
 export async function write(args: WriteArgs): Promise<WriteResult> {
   validateRequiredParams(args, ["file_path", "content"], "Write");
   const { file_path, content } = args;
-  if (!path.isAbsolute(file_path))
-    throw new Error(`File path must be absolute, got: ${file_path}`);
+  const userCwd = process.env.USER_CWD || process.cwd();
+  const resolvedPath = path.isAbsolute(file_path)
+    ? file_path
+    : path.resolve(userCwd, file_path);
   try {
-    const dir = path.dirname(file_path);
+    const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
     try {
-      const stats = await fs.stat(file_path);
+      const stats = await fs.stat(resolvedPath);
       if (stats.isDirectory())
-        throw new Error(`Path is a directory, not a file: ${file_path}`);
+        throw new Error(`Path is a directory, not a file: ${resolvedPath}`);
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") throw err;
     }
-    await fs.writeFile(file_path, content, "utf-8");
+    await fs.writeFile(resolvedPath, content, "utf-8");
     return {
-      message: `Successfully wrote ${content.length} characters to ${file_path}`,
+      message: `Successfully wrote ${content.length} characters to ${resolvedPath}`,
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err.code === "EACCES")
-      throw new Error(`Permission denied: ${file_path}`);
+      throw new Error(`Permission denied: ${resolvedPath}`);
     else if (err.code === "ENOSPC")
-      throw new Error(`No space left on device: ${file_path}`);
+      throw new Error(`No space left on device: ${resolvedPath}`);
     else if (err.code === "EISDIR")
-      throw new Error(`Path is a directory: ${file_path}`);
+      throw new Error(`Path is a directory: ${resolvedPath}`);
     else if (err.message) throw err;
     else throw new Error(`Failed to write file: ${err}`);
   }
