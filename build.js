@@ -49,6 +49,12 @@ if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
 
+// Patch secrets requirement back in for node build
+content = content.replace(
+  `(()=>{throw new Error("Cannot require module "+"bun");})().secrets`,
+  `globalThis.Bun.secrets`,
+);
+
 /**
  * Polyglot shebang
  * Prefer bun, fallback to node
