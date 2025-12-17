@@ -7,7 +7,7 @@ import { isProjectBlock } from "../../agent/memory";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { asciiLogo } from "./AsciiArt";
+import { AnimatedLogo } from "./AnimatedLogo";
 import { colors } from "./colors";
 
 /**
@@ -145,7 +145,6 @@ export function WelcomeScreen({
   const cwd = process.cwd();
   const version = getVersion();
 
-  const logoLines = asciiLogo.trim().split("\n");
   const tildePath = toTildePath(cwd);
 
   // Get model from agent state - just the last part (after last /)
@@ -165,12 +164,7 @@ export function WelcomeScreen({
     <Box flexDirection="row" marginTop={1}>
       {/* Left column: Logo */}
       <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
-        {logoLines.map((line, idx) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
-          <Text key={idx} bold color={colors.welcome.accent}>
-            {idx === 0 ? `  ${line}` : line}
-          </Text>
-        ))}
+        <AnimatedLogo color={colors.welcome.accent} />
       </Box>
 
       {/* Right column: Text info */}
