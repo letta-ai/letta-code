@@ -1623,7 +1623,8 @@ export default function App({
 
           try {
             const { settingsManager } = await import("../settings-manager");
-            const currentSettings = settingsManager.getSettings();
+            const currentSettings =
+              await settingsManager.getSettingsWithSecureTokens();
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
@@ -1631,17 +1632,8 @@ export default function App({
               await revokeToken(currentSettings.refreshToken);
             }
 
-            // Clear local credentials
-            const newEnv = { ...currentSettings.env };
-            delete newEnv.LETTA_API_KEY;
-            // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
-            // because it should not be stored there in the first place
-
-            settingsManager.updateSettings({
-              env: newEnv,
-              refreshToken: undefined,
-              tokenExpiresAt: undefined,
-            });
+            // Clear all credentials including secrets
+            await settingsManager.logout();
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -2129,9 +2121,8 @@ export default function App({
 
         // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
-          const { backgroundProcesses } = await import(
-            "../tools/impl/process_manager"
-          );
+          const { backgroundProcesses } =
+            await import("../tools/impl/process_manager");
           const cmdId = uid("cmd");
 
           let output: string;
@@ -2237,9 +2228,8 @@ export default function App({
 
           try {
             // Import the skill-creation prompt
-            const { SKILL_CREATOR_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            const { SKILL_CREATOR_PROMPT } =
+              await import("../agent/promptAssets.js");
 
             // Build system-reminder content for skill creation
             const userDescriptionLine = description
@@ -2312,9 +2302,8 @@ export default function App({
 
           try {
             // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            const { REMEMBER_PROMPT } =
+              await import("../agent/promptAssets.js");
 
             // Build system-reminder content for memory request
             const rememberMessage = userText
@@ -2377,9 +2366,8 @@ export default function App({
 
           try {
             // Import the initialization prompt
-            const { INITIALIZE_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            const { INITIALIZE_PROMPT } =
+              await import("../agent/promptAssets.js");
 
             // Gather git context if available
             let gitContext = "";
@@ -2542,9 +2530,8 @@ ${recentCommits}
         "sessionContextEnabled",
       );
       if (!hasSentSessionContextRef.current && sessionContextEnabled) {
-        const { buildSessionContext } = await import(
-          "./helpers/sessionContext"
-        );
+        const { buildSessionContext } =
+          await import("./helpers/sessionContext");
         sessionContextReminder = buildSessionContext({
           agentInfo: {
             id: agentId,
@@ -2784,9 +2771,8 @@ ${recentCommits}
         ];
 
         // Execute approved tools and format results using shared function
-        const { executeApprovalBatch } = await import(
-          "../agent/approval-execution"
-        );
+        const { executeApprovalBatch } =
+          await import("../agent/approval-execution");
         const executedResults = await executeApprovalBatch(
           allDecisions,
           (chunk) => {
@@ -3109,9 +3095,8 @@ ${recentCommits}
         setLlmConfig(updatedConfig);
 
         // After switching models, only switch toolset if it actually changes
-        const { isOpenAIModel, isGeminiModel } = await import(
-          "../tools/manager"
-        );
+        const { isOpenAIModel, isGeminiModel } =
+          await import("../tools/manager");
         const targetToolset:
           | "codex"
           | "codex_snake"

@@ -162,10 +162,41 @@ describe("Settings Manager - Global Settings", () => {
     });
 
     const settings = settingsManager.getSettings();
+    // LETTA_API_KEY should not be in settings file (moved to keychain)
     expect(settings.env).toEqual({
-      LETTA_API_KEY: "sk-test-123",
       CUSTOM_VAR: "value",
     });
+  });
+
+  test("Get settings with secure tokens (async method)", async () => {
+    // This test verifies the async method that includes keychain tokens
+    // Since keychain may not be available in test environment, we mainly test that it doesn't throw
+    settingsManager.updateSettings({
+      env: {
+        LETTA_API_KEY: "sk-test-async-123",
+        CUSTOM_VAR: "async-value",
+      },
+      refreshToken: "rt-test-refresh",
+      tokenExpiresAt: Date.now() + 3600000,
+    });
+
+    const settingsWithTokens = await settingsManager.getSettingsWithSecureTokens();
+
+    // Should include the environment variables and other settings
+    expect(settingsWithTokens.env?.CUSTOM_VAR).toBe("async-value");
+    expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
+
+    // API key and refresh token behavior depends on secrets availability
+    // If secrets are available, tokens should be included; if not, they fall back to settings
+    // Since secrets may not be available in test environment, we check that tokens exist somewhere
+    expect(
+      typeof settingsWithTokens.env?.LETTA_API_KEY === "string" ||
+      settingsWithTokens.env?.LETTA_API_KEY === "sk-test-async-123"
+    ).toBe(true);
+    expect(
+      typeof settingsWithTokens.refreshToken === "string" ||
+      settingsWithTokens.refreshToken === "rt-test-refresh"
+    ).toBe(true);
   });
 
   test("LETTA_BASE_URL should not be cached in settings", () => {

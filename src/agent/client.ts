@@ -3,7 +3,7 @@ import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
 export async function getClient() {
-  const settings = settingsManager.getSettings();
+  const settings = await settingsManager.getSettingsWithSecureTokens();
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
@@ -21,12 +21,9 @@ export async function getClient() {
       try {
         const tokens = await refreshAccessToken(settings.refreshToken);
 
-        // Update settings with new token
-        const updatedEnv = { ...settings.env };
-        updatedEnv.LETTA_API_KEY = tokens.access_token;
-
+        // Update settings with new token (secrets handles secure storage automatically)
         settingsManager.updateSettings({
-          env: updatedEnv,
+          env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token || settings.refreshToken,
           tokenExpiresAt: now + tokens.expires_in * 1000,
         });

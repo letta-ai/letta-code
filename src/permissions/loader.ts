@@ -17,7 +17,7 @@ type SettingsFile = {
  * Precedence (highest to lowest):
  * 1. Local project settings (.letta/settings.local.json)
  * 2. Project settings (.letta/settings.json)
- * 3. User settings (~/.letta/settings.json)
+ * 3. User settings (~/.config/letta/settings.json)
  *
  * Rules are merged by concatenating arrays (more specific settings add to broader ones)
  */
@@ -33,7 +33,8 @@ export async function loadPermissions(
 
   // Load in reverse precedence order (lowest to highest)
   const sources = [
-    join(homedir(), ".letta", "settings.json"), // User
+    join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta", "settings.json"), // User
+    join(homedir(), ".letta", "settings.json"), // User Legacy
     join(workingDirectory, ".letta", "settings.json"), // Project
     join(workingDirectory, ".letta", "settings.local.json"), // Local
   ];
@@ -93,7 +94,7 @@ export async function savePermissionRule(
   let settingsPath: string;
   switch (scope) {
     case "user":
-      settingsPath = join(homedir(), ".letta", "settings.json");
+      settingsPath = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "letta", "settings.json");
       break;
     case "project":
       settingsPath = join(workingDirectory, ".letta", "settings.json");

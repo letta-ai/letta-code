@@ -29,7 +29,8 @@ await Bun.build({
     entry: "letta.js",
   },
   define: {
-    "process.env.LETTA_VERSION": JSON.stringify(version),
+    LETTA_VERSION: JSON.stringify(version),
+    BUILD_TIME: JSON.stringify(new Date().toISOString()),
   },
   // Load text files as strings (for markdown, etc.)
   loader: {
@@ -48,7 +49,13 @@ if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
 
-const withShebang = `#!/usr/bin/env node\n${content}`;
+/**
+ * Polyglot shebang
+ * Prefer bun, fallback to node
+ * ref: https://sambal.org/2014/02/passing-options-node-shebang-line/
+ */
+const withShebang = `#!/bin/sh
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"\n${content}`;
 await Bun.write(outputPath, withShebang);
 
 // Make executable
@@ -56,6 +63,4 @@ await Bun.$`chmod +x letta.js`;
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log(
-  `   Size: ${((await Bun.file(outputPath).size) / 1024).toFixed(0)}KB`,
-);
+console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);
