@@ -1,6 +1,7 @@
 import Letta from "@letta-ai/letta-client";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
+import packageJson from "../../package.json";
 
 export async function getClient() {
   const settings = settingsManager.getSettings();
@@ -57,6 +58,9 @@ export async function getClient() {
   return new Letta({
     apiKey,
     baseURL,
-    defaultHeaders: { "X-Letta-Source": "letta-code" },
+    defaultHeaders: {
+      "X-Letta-Source": "letta-code",
+      "User-Agent": `letta-code/${packageJson.version}`,
+    },
   });
 }
