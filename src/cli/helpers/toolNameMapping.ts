@@ -42,15 +42,21 @@ export function getDisplayToolName(rawName: string): string {
 
   // Gemini toolset (snake_case)
   if (rawName === "run_shell_command") return "Shell";
+  if (rawName === "read_file_gemini") return "Read";
   if (rawName === "list_directory") return "LS";
+  if (rawName === "glob_gemini") return "Glob";
   if (rawName === "search_file_content") return "Grep";
+  if (rawName === "write_file_gemini") return "Write";
   if (rawName === "write_todos") return "TODO";
   if (rawName === "read_many_files") return "Read Multiple";
 
   // Gemini toolset (PascalCase)
   if (rawName === "RunShellCommand") return "Shell";
+  if (rawName === "ReadFileGemini") return "Read";
   if (rawName === "ListDirectory") return "LS";
+  if (rawName === "GlobGemini") return "Glob";
   if (rawName === "SearchFileContent") return "Grep";
+  if (rawName === "WriteFileGemini") return "Write";
   if (rawName === "WriteTodos") return "TODO";
   if (rawName === "ReadManyFiles") return "Read Multiple";
 
