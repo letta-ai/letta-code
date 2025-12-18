@@ -458,6 +458,9 @@ export default function App({
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
 
+  // Show exit stats on exit (double Ctrl+C)
+  const [showExitStats, setShowExitStats] = useState(false);
+
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
 
@@ -1353,7 +1356,8 @@ export default function App({
 
   const handleExit = useCallback(() => {
     saveLastAgentBeforeExit();
-    // Give React time to render the goodbye message, then exit
+    setShowExitStats(true);
+    // Give React time to render the stats, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -4305,9 +4309,26 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
+            {/* Exit stats - shown when exiting via double Ctrl+C */}
+            {showExitStats && (
+              <Box flexDirection="column">
+                <Text dimColor>
+                  {formatUsageStats({
+                    stats: sessionStatsRef.current.getSnapshot(),
+                  })}
+                </Text>
+                <Text dimColor>Resume this agent with:</Text>
+                <Text color="blue">letta --agent {agentId}</Text>
+              </Box>
+            )}
+
             {/* Input row - always mounted to preserve state */}
             <Input
-              visible={pendingApprovals.length === 0 && !anySelectorOpen}
+              visible={
+                !showExitStats &&
+                pendingApprovals.length === 0 &&
+                !anySelectorOpen
+              }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
