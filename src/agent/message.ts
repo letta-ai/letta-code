@@ -21,9 +21,13 @@ export async function sendMessageStream(
   requestOptions: { maxRetries?: number } = { maxRetries: 0 },
 ): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
-  return client.agents.messages.stream(agentId, {
-    messages: messages,
-    stream_tokens: opts.streamTokens ?? true,
-    background: opts.background ?? true,
-  }, requestOptions);
+  return client.agents.messages.stream(
+    agentId,
+    {
+      messages: messages,
+      stream_tokens: opts.streamTokens ?? true,
+      background: opts.background ?? true,
+    },
+    requestOptions,
+  );
 }

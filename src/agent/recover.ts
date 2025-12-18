@@ -30,8 +30,10 @@ export async function findNewestActiveBackgroundRunId(
 
   // Prefer the most recently created run.
   runs.sort((a, b) => {
-    const aTs = Date.parse((a as { created_at?: string }).created_at ?? "") || 0;
-    const bTs = Date.parse((b as { created_at?: string }).created_at ?? "") || 0;
+    const aTs =
+      Date.parse((a as { created_at?: string }).created_at ?? "") || 0;
+    const bTs =
+      Date.parse((b as { created_at?: string }).created_at ?? "") || 0;
     return bTs - aTs;
   });
 
@@ -60,7 +62,9 @@ export async function recoverFromStaleApproval(
     return { kind: "pending_approval", approvals };
   }
 
-  const runId = opts.lastKnownRunId ?? (await findNewestActiveBackgroundRunId(client, agentId));
+  const runId =
+    opts.lastKnownRunId ??
+    (await findNewestActiveBackgroundRunId(client, agentId));
   if (!runId) return { kind: "noop" };
 
   const stream = await client.runs.messages.stream(
@@ -72,6 +76,11 @@ export async function recoverFromStaleApproval(
     { maxRetries: 0 },
   );
 
-  const result = await drainStreamWithResume(stream, buffers, refresh, abortSignal);
+  const result = await drainStreamWithResume(
+    stream,
+    buffers,
+    refresh,
+    abortSignal,
+  );
   return { kind: "relatched", result };
 }

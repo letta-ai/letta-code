@@ -20,6 +20,10 @@ import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
+import {
+  recoverFromStaleApproval,
+  resyncPendingApprovals,
+} from "../agent/recover";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -101,7 +105,6 @@ import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
-import { recoverFromStaleApproval, resyncPendingApprovals } from "../agent/recover";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 
@@ -892,14 +895,20 @@ export default function App({
             }
           };
 
-          const { stopReason, approval, approvals, apiDurationMs, lastRunId, lastSeqId } =
-            await drainStreamWithResume(
-              stream,
-              buffersRef.current,
-              refreshDerivedThrottled,
-              abortControllerRef.current?.signal,
-              syncAgentState,
-            );
+          const {
+            stopReason,
+            approval,
+            approvals,
+            apiDurationMs,
+            lastRunId,
+            lastSeqId,
+          } = await drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            abortControllerRef.current?.signal,
+            syncAgentState,
+          );
 
           // Update lastKnownRunId for error handling in catch block
           if (lastRunId) {
@@ -1408,8 +1417,9 @@ export default function App({
           currentInput[0].type === "approval"
         ) {
           const detail =
-            (e.error as any)?.detail ??
-            (e.error as any)?.error?.detail ??
+            (e.error as Record<string, unknown>)?.detail ??
+            (e.error as Record<string, Record<string, unknown>>)?.error
+              ?.detail ??
             e.message ??
             "";
           if (
@@ -1490,6 +1500,7 @@ export default function App({
       refreshDerivedThrottled,
       setStreaming,
       agentName,
+      agentId,
     ],
   );
 
