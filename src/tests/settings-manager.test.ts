@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "../settings-manager";
-import { deleteSecureTokens, isKeychainAvailable, keychainAvailablePrecompute } from "../utils/secrets.js";
+import {
+  deleteSecureTokens,
+  isKeychainAvailable,
+  keychainAvailablePrecompute,
+} from "../utils/secrets.js";
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;

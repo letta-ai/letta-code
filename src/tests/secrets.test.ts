@@ -10,11 +10,11 @@ import {
   getRefreshToken,
   getSecureTokens,
   isKeychainAvailable,
+  keychainAvailablePrecompute,
   type SecureTokens,
   setApiKey,
   setRefreshToken,
   setSecureTokens,
-  keychainAvailablePrecompute
 } from "../utils/secrets";
 
 describe("Secrets utilities", () => {
@@ -87,34 +87,40 @@ describe("Secrets utilities", () => {
     expect(retrievedApiKey).toBe(null);
   });
 
-  test.skipIf(!keychainAvailablePrecompute)("can delete refresh token", async () => {
-    const testRefreshToken = "rt-test-refresh-token-delete";
+  test.skipIf(!keychainAvailablePrecompute)(
+    "can delete refresh token",
+    async () => {
+      const testRefreshToken = "rt-test-refresh-token-delete";
 
-    await setRefreshToken(testRefreshToken);
-    let retrievedRefreshToken = await getRefreshToken();
-    expect(retrievedRefreshToken).toBe(testRefreshToken);
+      await setRefreshToken(testRefreshToken);
+      let retrievedRefreshToken = await getRefreshToken();
+      expect(retrievedRefreshToken).toBe(testRefreshToken);
 
-    await deleteRefreshToken();
-    retrievedRefreshToken = await getRefreshToken();
-    expect(retrievedRefreshToken).toBe(null);
-  });
+      await deleteRefreshToken();
+      retrievedRefreshToken = await getRefreshToken();
+      expect(retrievedRefreshToken).toBe(null);
+    },
+  );
 
-  test.skipIf(!keychainAvailablePrecompute)("can delete all tokens", async () => {
-    const tokens: SecureTokens = {
-      apiKey: "sk-test-api-key-delete-all",
-      refreshToken: "rt-test-refresh-token-delete-all",
-    };
+  test.skipIf(!keychainAvailablePrecompute)(
+    "can delete all tokens",
+    async () => {
+      const tokens: SecureTokens = {
+        apiKey: "sk-test-api-key-delete-all",
+        refreshToken: "rt-test-refresh-token-delete-all",
+      };
 
-    await setSecureTokens(tokens);
-    let retrievedTokens = await getSecureTokens();
-    expect(retrievedTokens.apiKey).toBe(tokens.apiKey);
-    expect(retrievedTokens.refreshToken).toBe(tokens.refreshToken);
+      await setSecureTokens(tokens);
+      let retrievedTokens = await getSecureTokens();
+      expect(retrievedTokens.apiKey).toBe(tokens.apiKey);
+      expect(retrievedTokens.refreshToken).toBe(tokens.refreshToken);
 
-    await deleteSecureTokens();
-    retrievedTokens = await getSecureTokens();
-    expect(retrievedTokens.apiKey).toBeUndefined();
-    expect(retrievedTokens.refreshToken).toBeUndefined();
-  });
+      await deleteSecureTokens();
+      retrievedTokens = await getSecureTokens();
+      expect(retrievedTokens.apiKey).toBeUndefined();
+      expect(retrievedTokens.refreshToken).toBeUndefined();
+    },
+  );
 
   test.skipIf(!keychainAvailablePrecompute)(
     "returns null for non-existent tokens",
@@ -133,22 +139,25 @@ describe("Secrets utilities", () => {
     },
   );
 
-  test.skipIf(!keychainAvailablePrecompute)("handles partial token storage", async () => {
-    // Store only API key
-    await setSecureTokens({ apiKey: "sk-only-api-key" });
+  test.skipIf(!keychainAvailablePrecompute)(
+    "handles partial token storage",
+    async () => {
+      // Store only API key
+      await setSecureTokens({ apiKey: "sk-only-api-key" });
 
-    let tokens = await getSecureTokens();
-    expect(tokens.apiKey).toBe("sk-only-api-key");
-    expect(tokens.refreshToken).toBeUndefined();
+      let tokens = await getSecureTokens();
+      expect(tokens.apiKey).toBe("sk-only-api-key");
+      expect(tokens.refreshToken).toBeUndefined();
 
-    // Clean up and store only refresh token
-    await deleteSecureTokens();
-    await setSecureTokens({ refreshToken: "rt-only-refresh-token" });
+      // Clean up and store only refresh token
+      await deleteSecureTokens();
+      await setSecureTokens({ refreshToken: "rt-only-refresh-token" });
 
-    tokens = await getSecureTokens();
-    expect(tokens.apiKey).toBeUndefined();
-    expect(tokens.refreshToken).toBe("rt-only-refresh-token");
-  });
+      tokens = await getSecureTokens();
+      expect(tokens.apiKey).toBeUndefined();
+      expect(tokens.refreshToken).toBe("rt-only-refresh-token");
+    },
+  );
 
   test("gracefully handles secrets unavailability", async () => {
     // This test should work even if secrets are not available
