@@ -1859,12 +1859,19 @@ export default function App({
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
+            let errorOutput = formatErrorDetails(error, agentId);
+
+            // Add helpful tip for summarization failures
+            if (errorOutput.includes("Summarization failed")) {
+              errorOutput +=
+                "\n\nTip: Use /clear instead to clear the current message buffer.";
+            }
+
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${errorDetails}`,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
@@ -1976,6 +1983,91 @@ export default function App({
               id: cmdId,
               input: msg,
               output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /compact command - summarize conversation history
+        if (msg.trim() === "/compact") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Compacting conversation history...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            // SDK types are out of date - compact returns CompactionResponse, not void
+            const result = (await client.agents.messages.compact(
+              agentId,
+            )) as unknown as {
+              num_messages_before: number;
+              num_messages_after: number;
+              summary: string;
+            };
+
+            // Format success message with before/after counts and summary
+            const outputLines = [
+              `Compaction completed. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+              "",
+              `Summary: ${result.summary}`,
+            ];
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: outputLines.join("\n"),
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            let errorOutput: string;
+
+            // Check for summarization failure - format it cleanly
+            const apiError = error as {
+              status?: number;
+              error?: { detail?: string };
+            };
+            const detail = apiError?.error?.detail;
+            if (
+              apiError?.status === 400 &&
+              detail?.includes("Summarization failed")
+            ) {
+              // Clean format for this specific error, but preserve raw JSON
+              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
+              const rawJson = JSON.stringify(apiError.error);
+              errorOutput = [
+                `Request failed (code=400)`,
+                `Raw: ${rawJson}`,
+                `Detail: ${cleanDetail}`,
+                "",
+                "Tip: Use /clear instead to clear the current message buffer.",
+              ].join("\n");
+            } else {
+              errorOutput = formatErrorDetails(error, agentId);
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
