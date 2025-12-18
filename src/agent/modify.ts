@@ -97,7 +97,7 @@ function buildModelSettings(
     }
     settings = googleVertexSettings;
   } else {
-    // For unknown providers, return generic settings with parallel_tool_calls
+    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
     settings = { parallel_tool_calls: true };
   }
 
@@ -130,14 +130,13 @@ export async function updateAgentLLMConfig(
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const contextWindow = updateArgs?.context_window as number | undefined;
+  const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  if (modelSettings || contextWindow) {
-    await client.agents.update(agentId, {
-      model: modelHandle,
-      ...(modelSettings && { model_settings: modelSettings }),
-      ...(contextWindow && { context_window_limit: contextWindow }),
-    });
-  }
+  await client.agents.update(agentId, {
+    model: modelHandle,
+    ...(hasModelSettings && { model_settings: modelSettings }),
+    ...(contextWindow && { context_window_limit: contextWindow }),
+  });
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;

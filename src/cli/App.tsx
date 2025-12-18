@@ -17,7 +17,7 @@ import type { ApprovalResult } from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { setCurrentAgentId } from "../agent/context";
+import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
@@ -32,6 +32,11 @@ import {
   executeTool,
   savePermissionRule,
 } from "../tools/manager";
+import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
 import {
   addCommandResult,
   handlePin,
@@ -48,15 +53,20 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { FeedbackDialog } from "./components/FeedbackDialog";
+import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
+import { McpSelector } from "./components/McpSelector";
+import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
-import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { formatUsageStats } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
@@ -114,6 +124,18 @@ const EAGER_CANCEL = true;
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Save current agent as lastAgent before exiting
+// This ensures subagent overwrites during the session don't persist
+function saveLastAgentBeforeExit() {
+  try {
+    const currentAgentId = getCurrentAgentId();
+    settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
+    settingsManager.updateSettings({ lastAgent: currentAgentId });
+  } catch {
+    // Ignore if no agent context set
+  }
 }
 
 // Get plan mode system reminder if in plan mode
@@ -391,9 +413,17 @@ export default function App({
     | "profile"
     | "search"
     | "subagent"
+    | "feedback"
+    | "memory"
+    | "pin"
+    | "mcp"
+    | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+
+  // Pin dialog state
+  const [pinDialogLocal, setPinDialogLocal] = useState(false);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -412,6 +442,11 @@ export default function App({
     | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const llmConfigRef = useRef(llmConfig);
+  useEffect(() => {
+    llmConfigRef.current = llmConfig;
+  }, [llmConfig]);
+  const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
@@ -436,11 +471,11 @@ export default function App({
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
 
+  // Show exit stats on exit (double Ctrl+C)
+  const [showExitStats, setShowExitStats] = useState(false);
+
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
-
-  // Show exit stats on exit
-  const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -809,12 +844,64 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
+
+          // Define callback to sync agent state on first message chunk
+          // This ensures the UI shows the correct model as early as possible
+          const syncAgentState = async () => {
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+
+              // Check if the model has changed by comparing llm_config
+              const currentModel = llmConfigRef.current?.model;
+              const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
+              const agentModel = agent.llm_config.model;
+              const agentEndpoint = agent.llm_config.model_endpoint_type;
+
+              if (
+                currentModel !== agentModel ||
+                currentEndpoint !== agentEndpoint
+              ) {
+                // Model has changed - update local state
+                setLlmConfig(agent.llm_config);
+
+                // Derive model ID from llm_config for ModelSelector
+                // Try to find matching model by handle in models.json
+                const { getModelInfo } = await import("../agent/model");
+                const agentModelHandle =
+                  agent.llm_config.model_endpoint_type && agent.llm_config.model
+                    ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+                    : agent.llm_config.model;
+
+                const modelInfo = getModelInfo(agentModelHandle || "");
+                if (modelInfo) {
+                  setCurrentModelId(modelInfo.id);
+                } else {
+                  // Model not in models.json (e.g., BYOK model) - use handle as ID
+                  setCurrentModelId(agentModelHandle || null);
+                }
+
+                // Also update agent state if other fields changed
+                setAgentName(agent.name);
+                setAgentDescription(agent.description ?? null);
+                const lastRunCompletion = (
+                  agent as { last_run_completion?: string }
+                ).last_run_completion;
+                setAgentLastRunAt(lastRunCompletion ?? null);
+              }
+            } catch (error) {
+              // Silently fail - don't interrupt the conversation flow
+              console.error("Failed to sync agent state:", error);
+            }
+          };
+
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
+              syncAgentState,
             );
 
           // Track API duration
@@ -961,6 +1048,17 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
+              return;
+            }
+
+            // Check if user cancelled before starting permission checks
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
               return;
             }
 
@@ -1213,6 +1311,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before showing dialog
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Show approval dialog for tools that need user input
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
             setApprovalContexts(
@@ -1311,6 +1420,7 @@ export default function App({
   );
 
   const handleExit = useCallback(() => {
+    saveLastAgentBeforeExit();
     setShowExitStats(true);
     // Give React time to render the stats, then exit
     setTimeout(() => {
@@ -1347,6 +1457,7 @@ export default function App({
       // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
       }
 
       // Set cancellation flag to prevent processConversation from starting
@@ -1646,7 +1757,142 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /exit command - show stats and exit
+        // Special handling for /memory command - opens memory viewer
+        if (trimmed === "/memory") {
+          setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // Special handling for /mcp command - manage MCP servers
+        if (msg.trim().startsWith("/mcp")) {
+          const mcpCtx: McpCommandContext = {
+            buffersRef,
+            refreshDerived,
+            setCommandRunning,
+          };
+
+          // Check for subcommand by looking at the first word after /mcp
+          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
+          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
+
+          // /mcp - open MCP server selector
+          if (!firstWord) {
+            setActiveOverlay("mcp");
+            return { submitted: true };
+          }
+
+          // /mcp add --transport <type> <name> <url/command> [options]
+          if (firstWord === "add") {
+            // Pass the full command string after "add" to preserve quotes
+            const afterAdd = afterMcp.slice(firstWord.length).trim();
+            await handleMcpAdd(mcpCtx, msg, afterAdd);
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /help command - opens help dialog
+        if (trimmed === "/help") {
+          setActiveOverlay("help");
+          return { submitted: true };
+        }
+
+        // Special handling for /usage command - show session stats
+        if (trimmed === "/usage") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "Fetching usage statistics...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          // Fetch balance and display stats asynchronously
+          (async () => {
+            try {
+              const stats = sessionStatsRef.current.getSnapshot();
+
+              // Try to fetch balance info (only works for Letta Cloud)
+              // Silently skip if endpoint not available (not deployed yet or self-hosted)
+              let balance:
+                | {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  }
+                | undefined;
+
+              try {
+                const settings = settingsManager.getSettings();
+                const baseURL =
+                  process.env.LETTA_BASE_URL ||
+                  settings.env?.LETTA_BASE_URL ||
+                  "https://api.letta.com";
+                const apiKey =
+                  process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+                const balanceResponse = await fetch(
+                  `${baseURL}/v1/metadata/balance`,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${apiKey}`,
+                      "X-Letta-Source": "letta-code",
+                    },
+                  },
+                );
+
+                if (balanceResponse.ok) {
+                  balance = (await balanceResponse.json()) as {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  };
+                }
+              } catch {
+                // Silently skip balance info if endpoint not available
+              }
+
+              const output = formatUsageStats({
+                stats,
+                balance,
+              });
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output,
+                phase: "finished",
+                success: true,
+                dimOutput: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            }
+          })();
+
+          return { submitted: true };
+        }
+
+        // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
@@ -1711,15 +1957,24 @@ export default function App({
             });
             refreshDerived();
 
+            saveLastAgentBeforeExit();
+
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
+            let errorOutput = formatErrorDetails(error, agentId);
+
+            // Add helpful tip for summarization failures
+            if (errorOutput.includes("Summarization failed")) {
+              errorOutput +=
+                "\n\nTip: Use /clear instead to clear the current message buffer.";
+            }
+
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${errorDetails}`,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
@@ -1841,6 +2096,91 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /compact command - summarize conversation history
+        if (msg.trim() === "/compact") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Compacting conversation history...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            // SDK types are out of date - compact returns CompactionResponse, not void
+            const result = (await client.agents.messages.compact(
+              agentId,
+            )) as unknown as {
+              num_messages_before: number;
+              num_messages_after: number;
+              summary: string;
+            };
+
+            // Format success message with before/after counts and summary
+            const outputLines = [
+              `Compaction completed. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+              "",
+              `Summary: ${result.summary}`,
+            ];
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: outputLines.join("\n"),
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            let errorOutput: string;
+
+            // Check for summarization failure - format it cleanly
+            const apiError = error as {
+              status?: number;
+              error?: { detail?: string };
+            };
+            const detail = apiError?.error?.detail;
+            if (
+              apiError?.status === 400 &&
+              detail?.includes("Summarization failed")
+            ) {
+              // Clean format for this specific error, but preserve raw JSON
+              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
+              const rawJson = JSON.stringify(apiError.error);
+              errorOutput = [
+                `Request failed (code=400)`,
+                `Raw: ${rawJson}`,
+                `Detail: ${cleanDetail}`,
+                "",
+                "Tip: Use /clear instead to clear the current message buffer.",
+              ].join("\n");
+            } else {
+              errorOutput = formatErrorDetails(error, agentId);
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorOutput}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /rename command - rename the agent
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
@@ -1853,6 +2193,23 @@ export default function App({
               id: cmdId,
               input: msg,
               output: "Please provide a new name: /rename <name>",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // Validate the name before sending to API
+          const validationError = validateAgentName(newName);
+          if (validationError) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: validationError,
               phase: "finished",
               success: false,
             });
@@ -2066,6 +2423,29 @@ export default function App({
 
         // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
+          const argsStr = msg.trim().slice(4).trim();
+
+          // Parse args to check if name was provided
+          const parts = argsStr.split(/\s+/).filter(Boolean);
+          let hasNameArg = false;
+          let isLocal = false;
+
+          for (const part of parts) {
+            if (part === "-l" || part === "--local") {
+              isLocal = true;
+            } else {
+              hasNameArg = true;
+            }
+          }
+
+          // If no name provided, show the pin dialog
+          if (!hasNameArg) {
+            setPinDialogLocal(isLocal);
+            setActiveOverlay("pin");
+            return { submitted: true };
+          }
+
+          // Name was provided, use existing behavior
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -2074,7 +2454,6 @@ export default function App({
             setCommandRunning,
             setAgentName,
           };
-          const argsStr = msg.trim().slice(4).trim();
           await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
@@ -2536,6 +2915,12 @@ ${recentCommits}
           return { submitted: true };
         }
 
+        // Special handling for /feedback command - open feedback dialog
+        if (trimmed === "/feedback") {
+          setActiveOverlay("feedback");
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
@@ -2669,48 +3054,246 @@ ${recentCommits}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - show them and DON'T send the message yet
-            // The message will be restored to the input field for the user to decide
-
-            // Remove the optimistic user message from transcript to avoid duplication
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
-            }
-
-            setStreaming(false); // Stop streaming indicator
-            setPendingApprovals(existingApprovals);
-
-            // Analyze approval contexts for ALL pending approvals
-            const contexts = await Promise.all(
-              existingApprovals.map(async (approval) => {
+            // There are pending approvals - check permissions first (respects yolo mode)
+            const approvalResults = await Promise.all(
+              existingApprovals.map(async (approvalItem) => {
+                if (!approvalItem.toolName) {
+                  return {
+                    approval: approvalItem,
+                    permission: {
+                      decision: "deny" as const,
+                      reason: "Tool call incomplete - missing name",
+                    },
+                    context: null,
+                  };
+                }
                 const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
+                  approvalItem.toolArgs,
                   {},
                 );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
+                const permission = await checkToolPermission(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                const context = await analyzeToolApproval(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                return { approval: approvalItem, permission, context };
               }),
             );
 
-            // Check again after async approval analysis
+            // Check if user cancelled during permission check
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
             ) {
-              // User cancelled during analysis - don't show dialog
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
               setStreaming(false);
               refreshDerived();
               return { submitted: false };
             }
 
-            setApprovalContexts(contexts);
+            // Categorize by permission decision
+            const needsUserInput: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
 
-            // Refresh to remove the message from UI
-            refreshDerived();
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
 
-            // Return false = message NOT submitted, will be restored to input
-            return { submitted: false };
+              // Fancy tools always need user input (except if denied)
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                autoAllowed.push(ac);
+              }
+            }
+
+            // If all approvals can be auto-handled (yolo mode), process them immediately
+            if (needsUserInput.length === 0) {
+              // Execute auto-allowed tools
+              const autoAllowedResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial results for auto-denied and update UI
+              const autoDeniedResults = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason,
+                };
+              });
+
+              refreshDerived();
+
+              // Combine results and send directly with the user's message
+              // (can't use state here as it won't be available until next render)
+              const recoveryApprovalResults = [
+                ...autoAllowedResults.map((ar) => ({
+                  type: "approval" as const,
+                  tool_call_id: ar.toolCallId,
+                  approve: true,
+                  tool_return: ar.result.toolReturn,
+                })),
+                ...autoDeniedResults,
+              ];
+
+              // Build and send initialInput directly
+              const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                {
+                  type: "approval",
+                  approvals: recoveryApprovalResults,
+                },
+                {
+                  type: "message",
+                  role: "user",
+                  content:
+                    messageContent as unknown as MessageCreate["content"],
+                },
+              ];
+
+              await processConversation(initialInput);
+              clearPlaceholdersInText(msg);
+              return { submitted: true };
+            } else {
+              // Some approvals need user input - show dialog
+              // Remove the optimistic user message from transcript
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
+
+              setStreaming(false);
+              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+              setApprovalContexts(
+                needsUserInput
+                  .map((ac) => ac.context)
+                  .filter(Boolean) as ApprovalContext[],
+              );
+
+              // Execute auto-allowed tools and store results
+              const autoAllowedWithResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial reasons for auto-denied and update UI
+              const autoDeniedWithReasons = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
+
+              // Store auto-handled results to send along with user decisions
+              setAutoHandledResults(autoAllowedWithResults);
+              setAutoDeniedApprovals(autoDeniedWithReasons);
+
+              refreshDerived();
+              return { submitted: false };
+            }
           }
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
@@ -3131,7 +3714,18 @@ ${recentCommits}
         try {
           // Find the selected model from models.json first (for loading message)
           const { models } = await import("../agent/model");
-          const selectedModel = models.find((m) => m.id === modelId);
+          let selectedModel = models.find((m) => m.id === modelId);
+
+          // If not found in static list, it might be a BYOK model where id === handle
+          if (!selectedModel && modelId.includes("/")) {
+            // Treat it as a BYOK model - the modelId is actually the handle
+            selectedModel = {
+              id: modelId,
+              handle: modelId,
+              label: modelId.split("/").pop() ?? modelId,
+              description: "Custom model",
+            } as unknown as (typeof models)[number];
+          }
 
           if (!selectedModel) {
             // Create a failed command in the transcript
@@ -3170,6 +3764,7 @@ ${recentCommits}
             selectedModel.updateArgs,
           );
           setLlmConfig(updatedConfig);
+          setCurrentModelId(modelId);
 
           // After switching models, only switch toolset if it actually changes
           const { isOpenAIModel, isGeminiModel } = await import(
@@ -3380,6 +3975,81 @@ ${recentCommits}
   );
 
   // Handle escape when profile confirmation is pending
+  const handleFeedbackSubmit = useCallback(
+    async (message: string) => {
+      closeOverlay();
+
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
+
+        try {
+          // Immediately add command to transcript with "running" phase
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: "Sending feedback...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          const settings = settingsManager.getSettings();
+          const baseURL =
+            process.env.LETTA_BASE_URL ||
+            settings.env?.LETTA_BASE_URL ||
+            "https://api.letta.com";
+          const apiKey =
+            process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+          // Send feedback request manually since it's not in the SDK
+          const response = await fetch(`${baseURL}/v1/metadata/feedback`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "X-Letta-Source": "letta-code",
+            },
+            body: JSON.stringify({
+              message: message,
+              feature: "letta-code",
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+              `Failed to send feedback (${response.status}): ${errorText}`,
+            );
+          }
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output:
+              "Thank you for your feedback! Your message has been sent to the Letta team.",
+            phase: "finished",
+            success: true,
+          });
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: `Failed to send feedback: ${errorDetails}`,
+            phase: "finished",
+            success: false,
+          });
+          refreshDerived();
+        }
+      });
+    },
+    [agentId, refreshDerived, withCommandLock, closeOverlay],
+  );
+
   const handleProfileEscapeCancel = useCallback(() => {
     if (profileConfirmPending) {
       const { cmdId, name } = profileConfirmPending;
@@ -3727,19 +4397,17 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
+        : "Creating a new agent (use /pin to save)";
 
-      const agentNameLine =
-        !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /rename to rename)`
-          : "";
-
-      const statusLines = [
-        resumedMessage,
-        agentNameLine,
-        agentUrl ? `→ ${agentUrl}` : "",
-        ...hints,
-      ].filter(Boolean);
+      const statusLines = continueSession
+        ? [resumedMessage, ...hints, agentUrl ? `→ ${agentUrl}` : ""].filter(
+            Boolean,
+          )
+        : [
+            resumedMessage,
+            agentUrl ? `→ ${agentUrl}` : "",
+            "→ Tip: use /init to initialize your agent's memory system!",
+          ].filter(Boolean);
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -3836,12 +4504,17 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
-            {/* Show exit stats when exiting */}
+            {/* Exit stats - shown when exiting via double Ctrl+C */}
             {showExitStats && (
-              <SessionStatsComponent
-                stats={sessionStatsRef.current.getSnapshot()}
-                agentId={agentId}
-              />
+              <Box flexDirection="column">
+                <Text dimColor>
+                  {formatUsageStats({
+                    stats: sessionStatsRef.current.getSnapshot(),
+                  })}
+                </Text>
+                <Text dimColor>Resume this agent with:</Text>
+                <Text color="blue">letta --agent {agentId}</Text>
+              </Box>
             )}
 
             {/* Input row - always mounted to preserve state */}
@@ -3875,12 +4548,7 @@ Plan file path: ${planFilePath}`;
             {/* Model Selector - conditionally mounted as overlay */}
             {activeOverlay === "model" && (
               <ModelSelector
-                currentModel={
-                  llmConfig?.model_endpoint_type && llmConfig?.model
-                    ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-                    : undefined
-                }
-                currentEnableReasoner={llmConfig?.enable_reasoner}
+                currentModelId={currentModelId ?? undefined}
                 onSelect={handleModelSelect}
                 onCancel={closeOverlay}
               />
@@ -3960,6 +4628,119 @@ Plan file path: ${planFilePath}`;
             {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
               <MessageSearch onClose={closeOverlay} />
+            )}
+
+            {/* Feedback Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "feedback" && (
+              <FeedbackDialog
+                onSubmit={handleFeedbackSubmit}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Memory Viewer - conditionally mounted as overlay */}
+            {activeOverlay === "memory" && (
+              <MemoryViewer
+                blocks={agentState?.memory?.blocks || []}
+                agentId={agentId}
+                agentName={agentName}
+                onClose={closeOverlay}
+              />
+            )}
+
+            {/* MCP Server Selector - conditionally mounted as overlay */}
+            {activeOverlay === "mcp" && (
+              <McpSelector
+                agentId={agentId}
+                onAdd={() => {
+                  // Close overlay and prompt user to use /mcp add command
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/mcp",
+                    output:
+                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Help Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Pin Dialog - for naming agent before pinning */}
+            {activeOverlay === "pin" && (
+              <PinDialog
+                currentName={agentName || ""}
+                local={pinDialogLocal}
+                onSubmit={async (newName) => {
+                  closeOverlay();
+                  setCommandRunning(true);
+
+                  const cmdId = uid("cmd");
+                  const scopeText = pinDialogLocal
+                    ? "to this project"
+                    : "globally";
+                  const displayName =
+                    newName || agentName || agentId.slice(0, 12);
+
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/pin",
+                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    const client = await getClient();
+
+                    // Rename if new name provided
+                    if (newName && newName !== agentName) {
+                      await client.agents.update(agentId, { name: newName });
+                      setAgentName(newName);
+                    }
+
+                    // Pin the agent
+                    if (pinDialogLocal) {
+                      settingsManager.pinLocal(agentId);
+                    } else {
+                      settingsManager.pinGlobal(agentId);
+                    }
+
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      phase: "finished",
+                      success: true,
+                    });
+                  } catch (error) {
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Failed to pin: ${error}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                  } finally {
+                    setCommandRunning(false);
+                    refreshDerived();
+                  }
+                }}
+                onCancel={closeOverlay}
+              />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}

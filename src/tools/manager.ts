@@ -95,6 +95,13 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 
 // PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
+  // Additional Letta Code tools
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Task",
+  "Skill",
+  // Standard Codex tools
   "ShellCommand",
   "Shell",
   "ReadFile",
@@ -102,10 +109,16 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "GrepFiles",
   "ApplyPatch",
   "UpdatePlan",
-  "Skill",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
+  // Additional Letta Code tools
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Skill",
+  "Task",
+  // Standard Gemini tools
   "RunShellCommand",
   "ReadFileGemini",
   "ListDirectory",
@@ -115,7 +128,6 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "WriteFileGemini",
   "WriteTodos",
   "ReadManyFiles",
-  "Skill",
 ];
 
 // Tool permissions configuration
