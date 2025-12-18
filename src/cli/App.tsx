@@ -59,7 +59,7 @@ import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
-import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { formatUsageStats } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
@@ -459,9 +459,6 @@ export default function App({
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
-
-  // Show exit stats on exit
-  const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -1333,8 +1330,7 @@ export default function App({
 
   const handleExit = useCallback(() => {
     saveLastAgentBeforeExit();
-    setShowExitStats(true);
-    // Give React time to render the stats, then exit
+    // Give React time to render the goodbye message, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -1674,7 +1670,99 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /exit command - show stats and exit
+        // Special handling for /usage command - show session stats
+        if (trimmed === "/usage") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "Fetching usage statistics...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          // Fetch balance and display stats asynchronously
+          (async () => {
+            try {
+              const stats = sessionStatsRef.current.getSnapshot();
+
+              // Try to fetch balance info (only works for Letta Cloud)
+              // Silently skip if endpoint not available (not deployed yet or self-hosted)
+              let balance:
+                | {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  }
+                | undefined;
+
+              try {
+                const settings = settingsManager.getSettings();
+                const baseURL =
+                  process.env.LETTA_BASE_URL ||
+                  settings.env?.LETTA_BASE_URL ||
+                  "https://api.letta.com";
+                const apiKey =
+                  process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+                const balanceResponse = await fetch(
+                  `${baseURL}/v1/metadata/balance`,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${apiKey}`,
+                      "X-Letta-Source": "letta-code",
+                    },
+                  },
+                );
+
+                if (balanceResponse.ok) {
+                  balance = (await balanceResponse.json()) as {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  };
+                }
+              } catch {
+                // Silently skip balance info if endpoint not available
+              }
+
+              const output = formatUsageStats({
+                stats,
+                balance,
+              });
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output,
+                phase: "finished",
+                success: true,
+                dimOutput: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            }
+          })();
+
+          return { submitted: true };
+        }
+
+        // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
@@ -3986,21 +4074,9 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
-            {/* Show exit stats when exiting */}
-            {showExitStats && (
-              <SessionStatsComponent
-                stats={sessionStatsRef.current.getSnapshot()}
-                agentId={agentId}
-              />
-            )}
-
             {/* Input row - always mounted to preserve state */}
             <Input
-              visible={
-                !showExitStats &&
-                pendingApprovals.length === 0 &&
-                !anySelectorOpen
-              }
+              visible={pendingApprovals.length === 0 && !anySelectorOpen}
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
