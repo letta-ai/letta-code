@@ -138,6 +138,8 @@ export async function pollForToken(
  */
 export async function refreshAccessToken(
   refreshToken: string,
+  deviceId?: string,
+  deviceName?: string,
 ): Promise<TokenResponse> {
   const response = await fetch(`${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`, {
     method: "POST",
@@ -147,6 +149,8 @@ export async function refreshAccessToken(
       client_id: OAUTH_CONFIG.clientId,
       refresh_token: refreshToken,
       refresh_token_mode: "new",
+      ...(deviceId && { device_id: deviceId }),
+      ...(deviceName && { device_name: deviceName }),
     }),
   });
 

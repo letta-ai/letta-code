@@ -20,7 +20,19 @@ export async function getClient() {
     // Refresh if token expires within 5 minutes
     if (expiresAt - now < 5 * 60 * 1000) {
       try {
-        const tokens = await refreshAccessToken(settings.refreshToken);
+        // Get or generate device ID (should always exist, but fallback just in case)
+        let deviceId = settings.deviceId;
+        if (!deviceId) {
+          deviceId = crypto.randomUUID();
+          settingsManager.updateSettings({ deviceId });
+        }
+        const deviceName = hostname();
+
+        const tokens = await refreshAccessToken(
+          settings.refreshToken,
+          deviceId,
+          deviceName,
+        );
 
         // Update settings with new token
         const updatedEnv = { ...settings.env };
