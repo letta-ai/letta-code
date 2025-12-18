@@ -252,14 +252,16 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
-  // File edit previews: write/edit/multi_edit/replace/write_file
+  // File edit previews: write/edit/multi_edit/replace/write_file/write_file_gemini
   if (
     (t === "write" ||
       t === "edit" ||
       t === "multiedit" ||
       t === "replace" ||
       t === "write_file" ||
-      t === "writefile") &&
+      t === "writefile" ||
+      t === "write_file_gemini" ||
+      t === "writefilegemini") &&
     parsedArgs
   ) {
     try {
@@ -269,7 +271,11 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       if (precomputedDiff) {
         return (
           <Box flexDirection="column" paddingLeft={2}>
-            {t === "write" || t === "write_file" || t === "writefile" ? (
+            {t === "write" ||
+            t === "write_file" ||
+            t === "writefile" ||
+            t === "write_file_gemini" ||
+            t === "writefilegemini" ? (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="write"
@@ -307,7 +313,13 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
       }
 
       // Fallback to non-precomputed rendering
-      if (t === "write" || t === "write_file" || t === "writefile") {
+      if (
+        t === "write" ||
+        t === "write_file" ||
+        t === "writefile" ||
+        t === "write_file_gemini" ||
+        t === "writefilegemini"
+      ) {
         return (
           <Box flexDirection="column" paddingLeft={2}>
             <AdvancedDiffRenderer
@@ -362,7 +374,9 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     t === "edit" ||
     t === "multiedit" ||
     t === "replace" ||
-    t === "write_file"
+    t === "write_file" ||
+    t === "write_file_gemini" ||
+    t === "writefilegemini"
   ) {
     return (
       <Box flexDirection="column" paddingLeft={2}>
@@ -531,7 +545,13 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     if (!parsedArgs || !approvalRequest) return null;
 
     const toolName = approvalRequest.toolName.toLowerCase();
-    if (toolName === "write") {
+    if (
+      toolName === "write" ||
+      toolName === "write_file" ||
+      toolName === "writefile" ||
+      toolName === "write_file_gemini" ||
+      toolName === "writefilegemini"
+    ) {
       const result = computeAdvancedDiff({
         kind: "write",
         filePath: parsedArgs.file_path as string,
@@ -673,14 +693,20 @@ function getHeaderLabel(toolName: string): string {
   if (t === "updateplan") return "Plan update";
   // Gemini toolset (snake_case)
   if (t === "run_shell_command") return "Shell command";
+  if (t === "read_file_gemini") return "Read File";
   if (t === "list_directory") return "List Directory";
+  if (t === "glob_gemini") return "Find Files";
   if (t === "search_file_content") return "Search in Files";
+  if (t === "write_file_gemini") return "Write File";
   if (t === "write_todos") return "Update Todos";
   if (t === "read_many_files") return "Read Multiple Files";
   // Gemini toolset (PascalCase → lowercased)
   if (t === "runshellcommand") return "Shell command";
+  if (t === "readfilegemini") return "Read File";
   if (t === "listdirectory") return "List Directory";
+  if (t === "globgemini") return "Find Files";
   if (t === "searchfilecontent") return "Search in Files";
+  if (t === "writefilegemini") return "Write File";
   if (t === "writetodos") return "Update Todos";
   if (t === "readmanyfiles") return "Read Multiple Files";
   // Shared/additional tools

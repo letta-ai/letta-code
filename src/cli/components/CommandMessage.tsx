@@ -12,6 +12,7 @@ type CommandLine = {
   output: string;
   phase?: "running" | "finished";
   success?: boolean;
+  dimOutput?: boolean;
 };
 
 /**
@@ -63,7 +64,7 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
             <Text>{"  ⎿  "}</Text>
           </Box>
           <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-            <MarkdownDisplay text={line.output} />
+            <MarkdownDisplay text={line.output} dimColor={line.dimOutput} />
           </Box>
         </Box>
       )}
