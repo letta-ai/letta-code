@@ -135,6 +135,7 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         const parsedArgs = JSON.parse(line.argsText);
         if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
           // Convert todos to safe format for TodoRenderer
+          // Note: Anthropic/Codex use "content", Gemini uses "description"
           const safeTodos = parsedArgs.todos.map((t: unknown, i: number) => {
             const rec = isRecord(t) ? t : {};
             const status: "pending" | "in_progress" | "completed" =
@@ -144,8 +145,13 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
                   ? "in_progress"
                   : "pending";
             const id = typeof rec.id === "string" ? rec.id : String(i);
+            // Handle both "content" (Anthropic/Codex) and "description" (Gemini) fields
             const content =
-              typeof rec.content === "string" ? rec.content : JSON.stringify(t);
+              typeof rec.content === "string"
+                ? rec.content
+                : typeof rec.description === "string"
+                  ? rec.description
+                  : JSON.stringify(t);
             const priority: "high" | "medium" | "low" | undefined =
               rec.priority === "high"
                 ? "high"
