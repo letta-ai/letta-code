@@ -49,6 +49,7 @@ import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
+import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
@@ -409,6 +410,7 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -1750,6 +1752,12 @@ export default function App({
         // Special handling for /memory command - opens memory viewer
         if (trimmed === "/memory") {
           setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // Special handling for /help command - opens help dialog
+        if (trimmed === "/help") {
+          setActiveOverlay("help");
           return { submitted: true };
         }
 
@@ -4600,6 +4608,9 @@ Plan file path: ${planFilePath}`;
                 onClose={closeOverlay}
               />
             )}
+
+            {/* Help Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
 
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (
