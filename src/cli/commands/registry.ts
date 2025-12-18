@@ -25,9 +25,9 @@ export const commands: Record<string, Command> = {
     },
   },
   "/exit": {
-    desc: "Exit and show session stats",
+    desc: "Exit this session",
     handler: () => {
-      // Handled specially in App.tsx to show stats
+      // Handled specially in App.tsx
       return "Exiting...";
     },
   },
@@ -57,6 +57,22 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
+    },
+  },
+  "/link": {
+    desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Linking tools...";
+    },
+  },
+  "/unlink": {
+    desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Unlinking tools...";
     },
   },
   "/toolset": {
@@ -148,6 +164,27 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to open SubagentManager component
       return "Opening subagent manager...";
+    },
+  },
+  "/feedback": {
+    desc: "Send feedback to the Letta team",
+    handler: () => {
+      // Handled specially in App.tsx to send feedback request
+      return "Sending feedback...";
+    },
+  },
+  "/memory": {
+    desc: "View agent memory blocks",
+    handler: () => {
+      // Handled specially in App.tsx to open memory viewer
+      return "Opening memory viewer...";
+    },
+  },
+  "/usage": {
+    desc: "Show session usage statistics and balance",
+    handler: () => {
+      // Handled specially in App.tsx to display usage stats
+      return "Fetching usage statistics...";
     },
   },
 };

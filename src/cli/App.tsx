@@ -14,9 +14,10 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalResult } from "../agent/approval-execution";
+import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { setCurrentAgentId } from "../agent/context";
+import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
@@ -47,15 +48,18 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { FeedbackDialog } from "./components/FeedbackDialog";
 import { Input } from "./components/InputRich";
+import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
-import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { formatUsageStats } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
@@ -94,6 +98,7 @@ import {
 import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
+import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
@@ -112,6 +117,18 @@ const EAGER_CANCEL = true;
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Save current agent as lastAgent before exiting
+// This ensures subagent overwrites during the session don't persist
+function saveLastAgentBeforeExit() {
+  try {
+    const currentAgentId = getCurrentAgentId();
+    settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
+    settingsManager.updateSettings({ lastAgent: currentAgentId });
+  } catch {
+    // Ignore if no agent context set
+  }
 }
 
 // Get plan mode system reminder if in plan mode
@@ -276,6 +293,11 @@ export default function App({
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
+  // Warm the model-access cache in the background so /model is fast on first open.
+  useEffect(() => {
+    prefetchAvailableModelHandles();
+  }, []);
+
   // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
@@ -317,13 +339,16 @@ export default function App({
   }, [agentId]);
 
   // Whether a stream is in flight (disables input)
-  const [streaming, setStreaming] = useState(false);
+  // Uses synced state to keep ref in sync for reliable async checks
+  const [streaming, setStreaming, streamingRef] = useSyncedState(false);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
-  const [commandRunning, setCommandRunning] = useState(false);
+  // Uses synced state to keep ref in sync for reliable async checks
+  const [commandRunning, setCommandRunning, commandRunningRef] =
+    useSyncedState(false);
 
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
@@ -371,11 +396,30 @@ export default function App({
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
 
-  // Model selector state
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [toolsetSelectorOpen, setToolsetSelectorOpen] = useState(false);
-  const [systemPromptSelectorOpen, setSystemPromptSelectorOpen] =
-    useState(false);
+  // Overlay/selector state - only one can be open at a time
+  type ActiveOverlay =
+    | "model"
+    | "toolset"
+    | "system"
+    | "agent"
+    | "resume"
+    | "profile"
+    | "search"
+    | "subagent"
+    | "feedback"
+    | "memory"
+    | "pin"
+    | null;
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+
+  // Pin dialog state
+  const [pinDialogLocal, setPinDialogLocal] = useState(false);
+
+  // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
+  const anySelectorOpen = activeOverlay !== null;
+
+  // Other model/agent state
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
@@ -398,19 +442,6 @@ export default function App({
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
 
-  // Agent selector state
-  const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
-
-  // Resume selector state
-  const [resumeSelectorOpen, setResumeSelectorOpen] = useState(false);
-  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
-
-  // Subagent manager state (for /subagents command)
-  const [subagentManagerOpen, setSubagentManagerOpen] = useState(false);
-
-  // Profile selector state
-  const [profileSelectorOpen, setProfileSelectorOpen] = useState(false);
-
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
@@ -420,7 +451,7 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(),
+    getRandomThinkingMessage(agentName),
   );
 
   // Session stats tracking
@@ -428,9 +459,6 @@ export default function App({
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
-
-  // Show exit stats on exit
-  const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -458,6 +486,33 @@ export default function App({
   useEffect(() => {
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
+
+  // Helper to check if agent is busy (streaming, executing tool, or running command)
+  // Uses refs for synchronous access outside React's closure system
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
+  const isAgentBusy = useCallback(() => {
+    return (
+      streamingRef.current ||
+      isExecutingTool ||
+      commandRunningRef.current ||
+      abortControllerRef.current !== null
+    );
+  }, [isExecutingTool]);
+
+  // Helper to wrap async handlers that need to close overlay and lock input
+  // Closes overlay and sets commandRunning before executing, releases lock in finally
+  const withCommandLock = useCallback(
+    async (asyncFn: () => Promise<void>) => {
+      setActiveOverlay(null);
+      setCommandRunning(true);
+      try {
+        await asyncFn();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [setCommandRunning],
+  );
 
   // Track terminal shrink events to refresh static output (prevents wrapped leftovers)
   const columns = useTerminalWidth();
@@ -927,6 +982,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before starting permission checks
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -1102,7 +1168,7 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage());
+              setThinkingMessage(getRandomThinkingMessage(agentName));
               refreshDerived();
 
               await processConversation([
@@ -1173,6 +1239,17 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
+              return;
+            }
+
+            // Check if user cancelled before showing dialog
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
               return;
             }
 
@@ -1264,12 +1341,18 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled],
+    [
+      appendError,
+      refreshDerived,
+      refreshDerivedThrottled,
+      setStreaming,
+      agentName,
+    ],
   );
 
   const handleExit = useCallback(() => {
-    setShowExitStats(true);
-    // Give React time to render the stats, then exit
+    saveLastAgentBeforeExit();
+    // Give React time to render the goodbye message, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -1330,6 +1413,14 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
+      // Reset cancellation flag after cleanup is complete.
+      // This allows the dequeue effect to process any queued messages.
+      // We use setTimeout to ensure React state updates (setStreaming, etc.)
+      // have been processed before the dequeue effect runs.
+      setTimeout(() => {
+        userCancelledRef.current = false;
+      }, 0);
+
       return;
     } else {
       setInterruptRequested(true);
@@ -1353,6 +1444,7 @@ export default function App({
     appendError,
     isExecutingTool,
     refreshDerived,
+    setStreaming,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
@@ -1370,9 +1462,10 @@ export default function App({
 
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
-      setAgentSelectorOpen(false);
+      // Close selector immediately
+      setActiveOverlay(null);
 
-      // Skip if already on this agent
+      // Skip if already on this agent (no async work needed, queue can proceed)
       if (targetAgentId === agentId) {
         const label = agentName || targetAgentId.slice(0, 12);
         const cmdId = uid("cmd");
@@ -1389,9 +1482,10 @@ export default function App({
         return;
       }
 
-      const inputCmd = "/pinned";
-
+      // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
+
+      const inputCmd = "/pinned";
 
       try {
         const client = await getClient();
@@ -1472,9 +1566,10 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId, agentName],
+    [refreshDerived, agentId, agentName, setCommandRunning],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
@@ -1518,18 +1613,27 @@ export default function App({
 
       // Queue message if agent is busy (streaming, executing tool, or running command)
       // This allows messages to queue up while agent is working
-      const agentBusy = streaming || isExecutingTool || commandRunning;
 
-      if (agentBusy) {
+      // Reset cancellation flag before queue check - this ensures queued messages
+      // can be dequeued even if the user just cancelled. The dequeue effect checks
+      // userCancelledRef.current, so we must clear it here to prevent blocking.
+      userCancelledRef.current = false;
+
+      if (isAgentBusy()) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
-          // Always update snapshot to include ALL queued messages
-          queueSnapshotRef.current = [...newQueue];
+          // For slash commands, just queue and wait - don't interrupt the agent.
+          // For regular messages, cancel the stream so the new message can be sent.
+          const isSlashCommand = msg.startsWith("/");
 
-          // If this is the first queued message, send cancel request
-          if (!waitingForQueueCancelRef.current) {
+          if (
+            !isSlashCommand &&
+            streamingRef.current &&
+            !waitingForQueueCancelRef.current
+          ) {
             waitingForQueueCancelRef.current = true;
+            queueSnapshotRef.current = [...newQueue];
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
@@ -1546,9 +1650,8 @@ export default function App({
         return { submitted: true }; // Clears input
       }
 
-      // Reset cancellation flag when starting new submission
-      // This ensures that after an interrupt, new messages can be sent
-      userCancelledRef.current = false;
+      // Note: userCancelledRef.current was already reset above before the queue check
+      // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
       let aliasedMsg = msg;
       if (msg === "exit" || msg === "quit") {
@@ -1561,30 +1664,139 @@ export default function App({
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
-          setModelSelectorOpen(true);
+          setActiveOverlay("model");
           return { submitted: true };
         }
 
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
-          setToolsetSelectorOpen(true);
+          setActiveOverlay("toolset");
           return { submitted: true };
         }
 
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
-          setSystemPromptSelectorOpen(true);
+          setActiveOverlay("system");
           return { submitted: true };
         }
 
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
-          setSubagentManagerOpen(true);
+          setActiveOverlay("subagent");
           return { submitted: true };
         }
 
-        // Special handling for /exit command - show stats and exit
+        // Special handling for /memory command - opens memory viewer
+        if (trimmed === "/memory") {
+          setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // Special handling for /usage command - show session stats
+        if (trimmed === "/usage") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "Fetching usage statistics...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          // Fetch balance and display stats asynchronously
+          (async () => {
+            try {
+              const stats = sessionStatsRef.current.getSnapshot();
+
+              // Try to fetch balance info (only works for Letta Cloud)
+              // Silently skip if endpoint not available (not deployed yet or self-hosted)
+              let balance:
+                | {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  }
+                | undefined;
+
+              try {
+                const settings = settingsManager.getSettings();
+                const baseURL =
+                  process.env.LETTA_BASE_URL ||
+                  settings.env?.LETTA_BASE_URL ||
+                  "https://api.letta.com";
+                const apiKey =
+                  process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+                const balanceResponse = await fetch(
+                  `${baseURL}/v1/metadata/balance`,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${apiKey}`,
+                      "X-Letta-Source": "letta-code",
+                    },
+                  },
+                );
+
+                if (balanceResponse.ok) {
+                  balance = (await balanceResponse.json()) as {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  };
+                }
+              } catch {
+                // Silently skip balance info if endpoint not available
+              }
+
+              const output = formatUsageStats({
+                stats,
+                balance,
+              });
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output,
+                phase: "finished",
+                success: true,
+                dimOutput: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            }
+          })();
+
+          return { submitted: true };
+        }
+
+        // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "See ya!",
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           handleExit();
           return { submitted: true };
         }
@@ -1636,6 +1848,8 @@ export default function App({
               success: true,
             });
             refreshDerived();
+
+            saveLastAgentBeforeExit();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
@@ -1787,6 +2001,23 @@ export default function App({
             return { submitted: true };
           }
 
+          // Validate the name before sending to API
+          const validationError = validateAgentName(newName);
+          if (validationError) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: validationError,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -1898,13 +2129,13 @@ export default function App({
 
         // Special handling for /resume command - show session resume selector
         if (msg.trim() === "/agents" || msg.trim() === "/resume") {
-          setResumeSelectorOpen(true);
+          setActiveOverlay("resume");
           return { submitted: true };
         }
 
         // Special handling for /search command - show message search
         if (msg.trim() === "/search") {
-          setMessageSearchOpen(true);
+          setActiveOverlay("search");
           return { submitted: true };
         }
 
@@ -1925,7 +2156,7 @@ export default function App({
 
           // /profile - open profile selector
           if (!subcommand) {
-            setProfileSelectorOpen(true);
+            setActiveOverlay("profile");
             return { submitted: true };
           }
 
@@ -1986,12 +2217,35 @@ export default function App({
 
         // Special handling for /profiles and /pinned commands - open pinned agents selector
         if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
-          setProfileSelectorOpen(true);
+          setActiveOverlay("profile");
           return { submitted: true };
         }
 
         // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
+          const argsStr = msg.trim().slice(4).trim();
+
+          // Parse args to check if name was provided
+          const parts = argsStr.split(/\s+/).filter(Boolean);
+          let hasNameArg = false;
+          let isLocal = false;
+
+          for (const part of parts) {
+            if (part === "-l" || part === "--local") {
+              isLocal = true;
+            } else {
+              hasNameArg = true;
+            }
+          }
+
+          // If no name provided, show the pin dialog
+          if (!hasNameArg) {
+            setPinDialogLocal(isLocal);
+            setActiveOverlay("pin");
+            return { submitted: true };
+          }
+
+          // Name was provided, use existing behavior
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -2000,7 +2254,6 @@ export default function App({
             setCommandRunning,
             setAgentName,
           };
-          const argsStr = msg.trim().slice(4).trim();
           await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
@@ -2017,6 +2270,96 @@ export default function App({
           };
           const argsStr = msg.trim().slice(6).trim();
           handleUnpin(profileCtx, msg, argsStr);
+          return { submitted: true };
+        }
+
+        // Special handling for /link command - attach all Letta Code tools (deprecated)
+        if (msg.trim() === "/link" || msg.trim().startsWith("/link ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Attaching Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { linkToolsToAgent } = await import("../agent/modify");
+            const result = await linkToolsToAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to link tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /unlink command - remove all Letta Code tools (deprecated)
+        if (msg.trim() === "/unlink" || msg.trim().startsWith("/unlink ")) {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Removing Letta Code tools...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const { unlinkToolsFromAgent } = await import("../agent/modify");
+            const result = await unlinkToolsFromAgent(agentId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: result.message,
+              phase: "finished",
+              success: result.success,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed to unlink tools: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
           return { submitted: true };
         }
 
@@ -2372,6 +2715,12 @@ ${recentCommits}
           return { submitted: true };
         }
 
+        // Special handling for /feedback command - open feedback dialog
+        if (trimmed === "/feedback") {
+          setActiveOverlay("feedback");
+          return { submitted: true };
+        }
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
@@ -2471,7 +2820,7 @@ ${recentCommits}
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       // Show streaming state immediately for responsiveness
       setStreaming(true);
       refreshDerived();
@@ -2505,48 +2854,246 @@ ${recentCommits}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - show them and DON'T send the message yet
-            // The message will be restored to the input field for the user to decide
-
-            // Remove the optimistic user message from transcript to avoid duplication
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
-            }
-
-            setStreaming(false); // Stop streaming indicator
-            setPendingApprovals(existingApprovals);
-
-            // Analyze approval contexts for ALL pending approvals
-            const contexts = await Promise.all(
-              existingApprovals.map(async (approval) => {
+            // There are pending approvals - check permissions first (respects yolo mode)
+            const approvalResults = await Promise.all(
+              existingApprovals.map(async (approvalItem) => {
+                if (!approvalItem.toolName) {
+                  return {
+                    approval: approvalItem,
+                    permission: {
+                      decision: "deny" as const,
+                      reason: "Tool call incomplete - missing name",
+                    },
+                    context: null,
+                  };
+                }
                 const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
+                  approvalItem.toolArgs,
                   {},
                 );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
+                const permission = await checkToolPermission(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                const context = await analyzeToolApproval(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                return { approval: approvalItem, permission, context };
               }),
             );
 
-            // Check again after async approval analysis
+            // Check if user cancelled during permission check
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
             ) {
-              // User cancelled during analysis - don't show dialog
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
               setStreaming(false);
               refreshDerived();
               return { submitted: false };
             }
 
-            setApprovalContexts(contexts);
+            // Categorize by permission decision
+            const needsUserInput: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
 
-            // Refresh to remove the message from UI
-            refreshDerived();
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
 
-            // Return false = message NOT submitted, will be restored to input
-            return { submitted: false };
+              // Fancy tools always need user input (except if denied)
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                autoAllowed.push(ac);
+              }
+            }
+
+            // If all approvals can be auto-handled (yolo mode), process them immediately
+            if (needsUserInput.length === 0) {
+              // Execute auto-allowed tools
+              const autoAllowedResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial results for auto-denied and update UI
+              const autoDeniedResults = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason,
+                };
+              });
+
+              refreshDerived();
+
+              // Combine results and send directly with the user's message
+              // (can't use state here as it won't be available until next render)
+              const recoveryApprovalResults = [
+                ...autoAllowedResults.map((ar) => ({
+                  type: "approval" as const,
+                  tool_call_id: ar.toolCallId,
+                  approve: true,
+                  tool_return: ar.result.toolReturn,
+                })),
+                ...autoDeniedResults,
+              ];
+
+              // Build and send initialInput directly
+              const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                {
+                  type: "approval",
+                  approvals: recoveryApprovalResults,
+                },
+                {
+                  type: "message",
+                  role: "user",
+                  content:
+                    messageContent as unknown as MessageCreate["content"],
+                },
+              ];
+
+              await processConversation(initialInput);
+              clearPlaceholdersInText(msg);
+              return { submitted: true };
+            } else {
+              // Some approvals need user input - show dialog
+              // Remove the optimistic user message from transcript
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
+
+              setStreaming(false);
+              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+              setApprovalContexts(
+                needsUserInput
+                  .map((ac) => ac.context)
+                  .filter(Boolean) as ApprovalContext[],
+              );
+
+              // Execute auto-allowed tools and store results
+              const autoAllowedWithResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial reasons for auto-denied and update UI
+              const autoDeniedWithReasons = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
+
+              // Store auto-handled results to send along with user decisions
+              setAutoHandledResults(autoAllowedWithResults);
+              setAutoDeniedApprovals(autoDeniedWithReasons);
+
+              refreshDerived();
+              return { submitted: false };
+            }
           }
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
@@ -2594,6 +3141,9 @@ ${recentCommits}
       profileConfirmPending,
       handleAgentSelect,
       tokenStreamingEnabled,
+      isAgentBusy,
+      setStreaming,
+      setCommandRunning,
     ],
   );
 
@@ -2610,6 +3160,7 @@ ${recentCommits}
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
+      !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current // Don't dequeue if user just cancelled
     ) {
@@ -2626,6 +3177,7 @@ ${recentCommits}
     pendingApprovals,
     commandRunning,
     isExecutingTool,
+    anySelectorOpen,
   ]);
 
   // Helper to send all approval results when done
@@ -2747,7 +3299,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -2784,6 +3336,8 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
+      agentName,
+      setStreaming,
     ],
   );
 
@@ -2828,6 +3382,7 @@ ${recentCommits}
     sendAllResults,
     appendError,
     isExecutingTool,
+    setStreaming,
   ]);
 
   const handleApproveAlways = useCallback(
@@ -2898,7 +3453,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage());
+          setThinkingMessage(getRandomThinkingMessage(agentName));
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -2919,6 +3474,8 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
+      agentName,
+      setStreaming,
     ],
   );
 
@@ -2950,213 +3507,202 @@ ${recentCommits}
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
-      setModelSelectorOpen(false);
+      await withCommandLock(async () => {
+        // Declare cmdId outside try block so it's accessible in catch
+        let cmdId: string | null = null;
 
-      // Declare cmdId outside try block so it's accessible in catch
-      let cmdId: string | null = null;
+        try {
+          // Find the selected model from models.json first (for loading message)
+          const { models } = await import("../agent/model");
+          const selectedModel = models.find((m) => m.id === modelId);
 
-      try {
-        // Find the selected model from models.json first (for loading message)
-        const { models } = await import("../agent/model");
-        const selectedModel = models.find((m) => m.id === modelId);
+          if (!selectedModel) {
+            // Create a failed command in the transcript
+            cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/model ${modelId}`,
+              output: `Model not found: ${modelId}`,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return;
+          }
 
-        if (!selectedModel) {
-          // Create a failed command in the transcript
+          // Immediately add command to transcript with "running" phase and loading message
           cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Model not found: ${modelId}`,
-            phase: "finished",
-            success: false,
+            output: `Switching model to ${selectedModel.label}...`,
+            phase: "running",
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
-        }
 
-        // Immediately add command to transcript with "running" phase and loading message
-        cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/model ${modelId}`,
-          output: `Switching model to ${selectedModel.label}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Update the agent with new model and config args
+          const { updateAgentLLMConfig } = await import("../agent/modify");
 
-        // Lock input during async operation
-        setCommandRunning(true);
-
-        // Update the agent with new model and config args
-        const { updateAgentLLMConfig } = await import("../agent/modify");
-
-        const updatedConfig = await updateAgentLLMConfig(
-          agentId,
-          selectedModel.handle,
-          selectedModel.updateArgs,
-        );
-        setLlmConfig(updatedConfig);
-
-        // After switching models, only switch toolset if it actually changes
-        const { isOpenAIModel, isGeminiModel } = await import(
-          "../tools/manager"
-        );
-        const targetToolset:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none" = isOpenAIModel(selectedModel.handle ?? "")
-          ? "codex"
-          : isGeminiModel(selectedModel.handle ?? "")
-            ? "gemini"
-            : "default";
-
-        let toolsetName:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none"
-          | null = null;
-        if (currentToolset !== targetToolset) {
-          const { switchToolsetForModel } = await import("../tools/toolset");
-          toolsetName = await switchToolsetForModel(
-            selectedModel.handle ?? "",
+          const updatedConfig = await updateAgentLLMConfig(
             agentId,
+            selectedModel.handle,
+            selectedModel.updateArgs,
           );
-          setCurrentToolset(toolsetName);
-        }
+          setLlmConfig(updatedConfig);
 
-        // Update the same command with final result (include toolset info only if changed)
-        const autoToolsetLine = toolsetName
-          ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
-          : null;
-        const outputLines = [
-          `Switched to ${selectedModel.label}`,
-          ...(autoToolsetLine ? [autoToolsetLine] : []),
-        ].join("\n");
+          // After switching models, only switch toolset if it actually changes
+          const { isOpenAIModel, isGeminiModel } = await import(
+            "../tools/manager"
+          );
+          const targetToolset:
+            | "codex"
+            | "codex_snake"
+            | "default"
+            | "gemini"
+            | "gemini_snake"
+            | "none" = isOpenAIModel(selectedModel.handle ?? "")
+            ? "codex"
+            : isGeminiModel(selectedModel.handle ?? "")
+              ? "gemini"
+              : "default";
 
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/model ${modelId}`,
-          output: outputLines,
-          phase: "finished",
-          success: true,
-        });
-        refreshDerived();
-      } catch (error) {
-        // Mark command as failed (only if cmdId was created)
-        const errorDetails = formatErrorDetails(error, agentId);
-        if (cmdId) {
+          let toolsetName:
+            | "codex"
+            | "codex_snake"
+            | "default"
+            | "gemini"
+            | "gemini_snake"
+            | "none"
+            | null = null;
+          if (currentToolset !== targetToolset) {
+            const { switchToolsetForModel } = await import("../tools/toolset");
+            toolsetName = await switchToolsetForModel(
+              selectedModel.handle ?? "",
+              agentId,
+            );
+            setCurrentToolset(toolsetName);
+          }
+
+          // Update the same command with final result (include toolset info only if changed)
+          const autoToolsetLine = toolsetName
+            ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
+            : null;
+          const outputLines = [
+            `Switched to ${selectedModel.label}`,
+            ...(autoToolsetLine ? [autoToolsetLine] : []),
+          ].join("\n");
+
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/model ${modelId}`,
-            output: `Failed to switch model: ${errorDetails}`,
+            output: outputLines,
             phase: "finished",
-            success: false,
+            success: true,
           });
           refreshDerived();
+        } catch (error) {
+          // Mark command as failed (only if cmdId was created)
+          const errorDetails = formatErrorDetails(error, agentId);
+          if (cmdId) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/model ${modelId}`,
+              output: `Failed to switch model: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          }
         }
-      } finally {
-        // Unlock input
-        setCommandRunning(false);
-      }
+      });
     },
-    [agentId, refreshDerived, currentToolset],
+    [agentId, refreshDerived, currentToolset, withCommandLock],
   );
 
   const handleSystemPromptSelect = useCallback(
     async (promptId: string) => {
-      setSystemPromptSelectorOpen(false);
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
 
-      const cmdId = uid("cmd");
+        try {
+          // Find the selected prompt
+          const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+          const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
 
-      try {
-        // Find the selected prompt
-        const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
-        const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
+          if (!selectedPrompt) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: `System prompt not found: ${promptId}`,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return;
+          }
 
-        if (!selectedPrompt) {
+          // Immediately add command to transcript with "running" phase
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/system ${promptId}`,
-            output: `System prompt not found: ${promptId}`,
-            phase: "finished",
-            success: false,
+            output: `Switching system prompt to ${selectedPrompt.label}...`,
+            phase: "running",
           });
           buffersRef.current.order.push(cmdId);
           refreshDerived();
-          return;
-        }
 
-        // Immediately add command to transcript with "running" phase
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/system ${promptId}`,
-          output: `Switching system prompt to ${selectedPrompt.label}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Update the agent's system prompt
+          const { updateAgentSystemPrompt } = await import("../agent/modify");
+          const result = await updateAgentSystemPrompt(
+            agentId,
+            selectedPrompt.content,
+          );
 
-        // Lock input during async operation
-        setCommandRunning(true);
-
-        // Update the agent's system prompt
-        const { updateAgentSystemPrompt } = await import("../agent/modify");
-        const result = await updateAgentSystemPrompt(
-          agentId,
-          selectedPrompt.content,
-        );
-
-        if (result.success) {
-          setCurrentSystemPromptId(promptId);
+          if (result.success) {
+            setCurrentSystemPromptId(promptId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: `Switched system prompt to ${selectedPrompt.label}`,
+              phase: "finished",
+              success: true,
+            });
+          } else {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${promptId}`,
+              output: result.message,
+              phase: "finished",
+              success: false,
+            });
+          }
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: `/system ${promptId}`,
-            output: `Switched system prompt to ${selectedPrompt.label}`,
-            phase: "finished",
-            success: true,
-          });
-        } else {
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/system ${promptId}`,
-            output: result.message,
+            output: `Failed to switch system prompt: ${errorDetails}`,
             phase: "finished",
             success: false,
           });
+          refreshDerived();
         }
-        refreshDerived();
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/system ${promptId}`,
-          output: `Failed to switch system prompt: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
-      } finally {
-        setCommandRunning(false);
-      }
+      });
     },
-    [agentId, refreshDerived],
+    [agentId, refreshDerived, withCommandLock],
   );
 
   const handleToolsetSelect = useCallback(
@@ -3169,60 +3715,129 @@ ${recentCommits}
         | "gemini_snake"
         | "none",
     ) => {
-      setToolsetSelectorOpen(false);
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
 
-      const cmdId = uid("cmd");
+        try {
+          // Immediately add command to transcript with "running" phase
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Switching toolset to ${toolsetId}...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
 
-      try {
-        // Immediately add command to transcript with "running" phase
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Switching toolset to ${toolsetId}...`,
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+          // Force switch to the selected toolset
+          const { forceToolsetSwitch } = await import("../tools/toolset");
+          await forceToolsetSwitch(toolsetId, agentId);
+          setCurrentToolset(toolsetId);
 
-        // Lock input during async operation
-        setCommandRunning(true);
-
-        // Force switch to the selected toolset
-        const { forceToolsetSwitch } = await import("../tools/toolset");
-        await forceToolsetSwitch(toolsetId, agentId);
-        setCurrentToolset(toolsetId);
-
-        // Update the command with final result
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Switched toolset to ${toolsetId}`,
-          phase: "finished",
-          success: true,
-        });
-        refreshDerived();
-      } catch (error) {
-        const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Failed to switch toolset: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
-      } finally {
-        // Unlock input
-        setCommandRunning(false);
-      }
+          // Update the command with final result
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Switched toolset to ${toolsetId}`,
+            phase: "finished",
+            success: true,
+          });
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: `/toolset ${toolsetId}`,
+            output: `Failed to switch toolset: ${errorDetails}`,
+            phase: "finished",
+            success: false,
+          });
+          refreshDerived();
+        }
+      });
     },
-    [agentId, refreshDerived],
+    [agentId, refreshDerived, withCommandLock],
   );
 
   // Handle escape when profile confirmation is pending
+  const handleFeedbackSubmit = useCallback(
+    async (message: string) => {
+      closeOverlay();
+
+      await withCommandLock(async () => {
+        const cmdId = uid("cmd");
+
+        try {
+          // Immediately add command to transcript with "running" phase
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: "Sending feedback...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          const settings = settingsManager.getSettings();
+          const baseURL =
+            process.env.LETTA_BASE_URL ||
+            settings.env?.LETTA_BASE_URL ||
+            "https://api.letta.com";
+          const apiKey =
+            process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+          // Send feedback request manually since it's not in the SDK
+          const response = await fetch(`${baseURL}/v1/metadata/feedback`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "X-Letta-Source": "letta-code",
+            },
+            body: JSON.stringify({
+              message: message,
+              feature: "letta-code",
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+              `Failed to send feedback (${response.status}): ${errorText}`,
+            );
+          }
+
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output:
+              "Thank you for your feedback! Your message has been sent to the Letta team.",
+            phase: "finished",
+            success: true,
+          });
+          refreshDerived();
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/feedback",
+            output: `Failed to send feedback: ${errorDetails}`,
+            phase: "finished",
+            success: false,
+          });
+          refreshDerived();
+        }
+      });
+    },
+    [agentId, refreshDerived, withCommandLock, closeOverlay],
+  );
+
   const handleProfileEscapeCancel = useCallback(() => {
     if (profileConfirmPending) {
       const { cmdId, name } = profileConfirmPending;
@@ -3277,7 +3892,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage());
+        setThinkingMessage(getRandomThinkingMessage(agentName));
         refreshDerived();
 
         const decision = {
@@ -3305,6 +3920,8 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
+      agentName,
+      setStreaming,
     ],
   );
 
@@ -3386,7 +4003,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage());
+      setThinkingMessage(getRandomThinkingMessage(agentName));
       refreshDerived();
 
       const decision = {
@@ -3402,7 +4019,13 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
+    [
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      refreshDerived,
+      agentName,
+    ],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -3452,7 +4075,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage());
+    setThinkingMessage(getRandomThinkingMessage(agentName));
     refreshDerived();
 
     const decision = {
@@ -3467,7 +4090,13 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
+  }, [
+    pendingApprovals,
+    approvalResults,
+    sendAllResults,
+    refreshDerived,
+    agentName,
+  ]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -3556,19 +4185,17 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
+        : "Creating a new agent (use /pin to save)";
 
-      const agentNameLine =
-        !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /rename to rename)`
-          : "";
-
-      const statusLines = [
-        resumedMessage,
-        agentNameLine,
-        agentUrl ? `→ ${agentUrl}` : "",
-        ...hints,
-      ].filter(Boolean);
+      const statusLines = continueSession
+        ? [resumedMessage, ...hints, agentUrl ? `→ ${agentUrl}` : ""].filter(
+            Boolean,
+          )
+        : [
+            resumedMessage,
+            agentUrl ? `→ ${agentUrl}` : "",
+            "→ Tip: use /init to initialize your agent's memory system!",
+          ].filter(Boolean);
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -3665,27 +4292,9 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
-            {/* Show exit stats when exiting */}
-            {showExitStats && (
-              <SessionStatsComponent
-                stats={sessionStatsRef.current.getSnapshot()}
-                agentId={agentId}
-              />
-            )}
-
             {/* Input row - always mounted to preserve state */}
             <Input
-              visible={
-                !showExitStats &&
-                pendingApprovals.length === 0 &&
-                !modelSelectorOpen &&
-                !toolsetSelectorOpen &&
-                !systemPromptSelectorOpen &&
-                !agentSelectorOpen &&
-                !resumeSelectorOpen &&
-                !profileSelectorOpen &&
-                !messageSearchOpen
-              }
+              visible={pendingApprovals.length === 0 && !anySelectorOpen}
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
@@ -3708,7 +4317,7 @@ Plan file path: ${planFilePath}`;
             />
 
             {/* Model Selector - conditionally mounted as overlay */}
-            {modelSelectorOpen && (
+            {activeOverlay === "model" && (
               <ModelSelector
                 currentModel={
                   llmConfig?.model_endpoint_type && llmConfig?.model
@@ -3717,64 +4326,64 @@ Plan file path: ${planFilePath}`;
                 }
                 currentEnableReasoner={llmConfig?.enable_reasoner}
                 onSelect={handleModelSelect}
-                onCancel={() => setModelSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Toolset Selector - conditionally mounted as overlay */}
-            {toolsetSelectorOpen && (
+            {activeOverlay === "toolset" && (
               <ToolsetSelector
                 currentToolset={currentToolset ?? undefined}
                 onSelect={handleToolsetSelect}
-                onCancel={() => setToolsetSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* System Prompt Selector - conditionally mounted as overlay */}
-            {systemPromptSelectorOpen && (
+            {activeOverlay === "system" && (
               <SystemPromptSelector
                 currentPromptId={currentSystemPromptId ?? undefined}
                 onSelect={handleSystemPromptSelect}
-                onCancel={() => setSystemPromptSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Agent Selector - conditionally mounted as overlay */}
-            {agentSelectorOpen && (
+            {activeOverlay === "agent" && (
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={handleAgentSelect}
-                onCancel={() => setAgentSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Subagent Manager - for managing custom subagents */}
-            {subagentManagerOpen && (
-              <SubagentManager onClose={() => setSubagentManagerOpen(false)} />
+            {activeOverlay === "subagent" && (
+              <SubagentManager onClose={closeOverlay} />
             )}
 
             {/* Resume Selector - conditionally mounted as overlay */}
-            {resumeSelectorOpen && (
+            {activeOverlay === "resume" && (
               <ResumeSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setResumeSelectorOpen(false);
+                  closeOverlay();
                   await handleAgentSelect(id);
                 }}
-                onCancel={() => setResumeSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Profile Selector - conditionally mounted as overlay */}
-            {profileSelectorOpen && (
+            {activeOverlay === "profile" && (
               <ProfileSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
-                  setProfileSelectorOpen(false);
+                  closeOverlay();
                   await handleAgentSelect(id);
                 }}
                 onUnpin={(unpinAgentId) => {
-                  setProfileSelectorOpen(false);
+                  closeOverlay();
                   settingsManager.unpinBoth(unpinAgentId);
                   const cmdId = uid("cmd");
                   buffersRef.current.byId.set(cmdId, {
@@ -3788,13 +4397,99 @@ Plan file path: ${planFilePath}`;
                   buffersRef.current.order.push(cmdId);
                   refreshDerived();
                 }}
-                onCancel={() => setProfileSelectorOpen(false)}
+                onCancel={closeOverlay}
               />
             )}
 
             {/* Message Search - conditionally mounted as overlay */}
-            {messageSearchOpen && (
-              <MessageSearch onClose={() => setMessageSearchOpen(false)} />
+            {activeOverlay === "search" && (
+              <MessageSearch onClose={closeOverlay} />
+            )}
+
+            {/* Feedback Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "feedback" && (
+              <FeedbackDialog
+                onSubmit={handleFeedbackSubmit}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Memory Viewer - conditionally mounted as overlay */}
+            {activeOverlay === "memory" && (
+              <MemoryViewer
+                blocks={agentState?.memory?.blocks || []}
+                agentId={agentId}
+                agentName={agentName}
+                onClose={closeOverlay}
+              />
+            )}
+
+            {/* Pin Dialog - for naming agent before pinning */}
+            {activeOverlay === "pin" && (
+              <PinDialog
+                currentName={agentName || ""}
+                local={pinDialogLocal}
+                onSubmit={async (newName) => {
+                  closeOverlay();
+                  setCommandRunning(true);
+
+                  const cmdId = uid("cmd");
+                  const scopeText = pinDialogLocal
+                    ? "to this project"
+                    : "globally";
+                  const displayName =
+                    newName || agentName || agentId.slice(0, 12);
+
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/pin",
+                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    const client = await getClient();
+
+                    // Rename if new name provided
+                    if (newName && newName !== agentName) {
+                      await client.agents.update(agentId, { name: newName });
+                      setAgentName(newName);
+                    }
+
+                    // Pin the agent
+                    if (pinDialogLocal) {
+                      settingsManager.pinLocal(agentId);
+                    } else {
+                      settingsManager.pinGlobal(agentId);
+                    }
+
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      phase: "finished",
+                      success: true,
+                    });
+                  } catch (error) {
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Failed to pin: ${error}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                  } finally {
+                    setCommandRunning(false);
+                    refreshDerived();
+                  }
+                }}
+                onCancel={closeOverlay}
+              />
             )}
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}

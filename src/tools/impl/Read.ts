@@ -119,23 +119,25 @@ function formatWithLineNumbers(
 export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
   const { file_path, offset, limit } = args;
-  if (!path.isAbsolute(file_path))
-    throw new Error(`File path must be absolute, got: ${file_path}`);
+  const userCwd = process.env.USER_CWD || process.cwd();
+  const resolvedPath = path.isAbsolute(file_path)
+    ? file_path
+    : path.resolve(userCwd, file_path);
   try {
-    const stats = await fs.stat(file_path);
+    const stats = await fs.stat(resolvedPath);
     if (stats.isDirectory())
-      throw new Error(`Path is a directory, not a file: ${file_path}`);
+      throw new Error(`Path is a directory, not a file: ${resolvedPath}`);
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (stats.size > maxSize)
       throw new Error(
         `File too large: ${stats.size} bytes (max ${maxSize} bytes)`,
       );
-    if (await isBinaryFile(file_path))
-      throw new Error(`Cannot read binary file: ${file_path}`);
-    const content = await fs.readFile(file_path, "utf-8");
+    if (await isBinaryFile(resolvedPath))
+      throw new Error(`Cannot read binary file: ${resolvedPath}`);
+    const content = await fs.readFile(resolvedPath, "utf-8");
     if (content.trim() === "") {
       return {
-        content: `<system-reminder>\nThe file ${file_path} exists but has empty contents.\n</system-reminder>`,
+        content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
       };
     }
     const formattedContent = formatWithLineNumbers(content, offset, limit);
@@ -143,14 +145,13 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
     if (err.code === "ENOENT") {
-      const userCwd = process.env.USER_CWD || process.cwd();
       throw new Error(
-        `File does not exist. Current working directory: ${userCwd}`,
+        `File does not exist. Attempted path: ${resolvedPath}. Current working directory: ${userCwd}`,
       );
     } else if (err.code === "EACCES")
-      throw new Error(`Permission denied: ${file_path}`);
+      throw new Error(`Permission denied: ${resolvedPath}`);
     else if (err.code === "EISDIR")
-      throw new Error(`Path is a directory: ${file_path}`);
+      throw new Error(`Path is a directory: ${resolvedPath}`);
     else if (err.message) throw err;
     else throw new Error(`Failed to read file: ${String(err)}`);
   }

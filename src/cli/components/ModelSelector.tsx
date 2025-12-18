@@ -1,6 +1,11 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+  getAvailableModelsCacheInfo,
+} from "../../agent/available-models";
 import { models } from "../../agent/model";
 import { colors } from "./colors";
 
@@ -30,17 +35,79 @@ export function ModelSelector({
   const typedModels = models as UiModel[];
   const [showAll, setShowAll] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // undefined: not loaded yet (show spinner)
+  // Set<string>: loaded and filtered
+  // null: error fallback (show all models + warning)
+  const [availableModels, setAvailableModels] = useState<
+    Set<string> | null | undefined
+  >(undefined);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isCached, setIsCached] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Fetch available models from the API (with caching + inflight dedupe)
+  const loadModels = useRef(async (forceRefresh = false) => {
+    try {
+      if (forceRefresh) {
+        clearAvailableModelsCache();
+        if (mountedRef.current) {
+          setRefreshing(true);
+          setError(null);
+        }
+      }
+
+      const cacheInfoBefore = getAvailableModelsCacheInfo();
+      const result = await getAvailableModelHandles({ forceRefresh });
+
+      if (!mountedRef.current) return;
+
+      setAvailableModels(result.handles);
+      setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
+      setIsLoading(false);
+      setRefreshing(false);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(err instanceof Error ? err.message : "Failed to load models");
+      setIsLoading(false);
+      setRefreshing(false);
+      // Fallback: show all models if API fails
+      setAvailableModels(null);
+    }
+  });
+
+  useEffect(() => {
+    loadModels.current(false);
+  }, []);
+
+  // Filter models based on availability
+  const filteredModels = useMemo(() => {
+    // Not loaded yet: render nothing (avoid briefly showing unfiltered models)
+    if (availableModels === undefined) return [];
+    // Error fallback: show all models with warning
+    if (availableModels === null) return typedModels;
+    // Loaded: filter to only show models the user has access to
+    return typedModels.filter((model) => availableModels.has(model.handle));
+  }, [typedModels, availableModels]);
 
   const featuredModels = useMemo(
-    () => typedModels.filter((model) => model.isFeatured),
-    [typedModels],
+    () => filteredModels.filter((model) => model.isFeatured),
+    [filteredModels],
   );
 
   const visibleModels = useMemo(() => {
-    if (showAll) return typedModels;
+    if (showAll) return filteredModels;
     if (featuredModels.length > 0) return featuredModels;
-    return typedModels.slice(0, 5);
-  }, [featuredModels, showAll, typedModels]);
+    return filteredModels.slice(0, 5);
+  }, [featuredModels, showAll, filteredModels]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -54,35 +121,93 @@ export function ModelSelector({
     }
   }, [visibleModels, currentModel]);
 
-  const totalItems = showAll ? visibleModels.length : visibleModels.length + 1;
+  const hasMoreModels =
+    !showAll && filteredModels.length > visibleModels.length;
+  const totalItems = hasMoreModels
+    ? visibleModels.length + 1
+    : visibleModels.length;
 
-  useInput((_input, key) => {
-    if (key.upArrow) {
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
-    } else if (key.return) {
-      if (!showAll && selectedIndex === visibleModels.length) {
-        setShowAll(true);
-        setSelectedIndex(0);
-      } else {
-        const selectedModel = visibleModels[selectedIndex];
-        if (selectedModel) {
-          onSelect(selectedModel.id);
+  useInput(
+    (input, key) => {
+      // Allow ESC even while loading
+      if (key.escape) {
+        onCancel();
+        return;
+      }
+
+      // Allow 'r' to refresh even while loading (but not while already refreshing)
+      if (input === "r" && !refreshing) {
+        loadModels.current(true);
+        return;
+      }
+
+      // Disable other inputs while loading
+      if (isLoading || refreshing || visibleModels.length === 0) {
+        return;
+      }
+
+      if (key.upArrow) {
+        setSelectedIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
+      } else if (key.return) {
+        if (hasMoreModels && selectedIndex === visibleModels.length) {
+          setShowAll(true);
+          setSelectedIndex(0);
+        } else {
+          const selectedModel = visibleModels[selectedIndex];
+          if (selectedModel) {
+            onSelect(selectedModel.id);
+          }
         }
       }
-    } else if (key.escape) {
-      onCancel();
-    }
-  });
+    },
+    // Keep active so ESC and 'r' work while loading.
+    { isActive: true },
+  );
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Box>
+      <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
           Select Model (↑↓ to navigate, Enter to select, ESC to cancel)
         </Text>
+        {!isLoading && !refreshing && (
+          <Text dimColor>
+            {isCached
+              ? "Cached models (press 'r' to refresh)"
+              : "Press 'r' to refresh"}
+          </Text>
+        )}
       </Box>
+
+      {isLoading && (
+        <Box>
+          <Text dimColor>Loading available models...</Text>
+        </Box>
+      )}
+
+      {refreshing && (
+        <Box>
+          <Text dimColor>Refreshing models...</Text>
+        </Box>
+      )}
+
+      {error && (
+        <Box>
+          <Text color="yellow">
+            Warning: Could not fetch available models. Showing all models.
+          </Text>
+        </Box>
+      )}
+
+      {!isLoading && visibleModels.length === 0 && (
+        <Box>
+          <Text color="red">
+            No models available. Please check your Letta configuration.
+          </Text>
+        </Box>
+      )}
 
       <Box flexDirection="column">
         {visibleModels.map((model, index) => {
@@ -132,7 +257,7 @@ export function ModelSelector({
             </Box>
           );
         })}
-        {!showAll && (
+        {!showAll && filteredModels.length > visibleModels.length && (
           <Box flexDirection="row" gap={1}>
             <Text
               color={
@@ -143,7 +268,9 @@ export function ModelSelector({
             >
               {selectedIndex === visibleModels.length ? "›" : " "}
             </Text>
-            <Text dimColor>Show all models</Text>
+            <Text dimColor>
+              Show all models ({filteredModels.length} available)
+            </Text>
           </Box>
         )}
       </Box>

@@ -1,8 +1,10 @@
 // Import useInput from vendored Ink for bracketed paste support
+
+import { EventEmitter } from "node:events";
+import { stdin } from "node:process";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
-import { stdin } from "process";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
@@ -15,10 +17,6 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 
-// Increase max listeners to accommodate multiple useInput hooks
-// (5 in this component + autocomplete components)
-stdin.setMaxListeners(20);
-
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const appVersion = getVersion();
@@ -27,6 +25,14 @@ const appVersion = getVersion();
 const COUNTER_VISIBLE_THRESHOLD = 1000;
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+
+// Increase max listeners to accommodate multiple useInput hooks
+// (5 in this component + autocomplete components)
+stdin.setMaxListeners(20);
+
+// Also set default max listeners on EventEmitter prototype to prevent warnings
+// from any EventEmitters that might not have their limit set properly
+EventEmitter.defaultMaxListeners = 20;
 
 export function Input({
   visible = true,
@@ -150,16 +156,8 @@ export function Input({
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
-
-        // If there are queued messages, load them into the input box
-        if (messageQueue && messageQueue.length > 0) {
-          const queueText = messageQueue.join("\n");
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
-          }
-        }
+        // Don't load queued messages into input - let the dequeue effect
+        // in App.tsx process them automatically after the interrupt completes.
         return;
       }
 
@@ -460,10 +458,10 @@ export function Input({
     setCursorPos(newCursorPos);
   };
 
-  // Handle slash command selection from autocomplete
+  // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = async (selectedCommand: string) => {
-    // For slash commands, submit immediately when selected from autocomplete
-    // This provides a better UX - selecting /model should open the model selector
+    // For slash commands, submit immediately when selected via Enter
+    // This provides a better UX - pressing Enter on /model should open the model selector
     const commandToSubmit = selectedCommand.trim();
 
     // Add to history if not a duplicate of the last entry
@@ -477,6 +475,14 @@ export function Input({
 
     setValue(""); // Clear immediately for responsiveness
     await onSubmit(commandToSubmit);
+  };
+
+  // Handle slash command autocomplete (Tab key - fill text only)
+  const handleCommandAutocomplete = (selectedCommand: string) => {
+    // Just fill in the command text without executing
+    // User can then press Enter to execute or continue typing arguments
+    setValue(selectedCommand);
+    setCursorPos(selectedCommand.length);
   };
 
   // Get display name and color for permission mode
@@ -534,8 +540,8 @@ export function Input({
         </Box>
       )}
 
-      {/* Queue display - show when streaming with queued messages */}
-      {streaming && messageQueue && messageQueue.length > 0 && (
+      {/* Queue display - show whenever there are queued messages */}
+      {messageQueue && messageQueue.length > 0 && (
         <QueuedMessages messages={messageQueue} />
       )}
 
@@ -569,10 +575,12 @@ export function Input({
           cursorPosition={currentCursorPosition}
           onFileSelect={handleFileSelect}
           onCommandSelect={handleCommandSelect}
+          onCommandAutocomplete={handleCommandAutocomplete}
           onAutocompleteActiveChange={setIsAutocompleteActive}
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          workingDirectory={process.cwd()}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>

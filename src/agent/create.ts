@@ -7,6 +7,7 @@ import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
+import { DEFAULT_AGENT_NAME } from "../constants";
 import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
@@ -45,7 +46,7 @@ export interface CreateAgentResult {
 }
 
 export async function createAgent(
-  name = "letta-code-agent",
+  name = DEFAULT_AGENT_NAME,
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,

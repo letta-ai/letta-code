@@ -330,7 +330,8 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
               );
 
               // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
-              const msgId = "id" in msg ? String(msg.id) : "result";
+              const msgId =
+                "message_id" in msg ? String(msg.message_id) : "result";
               const uniqueKey = `${msgId}-${startIndex + index}`;
 
               return (
@@ -360,8 +361,16 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
                     </Text>
                     {agentId && (
                       <>
+                        <Text dimColor> · </Text>
+                        <Link
+                          url={`https://app.letta.com/projects/default-project/agents/${agentId}?searchTerm=${encodeURIComponent(activeQuery)}&messageId=${msgId}`}
+                        >
+                          <Text color={colors.link.text}>view message</Text>
+                        </Link>
                         <Text dimColor> · agent: </Text>
-                        <Link url={`https://app.letta.com/agents/${agentId}`}>
+                        <Link
+                          url={`https://app.letta.com/projects/default-project/agents/${agentId}`}
+                        >
                           <Text color={colors.link.text}>{agentId}</Text>
                         </Link>
                       </>

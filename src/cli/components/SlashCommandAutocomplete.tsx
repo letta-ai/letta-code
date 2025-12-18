@@ -1,12 +1,13 @@
-import { Box, Text } from "ink";
-import { useEffect, useState } from "react";
+import { Text } from "ink";
+import { useEffect, useMemo, useState } from "react";
+import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
-import { colors } from "./colors";
+import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 // Compute filtered command list (excluding hidden commands)
-const allCommands: CommandMatch[] = Object.entries(commands)
+const _allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
   .map(([cmd, { desc }]) => ({
     cmd,
@@ -41,13 +42,50 @@ export function SlashCommandAutocomplete({
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
+  onAutocomplete,
   onActiveChange,
+  agentId,
+  workingDirectory = process.cwd(),
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
+
+  // Check pin status to conditionally show/hide pin/unpin commands
+  const allCommands = useMemo(() => {
+    if (!agentId) return _allCommands;
+
+    try {
+      const globalPinned = settingsManager.getGlobalPinnedAgents();
+      const localPinned =
+        settingsManager.getLocalPinnedAgents(workingDirectory);
+
+      const isPinnedGlobally = globalPinned.includes(agentId);
+      const isPinnedLocally = localPinned.includes(agentId);
+      const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
+      const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+
+      return _allCommands.filter((cmd) => {
+        // Hide /pin if agent is pinned both locally AND globally
+        if (cmd.cmd === "/pin" && isPinnedBoth) {
+          return false;
+        }
+        // Hide /unpin if agent is not pinned anywhere
+        if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+          return false;
+        }
+        return true;
+      });
+    } catch (_error) {
+      // If settings aren't loaded, just show all commands
+      return _allCommands;
+    }
+  }, [agentId, workingDirectory]);
 
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
+    onAutocomplete: onAutocomplete
+      ? (item) => onAutocomplete(item.cmd)
+      : undefined,
     onActiveChange,
   });
 
@@ -84,7 +122,7 @@ export function SlashCommandAutocomplete({
     }
 
     setMatches(newMatches);
-  }, [currentInput, cursorPosition]);
+  }, [currentInput, cursorPosition, allCommands]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
@@ -97,25 +135,13 @@ export function SlashCommandAutocomplete({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-      marginBottom={1}
-    >
-      <Text dimColor>↑↓ navigate, Tab/Enter select</Text>
+    <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
       {matches.map((item, idx) => (
-        <Text
-          key={item.cmd}
-          color={idx === selectedIndex ? colors.command.selected : undefined}
-          bold={idx === selectedIndex}
-        >
-          {idx === selectedIndex ? "▶ " : "  "}
+        <AutocompleteItem key={item.cmd} selected={idx === selectedIndex}>
           {item.cmd.padEnd(14)}{" "}
           <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
-        </Text>
+        </AutocompleteItem>
       ))}
-    </Box>
+    </AutocompleteBox>
   );
 }
