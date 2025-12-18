@@ -832,24 +832,11 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
-          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
-            await drainStreamWithResume(
-              stream,
-              buffersRef.current,
-              refreshDerivedThrottled,
-              abortControllerRef.current?.signal,
-            );
 
-          // Track API duration
-          sessionStatsRef.current.endTurn(apiDurationMs);
-          sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
-
-          // Immediate refresh after stream completes to show final state
-          refreshDerived();
-
-          // Sync agent state after stream completes to detect model changes
-          // This ensures the UI shows the correct model if it was changed by the agent
-          if (stopReason === "end_turn" || stopReason === "requires_approval") {
+          // Sync agent state immediately in parallel to detect model changes early
+          // This ensures the UI shows the correct model as soon as possible
+          // Fire and forget - don't block the stream processing
+          (async () => {
             try {
               const client = await getClient();
               const agent = await client.agents.retrieve(agentIdRef.current);
@@ -895,7 +882,22 @@ export default function App({
               // Silently fail - don't interrupt the conversation flow
               console.error("Failed to sync agent state:", error);
             }
-          }
+          })();
+
+          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
+            await drainStreamWithResume(
+              stream,
+              buffersRef.current,
+              refreshDerivedThrottled,
+              abortControllerRef.current?.signal,
+            );
+
+          // Track API duration
+          sessionStatsRef.current.endTurn(apiDurationMs);
+          sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
+
+          // Immediate refresh after stream completes to show final state
+          refreshDerived();
 
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
