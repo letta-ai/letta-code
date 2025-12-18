@@ -40,6 +40,7 @@ export const commands: Record<string, Command> = {
   },
   "/compact": {
     desc: "Summarize conversation history (compaction)",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
