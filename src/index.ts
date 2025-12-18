@@ -14,6 +14,7 @@ import {
   loadTools,
   upsertToolsIfNeeded,
 } from "./tools/manager";
+import { telemetry } from "./telemetry";
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -213,6 +214,9 @@ async function main(): Promise<void> {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
+
+  // Initialize telemetry (respects user opt-out settings)
+  telemetry.init();
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
