@@ -433,6 +433,7 @@ export default function App({
     | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
@@ -3514,7 +3515,18 @@ ${recentCommits}
         try {
           // Find the selected model from models.json first (for loading message)
           const { models } = await import("../agent/model");
-          const selectedModel = models.find((m) => m.id === modelId);
+          let selectedModel = models.find((m) => m.id === modelId);
+
+          // If not found in static list, it might be a BYOK model where id === handle
+          if (!selectedModel && modelId.includes("/")) {
+            // Treat it as a BYOK model - the modelId is actually the handle
+            selectedModel = {
+              id: modelId,
+              handle: modelId,
+              label: modelId.split("/").pop() ?? modelId,
+              description: "Custom model",
+            } as unknown as (typeof models)[number];
+          }
 
           if (!selectedModel) {
             // Create a failed command in the transcript
@@ -3553,6 +3565,7 @@ ${recentCommits}
             selectedModel.updateArgs,
           );
           setLlmConfig(updatedConfig);
+          setCurrentModelId(modelId);
 
           // After switching models, only switch toolset if it actually changes
           const { isOpenAIModel, isGeminiModel } = await import(
@@ -4319,12 +4332,7 @@ Plan file path: ${planFilePath}`;
             {/* Model Selector - conditionally mounted as overlay */}
             {activeOverlay === "model" && (
               <ModelSelector
-                currentModel={
-                  llmConfig?.model_endpoint_type && llmConfig?.model
-                    ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-                    : undefined
-                }
-                currentEnableReasoner={llmConfig?.enable_reasoner}
+                currentModelId={currentModelId ?? undefined}
                 onSelect={handleModelSelect}
                 onCancel={closeOverlay}
               />
