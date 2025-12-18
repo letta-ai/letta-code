@@ -3147,7 +3147,28 @@ ${recentCommits}
         try {
           // Find the selected model from models.json first (for loading message)
           const { models } = await import("../agent/model");
-          const selectedModel = models.find((m) => m.id === modelId);
+          let selectedModel = models.find((m) => m.id === modelId);
+
+          // If not found in static list, it might be a BYOK model where id === handle
+          if (!selectedModel && modelId.includes("/")) {
+            // Look up provider type from API cache for BYOK models
+            const { getModelByHandle } = await import(
+              "../agent/available-models"
+            );
+            const apiModel = getModelByHandle(modelId);
+
+            // Treat it as a BYOK model - the modelId is actually the handle
+            selectedModel = {
+              id: modelId,
+              handle: modelId,
+              label: modelId.split("/").pop() ?? modelId,
+              description: "Custom model",
+              updateArgs: {
+                // Pass provider_type so buildModelSettings can use it
+                provider_type: apiModel?.provider_type,
+              },
+            } as unknown as (typeof models)[number];
+          }
 
           if (!selectedModel) {
             // Create a failed command in the transcript

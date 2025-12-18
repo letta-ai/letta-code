@@ -2,12 +2,15 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  type ApiModel,
   clearAvailableModelsCache,
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
 import { colors } from "./colors";
+
+const PAGE_SIZE = 10;
 
 type UiModel = {
   id: string;
@@ -34,6 +37,7 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const typedModels = models as UiModel[];
   const [showAll, setShowAll] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   // undefined: not loaded yet (show spinner)
   // Set<string>: loaded and filtered
@@ -41,6 +45,7 @@ export function ModelSelector({
   const [availableModels, setAvailableModels] = useState<
     Set<string> | null | undefined
   >(undefined);
+  const [apiModels, setApiModels] = useState<ApiModel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
@@ -71,6 +76,7 @@ export function ModelSelector({
       if (!mountedRef.current) return;
 
       setAvailableModels(result.handles);
+      setApiModels(result.models);
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -81,6 +87,7 @@ export function ModelSelector({
       setRefreshing(false);
       // Fallback: show all models if API fails
       setAvailableModels(null);
+      setApiModels([]);
     }
   });
 
@@ -88,26 +95,56 @@ export function ModelSelector({
     loadModels.current(false);
   }, []);
 
+  // Get the set of handles that are in the static models list
+  const staticModelHandles = useMemo(
+    () => new Set(typedModels.map((m) => m.handle)),
+    [typedModels],
+  );
+
   // Filter models based on availability
   const filteredModels = useMemo(() => {
     // Not loaded yet: render nothing (avoid briefly showing unfiltered models)
     if (availableModels === undefined) return [];
     // Error fallback: show all models with warning
     if (availableModels === null) return typedModels;
-    // Loaded: filter to only show models the user has access to
-    return typedModels.filter((model) => availableModels.has(model.handle));
-  }, [typedModels, availableModels]);
+
+    // Loaded: filter static models to only show those the user has access to
+    const availableStaticModels = typedModels.filter((model) =>
+      availableModels.has(model.handle),
+    );
+
+    // Also include BYOK/custom models from the API that aren't in the static list
+    const byokModels: UiModel[] = apiModels
+      .filter((apiModel) => !staticModelHandles.has(apiModel.handle))
+      .map((apiModel) => ({
+        id: apiModel.handle,
+        handle: apiModel.handle,
+        label: apiModel.display_name,
+        description: `${apiModel.provider_name} (${apiModel.provider_type})`,
+        isFeatured: false,
+      }));
+
+    return [...availableStaticModels, ...byokModels];
+  }, [typedModels, availableModels, apiModels, staticModelHandles]);
 
   const featuredModels = useMemo(
     () => filteredModels.filter((model) => model.isFeatured),
     [filteredModels],
   );
 
+  const totalPages = useMemo(
+    () => Math.ceil(filteredModels.length / PAGE_SIZE),
+    [filteredModels.length],
+  );
+
   const visibleModels = useMemo(() => {
-    if (showAll) return filteredModels;
+    if (showAll) {
+      const start = currentPage * PAGE_SIZE;
+      return filteredModels.slice(start, start + PAGE_SIZE);
+    }
     if (featuredModels.length > 0) return featuredModels;
     return filteredModels.slice(0, 5);
-  }, [featuredModels, showAll, filteredModels]);
+  }, [featuredModels, showAll, filteredModels, currentPage]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -150,9 +187,16 @@ export function ModelSelector({
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
         setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
+      } else if (key.leftArrow && showAll && currentPage > 0) {
+        setCurrentPage((prev) => prev - 1);
+        setSelectedIndex(0);
+      } else if (key.rightArrow && showAll && currentPage < totalPages - 1) {
+        setCurrentPage((prev) => prev + 1);
+        setSelectedIndex(0);
       } else if (key.return) {
         if (hasMoreModels && selectedIndex === visibleModels.length) {
           setShowAll(true);
+          setCurrentPage(0);
           setSelectedIndex(0);
         } else {
           const selectedModel = visibleModels[selectedIndex];
@@ -174,9 +218,11 @@ export function ModelSelector({
         </Text>
         {!isLoading && !refreshing && (
           <Text dimColor>
-            {isCached
-              ? "Cached models (press 'r' to refresh)"
-              : "Press 'r' to refresh"}
+            {showAll
+              ? `Page ${currentPage + 1}/${totalPages} (←→ to navigate pages, 'r' to refresh)`
+              : isCached
+                ? "Cached models (press 'r' to refresh)"
+                : "Press 'r' to refresh"}
           </Text>
         )}
       </Box>
