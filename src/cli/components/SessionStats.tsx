@@ -38,8 +38,7 @@ export function SessionStats({ stats, agentId }: SessionStatsProps) {
       <Text dimColor>Total duration (API): {apiDuration}</Text>
       <Text dimColor>Total duration (wall): {wallDuration}</Text>
       <Text dimColor>
-        Usage: {stats.usage.stepCount} steps,{" "}
-        {formatNumber(stats.usage.promptTokens)} input,{" "}
+        Usage: {stats.usage.stepCount} steps · {formatNumber(stats.usage.promptTokens)} input ·{" "}
         {formatNumber(stats.usage.completionTokens)} output
       </Text>
       {agentId && <Text dimColor>Agent ID: {agentId}</Text>}
