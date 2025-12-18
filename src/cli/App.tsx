@@ -25,6 +25,7 @@ import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
+import { telemetry } from "../telemetry";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -831,6 +832,10 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
+          
+          // Track agent message interaction
+          telemetry.trackAgentInteraction("message", agentIdRef.current, "user");
+          
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
@@ -1335,6 +1340,11 @@ export default function App({
           refreshDerived();
           return;
         }
+
+        // Track error
+        const errorType = e instanceof Error ? e.constructor.name : "UnknownError";
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        telemetry.trackError(errorType, errorMessage, "message_stream");
 
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
