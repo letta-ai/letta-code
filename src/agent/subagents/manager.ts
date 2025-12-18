@@ -364,6 +364,9 @@ async function executeSubagent(
   subagentId: string,
   isRetry = false,
 ): Promise<SubagentResult> {
+  // Update the state with the model being used (may differ on retry/fallback)
+  updateSubagent(subagentId, { model });
+
   try {
     const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
 
