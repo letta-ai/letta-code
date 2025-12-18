@@ -143,7 +143,9 @@ export function ModelSelector({
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
       const idx = MODEL_CATEGORIES.indexOf(current);
-      return MODEL_CATEGORIES[(idx + 1) % MODEL_CATEGORIES.length] as ModelCategory;
+      return MODEL_CATEGORIES[
+        (idx + 1) % MODEL_CATEGORIES.length
+      ] as ModelCategory;
     });
     setCurrentPage(0);
     setSelectedIndex(0);
@@ -195,7 +197,9 @@ export function ModelSelector({
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(visibleModels.length - 1, prev + 1));
+        setSelectedIndex((prev) =>
+          Math.min(visibleModels.length - 1, prev + 1),
+        );
       } else if (key.leftArrow && currentPage > 0) {
         setCurrentPage((prev) => prev - 1);
         setSelectedIndex(0);
@@ -232,7 +236,11 @@ export function ModelSelector({
                 {i > 0 && <Text dimColor> · </Text>}
                 <Text
                   bold={cat === category}
-                  color={cat === category ? colors.selector.itemHighlighted : undefined}
+                  color={
+                    cat === category
+                      ? colors.selector.itemHighlighted
+                      : undefined
+                  }
                 >
                   {getCategoryLabel(cat)}
                 </Text>
@@ -286,20 +294,26 @@ export function ModelSelector({
 
           return (
             <Box key={model.id} flexDirection="row" gap={1}>
-              <Text color={isSelected ? colors.selector.itemHighlighted : undefined}>
+              <Text
+                color={isSelected ? colors.selector.itemHighlighted : undefined}
+              >
                 {isSelected ? "›" : " "}
               </Text>
               <Box flexDirection="row">
                 <Text
                   bold={isSelected}
-                  color={isSelected ? colors.selector.itemHighlighted : undefined}
+                  color={
+                    isSelected ? colors.selector.itemHighlighted : undefined
+                  }
                 >
                   {model.label}
                   {isCurrent && (
                     <Text color={colors.selector.itemCurrent}> (current)</Text>
                   )}
                 </Text>
-                {model.description && <Text dimColor> {model.description}</Text>}
+                {model.description && (
+                  <Text dimColor> {model.description}</Text>
+                )}
               </Box>
             </Box>
           );
