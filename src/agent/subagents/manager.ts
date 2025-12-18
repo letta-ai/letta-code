@@ -20,6 +20,7 @@ import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
+import { resolveModelByLlmConfig } from "../model";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
@@ -53,18 +54,17 @@ interface ExecutionState {
 // ============================================================================
 
 /**
- * Get the primary agent's model handle
- * Falls back to default if unable to fetch
+ * Get the primary agent's model ID
+ * Fetches from API and resolves to a known model ID
  */
 async function getPrimaryAgentModel(): Promise<string | null> {
   try {
     const agentId = getCurrentAgentId();
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    const endpointType = agent.llm_config?.model_endpoint_type;
     const model = agent.llm_config?.model;
-    if (endpointType && model) {
-      return `${endpointType}/${model}`;
+    if (model) {
+      return resolveModelByLlmConfig(model);
     }
     return null;
   } catch {
