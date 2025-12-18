@@ -1854,12 +1854,19 @@ export default function App({
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
+            let errorOutput = formatErrorDetails(error, agentId);
+
+            // Add helpful tip for summarization failures
+            if (errorOutput.includes("Summarization failed")) {
+              errorOutput +=
+                "\n\nTip: Use /clear instead to clear the current message buffer.";
+            }
+
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${errorDetails}`,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
@@ -2025,12 +2032,37 @@ export default function App({
             });
             refreshDerived();
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
+            let errorOutput: string;
+
+            // Check for summarization failure - format it cleanly
+            const apiError = error as {
+              status?: number;
+              error?: { detail?: string };
+            };
+            const detail = apiError?.error?.detail;
+            if (
+              apiError?.status === 400 &&
+              detail?.includes("Summarization failed")
+            ) {
+              // Clean format for this specific error, but preserve raw JSON
+              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
+              const rawJson = JSON.stringify(apiError.error);
+              errorOutput = [
+                `Request failed (code=400)`,
+                `Raw: ${rawJson}`,
+                `Detail: ${cleanDetail}`,
+                "",
+                "Tip: Use /clear instead to clear the current message buffer.",
+              ].join("\n");
+            } else {
+              errorOutput = formatErrorDetails(error, agentId);
+            }
+
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${errorDetails}`,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
