@@ -1702,24 +1702,27 @@ export default function App({
 
         // Special handling for /mcp command - manage MCP servers
         if (msg.trim().startsWith("/mcp")) {
-          const parts = msg.trim().split(/\s+/);
-          const subcommand = parts[1]?.toLowerCase();
-
           const mcpCtx: McpCommandContext = {
             buffersRef,
             refreshDerived,
             setCommandRunning,
           };
 
+          // Check for subcommand by looking at the first word after /mcp
+          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
+          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
+
           // /mcp - open MCP server selector
-          if (!subcommand) {
+          if (!firstWord) {
             setActiveOverlay("mcp");
             return { submitted: true };
           }
 
           // /mcp add --transport <type> <name> <url/command> [options]
-          if (subcommand === "add") {
-            await handleMcpAdd(mcpCtx, msg, parts.slice(2));
+          if (firstWord === "add") {
+            // Pass the full command string after "add" to preserve quotes
+            const afterAdd = afterMcp.slice(firstWord.length).trim();
+            await handleMcpAdd(mcpCtx, msg, afterAdd);
             return { submitted: true };
           }
 

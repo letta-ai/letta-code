@@ -71,6 +71,45 @@ export function updateCommandResult(
   refreshDerived();
 }
 
+// Helper to parse command line arguments respecting quoted strings
+function parseCommandArgs(commandStr: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let quoteChar = "";
+  
+  for (let i = 0; i < commandStr.length; i++) {
+    const char = commandStr[i];
+    if (!char) continue; // Skip if undefined (shouldn't happen but type safety)
+    
+    if ((char === '"' || char === "'") && !inQuotes) {
+      // Start of quoted string
+      inQuotes = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuotes) {
+      // End of quoted string
+      inQuotes = false;
+      quoteChar = "";
+    } else if (/\s/.test(char) && !inQuotes) {
+      // Whitespace outside quotes - end of argument
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      // Regular character or whitespace inside quotes
+      current += char;
+    }
+  }
+  
+  // Add final argument if any
+  if (current) {
+    args.push(current);
+  }
+  
+  return args;
+}
+
 // Parse /mcp add args
 interface McpAddArgs {
   transport: "http" | "sse" | "stdio";
@@ -170,8 +209,10 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
 export async function handleMcpAdd(
   ctx: McpCommandContext,
   msg: string,
-  parts: string[],
+  commandStr: string,
 ): Promise<void> {
+  // Parse the full command string respecting quotes
+  const parts = parseCommandArgs(commandStr);
   const args = parseMcpAddArgs(parts);
 
   if (!args) {
