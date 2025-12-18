@@ -1868,14 +1868,21 @@ export default function App({
 
           try {
             const client = await getClient();
-            await client.agents.messages.compact(agentId);
+            const result = await client.agents.messages.compact(agentId);
+
+            // Format success message with before/after counts and summary
+            const outputLines = [
+              `Compaction completed. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+              "",
+              `Summary: ${result.summary}`,
+            ];
 
             // Update command with success
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Conversation history compacted (summarized)",
+              output: outputLines.join("\n"),
               phase: "finished",
               success: true,
             });
