@@ -982,6 +982,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before starting permission checks
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -1228,6 +1239,17 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
+              return;
+            }
+
+            // Check if user cancelled before showing dialog
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
               return;
             }
 
@@ -2832,48 +2854,246 @@ ${recentCommits}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - show them and DON'T send the message yet
-            // The message will be restored to the input field for the user to decide
-
-            // Remove the optimistic user message from transcript to avoid duplication
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
-            }
-
-            setStreaming(false); // Stop streaming indicator
-            setPendingApprovals(existingApprovals);
-
-            // Analyze approval contexts for ALL pending approvals
-            const contexts = await Promise.all(
-              existingApprovals.map(async (approval) => {
+            // There are pending approvals - check permissions first (respects yolo mode)
+            const approvalResults = await Promise.all(
+              existingApprovals.map(async (approvalItem) => {
+                if (!approvalItem.toolName) {
+                  return {
+                    approval: approvalItem,
+                    permission: {
+                      decision: "deny" as const,
+                      reason: "Tool call incomplete - missing name",
+                    },
+                    context: null,
+                  };
+                }
                 const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
+                  approvalItem.toolArgs,
                   {},
                 );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
+                const permission = await checkToolPermission(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                const context = await analyzeToolApproval(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                return { approval: approvalItem, permission, context };
               }),
             );
 
-            // Check again after async approval analysis
+            // Check if user cancelled during permission check
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
             ) {
-              // User cancelled during analysis - don't show dialog
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
               setStreaming(false);
               refreshDerived();
               return { submitted: false };
             }
 
-            setApprovalContexts(contexts);
+            // Categorize by permission decision
+            const needsUserInput: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
 
-            // Refresh to remove the message from UI
-            refreshDerived();
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
 
-            // Return false = message NOT submitted, will be restored to input
-            return { submitted: false };
+              // Fancy tools always need user input (except if denied)
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                autoAllowed.push(ac);
+              }
+            }
+
+            // If all approvals can be auto-handled (yolo mode), process them immediately
+            if (needsUserInput.length === 0) {
+              // Execute auto-allowed tools
+              const autoAllowedResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial results for auto-denied and update UI
+              const autoDeniedResults = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason,
+                };
+              });
+
+              refreshDerived();
+
+              // Combine results and send directly with the user's message
+              // (can't use state here as it won't be available until next render)
+              const recoveryApprovalResults = [
+                ...autoAllowedResults.map((ar) => ({
+                  type: "approval" as const,
+                  tool_call_id: ar.toolCallId,
+                  approve: true,
+                  tool_return: ar.result.toolReturn,
+                })),
+                ...autoDeniedResults,
+              ];
+
+              // Build and send initialInput directly
+              const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                {
+                  type: "approval",
+                  approvals: recoveryApprovalResults,
+                },
+                {
+                  type: "message",
+                  role: "user",
+                  content:
+                    messageContent as unknown as MessageCreate["content"],
+                },
+              ];
+
+              await processConversation(initialInput);
+              clearPlaceholdersInText(msg);
+              return { submitted: true };
+            } else {
+              // Some approvals need user input - show dialog
+              // Remove the optimistic user message from transcript
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
+
+              setStreaming(false);
+              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+              setApprovalContexts(
+                needsUserInput
+                  .map((ac) => ac.context)
+                  .filter(Boolean) as ApprovalContext[],
+              );
+
+              // Execute auto-allowed tools and store results
+              const autoAllowedWithResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial reasons for auto-denied and update UI
+              const autoDeniedWithReasons = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
+
+              // Store auto-handled results to send along with user decisions
+              setAutoHandledResults(autoAllowedWithResults);
+              setAutoDeniedApprovals(autoDeniedWithReasons);
+
+              refreshDerived();
+              return { submitted: false };
+            }
           }
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
