@@ -33,6 +33,11 @@ import {
   savePermissionRule,
 } from "../tools/manager";
 import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
+import {
   addCommandResult,
   handlePin,
   handleProfileDelete,
@@ -49,7 +54,9 @@ import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
+import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
+import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -409,6 +416,8 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "mcp"
+    | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -433,6 +442,10 @@ export default function App({
     | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const llmConfigRef = useRef(llmConfig);
+  useEffect(() => {
+    llmConfigRef.current = llmConfig;
+  }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -457,6 +470,9 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Show exit stats on exit (double Ctrl+C)
+  const [showExitStats, setShowExitStats] = useState(false);
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
@@ -828,12 +844,64 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
+
+          // Define callback to sync agent state on first message chunk
+          // This ensures the UI shows the correct model as early as possible
+          const syncAgentState = async () => {
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+
+              // Check if the model has changed by comparing llm_config
+              const currentModel = llmConfigRef.current?.model;
+              const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
+              const agentModel = agent.llm_config.model;
+              const agentEndpoint = agent.llm_config.model_endpoint_type;
+
+              if (
+                currentModel !== agentModel ||
+                currentEndpoint !== agentEndpoint
+              ) {
+                // Model has changed - update local state
+                setLlmConfig(agent.llm_config);
+
+                // Derive model ID from llm_config for ModelSelector
+                // Try to find matching model by handle in models.json
+                const { getModelInfo } = await import("../agent/model");
+                const agentModelHandle =
+                  agent.llm_config.model_endpoint_type && agent.llm_config.model
+                    ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+                    : agent.llm_config.model;
+
+                const modelInfo = getModelInfo(agentModelHandle || "");
+                if (modelInfo) {
+                  setCurrentModelId(modelInfo.id);
+                } else {
+                  // Model not in models.json (e.g., BYOK model) - use handle as ID
+                  setCurrentModelId(agentModelHandle || null);
+                }
+
+                // Also update agent state if other fields changed
+                setAgentName(agent.name);
+                setAgentDescription(agent.description ?? null);
+                const lastRunCompletion = (
+                  agent as { last_run_completion?: string }
+                ).last_run_completion;
+                setAgentLastRunAt(lastRunCompletion ?? null);
+              }
+            } catch (error) {
+              // Silently fail - don't interrupt the conversation flow
+              console.error("Failed to sync agent state:", error);
+            }
+          };
+
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
+              syncAgentState,
             );
 
           // Track API duration
@@ -1353,7 +1421,8 @@ export default function App({
 
   const handleExit = useCallback(() => {
     saveLastAgentBeforeExit();
-    // Give React time to render the goodbye message, then exit
+    setShowExitStats(true);
+    // Give React time to render the stats, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -1388,6 +1457,7 @@ export default function App({
       // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
       }
 
       // Set cancellation flag to prevent processConversation from starting
@@ -1693,6 +1763,43 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /mcp command - manage MCP servers
+        if (msg.trim().startsWith("/mcp")) {
+          const mcpCtx: McpCommandContext = {
+            buffersRef,
+            refreshDerived,
+            setCommandRunning,
+          };
+
+          // Check for subcommand by looking at the first word after /mcp
+          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
+          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
+
+          // /mcp - open MCP server selector
+          if (!firstWord) {
+            setActiveOverlay("mcp");
+            return { submitted: true };
+          }
+
+          // /mcp add --transport <type> <name> <url/command> [options]
+          if (firstWord === "add") {
+            // Pass the full command string after "add" to preserve quotes
+            const afterAdd = afterMcp.slice(firstWord.length).trim();
+            await handleMcpAdd(mcpCtx, msg, afterAdd);
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /help command - opens help dialog
+        if (trimmed === "/help") {
+          setActiveOverlay("help");
+          return { submitted: true };
+        }
+
         // Special handling for /usage command - show session stats
         if (trimmed === "/usage") {
           const cmdId = uid("cmd");
@@ -1855,12 +1962,19 @@ export default function App({
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
+            let errorOutput = formatErrorDetails(error, agentId);
+
+            // Add helpful tip for summarization failures
+            if (errorOutput.includes("Summarization failed")) {
+              errorOutput +=
+                "\n\nTip: Use /clear instead to clear the current message buffer.";
+            }
+
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Failed: ${errorDetails}`,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
@@ -1972,6 +2086,91 @@ export default function App({
               id: cmdId,
               input: msg,
               output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /compact command - summarize conversation history
+        if (msg.trim() === "/compact") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Compacting conversation history...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            // SDK types are out of date - compact returns CompactionResponse, not void
+            const result = (await client.agents.messages.compact(
+              agentId,
+            )) as unknown as {
+              num_messages_before: number;
+              num_messages_after: number;
+              summary: string;
+            };
+
+            // Format success message with before/after counts and summary
+            const outputLines = [
+              `Compaction completed. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+              "",
+              `Summary: ${result.summary}`,
+            ];
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: outputLines.join("\n"),
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            let errorOutput: string;
+
+            // Check for summarization failure - format it cleanly
+            const apiError = error as {
+              status?: number;
+              error?: { detail?: string };
+            };
+            const detail = apiError?.error?.detail;
+            if (
+              apiError?.status === 400 &&
+              detail?.includes("Summarization failed")
+            ) {
+              // Clean format for this specific error, but preserve raw JSON
+              const cleanDetail = detail.replace(/^\d{3}:\s*/, "");
+              const rawJson = JSON.stringify(apiError.error);
+              errorOutput = [
+                `Request failed (code=400)`,
+                `Raw: ${rawJson}`,
+                `Detail: ${cleanDetail}`,
+                "",
+                "Tip: Use /clear instead to clear the current message buffer.",
+              ].join("\n");
+            } else {
+              errorOutput = formatErrorDetails(error, agentId);
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorOutput}`,
               phase: "finished",
               success: false,
             });
@@ -4305,9 +4504,26 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
+            {/* Exit stats - shown when exiting via double Ctrl+C */}
+            {showExitStats && (
+              <Box flexDirection="column">
+                <Text dimColor>
+                  {formatUsageStats({
+                    stats: sessionStatsRef.current.getSnapshot(),
+                  })}
+                </Text>
+                <Text dimColor>Resume this agent with:</Text>
+                <Text color="blue">letta --agent {agentId}</Text>
+              </Box>
+            )}
+
             {/* Input row - always mounted to preserve state */}
             <Input
-              visible={pendingApprovals.length === 0 && !anySelectorOpen}
+              visible={
+                !showExitStats &&
+                pendingApprovals.length === 0 &&
+                !anySelectorOpen
+              }
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
@@ -4431,6 +4647,33 @@ Plan file path: ${planFilePath}`;
                 onClose={closeOverlay}
               />
             )}
+
+            {/* MCP Server Selector - conditionally mounted as overlay */}
+            {activeOverlay === "mcp" && (
+              <McpSelector
+                agentId={agentId}
+                onAdd={() => {
+                  // Close overlay and prompt user to use /mcp add command
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/mcp",
+                    output:
+                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Help Dialog - conditionally mounted as overlay */}
+            {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
 
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (

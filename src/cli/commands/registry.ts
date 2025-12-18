@@ -38,6 +38,14 @@ export const commands: Record<string, Command> = {
       return "Clearing messages...";
     },
   },
+  "/compact": {
+    desc: "Summarize conversation history (compaction)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access client and agent ID
+      return "Compacting conversation...";
+    },
+  },
   "/logout": {
     desc: "Clear credentials and exit",
     handler: () => {
@@ -46,14 +54,14 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename the current agent",
+    desc: "Rename the current agent (/rename <name>)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Renaming agent...";
     },
   },
   "/description": {
-    desc: "Update the current agent's description",
+    desc: "Update the current agent's description (/description <text>)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
@@ -111,14 +119,14 @@ export const commands: Record<string, Command> = {
     },
   },
   "/skill": {
-    desc: "Enter skill creation mode (optionally: /skill <description>)",
+    desc: "Enter skill creation mode (/skill [description])",
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
     },
   },
   "/remember": {
-    desc: "Remember something from the conversation",
+    desc: "Remember something from the conversation (/remember [instructions])",
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
@@ -139,14 +147,14 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent globally (use -l for local only)",
+    desc: "Pin current agent globally, or use -l for local only",
     handler: () => {
       // Handled specially in App.tsx
       return "Pinning agent...";
     },
   },
   "/unpin": {
-    desc: "Unpin current agent globally (use -l for local only)",
+    desc: "Unpin current agent globally, or use -l for local only",
     handler: () => {
       // Handled specially in App.tsx
       return "Unpinning agent...";
@@ -185,6 +193,20 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to display usage stats
       return "Fetching usage statistics...";
+    },
+  },
+  "/mcp": {
+    desc: "Manage MCP servers",
+    handler: () => {
+      // Handled specially in App.tsx to show MCP server selector
+      return "Opening MCP server manager...";
+    },
+  },
+  "/help": {
+    desc: "Show available commands",
+    handler: () => {
+      // Handled specially in App.tsx to open help dialog
+      return "Opening help...";
     },
   },
 };
