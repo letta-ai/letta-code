@@ -4065,6 +4065,7 @@ Plan file path: ${planFilePath}`;
             {activeOverlay === "memory" && (
               <MemoryViewer
                 blocks={agentState?.memory?.blocks || []}
+                agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
               />

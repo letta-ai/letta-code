@@ -1,5 +1,6 @@
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { Box, Text, useInput } from "ink";
+import Link from "ink-link";
 import { useState } from "react";
 import { colors } from "./colors";
 
@@ -10,6 +11,7 @@ const DETAIL_VALUE_LINES = 12; // Visible lines for value content in detail view
 
 interface MemoryViewerProps {
   blocks: Block[];
+  agentId: string;
   agentName: string | null;
   onClose: () => void;
 }
@@ -34,9 +36,12 @@ function formatCharCount(current: number, limit: number | null): string {
 
 export function MemoryViewer({
   blocks,
+  agentId,
   agentName,
   onClose,
 }: MemoryViewerProps) {
+  // Construct ADE URL for this agent's memory
+  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory`;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
 
@@ -159,8 +164,10 @@ export function MemoryViewer({
             {formatCharCount(charCount, detailBlock.limit ?? null)}
           </Text>
         </Box>
+        <Link url={adeUrl}>
+          <Text dimColor>View/edit in the ADE</Text>
+        </Link>
         <Text dimColor>↑↓/jk to scroll • ESC to go back</Text>
-        <Text dimColor>Click to view/edit in the ADE</Text>
 
         {/* Description (up to 3 lines) */}
         {descriptionLines.length > 0 && (
@@ -220,8 +227,10 @@ export function MemoryViewer({
           </Text>
         )}
       </Box>
+      <Link url={adeUrl}>
+        <Text dimColor>View/edit in the ADE</Text>
+      </Link>
       <Text dimColor>↑↓/jk to navigate • Enter to view • ESC to close</Text>
-      <Text dimColor>Click to view/edit in the ADE</Text>
 
       {/* Block list */}
       <Box flexDirection="column" gap={1}>
