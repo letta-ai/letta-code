@@ -98,7 +98,7 @@ function buildModelSettings(
     settings = googleVertexSettings;
   } else {
     // For BYOK/unknown providers, return generic settings with parallel_tool_calls
-    settings = { parallel_tool_calls: true };
+    settings = { };
   }
 
   // Apply max_output_tokens for all providers if specified
