@@ -178,6 +178,54 @@ function analyzeEditApproval(
 /**
  * Analyze Bash command approval
  */
+// Safe read-only commands that can be pattern-matched
+const SAFE_READONLY_COMMANDS = [
+  "ls",
+  "cat",
+  "pwd",
+  "echo",
+  "which",
+  "type",
+  "whoami",
+  "date",
+  "grep",
+  "find",
+  "head",
+  "tail",
+  "wc",
+  "diff",
+  "file",
+  "stat",
+];
+
+// Commands that should never be auto-approved
+const DANGEROUS_COMMANDS = [
+  "rm",
+  "mv",
+  "chmod",
+  "chown",
+  "sudo",
+  "dd",
+  "mkfs",
+  "fdisk",
+  "kill",
+  "killall",
+];
+
+/**
+ * Check if a compound command contains any dangerous commands
+ */
+function containsDangerousCommand(command: string): boolean {
+  const segments = command.split(/\s*(?:&&|\||;)\s*/);
+  for (const segment of segments) {
+    const baseCmd = segment.trim().split(/\s+/)[0] || "";
+    if (DANGEROUS_COMMANDS.includes(baseCmd)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function analyzeBashApproval(
   command: string,
   _workingDir: string,
@@ -186,21 +234,8 @@ function analyzeBashApproval(
   const baseCommand = parts[0] || "";
   const firstArg = parts[1] || "";
 
-  // Dangerous commands - no persistence
-  const dangerousCommands = [
-    "rm",
-    "mv",
-    "chmod",
-    "chown",
-    "sudo",
-    "dd",
-    "mkfs",
-    "fdisk",
-    "kill",
-    "killall",
-  ];
-
-  if (baseCommand && dangerousCommands.includes(baseCommand)) {
+  // Check if command contains ANY dangerous commands (including in pipelines)
+  if (containsDangerousCommand(command)) {
     return {
       recommendedRule: "",
       ruleDescription: "",
@@ -302,22 +337,7 @@ function analyzeBashApproval(
   }
 
   // Safe read-only commands
-  const safeCommands = [
-    "ls",
-    "cat",
-    "pwd",
-    "echo",
-    "which",
-    "type",
-    "whoami",
-    "date",
-    "grep",
-    "find",
-    "head",
-    "tail",
-  ];
-
-  if (baseCommand && safeCommands.includes(baseCommand)) {
+  if (baseCommand && SAFE_READONLY_COMMANDS.includes(baseCommand)) {
     return {
       recommendedRule: `Bash(${baseCommand}:*)`,
       ruleDescription: `'${baseCommand}' commands`,
@@ -399,6 +419,18 @@ function analyzeBashApproval(
             safetyLevel: "safe",
           };
         }
+      }
+
+      // Check if this segment is a safe read-only command
+      if (segmentBase && SAFE_READONLY_COMMANDS.includes(segmentBase)) {
+        return {
+          recommendedRule: `Bash(${segmentBase}:*)`,
+          ruleDescription: `'${segmentBase}' commands`,
+          approveAlwaysText: `Yes, and don't ask again for '${segmentBase}' commands in this project`,
+          defaultScope: "project",
+          allowPersistence: true,
+          safetyLevel: "safe",
+        };
       }
     }
   }
