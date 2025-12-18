@@ -10,7 +10,7 @@ import {
 } from "../helpers/toolNameMapping.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
-import { brandColors, colors } from "./colors.js";
+import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import { TodoRenderer } from "./TodoRenderer.js";
@@ -60,23 +60,20 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   // If name exceeds available width, fall back to simple wrapped rendering
   const fallback = displayName.length >= rightWidth;
 
-  // Special handling for memory tool - use orange
-  const isMemoryTool = rawName === "memory";
-
   // Determine dot state based on phase
   const getDotElement = () => {
     switch (line.phase) {
       case "streaming":
-        return <Text color={isMemoryTool ? brandColors.orange : colors.tool.streaming}>●</Text>;
+        return <Text color={colors.tool.streaming}>●</Text>;
       case "ready":
-        return <BlinkDot color={isMemoryTool ? brandColors.orange : colors.tool.pending} />;
+        return <BlinkDot color={colors.tool.pending} />;
       case "running":
-        return <BlinkDot color={isMemoryTool ? brandColors.orange : colors.tool.running} />;
+        return <BlinkDot color={colors.tool.running} />;
       case "finished":
         if (line.resultOk === false) {
           return <Text color={colors.tool.error}>●</Text>;
         }
-        return <Text color={isMemoryTool ? brandColors.orange : colors.tool.completed}>●</Text>;
+        return <Text color={colors.tool.completed}>●</Text>;
       default:
         return <Text>●</Text>;
     }
@@ -248,9 +245,6 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
     );
   };
 
-  // Apply orange text color for memory tool
-  const textColor = isMemoryTool ? brandColors.orange : undefined;
-
   return (
     <Box flexDirection="column">
       {/* Tool call with exact wrapping logic from old codebase */}
@@ -261,16 +255,16 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         </Box>
         <Box flexGrow={1} width={rightWidth}>
           {fallback ? (
-            <Text wrap="wrap" color={textColor}>{`${displayName}${args}`}</Text>
+            <Text wrap="wrap">{`${displayName}${args}`}</Text>
           ) : (
             <Box flexDirection="row">
-              <Text color={textColor}>{displayName}</Text>
+              <Text>{displayName}</Text>
               {args ? (
                 <Box
                   flexGrow={1}
                   width={Math.max(0, rightWidth - displayName.length)}
                 >
-                  <Text wrap="wrap" color={textColor}>{args}</Text>
+                  <Text wrap="wrap">{args}</Text>
                 </Box>
               ) : null}
             </Box>
