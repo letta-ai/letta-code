@@ -26,6 +26,7 @@ export interface SubagentState {
   totalTokens: number;
   durationMs: number;
   error?: string;
+  model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
 }
@@ -179,7 +180,7 @@ export function addToolCall(
  */
 export function completeSubagent(
   id: string,
-  result: { success: boolean; error?: string },
+  result: { success: boolean; error?: string; model?: string },
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -189,6 +190,7 @@ export function completeSubagent(
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
+    model: result.model,
     durationMs: Date.now() - agent.startTime,
   } as SubagentState;
   store.agents.set(id, updatedAgent);

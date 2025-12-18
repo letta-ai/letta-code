@@ -60,6 +60,7 @@ export async function task(args: TaskArgs): Promise<string> {
     completeSubagent(subagentId, {
       success: result.success,
       error: result.error,
+      model: result.model,
     });
 
     if (!result.success) {
