@@ -108,6 +108,7 @@ export function createSubagentGroupItem(
         totalTokens: subagent.totalTokens,
         agentURL: subagent.agentURL,
         error: subagent.error,
+        model: subagent.model,
       });
     }
   }
