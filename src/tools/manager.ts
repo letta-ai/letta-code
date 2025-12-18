@@ -7,6 +7,7 @@ import {
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
+import { telemetry } from "../telemetry";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 
@@ -468,6 +469,11 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
         fn: definition.impl,
       });
     } catch (error) {
+    const duration = Date.now() - startTime;
+    const errorType = error instanceof Error && (error.name === "AbortError" || error.message === "The operation was aborted" || ("code" in error && error.code === "ABORT_ERR")) ? "abort" : error instanceof Error ? error.name : "unknown";
+
+    // Track failed tool usage
+    telemetry.trackToolUsage(internalName, false, duration, errorType);
       const message =
         error instanceof Error ? error.message : JSON.stringify(error);
       throw new Error(
@@ -612,6 +618,11 @@ export async function upsertToolsToServer(client: Letta): Promise<void> {
       // Success! Operation completed within timeout
       return;
     } catch (error) {
+    const duration = Date.now() - startTime;
+    const errorType = error instanceof Error && (error.name === "AbortError" || error.message === "The operation was aborted" || ("code" in error && error.code === "ABORT_ERR")) ? "abort" : error instanceof Error ? error.name : "unknown";
+
+    // Track failed tool usage
+    telemetry.trackToolUsage(internalName, false, duration, errorType);
       const elapsed = Date.now() - attemptStartTime;
       const totalElapsed = Date.now() - startTime;
 
@@ -868,6 +879,10 @@ export async function executeTool(
     }
 
     const result = await tool.fn(enhancedArgs);
+    const duration = Date.now() - startTime;
+
+    // Track successful tool usage
+    telemetry.trackToolUsage(internalName, true, duration);
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;
@@ -886,6 +901,11 @@ export async function executeTool(
       ...(stderr && { stderr }),
     };
   } catch (error) {
+    const duration = Date.now() - startTime;
+    const errorType = error instanceof Error && (error.name === "AbortError" || error.message === "The operation was aborted" || ("code" in error && error.code === "ABORT_ERR")) ? "abort" : error instanceof Error ? error.name : "unknown";
+
+    // Track failed tool usage
+    telemetry.trackToolUsage(internalName, false, duration, errorType);
     const isAbort =
       error instanceof Error &&
       (error.name === "AbortError" ||

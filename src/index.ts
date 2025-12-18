@@ -8,6 +8,7 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { telemetry } from "./telemetry";
 import { loadTools, upsertToolsIfNeeded } from "./tools/manager";
 
 function printHelp() {
@@ -105,6 +106,9 @@ async function main() {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
+
+  // Initialize telemetry (respects user opt-out settings)
+  telemetry.init();
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
