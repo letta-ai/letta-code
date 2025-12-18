@@ -1448,6 +1448,7 @@ export default function App({
       // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
       }
 
       // Set cancellation flag to prevent processConversation from starting
