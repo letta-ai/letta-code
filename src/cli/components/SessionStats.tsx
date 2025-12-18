@@ -50,10 +50,19 @@ export function formatUsageStats({
   ];
 
   if (balance) {
+    // API returns credits (integers), dollars = credits / 1000
+    const totalCredits = Math.round(balance.total_balance);
+    const monthlyCredits = Math.round(balance.monthly_credit_balance);
+    const purchasedCredits = Math.round(balance.purchased_credit_balance);
+
+    const toDollars = (credits: number) => (credits / 1000).toFixed(2);
+
     outputLines.push(
-      `Available credits:     $${balance.total_balance.toFixed(2)}       Plan: [${balance.billing_tier}]`,
-      `  Monthly credits:     $${balance.monthly_credit_balance.toFixed(2)}`,
-      `  Purchased credits:   $${balance.purchased_credit_balance.toFixed(2)}`,
+      `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})       Plan: [${balance.billing_tier}]`,
+      `  Monthly credits:     ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
+      `  Purchased credits:   ◎${formatNumber(purchasedCredits)} ($${toDollars(purchasedCredits)})`,
+      "",
+      "https://app.letta.com/settings/organization/usage",
     );
   }
 
