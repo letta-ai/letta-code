@@ -120,7 +120,6 @@ export const colors = {
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
     treeChar: brandColors.textDisabled,
-    stats: brandColors.textSecondary,
     hint: brandColors.textDisabled,
   },
 
