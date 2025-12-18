@@ -2,15 +2,8 @@ import { getClient } from "./client";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Minimal model info needed for BYOK model switching
-type ModelInfo = {
-  handle: string;
-  provider_type: string;
-};
-
 type CacheEntry = {
   handles: Set<string>;
-  modelsByHandle: Map<string, ModelInfo>;
   fetchedAt: number;
 };
 
@@ -51,29 +44,10 @@ export function getAvailableModelsCacheInfo(): {
 async function fetchFromNetwork(): Promise<CacheEntry> {
   const client = await getClient();
   const modelsList = await client.models.list();
-
-  const handles = new Set<string>();
-  const modelsByHandle = new Map<string, ModelInfo>();
-
-  for (const m of modelsList) {
-    if (m.handle) {
-      handles.add(m.handle);
-      modelsByHandle.set(m.handle, {
-        handle: m.handle,
-        provider_type: m.provider_type ?? "unknown",
-      });
-    }
-  }
-
-  return { handles, modelsByHandle, fetchedAt: Date.now() };
-}
-
-/**
- * Look up a model's provider_type by handle from the cache.
- * Returns undefined if not found or cache is not populated.
- */
-export function getProviderType(handle: string): string | undefined {
-  return cache?.modelsByHandle.get(handle)?.provider_type;
+  const handles = new Set(
+    modelsList.map((m) => m.handle).filter((h): h is string => !!h),
+  );
+  return { handles, fetchedAt: Date.now() };
 }
 
 export async function getAvailableModelHandles(options?: {

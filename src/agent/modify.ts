@@ -97,53 +97,8 @@ function buildModelSettings(
     }
     settings = googleVertexSettings;
   } else {
-    // For BYOK/unknown providers, use provider_type from updateArgs if available
-    const providerType = updateArgs?.provider_type as string | undefined;
-    if (providerType === "openai") {
-      // BYOK OpenAI-compatible provider
-      const openaiSettings: OpenAIModelSettings = {
-        provider_type: "openai",
-        parallel_tool_calls: true,
-      };
-      if (updateArgs?.reasoning_effort) {
-        openaiSettings.reasoning = {
-          reasoning_effort: updateArgs.reasoning_effort as
-            | "none"
-            | "minimal"
-            | "low"
-            | "medium"
-            | "high",
-        };
-      }
-      settings = openaiSettings;
-    } else if (providerType === "anthropic") {
-      // BYOK Anthropic-compatible provider
-      const anthropicSettings: AnthropicModelSettings = {
-        provider_type: "anthropic",
-        parallel_tool_calls: true,
-      };
-      if (
-        updateArgs?.enable_reasoner !== undefined ||
-        typeof updateArgs?.max_reasoning_tokens === "number"
-      ) {
-        anthropicSettings.thinking = {
-          type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
-          ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
-            budget_tokens: updateArgs.max_reasoning_tokens,
-          }),
-        };
-      }
-      settings = anthropicSettings;
-    } else if (providerType) {
-      // Other known provider type from API
-      settings = {
-        provider_type: providerType,
-        parallel_tool_calls: true,
-      };
-    } else {
-      // Truly unknown provider - don't send model_settings
-      settings = {};
-    }
+    // For BYOK/unknown providers, don't send model_settings - use server defaults
+    settings = {};
   }
 
   // Apply max_output_tokens for all providers if specified

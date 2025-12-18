@@ -25,15 +25,13 @@ type UiModel = {
 };
 
 interface ModelSelectorProps {
-  currentModel?: string;
-  currentEnableReasoner?: boolean;
+  currentModelId?: string;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
 }
 
 export function ModelSelector({
-  currentModel,
-  currentEnableReasoner,
+  currentModelId,
   onSelect,
   onCancel,
 }: ModelSelectorProps) {
@@ -152,13 +150,13 @@ export function ModelSelector({
   const initializedRef = useRef(false);
   useEffect(() => {
     if (!initializedRef.current && visibleModels.length > 0) {
-      const index = visibleModels.findIndex((m) => m.handle === currentModel);
+      const index = visibleModels.findIndex((m) => m.id === currentModelId);
       if (index >= 0) {
         setSelectedIndex(index);
       }
       initializedRef.current = true;
     }
-  }, [visibleModels, currentModel]);
+  }, [visibleModels, currentModelId]);
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
@@ -277,19 +275,7 @@ export function ModelSelector({
       <Box flexDirection="column">
         {visibleModels.map((model, index) => {
           const isSelected = index === selectedIndex;
-
-          // Check if this model is current
-          let isCurrent = model.handle === currentModel;
-
-          // For Anthropic models, also check enable_reasoner setting
-          if (isCurrent && model.handle?.startsWith("anthropic/")) {
-            const modelEnableReasoner = model.updateArgs?.enable_reasoner;
-            if (modelEnableReasoner !== undefined) {
-              isCurrent = isCurrent && modelEnableReasoner === currentEnableReasoner;
-            } else {
-              isCurrent = isCurrent && currentEnableReasoner !== false;
-            }
-          }
+          const isCurrent = model.id === currentModelId;
 
           return (
             <Box key={model.id} flexDirection="row" gap={1}>
