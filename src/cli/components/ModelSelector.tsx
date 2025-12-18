@@ -1,8 +1,7 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  type ApiModel,
   clearAvailableModelsCache,
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
@@ -11,6 +10,9 @@ import { models } from "../../agent/model";
 import { colors } from "./colors";
 
 const PAGE_SIZE = 10;
+
+type ModelCategory = "supported" | "all";
+const MODEL_CATEGORIES: ModelCategory[] = ["supported", "all"];
 
 type UiModel = {
   id: string;
@@ -36,16 +38,15 @@ export function ModelSelector({
   onCancel,
 }: ModelSelectorProps) {
   const typedModels = models as UiModel[];
-  const [showAll, setShowAll] = useState(false);
+  const [category, setCategory] = useState<ModelCategory>("supported");
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  // undefined: not loaded yet (show spinner)
-  // Set<string>: loaded and filtered
-  // null: error fallback (show all models + warning)
-  const [availableModels, setAvailableModels] = useState<
+
+  // undefined: not loaded yet, Set<string>: loaded, null: error fallback
+  const [availableHandles, setAvailableHandles] = useState<
     Set<string> | null | undefined
   >(undefined);
-  const [apiModels, setApiModels] = useState<ApiModel[]>([]);
+  const [allApiHandles, setAllApiHandles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
@@ -59,7 +60,7 @@ export function ModelSelector({
     };
   }, []);
 
-  // Fetch available models from the API (with caching + inflight dedupe)
+  // Fetch available models from the API
   const loadModels = useRef(async (forceRefresh = false) => {
     try {
       if (forceRefresh) {
@@ -75,8 +76,8 @@ export function ModelSelector({
 
       if (!mountedRef.current) return;
 
-      setAvailableModels(result.handles);
-      setApiModels(result.models);
+      setAvailableHandles(result.handles);
+      setAllApiHandles(Array.from(result.handles));
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -85,9 +86,8 @@ export function ModelSelector({
       setError(err instanceof Error ? err.message : "Failed to load models");
       setIsLoading(false);
       setRefreshing(false);
-      // Fallback: show all models if API fails
-      setAvailableModels(null);
-      setApiModels([]);
+      setAvailableHandles(null);
+      setAllApiHandles([]);
     }
   });
 
@@ -95,61 +95,63 @@ export function ModelSelector({
     loadModels.current(false);
   }, []);
 
-  // Get the set of handles that are in the static models list
+  // Handles from models.json (for filtering "all" category)
   const staticModelHandles = useMemo(
     () => new Set(typedModels.map((m) => m.handle)),
     [typedModels],
   );
 
-  // Filter models based on availability
-  const filteredModels = useMemo(() => {
-    // Not loaded yet: render nothing (avoid briefly showing unfiltered models)
-    if (availableModels === undefined) return [];
-    // Error fallback: show all models with warning
-    if (availableModels === null) return typedModels;
+  // Supported models: models.json entries that are available
+  const supportedModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+    if (availableHandles === null) return typedModels; // fallback
+    return typedModels.filter((m) => availableHandles.has(m.handle));
+  }, [typedModels, availableHandles]);
 
-    // Loaded: filter static models to only show those the user has access to
-    const availableStaticModels = typedModels.filter((model) =>
-      availableModels.has(model.handle),
-    );
+  // All other models: API handles not in models.json
+  const otherModelHandles = useMemo(() => {
+    return allApiHandles.filter((handle) => !staticModelHandles.has(handle));
+  }, [allApiHandles, staticModelHandles]);
 
-    // Also include BYOK/custom models from the API that aren't in the static list
-    const byokModels: UiModel[] = apiModels
-      .filter((apiModel) => !staticModelHandles.has(apiModel.handle))
-      .map((apiModel) => ({
-        id: apiModel.handle,
-        handle: apiModel.handle,
-        label: apiModel.display_name,
-        description: `${apiModel.provider_name} (${apiModel.provider_type})`,
-        isFeatured: false,
-      }));
+  // Get the list for current category
+  const currentList: UiModel[] = useMemo(() => {
+    if (category === "supported") {
+      return supportedModels;
+    }
+    // For "all" category, convert handles to simple UiModel objects
+    return otherModelHandles.map((handle) => ({
+      id: handle,
+      handle,
+      label: handle,
+      description: "",
+    }));
+  }, [category, supportedModels, otherModelHandles]);
 
-    return [...availableStaticModels, ...byokModels];
-  }, [typedModels, availableModels, apiModels, staticModelHandles]);
-
-  const featuredModels = useMemo(
-    () => filteredModels.filter((model) => model.isFeatured),
-    [filteredModels],
-  );
-
+  // Pagination
   const totalPages = useMemo(
-    () => Math.ceil(filteredModels.length / PAGE_SIZE),
-    [filteredModels.length],
+    () => Math.max(1, Math.ceil(currentList.length / PAGE_SIZE)),
+    [currentList.length],
   );
 
   const visibleModels = useMemo(() => {
-    if (showAll) {
-      const start = currentPage * PAGE_SIZE;
-      return filteredModels.slice(start, start + PAGE_SIZE);
-    }
-    if (featuredModels.length > 0) return featuredModels;
-    return filteredModels.slice(0, 5);
-  }, [featuredModels, showAll, filteredModels, currentPage]);
+    const start = currentPage * PAGE_SIZE;
+    return currentList.slice(start, start + PAGE_SIZE);
+  }, [currentList, currentPage]);
+
+  // Reset page and selection when category changes
+  const cycleCategory = useCallback(() => {
+    setCategory((current) => {
+      const idx = MODEL_CATEGORIES.indexOf(current);
+      return MODEL_CATEGORIES[(idx + 1) % MODEL_CATEGORIES.length] as ModelCategory;
+    });
+    setCurrentPage(0);
+    setSelectedIndex(0);
+  }, []);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
   useEffect(() => {
-    if (!initializedRef.current) {
+    if (!initializedRef.current && visibleModels.length > 0) {
       const index = visibleModels.findIndex((m) => m.handle === currentModel);
       if (index >= 0) {
         setSelectedIndex(index);
@@ -158,27 +160,30 @@ export function ModelSelector({
     }
   }, [visibleModels, currentModel]);
 
-  const hasMoreModels =
-    !showAll && filteredModels.length > visibleModels.length;
-  const totalItems = hasMoreModels
-    ? visibleModels.length + 1
-    : visibleModels.length;
+  // Clamp selectedIndex when list changes
+  useEffect(() => {
+    if (selectedIndex >= visibleModels.length && visibleModels.length > 0) {
+      setSelectedIndex(visibleModels.length - 1);
+    }
+  }, [selectedIndex, visibleModels.length]);
 
   useInput(
     (input, key) => {
-      // Allow ESC even while loading
       if (key.escape) {
         onCancel();
         return;
       }
 
-      // Allow 'r' to refresh even while loading (but not while already refreshing)
       if (input === "r" && !refreshing) {
         loadModels.current(true);
         return;
       }
 
-      // Disable other inputs while loading
+      if (key.tab) {
+        cycleCategory();
+        return;
+      }
+
       if (isLoading || refreshing || visibleModels.length === 0) {
         return;
       }
@@ -186,43 +191,55 @@ export function ModelSelector({
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
-      } else if (key.leftArrow && showAll && currentPage > 0) {
+        setSelectedIndex((prev) => Math.min(visibleModels.length - 1, prev + 1));
+      } else if (key.leftArrow && currentPage > 0) {
         setCurrentPage((prev) => prev - 1);
         setSelectedIndex(0);
-      } else if (key.rightArrow && showAll && currentPage < totalPages - 1) {
+      } else if (key.rightArrow && currentPage < totalPages - 1) {
         setCurrentPage((prev) => prev + 1);
         setSelectedIndex(0);
       } else if (key.return) {
-        if (hasMoreModels && selectedIndex === visibleModels.length) {
-          setShowAll(true);
-          setCurrentPage(0);
-          setSelectedIndex(0);
-        } else {
-          const selectedModel = visibleModels[selectedIndex];
-          if (selectedModel) {
-            onSelect(selectedModel.id);
-          }
+        const selectedModel = visibleModels[selectedIndex];
+        if (selectedModel) {
+          onSelect(selectedModel.id);
         }
       }
     },
-    // Keep active so ESC and 'r' work while loading.
     { isActive: true },
   );
+
+  const getCategoryLabel = (cat: ModelCategory) => {
+    if (cat === "supported") return `Supported (${supportedModels.length})`;
+    return `All Models (${otherModelHandles.length})`;
+  };
 
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ to navigate, Enter to select, ESC to cancel)
+          Select Model (↑↓ navigate, ←→ page, Enter select, ESC cancel)
         </Text>
         {!isLoading && !refreshing && (
+          <Box>
+            <Text dimColor>Category: </Text>
+            {MODEL_CATEGORIES.map((cat, i) => (
+              <Text key={cat}>
+                {i > 0 && <Text dimColor> · </Text>}
+                <Text
+                  bold={cat === category}
+                  color={cat === category ? colors.selector.itemHighlighted : undefined}
+                >
+                  {getCategoryLabel(cat)}
+                </Text>
+              </Text>
+            ))}
+            <Text dimColor> (Tab to switch)</Text>
+          </Box>
+        )}
+        {!isLoading && !refreshing && (
           <Text dimColor>
-            {showAll
-              ? `Page ${currentPage + 1}/${totalPages} (←→ to navigate pages, 'r' to refresh)`
-              : isCached
-                ? "Cached models (press 'r' to refresh)"
-                : "Press 'r' to refresh"}
+            Page {currentPage + 1}/{totalPages}
+            {isCached ? " · cached" : ""} · 'r' to refresh
           </Text>
         )}
       </Box>
@@ -247,10 +264,12 @@ export function ModelSelector({
         </Box>
       )}
 
-      {!isLoading && visibleModels.length === 0 && (
+      {!isLoading && !refreshing && visibleModels.length === 0 && (
         <Box>
-          <Text color="red">
-            No models available. Please check your Letta configuration.
+          <Text dimColor>
+            {category === "supported"
+              ? "No supported models available."
+              : "No additional models available."}
           </Text>
         </Box>
       )}
@@ -259,66 +278,39 @@ export function ModelSelector({
         {visibleModels.map((model, index) => {
           const isSelected = index === selectedIndex;
 
-          // Check if this model is current by comparing handle and relevant settings
+          // Check if this model is current
           let isCurrent = model.handle === currentModel;
 
-          // For models with the same handle, also check specific configuration settings
+          // For Anthropic models, also check enable_reasoner setting
           if (isCurrent && model.handle?.startsWith("anthropic/")) {
-            // For Anthropic models, check enable_reasoner setting
             const modelEnableReasoner = model.updateArgs?.enable_reasoner;
-
-            // If the model explicitly sets enable_reasoner, check if it matches current settings
             if (modelEnableReasoner !== undefined) {
-              // Model has explicit enable_reasoner setting, compare with current
-              isCurrent =
-                isCurrent && modelEnableReasoner === currentEnableReasoner;
+              isCurrent = isCurrent && modelEnableReasoner === currentEnableReasoner;
             } else {
-              // If model doesn't explicitly set enable_reasoner, it defaults to enabled (or undefined)
-              // It's current if currentEnableReasoner is not explicitly false
               isCurrent = isCurrent && currentEnableReasoner !== false;
             }
           }
 
           return (
             <Box key={model.id} flexDirection="row" gap={1}>
-              <Text
-                color={isSelected ? colors.selector.itemHighlighted : undefined}
-              >
+              <Text color={isSelected ? colors.selector.itemHighlighted : undefined}>
                 {isSelected ? "›" : " "}
               </Text>
               <Box flexDirection="row">
                 <Text
                   bold={isSelected}
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
+                  color={isSelected ? colors.selector.itemHighlighted : undefined}
                 >
                   {model.label}
                   {isCurrent && (
                     <Text color={colors.selector.itemCurrent}> (current)</Text>
                   )}
                 </Text>
-                <Text dimColor> {model.description}</Text>
+                {model.description && <Text dimColor> {model.description}</Text>}
               </Box>
             </Box>
           );
         })}
-        {!showAll && filteredModels.length > visibleModels.length && (
-          <Box flexDirection="row" gap={1}>
-            <Text
-              color={
-                selectedIndex === visibleModels.length
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-            >
-              {selectedIndex === visibleModels.length ? "›" : " "}
-            </Text>
-            <Text dimColor>
-              Show all models ({filteredModels.length} available)
-            </Text>
-          </Box>
-        )}
       </Box>
     </Box>
   );

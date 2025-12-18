@@ -3152,10 +3152,9 @@ ${recentCommits}
           // If not found in static list, it might be a BYOK model where id === handle
           if (!selectedModel && modelId.includes("/")) {
             // Look up provider type from API cache for BYOK models
-            const { getModelByHandle } = await import(
+            const { getProviderType } = await import(
               "../agent/available-models"
             );
-            const apiModel = getModelByHandle(modelId);
 
             // Treat it as a BYOK model - the modelId is actually the handle
             selectedModel = {
@@ -3165,7 +3164,7 @@ ${recentCommits}
               description: "Custom model",
               updateArgs: {
                 // Pass provider_type so buildModelSettings can use it
-                provider_type: apiModel?.provider_type,
+                provider_type: getProviderType(modelId),
               },
             } as unknown as (typeof models)[number];
           }
