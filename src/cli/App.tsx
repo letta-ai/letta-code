@@ -17,7 +17,7 @@ import type { ApprovalResult } from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { setCurrentAgentId } from "../agent/context";
+import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
@@ -53,12 +53,13 @@ import { Input } from "./components/InputRich";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
-import { SessionStats as SessionStatsComponent } from "./components/SessionStats";
+import { formatUsageStats } from "./components/SessionStats";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
@@ -116,6 +117,18 @@ const EAGER_CANCEL = true;
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Save current agent as lastAgent before exiting
+// This ensures subagent overwrites during the session don't persist
+function saveLastAgentBeforeExit() {
+  try {
+    const currentAgentId = getCurrentAgentId();
+    settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
+    settingsManager.updateSettings({ lastAgent: currentAgentId });
+  } catch {
+    // Ignore if no agent context set
+  }
 }
 
 // Get plan mode system reminder if in plan mode
@@ -395,9 +408,13 @@ export default function App({
     | "subagent"
     | "feedback"
     | "memory"
+    | "pin"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+
+  // Pin dialog state
+  const [pinDialogLocal, setPinDialogLocal] = useState(false);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -442,9 +459,6 @@ export default function App({
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
-
-  // Show exit stats on exit
-  const [showExitStats, setShowExitStats] = useState(false);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -968,6 +982,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before starting permission checks
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -1217,6 +1242,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before showing dialog
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Show approval dialog for tools that need user input
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
             setApprovalContexts(
@@ -1315,8 +1351,8 @@ export default function App({
   );
 
   const handleExit = useCallback(() => {
-    setShowExitStats(true);
-    // Give React time to render the stats, then exit
+    saveLastAgentBeforeExit();
+    // Give React time to render the goodbye message, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -1656,7 +1692,99 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /exit command - show stats and exit
+        // Special handling for /usage command - show session stats
+        if (trimmed === "/usage") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: "Fetching usage statistics...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          // Fetch balance and display stats asynchronously
+          (async () => {
+            try {
+              const stats = sessionStatsRef.current.getSnapshot();
+
+              // Try to fetch balance info (only works for Letta Cloud)
+              // Silently skip if endpoint not available (not deployed yet or self-hosted)
+              let balance:
+                | {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  }
+                | undefined;
+
+              try {
+                const settings = settingsManager.getSettings();
+                const baseURL =
+                  process.env.LETTA_BASE_URL ||
+                  settings.env?.LETTA_BASE_URL ||
+                  "https://api.letta.com";
+                const apiKey =
+                  process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+                const balanceResponse = await fetch(
+                  `${baseURL}/v1/metadata/balance`,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${apiKey}`,
+                      "X-Letta-Source": "letta-code",
+                    },
+                  },
+                );
+
+                if (balanceResponse.ok) {
+                  balance = (await balanceResponse.json()) as {
+                    total_balance: number;
+                    monthly_credit_balance: number;
+                    purchased_credit_balance: number;
+                    billing_tier: string;
+                  };
+                }
+              } catch {
+                // Silently skip balance info if endpoint not available
+              }
+
+              const output = formatUsageStats({
+                stats,
+                balance,
+              });
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output,
+                phase: "finished",
+                success: true,
+                dimOutput: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            }
+          })();
+
+          return { submitted: true };
+        }
+
+        // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
@@ -1720,6 +1848,8 @@ export default function App({
               success: true,
             });
             refreshDerived();
+
+            saveLastAgentBeforeExit();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
@@ -1916,6 +2046,23 @@ export default function App({
               id: cmdId,
               input: msg,
               output: "Please provide a new name: /rename <name>",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // Validate the name before sending to API
+          const validationError = validateAgentName(newName);
+          if (validationError) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: validationError,
               phase: "finished",
               success: false,
             });
@@ -2129,6 +2276,29 @@ export default function App({
 
         // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
+          const argsStr = msg.trim().slice(4).trim();
+
+          // Parse args to check if name was provided
+          const parts = argsStr.split(/\s+/).filter(Boolean);
+          let hasNameArg = false;
+          let isLocal = false;
+
+          for (const part of parts) {
+            if (part === "-l" || part === "--local") {
+              isLocal = true;
+            } else {
+              hasNameArg = true;
+            }
+          }
+
+          // If no name provided, show the pin dialog
+          if (!hasNameArg) {
+            setPinDialogLocal(isLocal);
+            setActiveOverlay("pin");
+            return { submitted: true };
+          }
+
+          // Name was provided, use existing behavior
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -2137,7 +2307,6 @@ export default function App({
             setCommandRunning,
             setAgentName,
           };
-          const argsStr = msg.trim().slice(4).trim();
           await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
@@ -2738,48 +2907,246 @@ ${recentCommits}
           }
 
           if (existingApprovals && existingApprovals.length > 0) {
-            // There are pending approvals - show them and DON'T send the message yet
-            // The message will be restored to the input field for the user to decide
-
-            // Remove the optimistic user message from transcript to avoid duplication
-            buffersRef.current.byId.delete(userId);
-            const orderIndex = buffersRef.current.order.indexOf(userId);
-            if (orderIndex !== -1) {
-              buffersRef.current.order.splice(orderIndex, 1);
-            }
-
-            setStreaming(false); // Stop streaming indicator
-            setPendingApprovals(existingApprovals);
-
-            // Analyze approval contexts for ALL pending approvals
-            const contexts = await Promise.all(
-              existingApprovals.map(async (approval) => {
+            // There are pending approvals - check permissions first (respects yolo mode)
+            const approvalResults = await Promise.all(
+              existingApprovals.map(async (approvalItem) => {
+                if (!approvalItem.toolName) {
+                  return {
+                    approval: approvalItem,
+                    permission: {
+                      decision: "deny" as const,
+                      reason: "Tool call incomplete - missing name",
+                    },
+                    context: null,
+                  };
+                }
                 const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approval.toolArgs,
+                  approvalItem.toolArgs,
                   {},
                 );
-                return await analyzeToolApproval(approval.toolName, parsedArgs);
+                const permission = await checkToolPermission(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                const context = await analyzeToolApproval(
+                  approvalItem.toolName,
+                  parsedArgs,
+                );
+                return { approval: approvalItem, permission, context };
               }),
             );
 
-            // Check again after async approval analysis
+            // Check if user cancelled during permission check
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
             ) {
-              // User cancelled during analysis - don't show dialog
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
               setStreaming(false);
               refreshDerived();
               return { submitted: false };
             }
 
-            setApprovalContexts(contexts);
+            // Categorize by permission decision
+            const needsUserInput: typeof approvalResults = [];
+            const autoAllowed: typeof approvalResults = [];
+            const autoDenied: typeof approvalResults = [];
 
-            // Refresh to remove the message from UI
-            refreshDerived();
+            for (const ac of approvalResults) {
+              const { approval, permission } = ac;
+              let decision = permission.decision;
 
-            // Return false = message NOT submitted, will be restored to input
-            return { submitted: false };
+              // Fancy tools always need user input (except if denied)
+              if (isFancyUITool(approval.toolName) && decision === "allow") {
+                decision = "ask";
+              }
+
+              if (decision === "ask") {
+                needsUserInput.push(ac);
+              } else if (decision === "deny") {
+                autoDenied.push(ac);
+              } else {
+                autoAllowed.push(ac);
+              }
+            }
+
+            // If all approvals can be auto-handled (yolo mode), process them immediately
+            if (needsUserInput.length === 0) {
+              // Execute auto-allowed tools
+              const autoAllowedResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial results for auto-denied and update UI
+              const autoDeniedResults = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason,
+                };
+              });
+
+              refreshDerived();
+
+              // Combine results and send directly with the user's message
+              // (can't use state here as it won't be available until next render)
+              const recoveryApprovalResults = [
+                ...autoAllowedResults.map((ar) => ({
+                  type: "approval" as const,
+                  tool_call_id: ar.toolCallId,
+                  approve: true,
+                  tool_return: ar.result.toolReturn,
+                })),
+                ...autoDeniedResults,
+              ];
+
+              // Build and send initialInput directly
+              const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                {
+                  type: "approval",
+                  approvals: recoveryApprovalResults,
+                },
+                {
+                  type: "message",
+                  role: "user",
+                  content:
+                    messageContent as unknown as MessageCreate["content"],
+                },
+              ];
+
+              await processConversation(initialInput);
+              clearPlaceholdersInText(msg);
+              return { submitted: true };
+            } else {
+              // Some approvals need user input - show dialog
+              // Remove the optimistic user message from transcript
+              buffersRef.current.byId.delete(userId);
+              const orderIndex = buffersRef.current.order.indexOf(userId);
+              if (orderIndex !== -1) {
+                buffersRef.current.order.splice(orderIndex, 1);
+              }
+
+              setStreaming(false);
+              setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+              setApprovalContexts(
+                needsUserInput
+                  .map((ac) => ac.context)
+                  .filter(Boolean) as ApprovalContext[],
+              );
+
+              // Execute auto-allowed tools and store results
+              const autoAllowedWithResults = await Promise.all(
+                autoAllowed.map(async (ac) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    ac.approval.toolArgs,
+                    {},
+                  );
+                  const result = await executeTool(
+                    ac.approval.toolName,
+                    parsedArgs,
+                    { toolCallId: ac.approval.toolCallId },
+                  );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
+                  return {
+                    toolCallId: ac.approval.toolCallId,
+                    result,
+                  };
+                }),
+              );
+
+              // Create denial reasons for auto-denied and update UI
+              const autoDeniedWithReasons = autoDenied.map((ac) => {
+                const reason =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
+
+              // Store auto-handled results to send along with user decisions
+              setAutoHandledResults(autoAllowedWithResults);
+              setAutoDeniedApprovals(autoDeniedWithReasons);
+
+              refreshDerived();
+              return { submitted: false };
+            }
           }
         } catch (_error) {
           // If check fails, proceed anyway (don't block user)
@@ -3871,19 +4238,17 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
+        : "Creating a new agent (use /pin to save)";
 
-      const agentNameLine =
-        !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /rename to rename)`
-          : "";
-
-      const statusLines = [
-        resumedMessage,
-        agentNameLine,
-        ...hints,
-        agentUrl ? `→ ${agentUrl}` : "",
-      ].filter(Boolean);
+      const statusLines = continueSession
+        ? [resumedMessage, ...hints, agentUrl ? `→ ${agentUrl}` : ""].filter(
+            Boolean,
+          )
+        : [
+            resumedMessage,
+            agentUrl ? `→ ${agentUrl}` : "",
+            "→ Tip: use /init to initialize your agent's memory system!",
+          ].filter(Boolean);
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -3980,21 +4345,9 @@ Plan file path: ${planFilePath}`;
             {/* Ensure 1 blank line above input when there are no live items */}
             {liveItems.length === 0 && <Box height={1} />}
 
-            {/* Show exit stats when exiting */}
-            {showExitStats && (
-              <SessionStatsComponent
-                stats={sessionStatsRef.current.getSnapshot()}
-                agentId={agentId}
-              />
-            )}
-
             {/* Input row - always mounted to preserve state */}
             <Input
-              visible={
-                !showExitStats &&
-                pendingApprovals.length === 0 &&
-                !anySelectorOpen
-              }
+              visible={pendingApprovals.length === 0 && !anySelectorOpen}
               streaming={
                 streaming && !abortControllerRef.current?.signal.aborted
               }
@@ -4121,6 +4474,74 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+              />
+            )}
+
+            {/* Pin Dialog - for naming agent before pinning */}
+            {activeOverlay === "pin" && (
+              <PinDialog
+                currentName={agentName || ""}
+                local={pinDialogLocal}
+                onSubmit={async (newName) => {
+                  closeOverlay();
+                  setCommandRunning(true);
+
+                  const cmdId = uid("cmd");
+                  const scopeText = pinDialogLocal
+                    ? "to this project"
+                    : "globally";
+                  const displayName =
+                    newName || agentName || agentId.slice(0, 12);
+
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/pin",
+                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    const client = await getClient();
+
+                    // Rename if new name provided
+                    if (newName && newName !== agentName) {
+                      await client.agents.update(agentId, { name: newName });
+                      setAgentName(newName);
+                    }
+
+                    // Pin the agent
+                    if (pinDialogLocal) {
+                      settingsManager.pinLocal(agentId);
+                    } else {
+                      settingsManager.pinGlobal(agentId);
+                    }
+
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      phase: "finished",
+                      success: true,
+                    });
+                  } catch (error) {
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Failed to pin: ${error}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                  } finally {
+                    setCommandRunning(false);
+                    refreshDerived();
+                  }
+                }}
+                onCancel={closeOverlay}
               />
             )}
 

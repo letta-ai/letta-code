@@ -44,6 +44,7 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
+      dimOutput?: boolean;
     }
   | {
       kind: "status";
