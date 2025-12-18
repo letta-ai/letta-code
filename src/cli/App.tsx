@@ -42,6 +42,11 @@ import {
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
+import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
@@ -51,6 +56,7 @@ import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
+import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -410,6 +416,7 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "mcp"
     | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
@@ -1755,6 +1762,35 @@ export default function App({
           setActiveOverlay("memory");
           return { submitted: true };
         }
+
+        // Special handling for /mcp command - manage MCP servers
+        if (msg.trim().startsWith("/mcp")) {
+          const mcpCtx: McpCommandContext = {
+            buffersRef,
+            refreshDerived,
+            setCommandRunning,
+          };
+
+          // Check for subcommand by looking at the first word after /mcp
+          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
+          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
+
+          // /mcp - open MCP server selector
+          if (!firstWord) {
+            setActiveOverlay("mcp");
+            return { submitted: true };
+          }
+
+          // /mcp add --transport <type> <name> <url/command> [options]
+          if (firstWord === "add") {
+            // Pass the full command string after "add" to preserve quotes
+            const afterAdd = afterMcp.slice(firstWord.length).trim();
+            await handleMcpAdd(mcpCtx, msg, afterAdd);
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleMcpUsage(mcpCtx, msg);
 
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
@@ -4607,6 +4643,29 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+              />
+            )}
+
+            {/* MCP Server Selector - conditionally mounted as overlay */}
+            {activeOverlay === "mcp" && (
+              <McpSelector
+                agentId={agentId}
+                onAdd={() => {
+                  // Close overlay and prompt user to use /mcp add command
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/mcp",
+                    output: "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
               />
             )}
 
