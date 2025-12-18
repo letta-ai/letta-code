@@ -30,6 +30,7 @@ USAGE
 OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
+  --info                Show current directory, skills, and pinned agents
   --new                 Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
@@ -79,6 +80,108 @@ EXAMPLES
 }
 
 /**
+ * Print info about current directory, skills, and pinned agents
+ */
+async function printInfo() {
+  const { join } = await import("node:path");
+  const { getVersion } = await import("./version");
+  const { SKILLS_DIR } = await import("./agent/skills");
+  const { exists } = await import("./utils/fs");
+
+  const cwd = process.cwd();
+  const skillsDir = join(cwd, SKILLS_DIR);
+  const skillsExist = exists(skillsDir);
+
+  // Load local project settings first
+  await settingsManager.loadLocalProjectSettings(cwd);
+
+  // Get pinned agents
+  const localPinned = settingsManager.getLocalPinnedAgents(cwd);
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const localSettings = settingsManager.getLocalProjectSettings(cwd);
+  const lastAgent = localSettings.lastAgent;
+
+  // Try to fetch agent names from API (if authenticated)
+  const agentNames: Record<string, string> = {};
+  const allAgentIds = [
+    ...new Set([
+      ...localPinned,
+      ...globalPinned,
+      ...(lastAgent ? [lastAgent] : []),
+    ]),
+  ];
+
+  if (allAgentIds.length > 0) {
+    try {
+      const client = await getClient();
+      // Fetch each agent individually to get accurate names
+      await Promise.all(
+        allAgentIds.map(async (id) => {
+          try {
+            const agent = await client.agents.retrieve(id);
+            agentNames[id] = agent.name;
+          } catch {
+            // Agent not found or error - leave as not found
+          }
+        }),
+      );
+    } catch {
+      // Not authenticated or API error - just show IDs
+    }
+  }
+
+  const formatAgent = (id: string) => {
+    const name = agentNames[id];
+    return name ? `${id} (${name})` : `${id} (not found)`;
+  };
+
+  console.log(`Letta Code ${getVersion()}\n`);
+  console.log(`Current directory: ${cwd}`);
+  console.log(
+    `Skills directory:  ${skillsDir}${skillsExist ? "" : " (not found)"}`,
+  );
+
+  console.log("");
+
+  // Show which agent will be resumed
+  if (lastAgent) {
+    console.log(`Will resume: ${formatAgent(lastAgent)}`);
+  } else if (localPinned.length > 0 || globalPinned.length > 0) {
+    console.log("Will resume: (will show selector)");
+  } else {
+    console.log("Will resume: (will create new agent)");
+  }
+
+  console.log("");
+
+  // Locally pinned agents
+  if (localPinned.length > 0) {
+    console.log("Locally pinned agents (this project):");
+    for (const id of localPinned) {
+      const isLast = id === lastAgent;
+      const prefix = isLast ? "→ " : "  ";
+      const suffix = isLast ? " (last used)" : "";
+      console.log(`  ${prefix}${formatAgent(id)}${suffix}`);
+    }
+  } else {
+    console.log("Locally pinned agents: (none)");
+  }
+
+  console.log("");
+
+  // Globally pinned agents
+  if (globalPinned.length > 0) {
+    console.log("Globally pinned agents:");
+    for (const id of globalPinned) {
+      const isLocal = localPinned.includes(id);
+      console.log(`    ${formatAgent(id)}${isLocal ? " (also local)" : ""}`);
+    }
+  } else {
+    console.log("Globally pinned agents: (none)");
+  }
+}
+
+/**
  * Helper to determine which model identifier to pass to loadTools()
  * based on user's model and/or toolset preferences.
  */
@@ -121,6 +224,7 @@ async function main() {
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
+        info: { type: "boolean" },
         continue: { type: "boolean", short: "c" },
         new: { type: "boolean" },
         "init-blocks": { type: "string" },
@@ -176,6 +280,12 @@ async function main() {
   if (values.version) {
     const { getVersion } = await import("./version");
     console.log(`${getVersion()} (Letta Code)`);
+    process.exit(0);
+  }
+
+  // Handle info flag
+  if (values.info) {
+    await printInfo();
     process.exit(0);
   }
 
