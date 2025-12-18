@@ -433,6 +433,10 @@ export default function App({
     | null
   >(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const llmConfigRef = useRef(llmConfig);
+  useEffect(() => {
+    llmConfigRef.current = llmConfig;
+  }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -842,6 +846,56 @@ export default function App({
 
           // Immediate refresh after stream completes to show final state
           refreshDerived();
+
+          // Sync agent state after stream completes to detect model changes
+          // This ensures the UI shows the correct model if it was changed by the agent
+          if (stopReason === "end_turn" || stopReason === "requires_approval") {
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+
+              // Check if the model has changed by comparing llm_config
+              const currentModel = llmConfigRef.current?.model;
+              const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
+              const agentModel = agent.llm_config.model;
+              const agentEndpoint = agent.llm_config.model_endpoint_type;
+
+              if (
+                currentModel !== agentModel ||
+                currentEndpoint !== agentEndpoint
+              ) {
+                // Model has changed - update local state
+                setLlmConfig(agent.llm_config);
+
+                // Derive model ID from llm_config for ModelSelector
+                // Try to find matching model by handle in models.json
+                const { getModelInfo } = await import("../agent/model");
+                const agentModelHandle =
+                  agent.llm_config.model_endpoint_type && agent.llm_config.model
+                    ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+                    : agent.llm_config.model;
+
+                const modelInfo = getModelInfo(agentModelHandle || "");
+                if (modelInfo) {
+                  setCurrentModelId(modelInfo.id);
+                } else {
+                  // Model not in models.json (e.g., BYOK model) - use handle as ID
+                  setCurrentModelId(agentModelHandle || null);
+                }
+
+                // Also update agent state if other fields changed
+                setAgentName(agent.name);
+                setAgentDescription(agent.description ?? null);
+                const lastRunCompletion = (
+                  agent as { last_run_completion?: string }
+                ).last_run_completion;
+                setAgentLastRunAt(lastRunCompletion ?? null);
+              }
+            } catch (error) {
+              // Silently fail - don't interrupt the conversation flow
+              console.error("Failed to sync agent state:", error);
+            }
+          }
 
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
