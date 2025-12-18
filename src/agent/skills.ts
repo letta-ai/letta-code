@@ -51,6 +51,12 @@ export interface SkillDiscoveryError {
 export const SKILLS_DIR = ".skills";
 
 /**
+ * Skills block character limit.
+ * If formatted skills exceed this, fall back to compact tree format.
+ */
+const SKILLS_BLOCK_CHAR_LIMIT = 20000;
+
+/** origin/main
  * Discovers skills by recursively searching for SKILL.MD files
  * @param skillsPath - The directory to search for skills (default: .skills in current directory)
  * @returns A result containing discovered skills and any errors
@@ -204,12 +210,82 @@ async function parseSkillFile(
 }
 
 /**
- * Formats discovered skills as a string for the skills memory block
+ * Formats skills as a compact directory tree structure
  * @param skills - Array of discovered skills
  * @param skillsDirectory - Absolute path to the skills directory
- * @returns Formatted string representation of skills
+ * @returns Tree-structured string representation
  */
-export function formatSkillsForMemory(
+function formatSkillsAsTree(skills: Skill[], skillsDirectory: string): string {
+  let output = `Skills Directory: ${skillsDirectory}\n\n`;
+
+  if (skills.length === 0) {
+    return `${output}[NO SKILLS AVAILABLE]`;
+  }
+
+  output += `Note: Many skills available - showing directory structure only. For each skill path shown below, you can either:\n`;
+  output += `- Load it persistently into memory using the path (e.g., "ai/tools/mcp-builder")\n`;
+  output += `- Read ${skillsDirectory}/{path}/SKILL.md directly to preview without loading\n\n`;
+
+  // Build tree structure from skill IDs
+  interface TreeNode {
+    [key: string]: TreeNode | null;
+  }
+
+  const tree: TreeNode = {};
+
+  // Parse all skill IDs into tree structure
+  for (const skill of skills) {
+    const parts = skill.id.split("/");
+    let current = tree;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (!part) continue;
+
+      // Last part is the skill name (leaf node)
+      if (i === parts.length - 1) {
+        current[part] = null;
+      } else {
+        // Intermediate directory
+        if (!current[part]) {
+          current[part] = {};
+        }
+        current = current[part] as TreeNode;
+      }
+    }
+  }
+
+  // Render tree with indentation
+  function renderTree(node: TreeNode, indent: string = ""): string {
+    let result = "";
+    const entries = Object.entries(node).sort(([a], [b]) => a.localeCompare(b));
+
+    for (const [name, children] of entries) {
+      if (children === null) {
+        // Leaf node (skill)
+        result += `${indent}${name}\n`;
+      } else {
+        // Directory node
+        result += `${indent}${name}/\n`;
+        result += renderTree(children, `${indent}  `);
+      }
+    }
+
+    return result;
+  }
+
+  output += renderTree(tree);
+
+  return output.trim();
+}
+
+/**
+ * Formats discovered skills with full metadata
+ * @param skills - Array of discovered skills
+ * @param skillsDirectory - Absolute path to the skills directory
+ * @returns Full metadata string representation
+ */
+function formatSkillsWithMetadata(
   skills: Skill[],
   skillsDirectory: string,
 ): string {
@@ -271,4 +347,32 @@ function formatSkill(skill: Skill): string {
 
   output += "\n";
   return output;
+}
+
+/**
+ * Formats discovered skills as a string for the skills memory block.
+ * Tries full metadata format first, falls back to compact tree if it exceeds limit.
+ * @param skills - Array of discovered skills
+ * @param skillsDirectory - Absolute path to the skills directory
+ * @returns Formatted string representation of skills
+ */
+export function formatSkillsForMemory(
+  skills: Skill[],
+  skillsDirectory: string,
+): string {
+  // Handle empty case
+  if (skills.length === 0) {
+    return `Skills Directory: ${skillsDirectory}\n\n[NO SKILLS AVAILABLE]`;
+  }
+
+  // Try full metadata format first
+  const fullFormat = formatSkillsWithMetadata(skills, skillsDirectory);
+
+  // If within limit, use full format
+  if (fullFormat.length <= SKILLS_BLOCK_CHAR_LIMIT) {
+    return fullFormat;
+  }
+
+  // Otherwise fall back to compact tree format
+  return formatSkillsAsTree(skills, skillsDirectory);
 }
