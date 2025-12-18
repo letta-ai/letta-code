@@ -149,7 +149,7 @@ export async function refreshAccessToken(
       client_id: OAUTH_CONFIG.clientId,
       refresh_token: refreshToken,
       refresh_token_mode: "new",
-      ...(deviceId && { device_id: deviceId }),
+      device_id: deviceId,
       ...(deviceName && { device_name: deviceName }),
     }),
   });
