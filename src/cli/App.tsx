@@ -982,6 +982,17 @@ export default function App({
               return;
             }
 
+            // Check if user cancelled before starting permission checks
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
+              return;
+            }
+
             // Check permissions for all approvals (including fancy UI tools)
             const approvalResults = await Promise.all(
               approvalsToProcess.map(async (approvalItem) => {
@@ -1228,6 +1239,17 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
+              return;
+            }
+
+            // Check if user cancelled before showing dialog
+            if (
+              userCancelledRef.current ||
+              abortControllerRef.current?.signal.aborted
+            ) {
+              setStreaming(false);
+              markIncompleteToolsAsCancelled(buffersRef.current);
+              refreshDerived();
               return;
             }
 
