@@ -66,6 +66,7 @@ export async function handleHeadlessCommand(
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
+      "from-af": { type: "string" },
     },
     strict: false,
     allowPositionals: true,
@@ -108,6 +109,23 @@ export async function handleHeadlessCommand(
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const fromAfFile = values["from-af"] as string | undefined;
+
+  // Validate --from-af flag
+  if (fromAfFile) {
+    if (specifiedAgentId) {
+      console.error("Error: --from-af cannot be used with --agent");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --from-af cannot be used with --continue");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --from-af cannot be used with --new");
+      process.exit(1);
+    }
+  }
 
   if (initBlocksRaw && !forceNew) {
     console.error(
@@ -149,8 +167,19 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 1: Try to use --agent specified ID
-  if (specifiedAgentId) {
+  // Priority 1: Import from AgentFile template
+  if (fromAfFile) {
+    const { importAgentFromFile } = await import("./agent/import");
+    const result = await importAgentFromFile({
+      filePath: fromAfFile,
+      modelOverride: model,
+      stripMessages: true,
+    });
+    agent = result.agent;
+  }
+
+  // Priority 2: Try to use --agent specified ID
+  if (!agent && specifiedAgentId) {
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
     } catch (_error) {
@@ -158,7 +187,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 2: Check if --new flag was passed (skip all resume logic)
+  // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
     const result = await createAgent(
@@ -166,9 +195,8 @@ export async function handleHeadlessCommand(
       model,
       undefined,
       updateArgs,
-      forceNew,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       initBlocks,
@@ -177,7 +205,7 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
-  // Priority 3: Try to resume from project settings (.letta/settings.local.json)
+  // Priority 4: Try to resume from project settings (.letta/settings.local.json)
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
     const localProjectSettings = settingsManager.getLocalProjectSettings();
@@ -192,7 +220,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 4: Try to reuse global lastAgent if --continue flag is passed
+  // Priority 5: Try to reuse global lastAgent if --continue flag is passed
   if (!agent && shouldContinue && settings.lastAgent) {
     try {
       agent = await client.agents.retrieve(settings.lastAgent);
@@ -203,7 +231,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 5: Create a new agent
+  // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
     const result = await createAgent(
@@ -211,9 +239,8 @@ export async function handleHeadlessCommand(
       model,
       undefined,
       updateArgs,
-      false,
       skillsDirectory,
-      settings.parallelToolCalls,
+      true, // parallelToolCalls always enabled
       sleeptimeFlag ?? settings.enableSleeptime,
       specifiedSystem,
       undefined,
@@ -222,13 +249,60 @@ export async function handleHeadlessCommand(
     agent = result.agent;
   }
 
+  // Check if we're resuming an existing agent (not creating a new one)
+  const isResumingAgent = !!(
+    specifiedAgentId ||
+    shouldContinue ||
+    (!forceNew && !fromAfFile)
+  );
+
+  // If resuming and a model or system prompt was specified, apply those changes
+  if (isResumingAgent && (model || specifiedSystem)) {
+    if (model) {
+      const { resolveModel } = await import("./agent/model");
+      const modelHandle = resolveModel(model);
+      if (!modelHandle) {
+        console.error(`Error: Invalid model "${model}"`);
+        process.exit(1);
+      }
+
+      // Optimization: Skip update if agent is already using the specified model
+      const currentModel = agent.llm_config?.model;
+      const currentEndpointType = agent.llm_config?.model_endpoint_type;
+      const currentHandle = `${currentEndpointType}/${currentModel}`;
+
+      if (currentHandle !== modelHandle) {
+        const { updateAgentLLMConfig } = await import("./agent/modify");
+        const updateArgs = getModelUpdateArgs(model);
+        await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+        // Refresh agent state after model update
+        agent = await client.agents.retrieve(agent.id);
+      }
+    }
+
+    if (specifiedSystem) {
+      const { updateAgentSystemPrompt } = await import("./agent/modify");
+      const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
+      const systemPromptOption = SYSTEM_PROMPTS.find(
+        (p) => p.id === specifiedSystem,
+      );
+      if (!systemPromptOption) {
+        console.error(`Error: Invalid system prompt "${specifiedSystem}"`);
+        process.exit(1);
+      }
+      await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
+      // Refresh agent state after system prompt update
+      agent = await client.agents.retrieve(agent.id);
+    }
+  }
+
   // Save agent ID to both project and global settings
   await settingsManager.loadLocalProjectSettings();
   settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
   settingsManager.updateSettings({ lastAgent: agent.id });
 
-  // Set agent context for tools that need it (e.g., Skill tool)
-  setAgentContext(agent.id, client, skillsDirectory);
+  // Set agent context for tools that need it (e.g., Skill tool, Task tool)
+  setAgentContext(agent.id, skillsDirectory);
   await initializeLoadedSkillsFlag();
 
   // Re-discover skills and update the skills memory block
@@ -385,6 +459,7 @@ export async function handleHeadlessCommand(
                 type: "auto_approval",
                 tool_name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
+                tool_args: decision.approval.toolArgs,
               }),
             );
           }
@@ -631,6 +706,7 @@ export async function handleHeadlessCommand(
                         type: "auto_approval",
                         tool_name: nextName,
                         tool_call_id: id,
+                        tool_args: incomingArgs,
                         reason: permission.reason,
                         matched_rule: permission.matchedRule,
                       }),
@@ -830,6 +906,55 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
+      // Before failing, check run metadata to see if this is a retriable llm_api_error
+      if (
+        stopReason === "error" &&
+        lastRunId &&
+        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
+      ) {
+        try {
+          const run = await client.runs.retrieve(lastRunId);
+          const metaError = run.metadata?.error as
+            | {
+                type?: string;
+                message?: string;
+                detail?: string;
+              }
+            | undefined;
+
+          if (metaError?.type === "llm_api_error") {
+            const attempt = llmApiErrorRetries + 1;
+            const baseDelayMs = 1000;
+            const delayMs = baseDelayMs * 2 ** (attempt - 1);
+
+            llmApiErrorRetries = attempt;
+
+            if (outputFormat === "stream-json") {
+              console.log(
+                JSON.stringify({
+                  type: "retry",
+                  reason: "llm_api_error",
+                  attempt,
+                  max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                  delay_ms: delayMs,
+                  run_id: lastRunId,
+                }),
+              );
+            } else {
+              const delaySeconds = Math.round(delayMs / 1000);
+              console.error(
+                `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+        } catch (_e) {
+          // If we can't fetch run metadata, fall through to normal error handling
+        }
+      }
+
       // Mark incomplete tool calls as cancelled to prevent stuck state
       markIncompleteToolsAsCancelled(buffers);
 

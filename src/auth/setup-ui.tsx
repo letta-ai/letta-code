@@ -58,10 +58,17 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       // Auto-open browser
       try {
         const { default: open } = await import("open");
-        await open(deviceData.verification_uri_complete);
-      } catch (openErr) {
+        // Use wait: true to properly catch errors when opener command doesn't exist
+        const subprocess = await open(deviceData.verification_uri_complete, {
+          wait: false,
+        });
+        // Handle errors from the spawned process (e.g., xdg-open not found in containers)
+        subprocess.on("error", () => {
+          // Silently ignore - user can still manually visit the URL shown above
+        });
+      } catch (_openErr) {
         // If auto-open fails, user can still manually visit the URL
-        console.error("Failed to auto-open browser:", openErr);
+        // This handles cases like missing opener commands in containers
       }
 
       // Get or generate device ID

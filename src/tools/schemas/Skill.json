@@ -1,12 +1,20 @@
 {
   "type": "object",
   "properties": {
-    "skill": {
+    "command": {
       "type": "string",
-      "description": "The skill name/id (e.g., \"data-analysis\", \"web-scraper\")"
+      "enum": ["load", "unload", "refresh"],
+      "description": "The operation to perform: \"load\" to load skills, \"unload\" to unload skills, \"refresh\" to re-scan the skills directory and update the available skills list"
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of skill IDs to load or unload (required for load/unload, not used for refresh)"
     }
   },
-  "required": ["skill"],
+  "required": ["command"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

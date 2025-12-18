@@ -1,4 +1,7 @@
 // Import useInput from vendored Ink for bracketed paste support
+
+import { EventEmitter } from "node:events";
+import { stdin } from "node:process";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
@@ -20,6 +23,16 @@ const appVersion = getVersion();
 
 // Only show token count when it exceeds this threshold
 const COUNTER_VISIBLE_THRESHOLD = 1000;
+// Window for double-escape to clear input
+const ESC_CLEAR_WINDOW_MS = 2500;
+
+// Increase max listeners to accommodate multiple useInput hooks
+// (5 in this component + autocomplete components)
+stdin.setMaxListeners(20);
+
+// Also set default max listeners on EventEmitter prototype to prevent warnings
+// from any EventEmitters that might not have their limit set properly
+EventEmitter.defaultMaxListeners = 20;
 
 export function Input({
   visible = true,
@@ -37,6 +50,7 @@ export function Input({
   currentModel,
   messageQueue,
   onEnterQueueEditMode,
+  onEscapeCancel,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -53,6 +67,7 @@ export function Input({
   currentModel?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
+  onEscapeCancel?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -115,23 +130,34 @@ export function Input({
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
+  // Handle profile confirmation: Enter confirms, any other key cancels
+  // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
+  useInput((_input, key) => {
+    if (!visible) return;
+    if (!onEscapeCancel) return;
+
+    // Enter key confirms the action - trigger submit with empty input
+    if (key.return) {
+      onSubmit("");
+      return;
+    }
+
+    // Any other key cancels
+    onEscapeCancel();
+  });
+
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
+    // Skip if onEscapeCancel is provided - handled by the confirmation handler above
+    if (onEscapeCancel) return;
+
     if (key.escape) {
       // When streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
-
-        // If there are queued messages, load them into the input box
-        if (messageQueue && messageQueue.length > 0) {
-          const queueText = messageQueue.join("\n");
-          setValue(queueText);
-          // Signal to App.tsx to clear the queue
-          if (onEnterQueueEditMode) {
-            onEnterQueueEditMode();
-          }
-        }
+        // Don't load queued messages into input - let the dequeue effect
+        // in App.tsx process them automatically after the interrupt completes.
         return;
       }
 
@@ -143,12 +169,12 @@ export function Input({
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
-          // First escape - start 1-second timer
+          // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
             setEscapePressed(false);
-          }, 1000);
+          }, ESC_CLEAR_WINDOW_MS);
         }
       }
     }
@@ -432,6 +458,33 @@ export function Input({
     setCursorPos(newCursorPos);
   };
 
+  // Handle slash command selection from autocomplete (Enter key - execute)
+  const handleCommandSelect = async (selectedCommand: string) => {
+    // For slash commands, submit immediately when selected via Enter
+    // This provides a better UX - pressing Enter on /model should open the model selector
+    const commandToSubmit = selectedCommand.trim();
+
+    // Add to history if not a duplicate of the last entry
+    if (commandToSubmit && commandToSubmit !== history[history.length - 1]) {
+      setHistory([...history, commandToSubmit]);
+    }
+
+    // Reset history navigation
+    setHistoryIndex(-1);
+    setTemporaryInput("");
+
+    setValue(""); // Clear immediately for responsiveness
+    await onSubmit(commandToSubmit);
+  };
+
+  // Handle slash command autocomplete (Tab key - fill text only)
+  const handleCommandAutocomplete = (selectedCommand: string) => {
+    // Just fill in the command text without executing
+    // User can then press Enter to execute or continue typing arguments
+    setValue(selectedCommand);
+    setCursorPos(selectedCommand.length);
+  };
+
   // Get display name and color for permission mode
   const getModeInfo = () => {
     switch (currentMode) {
@@ -487,8 +540,8 @@ export function Input({
         </Box>
       )}
 
-      {/* Queue display - show when streaming with queued messages */}
-      {streaming && messageQueue && messageQueue.length > 0 && (
+      {/* Queue display - show whenever there are queued messages */}
+      {messageQueue && messageQueue.length > 0 && (
         <QueuedMessages messages={messageQueue} />
       )}
 
@@ -509,6 +562,7 @@ export function Input({
               onSubmit={handleSubmit}
               cursorPosition={cursorPos}
               onCursorMove={setCurrentCursorPosition}
+              focus={!onEscapeCancel}
             />
           </Box>
         </Box>
@@ -520,10 +574,13 @@ export function Input({
           currentInput={value}
           cursorPosition={currentCursorPosition}
           onFileSelect={handleFileSelect}
+          onCommandSelect={handleCommandSelect}
+          onCommandAutocomplete={handleCommandAutocomplete}
           onAutocompleteActiveChange={setIsAutocompleteActive}
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          workingDirectory={process.cwd()}
         />
 
         <Box justifyContent="space-between" marginBottom={1}>

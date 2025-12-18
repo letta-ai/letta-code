@@ -1,18 +1,54 @@
-import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Text } from "ink";
+import { useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
+import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
+import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
+import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
-interface FileMatch {
-  path: string;
-  type: "file" | "dir" | "url";
-}
+// Extract the text after the "@" symbol where the cursor is positioned
+function extractSearchQuery(
+  input: string,
+  cursor: number,
+): { query: string; hasSpaceAfter: boolean; atIndex: number } | null {
+  // Find all @ positions
+  const atPositions: number[] = [];
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === "@") {
+      // Only count @ at start or after space
+      if (i === 0 || input[i - 1] === " ") {
+        atPositions.push(i);
+      }
+    }
+  }
 
-interface FileAutocompleteProps {
-  currentInput: string;
-  cursorPosition?: number;
-  onSelect?: (path: string) => void;
-  onActiveChange?: (isActive: boolean) => void;
+  if (atPositions.length === 0) return null;
+
+  // Find which @ the cursor is in
+  let atIndex = -1;
+  for (const pos of atPositions) {
+    // Find the end of this @reference (next space or end of string)
+    const afterAt = input.slice(pos + 1);
+    const spaceIndex = afterAt.indexOf(" ");
+    const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
+
+    // Check if cursor is within this @reference
+    if (cursor >= pos && cursor <= endPos) {
+      atIndex = pos;
+      break;
+    }
+  }
+
+  // If cursor is not in any @reference, don't show autocomplete
+  if (atIndex === -1) return null;
+
+  // Get text after "@" until next space or end
+  const afterAt = input.slice(atIndex + 1);
+  const spaceIndex = afterAt.indexOf(" ");
+  const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
+  const hasSpaceAfter = spaceIndex !== -1;
+
+  return { query, hasSpaceAfter, atIndex };
 }
 
 export function FileAutocomplete({
@@ -20,78 +56,19 @@ export function FileAutocomplete({
   cursorPosition = currentInput.length,
   onSelect,
   onActiveChange,
-}: FileAutocompleteProps) {
+}: AutocompleteProps) {
   const [matches, setMatches] = useState<FileMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [lastValidQuery, setLastValidQuery] = useState<string>("");
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Extract the text after the "@" symbol where the cursor is positioned
-  const extractSearchQuery = useCallback(
-    (
-      input: string,
-      cursor: number,
-    ): { query: string; hasSpaceAfter: boolean; atIndex: number } | null => {
-      // Find all @ positions
-      const atPositions: number[] = [];
-      for (let i = 0; i < input.length; i++) {
-        if (input[i] === "@") {
-          // Only count @ at start or after space
-          if (i === 0 || input[i - 1] === " ") {
-            atPositions.push(i);
-          }
-        }
-      }
-
-      if (atPositions.length === 0) return null;
-
-      // Find which @ the cursor is in
-      let atIndex = -1;
-      for (const pos of atPositions) {
-        // Find the end of this @reference (next space or end of string)
-        const afterAt = input.slice(pos + 1);
-        const spaceIndex = afterAt.indexOf(" ");
-        const endPos = spaceIndex === -1 ? input.length : pos + 1 + spaceIndex;
-
-        // Check if cursor is within this @reference
-        if (cursor >= pos && cursor <= endPos) {
-          atIndex = pos;
-          break;
-        }
-      }
-
-      // If cursor is not in any @reference, don't show autocomplete
-      if (atIndex === -1) return null;
-
-      // Get text after "@" until next space or end
-      const afterAt = input.slice(atIndex + 1);
-      const spaceIndex = afterAt.indexOf(" ");
-      const query = spaceIndex === -1 ? afterAt : afterAt.slice(0, spaceIndex);
-      const hasSpaceAfter = spaceIndex !== -1;
-
-      return { query, hasSpaceAfter, atIndex };
-    },
-    [],
-  );
-
-  // Handle keyboard navigation
-  useInput((_input, key) => {
-    if (!matches.length || isLoading) return;
-
-    const maxIndex = Math.min(matches.length, 10) - 1;
-
-    if (key.upArrow) {
-      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : maxIndex));
-    } else if (key.downArrow) {
-      setSelectedIndex((prev) => (prev < maxIndex ? prev + 1 : 0));
-    } else if ((key.tab || key.return) && onSelect) {
-      // Insert selected file path on Tab or Enter
-      const selected = matches[selectedIndex];
-      if (selected) {
-        onSelect(selected.path);
-      }
-    }
+  // Use shared navigation hook (with manual active state management due to async loading)
+  const { selectedIndex } = useAutocompleteNavigation({
+    matches,
+    maxVisible: 10,
+    onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
+    manageActiveState: false, // We manage active state manually due to async loading
+    disabled: isLoading,
   });
 
   useEffect(() => {
@@ -104,7 +81,6 @@ export function FileAutocomplete({
 
     if (!result) {
       setMatches([]);
-      setSelectedIndex(0);
       onActiveChange?.(false);
       return;
     }
@@ -120,7 +96,6 @@ export function FileAutocomplete({
       // Always hide if there's more non-whitespace content after, or another @
       if (afterSpace.trim().length > 0 || afterSpace.includes("@")) {
         setMatches([]);
-        setSelectedIndex(0);
         onActiveChange?.(false);
         return;
       }
@@ -131,7 +106,6 @@ export function FileAutocomplete({
         // Show the selected file (non-interactive)
         if (matches[0]?.path !== query) {
           setMatches([{ path: query, type: "file" }]);
-          setSelectedIndex(0);
         }
         onActiveChange?.(false); // Don't block Enter key
         return;
@@ -139,7 +113,6 @@ export function FileAutocomplete({
 
       // No valid selection was made, hide
       setMatches([]);
-      setSelectedIndex(0);
       onActiveChange?.(false);
       return;
     }
@@ -151,13 +124,11 @@ export function FileAutocomplete({
       searchFiles("", false) // Don't do deep search for empty query
         .then((results) => {
           setMatches(results);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
         })
         .catch(() => {
           setMatches([]);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(false);
         });
@@ -167,7 +138,6 @@ export function FileAutocomplete({
     // Check if it's a URL pattern (no debounce)
     if (query.startsWith("http://") || query.startsWith("https://")) {
       setMatches([{ path: query, type: "url" }]);
-      setSelectedIndex(0);
       onActiveChange?.(true);
       return;
     }
@@ -182,7 +152,6 @@ export function FileAutocomplete({
       searchFiles(query, true) // Enable deep search
         .then((results) => {
           setMatches(results);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(results.length > 0);
           // Remember this query had valid matches
@@ -192,7 +161,6 @@ export function FileAutocomplete({
         })
         .catch(() => {
           setMatches([]);
-          setSelectedIndex(0);
           setIsLoading(false);
           onActiveChange?.(false);
         });
@@ -208,7 +176,6 @@ export function FileAutocomplete({
     currentInput,
     cursorPosition,
     onActiveChange,
-    extractSearchQuery,
     lastValidQuery,
     matches[0]?.path,
   ]);
@@ -223,37 +190,30 @@ export function FileAutocomplete({
     return null;
   }
 
+  const header = (
+    <>
+      File/URL autocomplete (↑↓ navigate, Tab/Enter select):
+      {isLoading && " Searching..."}
+    </>
+  );
+
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-      marginBottom={1}
-    >
-      <Text dimColor>
-        File/URL autocomplete (↑↓ to navigate, Tab/Enter to select):
-        {isLoading && " Searching..."}
-      </Text>
+    <AutocompleteBox header={header}>
       {matches.length > 0 ? (
         <>
           {matches.slice(0, 10).map((item, idx) => (
-            <Box key={item.path} flexDirection="row" gap={1}>
+            <AutocompleteItem key={item.path} selected={idx === selectedIndex}>
               <Text
                 color={
-                  idx === selectedIndex
-                    ? colors.status.success
-                    : item.type === "dir"
-                      ? colors.status.processing
-                      : undefined
+                  idx !== selectedIndex && item.type === "dir"
+                    ? colors.status.processing
+                    : undefined
                 }
-                bold={idx === selectedIndex}
               >
-                {idx === selectedIndex ? "▶ " : "  "}
                 {item.type === "dir" ? "📁" : item.type === "url" ? "🔗" : "📄"}
-              </Text>
-              <Text bold={idx === selectedIndex}>{item.path}</Text>
-            </Box>
+              </Text>{" "}
+              {item.path}
+            </AutocompleteItem>
           ))}
           {matches.length > 10 && (
             <Text dimColor>... and {matches.length - 10} more</Text>
@@ -262,6 +222,6 @@ export function FileAutocomplete({
       ) : (
         isLoading && <Text dimColor>Searching...</Text>
       )}
-    </Box>
+    </AutocompleteBox>
   );
 }

@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "subagent_type": {
+      "type": "string",
+      "description": "The type of specialized agent to use. Available agents are discovered from .letta/agents/ directory."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "The task for the agent to perform"
+    },
+    "description": {
+      "type": "string",
+      "description": "A short (3-5 word) description of the task"
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type."
+    }
+  },
+  "required": ["subagent_type", "prompt", "description"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,11 +1,16 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import parseKeypress, { nonAlphanumericKeys } from '../parse-keypress.js';
 import reconciler from '../reconciler.js';
 import useStdin from './use-stdin.js';
 
 // Patched for bracketed paste: propagate "isPasted" and avoid leaking ESC sequences
+// Also patched to use ref for inputHandler to avoid effect churn with inline handlers
 const useInput = (inputHandler, options = {}) => {
     const { stdin, setRawMode, internal_exitOnCtrlC, internal_eventEmitter } = useStdin();
+
+    // Store handler in ref to avoid re-subscribing when handler identity changes
+    const handlerRef = useRef(inputHandler);
+    handlerRef.current = inputHandler;
 
     useEffect(() => {
         if (options.isActive === false) {
@@ -43,7 +48,7 @@ const useInput = (inputHandler, options = {}) => {
                     isPasted: true
                 };
                 reconciler.batchedUpdates(() => {
-                    inputHandler(data.sequence || data.raw || '', key);
+                    handlerRef.current(data.sequence || data.raw || '', key);
                 });
                 return;
             }
@@ -84,7 +89,7 @@ const useInput = (inputHandler, options = {}) => {
 
             if (!(input === 'c' && key.ctrl) || !internal_exitOnCtrlC) {
                 reconciler.batchedUpdates(() => {
-                    inputHandler(input, key);
+                    handlerRef.current(input, key);
                 });
             }
         };
@@ -93,7 +98,7 @@ const useInput = (inputHandler, options = {}) => {
         return () => {
             internal_eventEmitter?.removeListener('input', handleData);
         };
-    }, [options.isActive, stdin, internal_exitOnCtrlC, inputHandler]);
+    }, [options.isActive, stdin, internal_exitOnCtrlC]);
 };
 
 export default useInput;

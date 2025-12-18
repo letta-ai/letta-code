@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
@@ -11,17 +12,7 @@ type CommandLine = {
   output: string;
   phase?: "running" | "finished";
   success?: boolean;
-};
-
-// BlinkDot component for running commands
-const BlinkDot: React.FC<{ color?: string }> = ({ color = "yellow" }) => {
-  const [on, setOn] = useState(true);
-  useEffect(() => {
-    const t = setInterval(() => setOn((v) => !v), 400);
-    return () => clearInterval(t);
-  }, []);
-  // Visible = colored dot; Off = space (keeps width/alignment)
-  return <Text color={color}>{on ? "●" : " "}</Text>;
+  dimOutput?: boolean;
 };
 
 /**
@@ -73,7 +64,7 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
             <Text>{"  ⎿  "}</Text>
           </Box>
           <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-            <MarkdownDisplay text={line.output} />
+            <MarkdownDisplay text={line.output} dimColor={line.dimOutput} />
           </Box>
         </Box>
       )}

@@ -10,13 +10,6 @@ interface Command {
 }
 
 export const commands: Record<string, Command> = {
-  "/agent": {
-    desc: "Show agent link",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID
-      return "Getting agent link...";
-    },
-  },
   "/model": {
     desc: "Switch model",
     handler: () => {
@@ -25,15 +18,16 @@ export const commands: Record<string, Command> = {
   },
   "/stream": {
     desc: "Toggle token streaming on/off",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx for live toggling
       return "Toggling token streaming...";
     },
   },
   "/exit": {
-    desc: "Exit and show session stats",
+    desc: "Exit this session",
     handler: () => {
-      // Handled specially in App.tsx to show stats
+      // Handled specially in App.tsx
       return "Exiting...";
     },
   },
@@ -44,6 +38,14 @@ export const commands: Record<string, Command> = {
       return "Clearing messages...";
     },
   },
+  "/compact": {
+    desc: "Summarize conversation history (compaction)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access client and agent ID
+      return "Compacting conversation...";
+    },
+  },
   "/logout": {
     desc: "Clear credentials and exit",
     handler: () => {
@@ -51,37 +53,38 @@ export const commands: Record<string, Command> = {
       return "Clearing credentials...";
     },
   },
-  "/link": {
-    desc: "Attach Letta Code tools to current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Attaching tools...";
-    },
-  },
-  "/unlink": {
-    desc: "Remove Letta Code tools from current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Removing tools...";
-    },
-  },
   "/rename": {
-    desc: "Rename the current agent",
+    desc: "Rename the current agent (/rename <name>)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Renaming agent...";
     },
   },
-  "/swap": {
-    desc: "Alias for /resume",
-    hidden: true, // Hidden - use /resume instead
+  "/description": {
+    desc: "Update the current agent's description (/description <text>)",
     handler: () => {
-      // Handled specially in App.tsx - redirects to /resume
-      return "Opening session selector...";
+      // Handled specially in App.tsx to access agent ID and client
+      return "Updating description...";
+    },
+  },
+  "/link": {
+    desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Linking tools...";
+    },
+  },
+  "/unlink": {
+    desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Unlinking tools...";
     },
   },
   "/toolset": {
-    desc: "Switch toolset (codex/default)",
+    desc: "Switch toolset (replaces /link and /unlink)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
@@ -95,13 +98,13 @@ export const commands: Record<string, Command> = {
     },
   },
   "/download": {
-    desc: "Download agent file locally",
+    desc: "Download AgentFile (.af)",
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
       return "Downloading agent file...";
     },
   },
-  "/bashes": {
+  "/bg": {
     desc: "Show background shell processes",
     handler: () => {
       // Handled specially in App.tsx to show background processes
@@ -116,24 +119,87 @@ export const commands: Record<string, Command> = {
     },
   },
   "/skill": {
-    desc: "Enter skill creation mode (optionally: /skill <description>)",
+    desc: "Enter skill creation mode (/skill [description])",
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
     },
   },
   "/remember": {
-    desc: "Remember something from the conversation (optionally: /remember <what to remember>)",
+    desc: "Remember something from the conversation (/remember [instructions])",
     handler: () => {
       // Handled specially in App.tsx to trigger memory update
       return "Processing memory request...";
     },
   },
   "/resume": {
-    desc: "Resume a previous agent session",
+    desc: "Browse and switch to another agent",
     handler: () => {
-      // Handled specially in App.tsx to show resume selector
-      return "Opening session selector...";
+      // Handled specially in App.tsx to show agent selector
+      return "Opening agent selector...";
+    },
+  },
+  "/search": {
+    desc: "Search messages across all agents",
+    handler: () => {
+      // Handled specially in App.tsx to show message search
+      return "Opening message search...";
+    },
+  },
+  "/pin": {
+    desc: "Pin current agent globally, or use -l for local only",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Pinning agent...";
+    },
+  },
+  "/unpin": {
+    desc: "Unpin current agent globally, or use -l for local only",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Unpinning agent...";
+    },
+  },
+  "/pinned": {
+    desc: "Show pinned agents",
+    handler: () => {
+      // Handled specially in App.tsx to open pinned agents selector
+      return "Opening pinned agents...";
+    },
+  },
+  "/subagents": {
+    desc: "Manage custom subagents",
+    handler: () => {
+      // Handled specially in App.tsx to open SubagentManager component
+      return "Opening subagent manager...";
+    },
+  },
+  "/feedback": {
+    desc: "Send feedback to the Letta team",
+    handler: () => {
+      // Handled specially in App.tsx to send feedback request
+      return "Sending feedback...";
+    },
+  },
+  "/memory": {
+    desc: "View agent memory blocks",
+    handler: () => {
+      // Handled specially in App.tsx to open memory viewer
+      return "Opening memory viewer...";
+    },
+  },
+  "/usage": {
+    desc: "Show session usage statistics and balance",
+    handler: () => {
+      // Handled specially in App.tsx to display usage stats
+      return "Fetching usage statistics...";
+    },
+  },
+  "/help": {
+    desc: "Show available commands",
+    handler: () => {
+      // Handled specially in App.tsx to open help dialog
+      return "Opening help...";
     },
   },
 };

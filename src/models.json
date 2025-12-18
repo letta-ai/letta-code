@@ -6,7 +6,11 @@
     "description": "The recommended default model (currently Sonnet 4.5)",
     "isDefault": true,
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
   },
   {
     "id": "sonnet-4.5-no-reasoning",
@@ -15,7 +19,8 @@
     "description": "Sonnet 4.5 with extended thinking/reasoning explicitly disabled",
     "updateArgs": {
       "enable_reasoner": false,
-      "context_window": 180000
+      "context_window": 180000,
+      "max_output_tokens": 64000
     }
   },
   {
@@ -24,14 +29,22 @@
     "label": "Claude Opus 4.5",
     "description": "Anthropic's newest flagship Opus 4.5 model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
   },
   {
     "id": "opus-4.1",
     "handle": "anthropic/claude-opus-4-1-20250805",
     "label": "Claude Opus 4.1",
     "description": "Anthropic's previous version of Opus",
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
   },
   {
     "id": "haiku",
@@ -39,7 +52,10 @@
     "label": "Claude Haiku 4.5",
     "description": "Anthropic's fastest model",
     "isFeatured": true,
-    "updateArgs": { "context_window": 180000 }
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000
+    }
   },
   {
     "id": "gpt-5-codex",
@@ -329,6 +345,17 @@
     }
   },
   {
+    "id": "kimi-k2-thinking",
+    "handle": "openrouter/moonshotai/kimi-k2-thinking",
+    "label": "Kimi K2 Thinking",
+    "description": "Kimi's K2 model with advanced thinking capabilities",
+    "updateArgs": {
+      "context_window": 256000,
+      "max_output_tokens": 16000,
+      "temperature": 1.0
+    }
+  },
+  {
     "id": "deepseek-chat-v3.1",
     "handle": "openrouter/deepseek/deepseek-chat-v3.1",
     "label": "DeepSeek Chat V3.1",
@@ -342,6 +369,14 @@
     "handle": "google_ai/gemini-3-pro-preview",
     "label": "Gemini 3 Pro",
     "description": "Google's smartest model",
+    "isFeatured": true,
+    "updateArgs": { "context_window": 180000, "temperature": 1.0 }
+  },
+  {
+    "id": "gemini-3-flash",
+    "handle": "google_ai/gemini-3-flash-preview",
+    "label": "Gemini 3 Flash",
+    "description": "Google's fastest Gemini 3 model",
     "isFeatured": true,
     "updateArgs": { "context_window": 180000, "temperature": 1.0 }
   },
