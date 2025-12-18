@@ -1,8 +1,7 @@
 import type {
-  McpServerListResponse,
-  StreamableHTTPMcpServer,
   SseMcpServer,
   StdioMcpServer,
+  StreamableHTTPMcpServer,
 } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
 import { Box, Text, useInput } from "ink";
@@ -75,11 +74,13 @@ export const McpSelector = memo(function McpSelector({
   const [mode, setMode] = useState<Mode>("browsing");
   const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Tools viewing state
   const [viewingServer, setViewingServer] = useState<McpServer | null>(null);
   const [tools, setTools] = useState<Tool[]>([]);
-  const [attachedToolIds, setAttachedToolIds] = useState<Set<string>>(new Set());
+  const [attachedToolIds, setAttachedToolIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [toolsLoading, setToolsLoading] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [toolsPage, setToolsPage] = useState(0);
@@ -105,81 +106,86 @@ export const McpSelector = memo(function McpSelector({
   }, []);
 
   // Load tools for a specific server
-  const loadTools = useCallback(async (server: McpServer) => {
-    if (!server.id) {
-      setToolsError("Server ID not available");
-      return;
-    }
-
-    setToolsLoading(true);
-    setToolsError(null);
-    setViewingServer(server);
-    setMode("viewing-tools");
-    
-    try {
-      const client = await getClient();
-      
-      // Fetch MCP server tools
-      const toolsList = await client.mcpServers.tools.list(server.id);
-      
-      // If no tools found, might need to refresh from server
-      if (toolsList.length === 0) {
-        setToolsError(
-          "No tools found. The server may need to be refreshed. Press R to sync tools from the MCP server."
-        );
+  const loadTools = useCallback(
+    async (server: McpServer) => {
+      if (!server.id) {
+        setToolsError("Server ID not available");
+        return;
       }
-      
-      setTools(toolsList);
-      
-      // Fetch agent's current tools to check which are attached
-      const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map(t => t.id) || []);
-      setAttachedToolIds(agentToolIds);
-      
-      setToolsPage(0);
-      setToolsSelectedIndex(0);
-    } catch (err) {
-      setToolsError(
-        err instanceof Error ? err.message : "Failed to load tools",
-      );
-      setTools([]);
-    } finally {
-      setToolsLoading(false);
-    }
-  }, [agentId]);
+
+      setToolsLoading(true);
+      setToolsError(null);
+      setViewingServer(server);
+      setMode("viewing-tools");
+
+      try {
+        const client = await getClient();
+
+        // Fetch MCP server tools
+        const toolsList = await client.mcpServers.tools.list(server.id);
+
+        // If no tools found, might need to refresh from server
+        if (toolsList.length === 0) {
+          setToolsError(
+            "No tools found. The server may need to be refreshed. Press R to sync tools from the MCP server.",
+          );
+        }
+
+        setTools(toolsList);
+
+        // Fetch agent's current tools to check which are attached
+        const agent = await client.agents.retrieve(agentId);
+        const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+        setAttachedToolIds(agentToolIds);
+
+        setToolsPage(0);
+        setToolsSelectedIndex(0);
+      } catch (err) {
+        setToolsError(
+          err instanceof Error ? err.message : "Failed to load tools",
+        );
+        setTools([]);
+      } finally {
+        setToolsLoading(false);
+      }
+    },
+    [agentId],
+  );
 
   // Refresh tools from MCP server
   const refreshToolsFromServer = useCallback(async () => {
     if (!viewingServer?.id) return;
-    
+
     setToolsLoading(true);
     setToolsError(null);
-    
+
     try {
       const client = await getClient();
-      
+
       // Call refresh endpoint to sync tools from the MCP server
       await client.mcpServers.refresh(viewingServer.id, { agent_id: agentId });
-      
+
       // Reload tools list
       const toolsList = await client.mcpServers.tools.list(viewingServer.id);
       setTools(toolsList);
-      
+
       // Refresh agent's current tools
       const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map(t => t.id) || []);
+      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
       setAttachedToolIds(agentToolIds);
-      
+
       setToolsPage(0);
       setToolsSelectedIndex(0);
-      
+
       // Clear error if successful
       if (toolsList.length === 0) {
         setToolsError("Server refreshed but no tools available.");
       }
     } catch (err) {
       setToolsError(
-        err instanceof Error ? `Failed to refresh: ${err.message}` : "Failed to refresh tools",
+        err instanceof Error
+          ? `Failed to refresh: ${err.message}`
+          : "Failed to refresh tools",
       );
     } finally {
       setToolsLoading(false);
@@ -187,50 +193,55 @@ export const McpSelector = memo(function McpSelector({
   }, [agentId, viewingServer]);
 
   // Toggle tool attachment
-  const toggleTool = useCallback(async (tool: Tool) => {
-    setIsTogglingTool(true);
-    try {
-      const client = await getClient();
-      const isAttached = attachedToolIds.has(tool.id);
-      
-      if (isAttached) {
-        // Detach tool
-        await client.agents.tools.detach(tool.id, { agent_id: agentId });
-      } else {
-        // Attach tool
-        await client.agents.tools.attach(tool.id, { agent_id: agentId });
+  const toggleTool = useCallback(
+    async (tool: Tool) => {
+      setIsTogglingTool(true);
+      try {
+        const client = await getClient();
+        const isAttached = attachedToolIds.has(tool.id);
+
+        if (isAttached) {
+          // Detach tool
+          await client.agents.tools.detach(tool.id, { agent_id: agentId });
+        } else {
+          // Attach tool
+          await client.agents.tools.attach(tool.id, { agent_id: agentId });
+        }
+
+        // Fetch agent's current tools to get accurate total count
+        const agent = await client.agents.retrieve(agentId);
+        const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+        setAttachedToolIds(agentToolIds);
+      } catch (err) {
+        setToolsError(
+          err instanceof Error
+            ? err.message
+            : "Failed to toggle tool attachment",
+        );
+      } finally {
+        setIsTogglingTool(false);
       }
-      
-      // Fetch agent's current tools to get accurate total count
-      const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map(t => t.id) || []);
-      setAttachedToolIds(agentToolIds);
-    } catch (err) {
-      setToolsError(
-        err instanceof Error ? err.message : "Failed to toggle tool attachment",
-      );
-    } finally {
-      setIsTogglingTool(false);
-    }
-  }, [agentId, attachedToolIds]);
+    },
+    [agentId, attachedToolIds],
+  );
 
   // Attach all tools
   const attachAllTools = useCallback(async () => {
     setIsTogglingTool(true);
     try {
       const client = await getClient();
-      
+
       // Attach tools that aren't already attached
-      const unattachedTools = tools.filter(t => !attachedToolIds.has(t.id));
+      const unattachedTools = tools.filter((t) => !attachedToolIds.has(t.id));
       await Promise.all(
-        unattachedTools.map(tool => 
-          client.agents.tools.attach(tool.id, { agent_id: agentId })
-        )
+        unattachedTools.map((tool) =>
+          client.agents.tools.attach(tool.id, { agent_id: agentId }),
+        ),
       );
-      
+
       // Fetch agent's current tools to get accurate total count
       const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map(t => t.id) || []);
+      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
       setAttachedToolIds(agentToolIds);
     } catch (err) {
       setToolsError(
@@ -246,18 +257,18 @@ export const McpSelector = memo(function McpSelector({
     setIsTogglingTool(true);
     try {
       const client = await getClient();
-      
+
       // Detach only the tools from this server that are currently attached
-      const attachedTools = tools.filter(t => attachedToolIds.has(t.id));
+      const attachedTools = tools.filter((t) => attachedToolIds.has(t.id));
       await Promise.all(
-        attachedTools.map(tool => 
-          client.agents.tools.detach(tool.id, { agent_id: agentId })
-        )
+        attachedTools.map((tool) =>
+          client.agents.tools.detach(tool.id, { agent_id: agentId }),
+        ),
       );
-      
+
       // Fetch agent's current tools to get accurate total count
       const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map(t => t.id) || []);
+      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
       setAttachedToolIds(agentToolIds);
     } catch (err) {
       setToolsError(
@@ -324,10 +335,13 @@ export const McpSelector = memo(function McpSelector({
     // Handle viewing tools mode
     if (mode === "viewing-tools") {
       if (isTogglingTool) return; // Prevent input during toggle
-      
+
       const toolsTotalPages = Math.ceil(tools.length / TOOLS_DISPLAY_PAGE_SIZE);
       const toolsStartIndex = toolsPage * TOOLS_DISPLAY_PAGE_SIZE;
-      const pageTools = tools.slice(toolsStartIndex, toolsStartIndex + TOOLS_DISPLAY_PAGE_SIZE);
+      const pageTools = tools.slice(
+        toolsStartIndex,
+        toolsStartIndex + TOOLS_DISPLAY_PAGE_SIZE,
+      );
       const selectedTool = pageTools[toolsSelectedIndex];
 
       if (key.upArrow) {
@@ -339,12 +353,17 @@ export const McpSelector = memo(function McpSelector({
           setToolsSelectedIndex((prev) => Math.max(0, prev - 1));
         }
       } else if (key.downArrow) {
-        if (toolsSelectedIndex === pageTools.length - 1 && toolsPage < toolsTotalPages - 1) {
+        if (
+          toolsSelectedIndex === pageTools.length - 1 &&
+          toolsPage < toolsTotalPages - 1
+        ) {
           // At bottom of page, go to next page
           setToolsPage((prev) => prev + 1);
           setToolsSelectedIndex(0);
         } else {
-          setToolsSelectedIndex((prev) => Math.min(pageTools.length - 1, prev + 1));
+          setToolsSelectedIndex((prev) =>
+            Math.min(pageTools.length - 1, prev + 1),
+          );
         }
       } else if ((key.return || input === " ") && selectedTool) {
         // Space or Enter to toggle selected tool
@@ -378,7 +397,10 @@ export const McpSelector = memo(function McpSelector({
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       }
     } else if (key.downArrow) {
-      if (selectedIndex === pageServers.length - 1 && currentPage < totalPages - 1) {
+      if (
+        selectedIndex === pageServers.length - 1 &&
+        currentPage < totalPages - 1
+      ) {
         // At bottom of page, go to next page
         setCurrentPage((prev) => prev + 1);
         setSelectedIndex(0);
@@ -410,7 +432,10 @@ export const McpSelector = memo(function McpSelector({
   if (mode === "viewing-tools" && viewingServer) {
     const toolsTotalPages = Math.ceil(tools.length / TOOLS_DISPLAY_PAGE_SIZE);
     const toolsStartIndex = toolsPage * TOOLS_DISPLAY_PAGE_SIZE;
-    const pageTools = tools.slice(toolsStartIndex, toolsStartIndex + TOOLS_DISPLAY_PAGE_SIZE);
+    const pageTools = tools.slice(
+      toolsStartIndex,
+      toolsStartIndex + TOOLS_DISPLAY_PAGE_SIZE,
+    );
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -466,11 +491,7 @@ export const McpSelector = memo(function McpSelector({
               const statusIndicator = isAttached ? "✓" : " ";
 
               return (
-                <Box
-                  key={tool.id}
-                  flexDirection="column"
-                  marginBottom={1}
-                >
+                <Box key={tool.id} flexDirection="column" marginBottom={1}>
                   {/* Row 1: Selection indicator, attachment status, and tool name */}
                   <Box flexDirection="row">
                     <Text
@@ -510,24 +531,32 @@ export const McpSelector = memo(function McpSelector({
         )}
 
         {/* Footer with pagination and controls */}
-        {!toolsLoading && !toolsError && tools.length > 0 && (() => {
-          const attachedFromThisServer = tools.filter(t => attachedToolIds.has(t.id)).length;
-          return (
-            <Box flexDirection="column" marginTop={1}>
-              <Box>
-                <Text dimColor>
-                  {toolsTotalPages > 1 && `Page ${toolsPage + 1}/${toolsTotalPages} · `}
-                  {attachedFromThisServer}/{tools.length} attached from server · {attachedToolIds.size} total on agent
-                </Text>
+        {!toolsLoading &&
+          !toolsError &&
+          tools.length > 0 &&
+          (() => {
+            const attachedFromThisServer = tools.filter((t) =>
+              attachedToolIds.has(t.id),
+            ).length;
+            return (
+              <Box flexDirection="column" marginTop={1}>
+                <Box>
+                  <Text dimColor>
+                    {toolsTotalPages > 1 &&
+                      `Page ${toolsPage + 1}/${toolsTotalPages} · `}
+                    {attachedFromThisServer}/{tools.length} attached from server
+                    · {attachedToolIds.size} total on agent
+                  </Text>
+                </Box>
+                <Box>
+                  <Text dimColor>
+                    ↑↓ navigate · Space/Enter toggle · A attach all · D detach
+                    all · R refresh · Esc back
+                  </Text>
+                </Box>
               </Box>
-              <Box>
-                <Text dimColor>
-                  ↑↓ navigate · Space/Enter toggle · A attach all · D detach all · R refresh · Esc back
-                </Text>
-              </Box>
-            </Box>
-          );
-        })()}
+            );
+          })()}
       </Box>
     );
   }
@@ -676,7 +705,8 @@ export const McpSelector = memo(function McpSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter view tools · A add · D delete · R refresh · Esc close
+              ↑↓ navigate · Enter view tools · A add · D delete · R refresh ·
+              Esc close
             </Text>
           </Box>
         </Box>
