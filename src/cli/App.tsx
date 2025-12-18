@@ -2935,6 +2935,19 @@ ${recentCommits}
                     parsedArgs,
                     { toolCallId: ac.approval.toolCallId },
                   );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
                   return {
                     toolCallId: ac.approval.toolCallId,
                     result,
@@ -2942,19 +2955,38 @@ ${recentCommits}
                 }),
               );
 
-              // Create denial results for auto-denied
-              const autoDeniedResults = autoDenied.map((ac) => ({
-                type: "approval" as const,
-                tool_call_id: ac.approval.toolCallId,
-                approve: false,
-                reason:
+              // Create denial results for auto-denied and update UI
+              const autoDeniedResults = autoDenied.map((ac) => {
+                const reason =
                   "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`,
-              }));
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
 
-              // Combine results and queue them to be sent with the user's message
-              const allResults = [
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason,
+                };
+              });
+
+              refreshDerived();
+
+              // Combine results and send directly with the user's message
+              // (can't use state here as it won't be available until next render)
+              const recoveryApprovalResults = [
                 ...autoAllowedResults.map((ar) => ({
                   type: "approval" as const,
                   tool_call_id: ar.toolCallId,
@@ -2964,9 +2996,23 @@ ${recentCommits}
                 ...autoDeniedResults,
               ];
 
-              // Queue these results to be sent with the message
-              setQueuedApprovalResults(allResults);
-              // Don't remove the user message or return false - let it continue to send
+              // Build and send initialInput directly
+              const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                {
+                  type: "approval",
+                  approvals: recoveryApprovalResults,
+                },
+                {
+                  type: "message",
+                  role: "user",
+                  content:
+                    messageContent as unknown as MessageCreate["content"],
+                },
+              ];
+
+              await processConversation(initialInput);
+              clearPlaceholdersInText(msg);
+              return { submitted: true };
             } else {
               // Some approvals need user input - show dialog
               // Remove the optimistic user message from transcript
@@ -2996,6 +3042,19 @@ ${recentCommits}
                     parsedArgs,
                     { toolCallId: ac.approval.toolCallId },
                   );
+
+                  // Update buffers with tool return for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: result.toolReturn,
+                    status: result.status,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  });
+
                   return {
                     toolCallId: ac.approval.toolCallId,
                     result,
@@ -3003,14 +3062,30 @@ ${recentCommits}
                 }),
               );
 
-              // Create denial reasons for auto-denied
-              const autoDeniedWithReasons = autoDenied.map((ac) => ({
-                approval: ac.approval,
-                reason:
+              // Create denial reasons for auto-denied and update UI
+              const autoDeniedWithReasons = autoDenied.map((ac) => {
+                const reason =
                   "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`,
-              }));
+                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+
+                // Update buffers with denial for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
 
               // Store auto-handled results to send along with user decisions
               setAutoHandledResults(autoAllowedWithResults);
