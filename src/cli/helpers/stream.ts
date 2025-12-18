@@ -31,6 +31,7 @@ export async function drainStream(
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
+  onFirstMessage?: () => void,
 ): Promise<DrainResult> {
   const startTime = performance.now();
 
@@ -47,6 +48,7 @@ export async function drainStream(
   let stopReason: StopReasonType | null = null;
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
+  let hasCalledFirstMessage = false;
 
   for await (const chunk of stream) {
     // console.log("chunk", chunk);
@@ -70,6 +72,18 @@ export async function drainStream(
     }
 
     if (chunk.message_type === "ping") continue;
+
+    // Call onFirstMessage callback on the first agent response chunk
+    if (
+      !hasCalledFirstMessage &&
+      onFirstMessage &&
+      (chunk.message_type === "reasoning_message" ||
+        chunk.message_type === "assistant_message")
+    ) {
+      hasCalledFirstMessage = true;
+      // Call async in background - don't block stream processing
+      queueMicrotask(() => onFirstMessage());
+    }
 
     // Remove tool from pending approvals when it completes (server-side execution finished)
     // This means the tool was executed server-side and doesn't need approval
@@ -218,6 +232,7 @@ export async function drainStream(
  * @param buffers - Buffer to accumulate chunks
  * @param refresh - Callback to refresh UI
  * @param abortSignal - Optional abort signal for cancellation
+ * @param onFirstMessage - Optional callback to invoke on first message chunk
  * @returns Result with stop_reason, approval info, and timing
  */
 export async function drainStreamWithResume(
@@ -225,11 +240,18 @@ export async function drainStreamWithResume(
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
+  onFirstMessage?: () => void,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
 
   // Attempt initial drain
-  let result = await drainStream(stream, buffers, refresh, abortSignal);
+  let result = await drainStream(
+    stream,
+    buffers,
+    refresh,
+    abortSignal,
+    onFirstMessage,
+  );
 
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
   if (
@@ -247,6 +269,7 @@ export async function drainStreamWithResume(
       });
 
       // Continue draining from where we left off
+      // Note: Don't pass onFirstMessage again - already called in initial drain
       const resumeResult = await drainStream(
         resumeStream,
         buffers,

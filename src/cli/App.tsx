@@ -833,10 +833,9 @@ export default function App({
             currentInput,
           );
 
-          // Sync agent state immediately in parallel to detect model changes early
-          // This ensures the UI shows the correct model as soon as possible
-          // Fire and forget - don't block the stream processing
-          (async () => {
+          // Define callback to sync agent state on first message chunk
+          // This ensures the UI shows the correct model as early as possible
+          const syncAgentState = async () => {
             try {
               const client = await getClient();
               const agent = await client.agents.retrieve(agentIdRef.current);
@@ -882,7 +881,7 @@ export default function App({
               // Silently fail - don't interrupt the conversation flow
               console.error("Failed to sync agent state:", error);
             }
-          })();
+          };
 
           const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
             await drainStreamWithResume(
@@ -890,6 +889,7 @@ export default function App({
               buffersRef.current,
               refreshDerivedThrottled,
               abortControllerRef.current?.signal,
+              syncAgentState,
             );
 
           // Track API duration
