@@ -53,6 +53,7 @@ import { Input } from "./components/InputRich";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
@@ -407,9 +408,13 @@ export default function App({
     | "subagent"
     | "feedback"
     | "memory"
+    | "pin"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+
+  // Pin dialog state
+  const [pinDialogLocal, setPinDialogLocal] = useState(false);
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -1886,6 +1891,23 @@ export default function App({
             return { submitted: true };
           }
 
+          // Validate the name before sending to API
+          const validationError = validateAgentName(newName);
+          if (validationError) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: validationError,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -2091,6 +2113,29 @@ export default function App({
 
         // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
+          const argsStr = msg.trim().slice(4).trim();
+
+          // Parse args to check if name was provided
+          const parts = argsStr.split(/\s+/).filter(Boolean);
+          let hasNameArg = false;
+          let isLocal = false;
+
+          for (const part of parts) {
+            if (part === "-l" || part === "--local") {
+              isLocal = true;
+            } else {
+              hasNameArg = true;
+            }
+          }
+
+          // If no name provided, show the pin dialog
+          if (!hasNameArg) {
+            setPinDialogLocal(isLocal);
+            setActiveOverlay("pin");
+            return { submitted: true };
+          }
+
+          // Name was provided, use existing behavior
           const profileCtx: ProfileCommandContext = {
             buffersRef,
             refreshDerived,
@@ -2099,7 +2144,6 @@ export default function App({
             setCommandRunning,
             setAgentName,
           };
-          const argsStr = msg.trim().slice(4).trim();
           await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
         }
@@ -4083,6 +4127,74 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+              />
+            )}
+
+            {/* Pin Dialog - for naming agent before pinning */}
+            {activeOverlay === "pin" && (
+              <PinDialog
+                currentName={agentName || ""}
+                local={pinDialogLocal}
+                onSubmit={async (newName) => {
+                  closeOverlay();
+                  setCommandRunning(true);
+
+                  const cmdId = uid("cmd");
+                  const scopeText = pinDialogLocal
+                    ? "to this project"
+                    : "globally";
+                  const displayName =
+                    newName || agentName || agentId.slice(0, 12);
+
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/pin",
+                    output: `Pinning "${displayName}" ${scopeText}...`,
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    const client = await getClient();
+
+                    // Rename if new name provided
+                    if (newName && newName !== agentName) {
+                      await client.agents.update(agentId, { name: newName });
+                      setAgentName(newName);
+                    }
+
+                    // Pin the agent
+                    if (pinDialogLocal) {
+                      settingsManager.pinLocal(agentId);
+                    } else {
+                      settingsManager.pinGlobal(agentId);
+                    }
+
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      phase: "finished",
+                      success: true,
+                    });
+                  } catch (error) {
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/pin",
+                      output: `Failed to pin: ${error}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                  } finally {
+                    setCommandRunning(false);
+                    refreshDerived();
+                  }
+                }}
+                onCancel={closeOverlay}
               />
             )}
 
