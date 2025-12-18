@@ -97,8 +97,8 @@ function buildModelSettings(
     }
     settings = googleVertexSettings;
   } else {
-    // For BYOK/unknown providers, don't send model_settings - use server defaults
-    settings = {};
+    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
+    settings = { parallel_tool_calls: true };
   }
 
   // Apply max_output_tokens for all providers if specified
