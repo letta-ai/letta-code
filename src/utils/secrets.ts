@@ -225,3 +225,8 @@ export async function isKeychainAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+/** Const value of isKeychainAvailable
+ * Precomputed for tests
+ */
+ export const keychainAvailablePrecompute = await isKeychainAvailable();

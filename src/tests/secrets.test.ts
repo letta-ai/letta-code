@@ -14,24 +14,18 @@ import {
   setApiKey,
   setRefreshToken,
   setSecureTokens,
+  keychainAvailablePrecompute
 } from "../utils/secrets";
 
 describe("Secrets utilities", () => {
-  let keychainSupported: boolean = false;
-
   beforeEach(async () => {
-    // Check if secrets are available on this system
-    keychainSupported = await isKeychainAvailable();
-
-    if (keychainSupported) {
-      // Clean up any existing test tokens
+    if (keychainAvailablePrecompute) {
       await deleteSecureTokens();
     }
   });
 
   afterEach(async () => {
-    if (keychainSupported) {
-      // Clean up after each test
+    if (keychainAvailablePrecompute) {
       await deleteSecureTokens();
     }
   });
@@ -41,7 +35,7 @@ describe("Secrets utilities", () => {
     expect(typeof available).toBe("boolean");
   });
 
-  test.skipIf(!keychainSupported)(
+  test.skipIf(!keychainAvailablePrecompute)(
     "can store and retrieve API key",
     async () => {
       const testApiKey = "sk-test-api-key-12345";
@@ -53,7 +47,7 @@ describe("Secrets utilities", () => {
     },
   );
 
-  test.skipIf(!keychainSupported)(
+  test.skipIf(!keychainAvailablePrecompute)(
     "can store and retrieve refresh token",
     async () => {
       const testRefreshToken = "rt-test-refresh-token-67890";
@@ -65,7 +59,7 @@ describe("Secrets utilities", () => {
     },
   );
 
-  test.skipIf(!keychainSupported)(
+  test.skipIf(!keychainAvailablePrecompute)(
     "can store and retrieve both tokens together",
     async () => {
       const tokens: SecureTokens = {
@@ -81,7 +75,7 @@ describe("Secrets utilities", () => {
     },
   );
 
-  test.skipIf(!keychainSupported)("can delete API key", async () => {
+  test.skipIf(!keychainAvailablePrecompute)("can delete API key", async () => {
     const testApiKey = "sk-test-api-key-delete";
 
     await setApiKey(testApiKey);
@@ -93,7 +87,7 @@ describe("Secrets utilities", () => {
     expect(retrievedApiKey).toBe(null);
   });
 
-  test.skipIf(!keychainSupported)("can delete refresh token", async () => {
+  test.skipIf(!keychainAvailablePrecompute)("can delete refresh token", async () => {
     const testRefreshToken = "rt-test-refresh-token-delete";
 
     await setRefreshToken(testRefreshToken);
@@ -105,7 +99,7 @@ describe("Secrets utilities", () => {
     expect(retrievedRefreshToken).toBe(null);
   });
 
-  test.skipIf(!keychainSupported)("can delete all tokens", async () => {
+  test.skipIf(!keychainAvailablePrecompute)("can delete all tokens", async () => {
     const tokens: SecureTokens = {
       apiKey: "sk-test-api-key-delete-all",
       refreshToken: "rt-test-refresh-token-delete-all",
@@ -122,7 +116,7 @@ describe("Secrets utilities", () => {
     expect(retrievedTokens.refreshToken).toBeUndefined();
   });
 
-  test.skipIf(!keychainSupported)(
+  test.skipIf(!keychainAvailablePrecompute)(
     "returns null for non-existent tokens",
     async () => {
       // Ensure no tokens exist
@@ -139,7 +133,7 @@ describe("Secrets utilities", () => {
     },
   );
 
-  test.skipIf(!keychainSupported)("handles partial token storage", async () => {
+  test.skipIf(!keychainAvailablePrecompute)("handles partial token storage", async () => {
     // Store only API key
     await setSecureTokens({ apiKey: "sk-only-api-key" });
 
@@ -158,7 +152,7 @@ describe("Secrets utilities", () => {
 
   test("gracefully handles secrets unavailability", async () => {
     // This test should work even if secrets are not available
-    if (keychainSupported) {
+    if (await isKeychainAvailable()) {
       // If secrets are available, this is a basic functionality test
       const tokens = await getSecureTokens();
       expect(typeof tokens).toBe("object");
