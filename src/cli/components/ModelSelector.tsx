@@ -40,7 +40,9 @@ export function ModelSelector({
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // undefined: not loaded yet, Set<string>: loaded, null: error fallback
+  // undefined: not loaded yet (show spinner)
+  // Set<string>: loaded and filtered
+  // null: error fallback (show all models + warning)
   const [availableHandles, setAvailableHandles] = useState<
     Set<string> | null | undefined
   >(undefined);
@@ -58,7 +60,7 @@ export function ModelSelector({
     };
   }, []);
 
-  // Fetch available models from the API
+  // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
     try {
       if (forceRefresh) {
@@ -84,6 +86,7 @@ export function ModelSelector({
       setError(err instanceof Error ? err.message : "Failed to load models");
       setIsLoading(false);
       setRefreshing(false);
+      // Fallback: show all models if API fails
       setAvailableHandles(null);
       setAllApiHandles([]);
     }
@@ -167,11 +170,13 @@ export function ModelSelector({
 
   useInput(
     (input, key) => {
+      // Allow ESC even while loading
       if (key.escape) {
         onCancel();
         return;
       }
 
+      // Allow 'r' to refresh even while loading (but not while already refreshing)
       if (input === "r" && !refreshing) {
         loadModels.current(true);
         return;
@@ -182,6 +187,7 @@ export function ModelSelector({
         return;
       }
 
+      // Disable other inputs while loading
       if (isLoading || refreshing || visibleModels.length === 0) {
         return;
       }
@@ -203,6 +209,7 @@ export function ModelSelector({
         }
       }
     },
+    // Keep active so ESC and 'r' work while loading.
     { isActive: true },
   );
 
