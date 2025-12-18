@@ -4185,19 +4185,17 @@ Plan file path: ${planFilePath}`;
         ? agentState?.name
           ? `Resumed **${agentState.name}**`
           : "Resumed agent"
-        : "Created a new agent (use /pin to save, /pinned or /resume to switch)";
+        : "Creating a new agent (use /pin to save)";
 
-      const agentNameLine =
-        !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /rename to rename)`
-          : "";
-
-      const statusLines = [
-        resumedMessage,
-        agentNameLine,
-        ...hints,
-        agentUrl ? `→ ${agentUrl}` : "",
-      ].filter(Boolean);
+      const statusLines = continueSession
+        ? [resumedMessage, ...hints, agentUrl ? `→ ${agentUrl}` : ""].filter(
+            Boolean,
+          )
+        : [
+            resumedMessage,
+            agentUrl ? `→ ${agentUrl}` : "",
+            "→ Tip: use /init to initialize your agent's memory system!",
+          ].filter(Boolean);
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
