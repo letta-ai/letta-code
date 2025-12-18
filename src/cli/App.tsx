@@ -42,6 +42,11 @@ import {
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
+import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
@@ -50,6 +55,7 @@ import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { Input } from "./components/InputRich";
+import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -409,6 +415,7 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "mcp"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -1690,6 +1697,34 @@ export default function App({
         // Special handling for /memory command - opens memory viewer
         if (trimmed === "/memory") {
           setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // Special handling for /mcp command - manage MCP servers
+        if (msg.trim().startsWith("/mcp")) {
+          const parts = msg.trim().split(/\s+/);
+          const subcommand = parts[1]?.toLowerCase();
+
+          const mcpCtx: McpCommandContext = {
+            buffersRef,
+            refreshDerived,
+            setCommandRunning,
+          };
+
+          // /mcp - open MCP server selector
+          if (!subcommand) {
+            setActiveOverlay("mcp");
+            return { submitted: true };
+          }
+
+          // /mcp add --transport <type> <name> <url/command> [options]
+          if (subcommand === "add") {
+            await handleMcpAdd(mcpCtx, msg, parts.slice(2));
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleMcpUsage(mcpCtx, msg);
           return { submitted: true };
         }
 
@@ -4429,6 +4464,29 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+              />
+            )}
+
+            {/* MCP Server Selector - conditionally mounted as overlay */}
+            {activeOverlay === "mcp" && (
+              <McpSelector
+                agentId={agentId}
+                onAdd={() => {
+                  // Close overlay and prompt user to use /mcp add command
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/mcp",
+                    output: "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
               />
             )}
 
