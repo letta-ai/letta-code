@@ -1851,6 +1851,52 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /compact command - summarize conversation history
+        if (msg.trim() === "/compact") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Compacting conversation history...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+            await client.agents.messages.compact(agentId);
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Conversation history compacted (summarized)",
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /rename command - rename the agent
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
