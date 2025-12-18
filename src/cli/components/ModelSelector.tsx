@@ -200,6 +200,18 @@ export function ModelSelector({
         setSelectedIndex((prev) =>
           Math.min(visibleModels.length - 1, prev + 1),
         );
+      } else if (input === "j" || input === "J") {
+        // Previous page
+        if (currentPage > 0) {
+          setCurrentPage((prev) => prev - 1);
+          setSelectedIndex(0);
+        }
+      } else if (input === "k" || input === "K") {
+        // Next page
+        if (currentPage < totalPages - 1) {
+          setCurrentPage((prev) => prev + 1);
+          setSelectedIndex(0);
+        }
       } else if (key.leftArrow && currentPage > 0) {
         setCurrentPage((prev) => prev - 1);
         setSelectedIndex(0);
@@ -219,14 +231,14 @@ export function ModelSelector({
 
   const getCategoryLabel = (cat: ModelCategory) => {
     if (cat === "supported") return `Supported (${supportedModels.length})`;
-    return `All Models (${otherModelHandles.length})`;
+    return `All Available Models (${otherModelHandles.length})`;
   };
 
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ navigate, ←→ page, Enter select, ESC cancel)
+          Select Model (↑↓ navigate, ←→/jk page, Enter select, ESC cancel)
         </Text>
         {!isLoading && !refreshing && (
           <Box>
