@@ -68,7 +68,7 @@ export async function pollForToken(
   deviceCode: string,
   interval: number = 5,
   expiresIn: number = 900,
-  deviceId?: string,
+  deviceId: string,
   deviceName?: string,
 ): Promise<TokenResponse> {
   const startTime = Date.now();
@@ -88,7 +88,7 @@ export async function pollForToken(
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",
             client_id: OAUTH_CONFIG.clientId,
             device_code: deviceCode,
-            ...(deviceId && { device_id: deviceId }),
+            device_id: deviceId,
             ...(deviceName && { device_name: deviceName }),
           }),
         },
@@ -138,7 +138,7 @@ export async function pollForToken(
  */
 export async function refreshAccessToken(
   refreshToken: string,
-  deviceId?: string,
+  deviceId: string,
   deviceName?: string,
 ): Promise<TokenResponse> {
   const response = await fetch(`${OAUTH_CONFIG.authBaseUrl}/api/oauth/token`, {

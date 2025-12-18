@@ -2,6 +2,7 @@ import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
+import {hostname} from "node:os";
 
 export async function getClient() {
   const settings = settingsManager.getSettings();
