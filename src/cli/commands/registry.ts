@@ -38,6 +38,13 @@ export const commands: Record<string, Command> = {
       return "Clearing messages...";
     },
   },
+  "/compact": {
+    desc: "Summarize conversation history (compaction)",
+    handler: () => {
+      // Handled specially in App.tsx to access client and agent ID
+      return "Compacting conversation...";
+    },
+  },
   "/logout": {
     desc: "Clear credentials and exit",
     handler: () => {
