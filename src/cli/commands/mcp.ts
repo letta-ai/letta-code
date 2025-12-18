@@ -2,9 +2,9 @@
 // MCP server command handlers
 
 import type {
-  CreateStreamableHTTPMcpServer,
   CreateSseMcpServer,
   CreateStdioMcpServer,
+  CreateStreamableHTTPMcpServer,
 } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import { getClient } from "../../agent/client";
 import type { Buffers, Line } from "../helpers/accumulator";
@@ -77,11 +77,11 @@ function parseCommandArgs(commandStr: string): string[] {
   let current = "";
   let inQuotes = false;
   let quoteChar = "";
-  
+
   for (let i = 0; i < commandStr.length; i++) {
     const char = commandStr[i];
     if (!char) continue; // Skip if undefined (shouldn't happen but type safety)
-    
+
     if ((char === '"' || char === "'") && !inQuotes) {
       // Start of quoted string
       inQuotes = true;
@@ -101,12 +101,12 @@ function parseCommandArgs(commandStr: string): string[] {
       current += char;
     }
   }
-  
+
   // Add final argument if any
   if (current) {
     args.push(current);
   }
-  
+
   return args;
 }
 
@@ -127,7 +127,7 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   let name: string | null = null;
   let url: string | null = null;
   let command: string | null = null;
-  let args: string[] = [];
+  const args: string[] = [];
   const headers: Record<string, string> = {};
   let authToken: string | null = null;
 
@@ -153,9 +153,9 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
         // Parse "key: value" or "key=value"
         const colonMatch = headerValue.match(/^([^:]+):\s*(.+)$/);
         const equalsMatch = headerValue.match(/^([^=]+)=(.+)$/);
-        if (colonMatch && colonMatch[1] && colonMatch[2]) {
+        if (colonMatch?.[1] && colonMatch[2]) {
           headers[colonMatch[1].trim()] = colonMatch[2].trim();
-        } else if (equalsMatch && equalsMatch[1] && equalsMatch[2]) {
+        } else if (equalsMatch?.[1] && equalsMatch[2]) {
           headers[equalsMatch[1].trim()] = equalsMatch[2].trim();
         }
       }
@@ -194,14 +194,14 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
     return null;
   }
 
-  return { 
-    transport, 
-    name, 
-    url: url || null, 
-    command: command || null, 
-    args, 
-    headers, 
-    authToken: authToken || null 
+  return {
+    transport,
+    name,
+    url: url || null,
+    command: command || null,
+    args,
+    headers,
+    authToken: authToken || null,
   };
 }
 
@@ -220,7 +220,7 @@ export async function handleMcpAdd(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header \"key: value\"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --header \"Authorization: Bearer token\"",
+      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --header "Authorization: Bearer token"',
       false,
     );
     return;
@@ -253,7 +253,8 @@ export async function handleMcpAdd(
         mcp_server_type: "streamable_http",
         server_url: args.url,
         auth_token: args.authToken,
-        custom_headers: Object.keys(args.headers).length > 0 ? args.headers : null,
+        custom_headers:
+          Object.keys(args.headers).length > 0 ? args.headers : null,
       };
     } else if (args.transport === "sse") {
       if (!args.url) {
@@ -263,7 +264,8 @@ export async function handleMcpAdd(
         mcp_server_type: "sse",
         server_url: args.url,
         auth_token: args.authToken,
-        custom_headers: Object.keys(args.headers).length > 0 ? args.headers : null,
+        custom_headers:
+          Object.keys(args.headers).length > 0 ? args.headers : null,
       };
     } else {
       // stdio
@@ -307,10 +309,10 @@ export async function handleMcpAdd(
 
     try {
       await client.mcpServers.refresh(server.id);
-      
+
       // Get tool count
       const tools = await client.mcpServers.tools.list(server.id);
-      
+
       updateCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -321,7 +323,8 @@ export async function handleMcpAdd(
       );
     } catch (refreshErr) {
       // If refresh fails, still show success but warn about tools
-      const errorMsg = refreshErr instanceof Error ? refreshErr.message : "Unknown error";
+      const errorMsg =
+        refreshErr instanceof Error ? refreshErr.message : "Unknown error";
       updateCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
@@ -352,7 +355,7 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Usage: /mcp [add ...]\n  /mcp - list MCP servers\n  /mcp add --transport <http|sse|stdio> <name> <url|command> [...] - add a new server\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http api https://api.example.com --header \"Authorization: Bearer token\"",
+    'Usage: /mcp [add ...]\n  /mcp - list MCP servers\n  /mcp add --transport <http|sse|stdio> <name> <url|command> [...] - add a new server\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http api https://api.example.com --header "Authorization: Bearer token"',
     false,
   );
 }

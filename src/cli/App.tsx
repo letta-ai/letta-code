@@ -33,6 +33,11 @@ import {
   savePermissionRule,
 } from "../tools/manager";
 import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
+import {
   addCommandResult,
   handlePin,
   handleProfileDelete,
@@ -42,11 +47,6 @@ import {
   type ProfileCommandContext,
   validateProfileLoad,
 } from "./commands/profile";
-import {
-  handleMcpAdd,
-  handleMcpUsage,
-  type McpCommandContext,
-} from "./commands/mcp";
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
@@ -1791,6 +1791,8 @@ export default function App({
 
           // Unknown subcommand
           handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
 
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
@@ -4658,7 +4660,8 @@ Plan file path: ${planFilePath}`;
                     kind: "command",
                     id: cmdId,
                     input: "/mcp",
-                    output: "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    output:
+                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
                     phase: "finished",
                     success: true,
                   });
