@@ -416,7 +416,7 @@ async function executeSubagent(
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
         const primaryModel = await getPrimaryAgentModel();
-        if (primaryModel && primaryModel !== model) {
+        if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
             type,
