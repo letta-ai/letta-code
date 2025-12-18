@@ -19,6 +19,33 @@ function clip(s: string, limit: number): string {
   return s.length > limit ? `${s.slice(0, limit)}…` : s;
 }
 
+/**
+ * Check if a user message is a compaction summary (system_alert with summary content).
+ * Returns the summary text if found, null otherwise.
+ */
+function extractCompactionSummary(text: string): string | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed.type === "system_alert" &&
+      typeof parsed.message === "string" &&
+      parsed.message.includes("prior messages have been hidden")
+    ) {
+      // Extract the summary part after the header
+      const summaryMatch = parsed.message.match(
+        /The following is a summary of the previous messages:\s*([\s\S]*)/,
+      );
+      if (summaryMatch?.[1]) {
+        return summaryMatch[1].trim();
+      }
+      return parsed.message;
+    }
+  } catch {
+    // Not JSON, not a compaction summary
+  }
+  return null;
+}
+
 function renderAssistantContentParts(
   parts: string | LettaAssistantMessageContentUnion[],
 ): string {
@@ -71,11 +98,32 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
     switch (msg.message_type) {
       // user message - content parts may include text and image parts
       case "user_message": {
+        const rawText = renderUserContentParts(msg.content);
+
+        // Check if this is a compaction summary message (system_alert with summary)
+        const compactionSummary = extractCompactionSummary(rawText);
+        if (compactionSummary) {
+          // Render as a synthetic tool call showing the compaction
+          const exists = buffers.byId.has(lineId);
+          buffers.byId.set(lineId, {
+            kind: "tool_call",
+            id: lineId,
+            toolCallId: `compaction-${lineId}`,
+            name: "Compact",
+            argsText: "messages[...]",
+            resultText: compactionSummary,
+            resultOk: true,
+            phase: "finished",
+          });
+          if (!exists) buffers.order.push(lineId);
+          break;
+        }
+
         const exists = buffers.byId.has(lineId);
         buffers.byId.set(lineId, {
           kind: "user",
           id: lineId,
-          text: renderUserContentParts(msg.content),
+          text: rawText,
         });
         if (!exists) buffers.order.push(lineId);
         break;
