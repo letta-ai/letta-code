@@ -32,14 +32,16 @@ function formatNumber(n: number): string {
 export function SessionStats({ stats, agentId }: SessionStatsProps) {
   const wallDuration = formatDuration(stats.totalWallMs);
   const apiDuration = formatDuration(stats.totalApiMs);
+  const steps = stats.usage.stepCount;
+  const inputTokens = formatNumber(stats.usage.promptTokens);
+  const outputTokens = formatNumber(stats.usage.completionTokens);
 
   return (
     <Box flexDirection="column" paddingTop={1}>
       <Text dimColor>Total duration (API): {apiDuration}</Text>
       <Text dimColor>Total duration (wall): {wallDuration}</Text>
       <Text dimColor>
-        Usage: {stats.usage.stepCount} steps · {formatNumber(stats.usage.promptTokens)} input ·{" "}
-        {formatNumber(stats.usage.completionTokens)} output
+        Usage: {steps} steps · {inputTokens} input · {outputTokens} output
       </Text>
       {agentId && <Text dimColor>Agent ID: {agentId}</Text>}
     </Box>
