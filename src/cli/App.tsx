@@ -21,6 +21,7 @@ import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
+import { DEFAULT_AGENT_NAME } from "../constants";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
@@ -724,7 +725,9 @@ export default function App({
         : null;
       const statusLines = [
         `Connecting to last used agent in ${shortCwd}`,
-        agentState?.name ? `→ Agent: ${agentState.name}` : "",
+        agentState?.name
+          ? `→ Agent: ${agentState.name}${agentState.name === DEFAULT_AGENT_NAME ? " (use /rename to rename)" : ""}`
+          : "",
         agentUrl ? `→ ${agentUrl}` : "",
         "→ Use /pinned or /resume to switch agents",
       ].filter(Boolean);
@@ -3881,7 +3884,7 @@ Plan file path: ${planFilePath}`;
 
       const agentNameLine =
         !continueSession && agentState?.name
-          ? `→ Agent: ${agentState.name} (use /rename to rename)`
+          ? `→ Agent: ${agentState.name}${agentState.name === DEFAULT_AGENT_NAME ? " (use /rename to rename)" : ""}`
           : "";
 
       const statusLines = [
