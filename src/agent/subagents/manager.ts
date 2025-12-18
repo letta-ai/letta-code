@@ -18,6 +18,8 @@ import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
+import { getClient } from "../client";
+import { getCurrentAgentId } from "../context";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
@@ -49,6 +51,37 @@ interface ExecutionState {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Get the primary agent's model handle
+ * Falls back to default if unable to fetch
+ */
+async function getPrimaryAgentModel(): Promise<string | null> {
+  try {
+    const agentId = getCurrentAgentId();
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    const endpointType = agent.llm_config?.model_endpoint_type;
+    const model = agent.llm_config?.model;
+    if (endpointType && model) {
+      return `${endpointType}/${model}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if an error message indicates an unsupported provider
+ */
+function isProviderNotSupportedError(errorOutput: string): boolean {
+  return (
+    errorOutput.includes("Provider") &&
+    errorOutput.includes("is not supported") &&
+    errorOutput.includes("supported providers:")
+  );
+}
 
 /**
  * Record a tool call to the state store
@@ -328,6 +361,7 @@ async function executeSubagent(
   userPrompt: string,
   baseURL: string,
   subagentId: string,
+  isRetry = false,
 ): Promise<SubagentResult> {
   try {
     const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
@@ -376,6 +410,27 @@ async function executeSubagent(
 
     // Handle non-zero exit code
     if (exitCode !== 0) {
+      // Check if this is a provider-not-supported error and we haven't retried yet
+      if (!isRetry && isProviderNotSupportedError(stderr)) {
+        const primaryModel = await getPrimaryAgentModel();
+        if (primaryModel && primaryModel !== model) {
+          console.warn(
+            `Subagent model "${model}" uses unsupported provider, falling back to primary agent's model`,
+          );
+
+          // Retry with the primary agent's model
+          return executeSubagent(
+            type,
+            config,
+            primaryModel,
+            userPrompt,
+            baseURL,
+            subagentId,
+            true, // Mark as retry to prevent infinite loops
+          );
+        }
+      }
+
       return {
         agentId: state.agentId || "",
         report: "",
