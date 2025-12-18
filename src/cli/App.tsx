@@ -50,6 +50,7 @@ import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { Input } from "./components/InputRich";
+import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { PlanModeDialog } from "./components/PlanModeDialog";
@@ -393,6 +394,7 @@ export default function App({
     | "search"
     | "subagent"
     | "feedback"
+    | "memory"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -1645,6 +1647,12 @@ export default function App({
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
           setActiveOverlay("subagent");
+          return { submitted: true };
+        }
+
+        // Special handling for /memory command - opens memory viewer
+        if (trimmed === "/memory") {
+          setActiveOverlay("memory");
           return { submitted: true };
         }
 
@@ -4050,6 +4058,16 @@ Plan file path: ${planFilePath}`;
               <FeedbackDialog
                 onSubmit={handleFeedbackSubmit}
                 onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Memory Viewer - conditionally mounted as overlay */}
+            {activeOverlay === "memory" && (
+              <MemoryViewer
+                blocks={agentState?.memory?.blocks || []}
+                agentId={agentId}
+                agentName={agentName}
+                onClose={closeOverlay}
               />
             )}
 
