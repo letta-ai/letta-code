@@ -66,7 +66,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         <Text> {agent.description}</Text>
         <Text dimColor> · {agent.type.toLowerCase()}</Text>
         {agent.model && <Text dimColor> · {agent.model}</Text>}
-        <Text color={colors.subagent.stats}> · {stats}</Text>
+        <Text dimColor> · {stats}</Text>
       </Box>
 
       {/* Subagent URL */}
