@@ -12,7 +12,7 @@ export function FeedbackDialog({ onSubmit, onCancel }: FeedbackDialogProps) {
   const [feedbackText, setFeedbackText] = useState("");
   const [error, setError] = useState("");
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (key.escape) {
       onCancel();
     }
