@@ -215,12 +215,9 @@ async function parseSkillFile(
  * @param skillsDirectory - Absolute path to the skills directory
  * @returns Tree-structured string representation
  */
-function formatSkillsAsTree(
-  skills: Skill[],
-  skillsDirectory: string,
-): string {
+function formatSkillsAsTree(skills: Skill[], skillsDirectory: string): string {
   let output = `Skills Directory: ${skillsDirectory}\n\n`;
-  
+
   if (skills.length === 0) {
     return `${output}[NO SKILLS AVAILABLE]`;
   }
@@ -233,18 +230,18 @@ function formatSkillsAsTree(
   interface TreeNode {
     [key: string]: TreeNode | null;
   }
-  
+
   const tree: TreeNode = {};
-  
+
   // Parse all skill IDs into tree structure
   for (const skill of skills) {
     const parts = skill.id.split("/");
     let current = tree;
-    
+
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       if (!part) continue;
-      
+
       // Last part is the skill name (leaf node)
       if (i === parts.length - 1) {
         current[part] = null;
@@ -257,12 +254,12 @@ function formatSkillsAsTree(
       }
     }
   }
-  
+
   // Render tree with indentation
   function renderTree(node: TreeNode, indent: string = ""): string {
     let result = "";
     const entries = Object.entries(node).sort(([a], [b]) => a.localeCompare(b));
-    
+
     for (const [name, children] of entries) {
       if (children === null) {
         // Leaf node (skill)
@@ -270,15 +267,15 @@ function formatSkillsAsTree(
       } else {
         // Directory node
         result += `${indent}${name}/\n`;
-        result += renderTree(children, indent + "  ");
+        result += renderTree(children, `${indent}  `);
       }
     }
-    
+
     return result;
   }
-  
+
   output += renderTree(tree);
-  
+
   return output.trim();
 }
 

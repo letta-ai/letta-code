@@ -66,7 +66,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         subprocess.on("error", () => {
           // Silently ignore - user can still manually visit the URL shown above
         });
-      } catch (openErr) {
+      } catch (_openErr) {
         // If auto-open fails, user can still manually visit the URL
         // This handles cases like missing opener commands in containers
       }

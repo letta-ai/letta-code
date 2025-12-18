@@ -26,7 +26,7 @@ describe("Skills formatting", () => {
     expect(result).toContain("ID: `testing`");
     expect(result).toContain("Description: Unit testing patterns");
     expect(result).toContain("### Deployment");
-    
+
     // Should NOT contain tree format markers
     expect(result).not.toContain("Note: Many skills available");
   });
@@ -35,7 +35,7 @@ describe("Skills formatting", () => {
     // Create enough skills with long descriptions to exceed 20k chars
     const skills: Skill[] = [];
     const longDescription = "A".repeat(500); // 500 chars per description
-    
+
     for (let i = 0; i < 50; i++) {
       skills.push({
         id: `category-${i}/skill-${i}`,
@@ -50,11 +50,11 @@ describe("Skills formatting", () => {
     // Should contain tree format markers
     expect(result).toContain("Note: Many skills available");
     expect(result).toContain("showing directory structure only");
-    
+
     // Should NOT contain full metadata markers
     expect(result).not.toContain("Available Skills:");
     expect(result).not.toContain("Description:");
-    
+
     // Should show directory structure
     expect(result).toContain("category-");
     expect(result).toContain("skill-");
@@ -63,7 +63,7 @@ describe("Skills formatting", () => {
   test("tree format shows nested directory structure", () => {
     const skills: Skill[] = [];
     const longDescription = "A".repeat(500);
-    
+
     // Create nested skills to exceed limit
     for (let i = 0; i < 50; i++) {
       skills.push({
@@ -92,7 +92,7 @@ describe("Skills formatting", () => {
   test("tree format includes helper message", () => {
     const skills: Skill[] = [];
     const longDescription = "A".repeat(500);
-    
+
     for (let i = 0; i < 50; i++) {
       skills.push({
         id: `skill-${i}`,
@@ -114,7 +114,7 @@ describe("Skills formatting", () => {
   test("full format respects character limit boundary", () => {
     // Create skills that are just under the limit
     const skills: Skill[] = [];
-    
+
     // Each skill formatted is roughly 100 chars, so ~190 skills should be under 20k
     for (let i = 0; i < 10; i++) {
       skills.push({
@@ -135,7 +135,7 @@ describe("Skills formatting", () => {
   test("tree format groups skills by directory correctly", () => {
     const skills: Skill[] = [];
     const longDescription = "A".repeat(500);
-    
+
     for (let i = 0; i < 30; i++) {
       skills.push({
         id: `ai/agents/agent-${i}`,
@@ -144,7 +144,7 @@ describe("Skills formatting", () => {
         path: `/test/.skills/ai/agents/agent-${i}/SKILL.md`,
       });
     }
-    
+
     for (let i = 0; i < 30; i++) {
       skills.push({
         id: `development/patterns/pattern-${i}`,
@@ -159,7 +159,7 @@ describe("Skills formatting", () => {
     // Should show both top-level directories
     expect(result).toContain("ai/");
     expect(result).toContain("development/");
-    
+
     // Should show nested structure
     expect(result).toContain("  agents/");
     expect(result).toContain("  patterns/");
