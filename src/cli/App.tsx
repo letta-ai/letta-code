@@ -17,7 +17,7 @@ import type { ApprovalResult } from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
-import { setCurrentAgentId } from "../agent/context";
+import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
@@ -114,6 +114,18 @@ const EAGER_CANCEL = true;
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Save current agent as lastAgent before exiting
+// This ensures subagent overwrites during the session don't persist
+function saveLastAgentBeforeExit() {
+  try {
+    const currentAgentId = getCurrentAgentId();
+    settingsManager.updateLocalProjectSettings({ lastAgent: currentAgentId });
+    settingsManager.updateSettings({ lastAgent: currentAgentId });
+  } catch {
+    // Ignore if no agent context set
+  }
 }
 
 // Get plan mode system reminder if in plan mode
@@ -1311,6 +1323,7 @@ export default function App({
   );
 
   const handleExit = useCallback(() => {
+    saveLastAgentBeforeExit();
     setShowExitStats(true);
     // Give React time to render the stats, then exit
     setTimeout(() => {
@@ -1710,6 +1723,8 @@ export default function App({
               success: true,
             });
             refreshDerived();
+
+            saveLastAgentBeforeExit();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
