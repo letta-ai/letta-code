@@ -180,7 +180,7 @@ export function addToolCall(
  */
 export function completeSubagent(
   id: string,
-  result: { success: boolean; error?: string; model?: string },
+  result: { success: boolean; error?: string },
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -190,7 +190,6 @@ export function completeSubagent(
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
-    model: result.model,
     durationMs: Date.now() - agent.startTime,
   } as SubagentState;
   store.agents.set(id, updatedAgent);

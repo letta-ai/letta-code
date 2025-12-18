@@ -35,7 +35,6 @@ export interface SubagentResult {
   report: string;
   success: boolean;
   error?: string;
-  model?: string;
 }
 
 /**
@@ -436,7 +435,6 @@ async function executeSubagent(
         report: "",
         success: false,
         error: stderr || `Subagent exited with code ${exitCode}`,
-        model,
       };
     }
 
@@ -447,7 +445,6 @@ async function executeSubagent(
         report: state.finalResult,
         success: !state.finalError,
         error: state.finalError || undefined,
-        model,
       };
     }
 
@@ -458,13 +455,12 @@ async function executeSubagent(
         report: "",
         success: false,
         error: state.finalError,
-        model,
       };
     }
 
     // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
-    return { ...parseResultFromStdout(stdout, state.agentId), model };
+    return parseResultFromStdout(stdout, state.agentId);
   } catch (error) {
     return {
       agentId: "",
