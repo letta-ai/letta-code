@@ -9,6 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
 import { getToolNames } from "../tools/manager";
+import { getAvailableModelHandles } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
@@ -20,6 +21,26 @@ import { updateAgentLLMConfig } from "./modify";
 import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
+
+/**
+ * Error thrown when the requested or default model is not available on the server.
+ * Callers can catch this to show a model selector in interactive mode.
+ */
+export class ModelNotAvailableError extends Error {
+  constructor(
+    public readonly requestedModel: string | undefined,
+    public readonly availableHandles: Set<string>,
+    public readonly availableProviders: Set<string>,
+  ) {
+    const modelInfo = requestedModel
+      ? `Model "${requestedModel}"`
+      : "Default model (anthropic/claude-sonnet-4-5)";
+    super(
+      `${modelInfo} is not available on this server. Available providers: ${Array.from(availableProviders).join(", ") || "none"}`,
+    );
+    this.name = "ModelNotAvailableError";
+  }
+}
 
 /**
  * Describes where a memory block came from
@@ -48,7 +69,6 @@ export interface CreateAgentResult {
 export async function createAgent(
   name = DEFAULT_AGENT_NAME,
   model?: string,
-  embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
   skillsDirectory?: string,
   parallelToolCalls = true,
@@ -57,6 +77,33 @@ export async function createAgent(
   initBlocks?: string[],
   baseTools?: string[],
 ) {
+  const client = await getClient();
+
+  // Fetch available models from the server to validate provider support
+  let availableHandles: Set<string>;
+  let availableProviders: Set<string>;
+  try {
+    const { handles } = await getAvailableModelHandles();
+    availableHandles = handles;
+    // Extract providers from handles (e.g., "anthropic/claude-..." -> "anthropic")
+    availableProviders = new Set(
+      Array.from(handles)
+        .map((h) => h.split("/")[0])
+        .filter((p): p is string => !!p),
+    );
+  } catch {
+    // If we can't fetch available models, assume all providers are available
+    availableHandles = new Set();
+    availableProviders = new Set();
+  }
+
+  // Helper to check if a provider is available (empty set means we couldn't check)
+  const isProviderAvailable = (handle: string): boolean => {
+    if (availableProviders.size === 0) return true; // Couldn't check, assume available
+    const provider = handle.split("/")[0];
+    return provider ? availableProviders.has(provider) : false;
+  };
+
   // Resolve model identifier to handle
   let modelHandle: string;
   if (model) {
@@ -68,12 +115,31 @@ export async function createAgent(
       process.exit(1);
     }
     modelHandle = resolved;
-  } else {
-    // Use default model
-    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
-  }
 
-  const client = await getClient();
+    // Validate the requested model's provider is available
+    if (!isProviderAvailable(modelHandle)) {
+      throw new ModelNotAvailableError(
+        modelHandle,
+        availableHandles,
+        availableProviders,
+      );
+    }
+  } else {
+    // Use default model, but throw error if provider isn't available
+    // (caller can catch and show model selector in interactive mode)
+    const defaultModel = "anthropic/claude-sonnet-4-5-20250929";
+    if (isProviderAvailable(defaultModel)) {
+      modelHandle = defaultModel;
+    } else {
+      // Throw error so caller can handle appropriately
+      // (show model selector in interactive mode, error message in headless)
+      throw new ModelNotAvailableError(
+        undefined,
+        availableHandles,
+        availableProviders,
+      );
+    }
+  }
 
   // Get loaded tool names (tools are already registered with Letta)
   // Map internal names to server names so the agent sees the correct tool names
@@ -211,7 +277,6 @@ export async function createAgent(
     system: resolvedSystemPrompt,
     name,
     description: `Letta Code agent created in ${process.cwd()}`,
-    embedding: embeddingModel,
     model: modelHandle,
     context_window_limit: contextWindow,
     tools: toolNames,

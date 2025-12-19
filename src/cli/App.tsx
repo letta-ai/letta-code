@@ -282,6 +282,8 @@ export default function App({
   messageHistory = [],
   tokenStreaming = false,
   agentProvenance = null,
+  pendingModelSelection = null,
+  onInitialModelSelect,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -292,6 +294,7 @@ export default function App({
     | "importing"
     | "initializing"
     | "checking"
+    | "model_selection"
     | "ready";
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
@@ -299,6 +302,11 @@ export default function App({
   messageHistory?: Message[];
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
+  pendingModelSelection?: {
+    availableHandles: Set<string>;
+    availableProviders: Set<string>;
+  } | null;
+  onInitialModelSelect?: (modelId: string) => void;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -4463,12 +4471,48 @@ Plan file path: ${planFilePath}`;
 
       <Box flexDirection="column" gap={1}>
         {/* Loading screen / intro text */}
-        {loadingState !== "ready" && (
+        {loadingState !== "ready" && loadingState !== "model_selection" && (
           <WelcomeScreen
             loadingState={loadingState}
             continueSession={continueSession}
             agentState={agentState}
           />
+        )}
+
+        {/* Initial model selection - shown when default model not available */}
+        {loadingState === "model_selection" && pendingModelSelection && (
+          <>
+            <WelcomeScreen
+              loadingState="model_selection"
+              continueSession={continueSession}
+              agentState={agentState}
+            />
+            <Box flexDirection="column" marginTop={1}>
+              <Text color="yellow">
+                Default model (anthropic/claude-sonnet-4-5) is not available on
+                this server.
+              </Text>
+              <Text dimColor>
+                Available providers:{" "}
+                {Array.from(pendingModelSelection.availableProviders).join(
+                  ", ",
+                )}
+              </Text>
+            </Box>
+            <Box marginTop={1}>
+              <ModelSelector
+                onSelect={(modelId) => {
+                  onInitialModelSelect?.(modelId);
+                }}
+                onCancel={() => {
+                  console.error(
+                    "Model selection cancelled. Cannot create agent without a model.",
+                  );
+                  process.exit(1);
+                }}
+              />
+            </Box>
+          </>
         )}
 
         {loadingState === "ready" && (

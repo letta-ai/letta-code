@@ -568,7 +568,7 @@ async function main() {
   // Interactive: lazy-load React/Ink + App
   const React = await import("react");
   const { render } = await import("ink");
-  const { useState, useEffect } = React;
+  const { useState, useEffect, useCallback } = React;
   const AppModule = await import("./cli/App");
   const App = AppModule.default;
 
@@ -603,6 +603,7 @@ async function main() {
       | "importing"
       | "initializing"
       | "checking"
+      | "model_selection"
       | "ready"
     >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
@@ -611,6 +612,13 @@ async function main() {
     const [isResumingSession, setIsResumingSession] = useState(false);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
+    const [pendingModelSelection, setPendingModelSelection] = useState<{
+      availableHandles: Set<string>;
+      availableProviders: Set<string>;
+    } | null>(null);
+    const [selectedModel, setSelectedModel] = useState<string | undefined>(
+      model,
+    );
 
     // Initialize on mount - no selector, just start immediately
     useEffect(() => {
@@ -724,7 +732,9 @@ async function main() {
         }
 
         setLoadingState("initializing");
-        const { createAgent } = await import("./agent/create");
+        const { createAgent, ModelNotAvailableError } = await import(
+          "./agent/create"
+        );
         const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
@@ -764,21 +774,32 @@ async function main() {
 
         // Priority 3: Check if --new flag was passed - create new agent
         if (!agent && forceNew) {
-          const updateArgs = getModelUpdateArgs(model);
-          const result = await createAgent(
-            undefined,
-            model,
-            undefined,
-            updateArgs,
-            skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
-            system,
-            initBlocks,
-            baseTools,
-          );
-          agent = result.agent;
-          setAgentProvenance(result.provenance);
+          const updateArgs = getModelUpdateArgs(selectedModel);
+          try {
+            const result = await createAgent(
+              undefined,
+              selectedModel,
+              updateArgs,
+              skillsDirectory,
+              true, // parallelToolCalls always enabled
+              sleeptimeFlag ?? settings.enableSleeptime,
+              system,
+              initBlocks,
+              baseTools,
+            );
+            agent = result.agent;
+            setAgentProvenance(result.provenance);
+          } catch (err) {
+            if (err instanceof ModelNotAvailableError) {
+              setPendingModelSelection({
+                availableHandles: err.availableHandles,
+                availableProviders: err.availableProviders,
+              });
+              setLoadingState("model_selection");
+              return; // Wait for user to select a model
+            }
+            throw err;
+          }
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -814,21 +835,32 @@ async function main() {
 
         // Priority 7: Create a new agent
         if (!agent) {
-          const updateArgs = getModelUpdateArgs(model);
-          const result = await createAgent(
-            undefined,
-            model,
-            undefined,
-            updateArgs,
-            skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
-            system,
-            undefined,
-            undefined,
-          );
-          agent = result.agent;
-          setAgentProvenance(result.provenance);
+          const updateArgs = getModelUpdateArgs(selectedModel);
+          try {
+            const result = await createAgent(
+              undefined,
+              selectedModel,
+              updateArgs,
+              skillsDirectory,
+              true, // parallelToolCalls always enabled
+              sleeptimeFlag ?? settings.enableSleeptime,
+              system,
+              undefined,
+              undefined,
+            );
+            agent = result.agent;
+            setAgentProvenance(result.provenance);
+          } catch (err) {
+            if (err instanceof ModelNotAvailableError) {
+              setPendingModelSelection({
+                availableHandles: err.availableHandles,
+                availableProviders: err.availableProviders,
+              });
+              setLoadingState("model_selection");
+              return; // Wait for user to select a model
+            }
+            throw err;
+          }
         }
 
         // Ensure local project settings are loaded before updating
@@ -961,35 +993,50 @@ async function main() {
       system,
       fromAfFile,
       loadingState,
+      selectedModel,
     ]);
+
+    // Handler for initial model selection (when default model not available)
+    const handleInitialModelSelect = useCallback((modelId: string) => {
+      setSelectedModel(modelId);
+      setPendingModelSelection(null);
+      setLoadingState("assembling"); // Resume initialization
+    }, []);
 
     // Profile selector is no longer shown at startup
     // Users can access it via /pinned or /agents commands
 
+    // Map internal loading states to App-compatible states
+    const appLoadingState =
+      loadingState === "selecting" ? "assembling" : loadingState;
+
     if (!agentId) {
       return React.createElement(App, {
         agentId: "loading",
-        loadingState:
-          loadingState === "selecting" ? "assembling" : loadingState,
+        loadingState: appLoadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? [],
         messageHistory: resumeData?.messageHistory ?? [],
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
+        pendingModelSelection,
+        onInitialModelSelect: handleInitialModelSelect,
       });
     }
 
     return React.createElement(App, {
       agentId,
       agentState,
-      loadingState: loadingState === "selecting" ? "assembling" : loadingState,
+      loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? [],
       messageHistory: resumeData?.messageHistory ?? [],
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
+      pendingModelSelection,
+      onInitialModelSelect: handleInitialModelSelect,
     });
   }
 
