@@ -111,11 +111,16 @@ export function PasteAwareTextInput({
     number | undefined
   >(undefined);
   const displayValueRef = useRef(displayValue);
+  const actualValueRef = useRef(actualValue);
   const focusRef = useRef(focus);
 
   useEffect(() => {
     displayValueRef.current = displayValue;
   }, [displayValue]);
+
+  useEffect(() => {
+    actualValueRef.current = actualValue;
+  }, [actualValue]);
 
   useEffect(() => {
     focusRef.current = focus;
@@ -278,6 +283,25 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
+    const insertNewline = () => {
+      const curPos = caretOffsetRef.current;
+      const newDisplay =
+        displayValueRef.current.slice(0, curPos) +
+        "\n" +
+        displayValueRef.current.slice(curPos);
+      const newActual =
+        actualValueRef.current.slice(0, curPos) +
+        "\n" +
+        actualValueRef.current.slice(curPos);
+
+      setDisplayValue(newDisplay);
+      setActualValue(newActual);
+      onChangeRef.current(newDisplay);
+      const nextCaret = curPos + 1;
+      setNudgeCursorOffset(nextCaret);
+      caretOffsetRef.current = nextCaret;
+    };
+
     const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
@@ -293,6 +317,22 @@ export function PasteAwareTextInput({
         sequence = (payload as { sequence?: string }).sequence ?? null;
       }
       if (!sequence) return;
+
+      // Shift+Enter detection - various terminal escape sequences
+      // - \x1b[13;2u - kitty keyboard protocol (Shift+Enter)
+      // - \x1b[27;2;13~ - xterm modifyOtherKeys mode
+      // - \x1bOM - some terminals send this for Shift+Enter
+      // - \x1b\r or \x1b\n - ESC + CR/LF (some terminals)
+      if (
+        sequence === "\x1b[13;2u" ||
+        sequence === "\x1b[27;2;13~" ||
+        sequence === "\x1bOM" ||
+        sequence === "\x1b\r" ||
+        sequence === "\x1b\n"
+      ) {
+        insertNewline();
+        return;
+      }
 
       // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
@@ -431,9 +471,9 @@ export function PasteAwareTextInput({
 
   const handleSubmit = () => {
     if (onSubmit) {
-      // Pass the display value (with placeholders) to onSubmit
+      // Pass the actual value (with real newlines and resolved placeholders) to onSubmit
       // The parent will handle conversion to content parts and cleanup
-      onSubmit(displayValue);
+      onSubmit(actualValue);
     }
   };
 
