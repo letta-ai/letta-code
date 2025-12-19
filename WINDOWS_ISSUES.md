@@ -30,7 +30,7 @@ Applied to: Edit.ts, MultiEdit.ts, ApplyPatch.ts
 
 ## Issue 3: Git commits fail - heredoc syntax (P1)
 **Source:** GitHub #320, letta/letta#3113
-**Status:** TODO
+**Status:** FIXED
 
 **Root Cause:** System prompt in `src/tools/descriptions/Bash.md` tells model to use heredoc syntax:
 ```bash
@@ -41,7 +41,8 @@ EOF
 ```
 This is bash-only syntax that doesn't work in cmd.exe or PowerShell.
 
-**Fix:** Detect Windows in system prompt and use platform-appropriate syntax, or update prompt to use simpler quoting that works cross-platform.
+**Fix:** Added Windows-specific shell guidance to session context (only shown on Windows).
+This avoids polluting the prompt for non-Windows users (similar pattern to Gemini CLI).
 
 ---
 
