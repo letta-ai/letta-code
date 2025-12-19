@@ -8,13 +8,13 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { telemetry } from "./telemetry";
 import {
   forceUpsertTools,
   isToolsNotFoundError,
   loadTools,
   upsertToolsIfNeeded,
 } from "./tools/manager";
-import { telemetry } from "./telemetry";
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -215,7 +215,7 @@ async function main(): Promise<void> {
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
 
-  // Initialize telemetry (respects user opt-out settings)
+  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   telemetry.init();
 
   // Check for updates on startup (non-blocking)
