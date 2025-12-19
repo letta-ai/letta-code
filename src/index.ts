@@ -8,7 +8,12 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
-import { loadTools, upsertToolsIfNeeded } from "./tools/manager";
+import {
+  forceUpsertTools,
+  isToolsNotFoundError,
+  loadTools,
+  upsertToolsIfNeeded,
+} from "./tools/manager";
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -204,7 +209,7 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
-async function main() {
+async function main(): Promise<void> {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
@@ -437,7 +442,16 @@ async function main() {
     const { runSetup } = await import("./auth/setup");
     await runSetup();
     // After setup, restart main flow
-    return main();
+    return main().catch((err: unknown) => {
+      // Handle top-level errors gracefully without raw stack traces
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred";
+      console.error(`\nError: ${message}`);
+      if (process.env.DEBUG) {
+        console.error(err);
+      }
+      process.exit(1);
+    });
   }
 
   if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
@@ -765,20 +779,47 @@ async function main() {
         // Priority 3: Check if --new flag was passed - create new agent
         if (!agent && forceNew) {
           const updateArgs = getModelUpdateArgs(model);
-          const result = await createAgent(
-            undefined,
-            model,
-            undefined,
-            updateArgs,
-            skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
-            system,
-            initBlocks,
-            baseTools,
-          );
-          agent = result.agent;
-          setAgentProvenance(result.provenance);
+          try {
+            const result = await createAgent(
+              undefined,
+              model,
+              undefined,
+              updateArgs,
+              skillsDirectory,
+              true, // parallelToolCalls always enabled
+              sleeptimeFlag ?? settings.enableSleeptime,
+              system,
+              initBlocks,
+              baseTools,
+            );
+            agent = result.agent;
+            setAgentProvenance(result.provenance);
+          } catch (err) {
+            // Check if tools are missing on server (stale hash cache)
+            if (isToolsNotFoundError(err)) {
+              console.warn(
+                "Tools missing on server, re-uploading and retrying...",
+              );
+              await forceUpsertTools(client, baseURL);
+              // Retry agent creation
+              const result = await createAgent(
+                undefined,
+                model,
+                undefined,
+                updateArgs,
+                skillsDirectory,
+                true,
+                sleeptimeFlag ?? settings.enableSleeptime,
+                system,
+                initBlocks,
+                baseTools,
+              );
+              agent = result.agent;
+              setAgentProvenance(result.provenance);
+            } else {
+              throw err;
+            }
+          }
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -815,20 +856,47 @@ async function main() {
         // Priority 7: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          const result = await createAgent(
-            undefined,
-            model,
-            undefined,
-            updateArgs,
-            skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
-            system,
-            undefined,
-            undefined,
-          );
-          agent = result.agent;
-          setAgentProvenance(result.provenance);
+          try {
+            const result = await createAgent(
+              undefined,
+              model,
+              undefined,
+              updateArgs,
+              skillsDirectory,
+              true, // parallelToolCalls always enabled
+              sleeptimeFlag ?? settings.enableSleeptime,
+              system,
+              undefined,
+              undefined,
+            );
+            agent = result.agent;
+            setAgentProvenance(result.provenance);
+          } catch (err) {
+            // Check if tools are missing on server (stale hash cache)
+            if (isToolsNotFoundError(err)) {
+              console.warn(
+                "Tools missing on server, re-uploading and retrying...",
+              );
+              await forceUpsertTools(client, baseURL);
+              // Retry agent creation
+              const result = await createAgent(
+                undefined,
+                model,
+                undefined,
+                updateArgs,
+                skillsDirectory,
+                true,
+                sleeptimeFlag ?? settings.enableSleeptime,
+                system,
+                undefined,
+                undefined,
+              );
+              agent = result.agent;
+              setAgentProvenance(result.provenance);
+            } else {
+              throw err;
+            }
+          }
         }
 
         // Ensure local project settings are loaded before updating
@@ -952,7 +1020,16 @@ async function main() {
         setLoadingState("ready");
       }
 
-      init();
+      init().catch((err) => {
+        // Handle errors gracefully without showing raw stack traces
+        const message =
+          err instanceof Error ? err.message : "An unexpected error occurred";
+        console.error(`\nError during initialization: ${message}`);
+        if (process.env.DEBUG) {
+          console.error(err);
+        }
+        process.exit(1);
+      });
     }, [
       continueSession,
       forceNew,

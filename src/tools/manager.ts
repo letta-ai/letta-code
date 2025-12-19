@@ -716,6 +716,40 @@ export async function upsertToolsIfNeeded(
 }
 
 /**
+ * Force upsert tools by clearing the hash cache for the server.
+ * Use this when tools are missing on the server despite the hash matching.
+ *
+ * @param client - Letta client instance
+ * @param serverUrl - The server URL (used as cache key)
+ */
+export async function forceUpsertTools(
+  client: Letta,
+  serverUrl: string,
+): Promise<void> {
+  const { settingsManager } = await import("../settings-manager");
+  const cachedHashes = settingsManager.getSetting("toolUpsertHashes") || {};
+
+  // Clear the hash for this server to force re-upsert
+  delete cachedHashes[serverUrl];
+  settingsManager.updateSettings({ toolUpsertHashes: cachedHashes });
+
+  // Now upsert (will always run since hash was cleared)
+  await upsertToolsIfNeeded(client, serverUrl);
+}
+
+/**
+ * Check if an error indicates tools are missing on the server.
+ * This can happen when the local hash cache is stale (tools were deleted server-side).
+ */
+export function isToolsNotFoundError(error: unknown): boolean {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String((error as { message: string }).message);
+    return message.includes("Tools not found by name");
+  }
+  return false;
+}
+
+/**
  * Helper to clip tool return text to a reasonable display size
  * Used by UI components to truncate long responses for display
  */
