@@ -101,6 +101,13 @@ jobs:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
 
+      - name: Windows integration test
+        # Only run on Windows, with API key available
+        if: ${{ runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: bun run src/tests/headless-windows.ts --model haiku
+
       - name: Publish dry-run
         if: ${{ github.event_name == 'push' }}
         env:

@@ -29,7 +29,9 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       "No changes to make: old_string and new_string are exactly the same.",
     );
   try {
-    const content = await fs.readFile(resolvedPath, "utf-8");
+    const rawContent = await fs.readFile(resolvedPath, "utf-8");
+    // Normalize line endings to LF for consistent matching (Windows uses CRLF)
+    const content = rawContent.replace(/\r\n/g, "\n");
     const occurrences = content.split(old_string).length - 1;
     if (occurrences === 0)
       throw new Error(
