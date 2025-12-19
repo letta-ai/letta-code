@@ -50,11 +50,11 @@ async function ensurePrereqs(_model: string): Promise<"ok" | "skip"> {
 function scenarioPrompt(): string {
   return (
     "I want to test your tool calling abilities (do not ask for any clarifications, this is an automated test suite inside a CI runner, there is no human to assist you). " +
-    "First, call a single web_search to get the weather in SF. " +
-    "Then, try calling two web_searches in parallel. " +
+    "First, call a single conversation_search to search for 'hello'. " +
+    "Then, try calling two conversation_searches in parallel (search for 'test' and 'hello'). " +
     "Then, try running a shell command to output an echo (use whatever shell/bash tool is available). " +
     "Then, try running three shell commands in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
-    "Then finally, try running 2 shell commands and 1 web_search, in parallel, so three parallel tools. " +
+    "Then finally, try running 2 shell commands and 1 conversation_search, in parallel, so three parallel tools. " +
     "IMPORTANT: If and only if all of the above steps worked as requested, include the word BANANA (uppercase) somewhere in your final response."
   );
 }
