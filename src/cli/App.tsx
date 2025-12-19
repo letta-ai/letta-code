@@ -102,7 +102,7 @@ import {
   clearCompletedSubagents,
   clearSubagentsByIds,
 } from "./helpers/subagentState";
-import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -465,7 +465,7 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(agentName),
+    getRandomThinkingVerb(),
   );
 
   // Session stats tracking
@@ -1237,7 +1237,7 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage(agentName));
+              setThinkingMessage(getRandomThinkingVerb());
               refreshDerived();
 
               await processConversation([
@@ -1410,13 +1410,7 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [
-      appendError,
-      refreshDerived,
-      refreshDerivedThrottled,
-      setStreaming,
-      agentName,
-    ],
+    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
   );
 
   const handleExit = useCallback(() => {
@@ -3020,7 +3014,7 @@ ${recentCommits}
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage(agentName));
+      setThinkingMessage(getRandomThinkingVerb());
       // Show streaming state immediately for responsiveness
       setStreaming(true);
       refreshDerived();
@@ -3499,7 +3493,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -3536,7 +3530,6 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
-      agentName,
       setStreaming,
     ],
   );
@@ -3653,7 +3646,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage(agentName));
+          setThinkingMessage(getRandomThinkingVerb());
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -3674,7 +3667,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
-      agentName,
       setStreaming,
     ],
   );
@@ -4104,7 +4096,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const decision = {
@@ -4132,7 +4124,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
-      agentName,
       setStreaming,
     ],
   );
@@ -4215,7 +4206,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage(agentName));
+      setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
 
       const decision = {
@@ -4231,13 +4222,7 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      refreshDerived,
-      agentName,
-    ],
+    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -4287,7 +4272,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage(agentName));
+    setThinkingMessage(getRandomThinkingVerb());
     refreshDerived();
 
     const decision = {
@@ -4302,13 +4287,7 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    agentName,
-  ]);
+  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
