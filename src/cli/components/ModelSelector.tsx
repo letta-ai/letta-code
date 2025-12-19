@@ -112,7 +112,9 @@ export function ModelSelector({
 
   // All other models: API handles not in models.json
   const otherModelHandles = useMemo(() => {
-    const filtered = allApiHandles.filter((handle) => !staticModelHandles.has(handle));
+    const filtered = allApiHandles.filter(
+      (handle) => !staticModelHandles.has(handle),
+    );
     if (!searchQuery) return filtered;
     const query = searchQuery.toLowerCase();
     return filtered.filter((handle) => handle.toLowerCase().includes(query));
@@ -264,7 +266,8 @@ export function ModelSelector({
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ navigate, ←→/jk page, Tab category, Enter select, ESC cancel)
+          Select Model (↑↓ navigate, ←→/jk page, Tab category, Enter select, ESC
+          cancel)
         </Text>
         {!isLoading && !refreshing && (
           <Box>
@@ -294,9 +297,7 @@ export function ModelSelector({
               {isCached ? " · cached" : ""} · 'r' to refresh
             </Text>
             {category === "all" && (
-              <Text dimColor>
-                Search: {searchQuery || "(type to search)"}
-              </Text>
+              <Text dimColor>Search: {searchQuery || "(type to search)"}</Text>
             )}
           </Box>
         )}
