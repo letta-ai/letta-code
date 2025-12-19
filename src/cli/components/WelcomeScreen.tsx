@@ -51,6 +51,7 @@ type LoadingState =
   | "importing"
   | "initializing"
   | "checking"
+  | "model_selection"
   | "ready";
 
 /**
@@ -169,6 +170,8 @@ function getLoadingMessage(
       return "Importing agent...";
     case "checking":
       return "Checking for pending approvals...";
+    case "model_selection":
+      return "Select a model...";
     default:
       return "Loading...";
   }

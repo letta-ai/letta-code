@@ -8,7 +8,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import type { ApprovalResult } from "./agent/approval-execution";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
-import { createAgent } from "./agent/create";
+import { createAgent, ModelNotAvailableError } from "./agent/create";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -190,19 +190,30 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      initBlocks,
-      baseTools,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        specifiedSystem,
+        initBlocks,
+        baseTools,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (err instanceof ModelNotAvailableError) {
+        console.error(`Error: ${err.message}`);
+        console.error("\nPlease specify a model with --model, e.g.:");
+        for (const handle of Array.from(err.availableHandles).slice(0, 3)) {
+          console.error(`  --model "${handle}"`);
+        }
+        process.exit(1);
+      }
+      throw err;
+    }
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -234,19 +245,30 @@ export async function handleHeadlessCommand(
   // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      undefined,
-      undefined,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        specifiedSystem,
+        undefined,
+        undefined,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (err instanceof ModelNotAvailableError) {
+        console.error(`Error: ${err.message}`);
+        console.error("\nPlease specify a model with --model, e.g.:");
+        for (const handle of Array.from(err.availableHandles).slice(0, 3)) {
+          console.error(`  --model "${handle}"`);
+        }
+        process.exit(1);
+      }
+      throw err;
+    }
   }
 
   // Check if we're resuming an existing agent (not creating a new one)
