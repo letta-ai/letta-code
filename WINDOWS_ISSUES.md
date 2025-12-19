@@ -17,13 +17,14 @@
 
 ## Issue 2: Edit tool fails with line endings (P1)
 **Source:** GitHub #322
-**Status:** TODO
+**Status:** FIXED
 
 **Root Cause:** `src/tools/impl/Edit.ts` does direct string matching without normalizing line endings.
 
 Windows files use `\r\n` (CRLF), but the model sends `\n` (LF) in `old_string`. The match fails.
 
-**Fix:** Normalize line endings before comparison, preserve original on write.
+**Fix:** Normalize file content to LF on read (same approach as Gemini CLI and Codex).
+Applied to: Edit.ts, MultiEdit.ts, ApplyPatch.ts
 
 ---
 
