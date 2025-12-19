@@ -34,13 +34,19 @@ const THINKING_VERBS = [
   "initializing",
 ] as const;
 
-// Get a random thinking message
-export function getRandomThinkingMessage(agentName?: string | null): string {
+// Get a random thinking verb phrase (e.g., "is thinking", "is processing")
+export function getRandomThinkingVerb(): string {
   const index = Math.floor(Math.random() * THINKING_VERBS.length);
   const verb = THINKING_VERBS[index] ?? "thinking";
+  return `is ${verb}`;
+}
+
+// Get a random thinking message (full string with agent name)
+export function getRandomThinkingMessage(agentName?: string | null): string {
+  const verb = getRandomThinkingVerb();
 
   if (agentName) {
-    return `${agentName} is ${verb}`;
+    return `${agentName} ${verb}`;
   }
 
   // Fallback to capitalized verb if no agent name
