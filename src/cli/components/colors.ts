@@ -99,6 +99,7 @@ export const colors = {
     streaming: brandColors.textDisabled, // solid gray dot (streaming/in progress)
     running: brandColors.statusWarning, // blinking yellow dot (executing)
     error: brandColors.statusError, // solid red dot (failed)
+    memoryName: brandColors.orange, // memory tool name highlight
   },
 
   // Input box
