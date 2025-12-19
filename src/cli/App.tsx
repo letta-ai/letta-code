@@ -654,7 +654,11 @@ export default function App({
       buffersRef.current.pendingRefresh = true;
       setTimeout(() => {
         buffersRef.current.pendingRefresh = false;
-        refreshDerived();
+        // Skip refresh if stream was interrupted - prevents stale updates appearing
+        // after user cancels. Normal stream completion still renders (interrupted=false).
+        if (!buffersRef.current.interrupted) {
+          refreshDerived();
+        }
       }, 16); // ~60fps
     }
   }, [refreshDerived]);
@@ -828,6 +832,8 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+        // Reset interrupted flag since we're starting a fresh stream
+        buffersRef.current.interrupted = false;
 
         // Clear completed subagents from the UI when starting a new turn
         clearCompletedSubagents();
@@ -3013,6 +3019,8 @@ ${recentCommits}
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
+      // Clear interrupted flag from previous turn
+      buffersRef.current.interrupted = false;
       // Rotate to a new thinking message for this turn
       setThinkingMessage(getRandomThinkingVerb());
       // Show streaming state immediately for responsiveness
@@ -3412,6 +3420,8 @@ ${recentCommits}
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
+        // Ensure interrupted flag is cleared for this execution
+        buffersRef.current.interrupted = false;
 
         const approvalAbortController = new AbortController();
         toolAbortControllerRef.current = approvalAbortController;
