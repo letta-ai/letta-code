@@ -119,7 +119,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, gemini-3-flash, glm-4.6, haiku]
+        # Note: gemini-3-flash temporarily disabled due to instability
+        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, glm-4.6, haiku]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
