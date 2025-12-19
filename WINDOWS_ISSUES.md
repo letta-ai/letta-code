@@ -48,10 +48,10 @@ This avoids polluting the prompt for non-Windows users (similar pattern to Gemin
 
 ## Issue 4: Python/Git not found in PATH (P2)
 **Source:** GitHub #321
-**Status:** TODO - needs investigation
+**Status:** FIXED
 
-**Root Cause:** Likely environment variable inheritance issue when spawning shell processes.
+**Root Cause:** We tried cmd.exe first, then PowerShell. Many users configure Python/Git
+in their PowerShell environment but not system-wide cmd.exe PATH.
 
-User shows Python/Git work in PowerShell directly, but Letta can't find them. Need to investigate how `src/tools/impl/shellLaunchers.ts` inherits PATH.
-
-**Investigation needed:** Check if `spawn()` options include `env: process.env`.
+**Fix:** Changed shell order to match Gemini CLI and Codex CLI - PowerShell first, cmd.exe as fallback.
+This ensures better PATH compatibility since many tools are configured in PowerShell profiles.
