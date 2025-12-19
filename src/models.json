@@ -36,17 +36,6 @@
     }
   },
   {
-    "id": "opus-4.1",
-    "handle": "anthropic/claude-opus-4-1-20250805",
-    "label": "Claude Opus 4.1",
-    "description": "Anthropic's previous version of Opus",
-    "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
-    }
-  },
-  {
     "id": "haiku",
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Claude Haiku 4.5",
