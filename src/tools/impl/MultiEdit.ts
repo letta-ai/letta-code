@@ -42,7 +42,9 @@ export async function multi_edit(
       );
   }
   try {
-    let content = await fs.readFile(resolvedPath, "utf-8");
+    const rawContent = await fs.readFile(resolvedPath, "utf-8");
+    // Normalize line endings to LF for consistent matching (Windows uses CRLF)
+    let content = rawContent.replace(/\r\n/g, "\n");
     const appliedEdits: string[] = [];
     for (let i = 0; i < edits.length; i++) {
       const edit = edits[i];
