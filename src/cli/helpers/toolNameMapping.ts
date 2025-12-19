@@ -112,3 +112,10 @@ export function isFancyUITool(name: string): boolean {
     name === "ExitPlanMode"
   );
 }
+
+/**
+ * Checks if a tool is a memory tool (server-side memory management)
+ */
+export function isMemoryTool(name: string): boolean {
+  return name === "memory" || name === "memory_apply_patch";
+}

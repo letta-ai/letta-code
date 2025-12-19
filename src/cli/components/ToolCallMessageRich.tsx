@@ -4,6 +4,7 @@ import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
+  isMemoryTool,
   isPlanTool,
   isTaskTool,
   isTodoTool,
@@ -12,6 +13,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import { TodoRenderer } from "./TodoRenderer.js";
 
@@ -207,6 +209,17 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       }
     }
 
+    // Check if this is a memory tool - show diff instead of raw result
+    if (isMemoryTool(rawName) && line.resultOk !== false && line.argsText) {
+      const memoryDiff = (
+        <MemoryDiffRenderer argsText={line.argsText} toolName={rawName} />
+      );
+      if (memoryDiff) {
+        return memoryDiff;
+      }
+      // If MemoryDiffRenderer returns null, fall through to regular handling
+    }
+
     // Regular result handling
     const isError = line.resultOk === false;
 
@@ -255,10 +268,25 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         </Box>
         <Box flexGrow={1} width={rightWidth}>
           {fallback ? (
-            <Text wrap="wrap">{`${displayName}${args}`}</Text>
+            <Text wrap="wrap">
+              {isMemoryTool(rawName) ? (
+                <>
+                  <Text color={colors.tool.memoryName}>{displayName}</Text>
+                  {args}
+                </>
+              ) : (
+                `${displayName}${args}`
+              )}
+            </Text>
           ) : (
             <Box flexDirection="row">
-              <Text>{displayName}</Text>
+              <Text
+                color={
+                  isMemoryTool(rawName) ? colors.tool.memoryName : undefined
+                }
+              >
+                {displayName}
+              </Text>
               {args ? (
                 <Box
                   flexGrow={1}
