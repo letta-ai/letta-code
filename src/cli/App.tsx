@@ -25,6 +25,7 @@ import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
+import { telemetry } from "../telemetry";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -314,6 +315,7 @@ export default function App({
   const agentIdRef = useRef(agentId);
   useEffect(() => {
     agentIdRef.current = agentId;
+    telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
   const resumeKey = useSuspend();
@@ -472,6 +474,18 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Wire up session stats to telemetry for safety net handlers
+  useEffect(() => {
+    telemetry.setSessionStatsGetter(() =>
+      sessionStatsRef.current.getSnapshot(),
+    );
+
+    // Cleanup on unmount (defensive, prevents potential memory leak)
+    return () => {
+      telemetry.setSessionStatsGetter(undefined);
+    };
+  }, []);
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
@@ -1409,6 +1423,25 @@ export default function App({
           return;
         }
 
+        // Track error with enhanced context
+        const errorType =
+          e instanceof Error ? e.constructor.name : "UnknownError";
+        const errorMessage = e instanceof Error ? e.message : String(e);
+
+        // Extract HTTP status code if available (API errors often have this)
+        const httpStatus =
+          e &&
+          typeof e === "object" &&
+          "status" in e &&
+          typeof e.status === "number"
+            ? e.status
+            : undefined;
+
+        telemetry.trackError(errorType, errorMessage, "message_stream", {
+          httpStatus,
+          modelId: currentModelId || undefined,
+        });
+
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails);
@@ -1418,11 +1451,25 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
+    [
+      appendError,
+      refreshDerived,
+      refreshDerivedThrottled,
+      setStreaming,
+      currentModelId,
+    ],
   );
 
-  const handleExit = useCallback(() => {
+  const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
+
+    // Track session end explicitly (before exit) with stats
+    const stats = sessionStatsRef.current.getSnapshot();
+    telemetry.trackSessionEnd(stats, "exit_command");
+
+    // Flush telemetry before exit
+    await telemetry.flush();
+
     setShowExitStats(true);
     // Give React time to render the stats, then exit
     setTimeout(() => {
@@ -1677,6 +1724,9 @@ export default function App({
       }
 
       if (!msg) return { submitted: false };
+
+      // Track user input (agent_id automatically added from telemetry.currentAgentId)
+      telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
 
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
@@ -1999,6 +2049,13 @@ export default function App({
             refreshDerived();
 
             saveLastAgentBeforeExit();
+
+            // Track session end explicitly (before exit) with stats
+            const stats = sessionStatsRef.current.getSnapshot();
+            telemetry.trackSessionEnd(stats, "logout");
+
+            // Flush telemetry before exit
+            await telemetry.flush();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
