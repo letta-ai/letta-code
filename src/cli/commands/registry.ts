@@ -209,6 +209,20 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/connect": {
+    desc: "Connect to Claude via OAuth (/connect claude)",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Initiating OAuth connection...";
+    },
+  },
+  "/disconnect": {
+    desc: "Disconnect from Claude OAuth",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Disconnecting...";
+    },
+  },
 };
 
 /**
