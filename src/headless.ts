@@ -335,16 +335,13 @@ export async function handleHeadlessCommand(
     }
 
     if (specifiedSystem) {
-      const { updateAgentSystemPrompt } = await import("./agent/modify");
-      const { resolveSystemPrompt } = await import("./agent/promptAssets");
-      const resolvedPrompt = await resolveSystemPrompt(specifiedSystem);
-      const result = await updateAgentSystemPrompt(agent.id, resolvedPrompt);
+      const { applySystemPrompt } = await import("./agent/modify");
+      const result = await applySystemPrompt(agent.id, specifiedSystem);
       if (!result.success) {
         console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
       }
-      // Refresh agent state after system prompt update
-      agent = await client.agents.retrieve(agent.id);
+      agent = result.agent!;
     }
   }
 

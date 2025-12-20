@@ -766,25 +766,15 @@ async function main(): Promise<void> {
 
             // Apply --system flag to existing agent if provided
             if (system) {
-              const { resolveSystemPrompt } = await import(
-                "./agent/promptAssets"
-              );
-              const { updateAgentSystemPrompt } = await import(
-                "./agent/modify"
-              );
-              const resolvedPrompt = await resolveSystemPrompt(system);
-              const result = await updateAgentSystemPrompt(
-                agent.id,
-                resolvedPrompt,
-              );
+              const { applySystemPrompt } = await import("./agent/modify");
+              const result = await applySystemPrompt(agent.id, system);
               if (!result.success) {
                 console.error(
                   `Failed to update system prompt: ${result.message}`,
                 );
                 process.exit(1);
               }
-              // Re-fetch agent to get updated state
-              agent = await client.agents.retrieve(agentIdArg);
+              agent = result.agent!;
             }
           } catch (error) {
             console.error(
@@ -1015,18 +1005,13 @@ async function main(): Promise<void> {
           }
 
           if (system) {
-            const { updateAgentSystemPrompt } = await import("./agent/modify");
-            const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-            const systemPromptOption = SYSTEM_PROMPTS.find(
-              (p) => p.id === system,
-            );
-            if (!systemPromptOption) {
-              console.error(`Error: Invalid system prompt "${system}"`);
+            const { applySystemPrompt } = await import("./agent/modify");
+            const result = await applySystemPrompt(agent.id, system);
+            if (!result.success) {
+              console.error(`Error: ${result.message}`);
               process.exit(1);
             }
-            await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
-            // Refresh agent state after system prompt update
-            agent = await client.agents.retrieve(agent.id);
+            agent = result.agent!;
           }
         }
 

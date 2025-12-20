@@ -2,6 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type {
+  AgentState,
   AnthropicModelSettings,
   GoogleAIModelSettings,
   OpenAIModelSettings,
@@ -337,6 +338,58 @@ export async function updateAgentSystemPrompt(
     return {
       success: false,
       message: `Failed to update system prompt: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Result from applying a system prompt to an agent
+ */
+export interface ApplySystemPromptResult {
+  success: boolean;
+  message: string;
+  agent: AgentState | null;
+}
+
+/**
+ * Resolves a system prompt input (ID or subagent name) and applies it to an agent.
+ * This is a convenience function that combines resolution, update, and re-fetch.
+ *
+ * @param agentId - The agent ID to update
+ * @param systemPromptInput - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @returns Result with success status, message, and updated agent state
+ */
+export async function applySystemPrompt(
+  agentId: string,
+  systemPromptInput: string,
+): Promise<ApplySystemPromptResult> {
+  try {
+    const { resolveSystemPrompt } = await import("./promptAssets");
+    const resolvedPrompt = await resolveSystemPrompt(systemPromptInput);
+
+    const updateResult = await updateAgentSystemPrompt(agentId, resolvedPrompt);
+    if (!updateResult.success) {
+      return {
+        success: false,
+        message: updateResult.message,
+        agent: null,
+      };
+    }
+
+    // Re-fetch agent to get updated state
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+
+    return {
+      success: true,
+      message: "System prompt applied successfully",
+      agent,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to apply system prompt: ${error instanceof Error ? error.message : String(error)}`,
+      agent: null,
     };
   }
 }
