@@ -141,16 +141,16 @@ export async function drainStream(
       }
     }
 
-    onChunk(buffers, chunk);
-    queueMicrotask(refresh);
-
-    // Check abort signal again after processing chunk (for eager cancellation)
+    // Check abort signal before processing - don't add data after interrupt
     if (abortSignal?.aborted) {
       stopReason = "cancelled";
       markIncompleteToolsAsCancelled(buffers);
       queueMicrotask(refresh);
       break;
     }
+
+    onChunk(buffers, chunk);
+    queueMicrotask(refresh);
 
     if (chunk.message_type === "stop_reason") {
       stopReason = chunk.stop_reason;

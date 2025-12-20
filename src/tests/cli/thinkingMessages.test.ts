@@ -5,31 +5,31 @@ describe("Thinking messages", () => {
   test("returns formatted message with agent name", () => {
     const message = getRandomThinkingMessage("Letta");
 
-    // Should be in format "Letta is <verb>ing"
-    expect(message).toMatch(/^Letta is \w+$/);
+    // Should be in format "Letta is <verb/phrase>"
+    expect(message).toMatch(/^Letta is .+$/);
     expect(message.startsWith("Letta is ")).toBe(true);
   });
 
   test("returns capitalized verb without agent name", () => {
     const message = getRandomThinkingMessage();
 
-    // Should be a capitalized verb (e.g., "Thinking", "Processing")
-    expect(message).toMatch(/^[A-Z][a-z]+$/);
+    // Should be a capitalized verb/phrase (e.g., "Thinking", "Processing", "Absolutely right")
+    expect(message).toMatch(/^[A-Z].+$/);
     expect(message[0]).toMatch(/[A-Z]/);
   });
 
   test("handles null agent name", () => {
     const message = getRandomThinkingMessage(null);
 
-    // Should fall back to capitalized verb
-    expect(message).toMatch(/^[A-Z][a-z]+$/);
+    // Should fall back to capitalized verb/phrase
+    expect(message).toMatch(/^[A-Z].+$/);
   });
 
   test("handles empty string agent name", () => {
     const message = getRandomThinkingMessage("");
 
-    // Should fall back to capitalized verb (empty string is falsy)
-    expect(message).toMatch(/^[A-Z][a-z]+$/);
+    // Should fall back to capitalized verb/phrase (empty string is falsy)
+    expect(message).toMatch(/^[A-Z].+$/);
   });
 
   test("generates different messages on multiple calls", () => {

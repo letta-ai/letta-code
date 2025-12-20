@@ -51,6 +51,7 @@ export function ModelSelector({
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -111,8 +112,13 @@ export function ModelSelector({
 
   // All other models: API handles not in models.json
   const otherModelHandles = useMemo(() => {
-    return allApiHandles.filter((handle) => !staticModelHandles.has(handle));
-  }, [allApiHandles, staticModelHandles]);
+    const filtered = allApiHandles.filter(
+      (handle) => !staticModelHandles.has(handle),
+    );
+    if (!searchQuery) return filtered;
+    const query = searchQuery.toLowerCase();
+    return filtered.filter((handle) => handle.toLowerCase().includes(query));
+  }, [allApiHandles, staticModelHandles, searchQuery]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
@@ -149,6 +155,7 @@ export function ModelSelector({
     });
     setCurrentPage(0);
     setSelectedIndex(0);
+    setSearchQuery("");
   }, []);
 
   // Set initial selection to current model on mount
@@ -172,20 +179,36 @@ export function ModelSelector({
 
   useInput(
     (input, key) => {
-      // Allow ESC even while loading
+      // Handle ESC: clear search first if active, otherwise cancel
       if (key.escape) {
-        onCancel();
+        if (searchQuery) {
+          setSearchQuery("");
+          setCurrentPage(0);
+          setSelectedIndex(0);
+        } else {
+          onCancel();
+        }
         return;
       }
 
       // Allow 'r' to refresh even while loading (but not while already refreshing)
-      if (input === "r" && !refreshing) {
+      if (input === "r" && !refreshing && !searchQuery) {
         loadModels.current(true);
         return;
       }
 
       if (key.tab) {
         cycleCategory();
+        return;
+      }
+
+      // Handle backspace for search
+      if (key.backspace || key.delete) {
+        if (searchQuery) {
+          setSearchQuery((prev) => prev.slice(0, -1));
+          setCurrentPage(0);
+          setSelectedIndex(0);
+        }
         return;
       }
 
@@ -223,6 +246,11 @@ export function ModelSelector({
         if (selectedModel) {
           onSelect(selectedModel.id);
         }
+      } else if (category === "all" && input && input.length === 1) {
+        // Capture text input for search (only in "all" category)
+        setSearchQuery((prev) => prev + input);
+        setCurrentPage(0);
+        setSelectedIndex(0);
       }
     },
     // Keep active so ESC and 'r' work while loading.
@@ -238,7 +266,8 @@ export function ModelSelector({
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ navigate, ←→/jk page, Enter select, ESC cancel)
+          Select Model (↑↓ navigate, ←→/jk page, Tab category, Enter select, ESC
+          cancel)
         </Text>
         {!isLoading && !refreshing && (
           <Box>
@@ -262,10 +291,15 @@ export function ModelSelector({
           </Box>
         )}
         {!isLoading && !refreshing && (
-          <Text dimColor>
-            Page {currentPage + 1}/{totalPages}
-            {isCached ? " · cached" : ""} · 'r' to refresh
-          </Text>
+          <Box flexDirection="column">
+            <Text dimColor>
+              Page {currentPage + 1}/{totalPages}
+              {isCached ? " · cached" : ""} · 'r' to refresh
+            </Text>
+            {category === "all" && (
+              <Text dimColor>Search: {searchQuery || "(type to search)"}</Text>
+            )}
+          </Box>
         )}
       </Box>
 

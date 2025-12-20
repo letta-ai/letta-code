@@ -26,6 +26,7 @@ export interface SubagentState {
   totalTokens: number;
   durationMs: number;
   error?: string;
+  model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
 }

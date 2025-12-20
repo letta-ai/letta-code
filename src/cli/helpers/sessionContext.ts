@@ -224,6 +224,16 @@ ${gitInfo.status}
 `;
     }
 
+    // Add Windows-specific shell guidance
+    if (platform() === "win32") {
+      context += `
+## Windows Shell Notes
+- The Bash tool uses PowerShell or cmd.exe on Windows
+- HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
+- For multiline strings (git commits, PR bodies), use simple quoted strings instead
+`;
+    }
+
     // Add agent info
     context += `
 ## Agent Information (i.e. information about you)

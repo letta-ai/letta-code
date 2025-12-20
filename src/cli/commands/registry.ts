@@ -195,6 +195,13 @@ export const commands: Record<string, Command> = {
       return "Fetching usage statistics...";
     },
   },
+  "/mcp": {
+    desc: "Manage MCP servers",
+    handler: () => {
+      // Handled specially in App.tsx to show MCP server selector
+      return "Opening MCP server manager...";
+    },
+  },
   "/help": {
     desc: "Show available commands",
     handler: () => {

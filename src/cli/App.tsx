@@ -37,6 +37,11 @@ import {
   savePermissionRule,
 } from "../tools/manager";
 import {
+  handleMcpAdd,
+  handleMcpUsage,
+  type McpCommandContext,
+} from "./commands/mcp";
+import {
   addCommandResult,
   handlePin,
   handleProfileDelete,
@@ -55,6 +60,7 @@ import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
+import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -100,7 +106,7 @@ import {
   clearCompletedSubagents,
   clearSubagentsByIds,
 } from "./helpers/subagentState";
-import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -414,6 +420,7 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "mcp"
     | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
@@ -462,7 +469,7 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(agentName),
+    getRandomThinkingVerb(),
   );
 
   // Session stats tracking
@@ -651,7 +658,11 @@ export default function App({
       buffersRef.current.pendingRefresh = true;
       setTimeout(() => {
         buffersRef.current.pendingRefresh = false;
-        refreshDerived();
+        // Skip refresh if stream was interrupted - prevents stale updates appearing
+        // after user cancels. Normal stream completion still renders (interrupted=false).
+        if (!buffersRef.current.interrupted) {
+          refreshDerived();
+        }
       }, 16); // ~60fps
     }
   }, [refreshDerived]);
@@ -828,6 +839,8 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+        // Reset interrupted flag since we're starting a fresh stream
+        buffersRef.current.interrupted = false;
 
         // Clear completed subagents from the UI when starting a new turn
         clearCompletedSubagents();
@@ -1251,7 +1264,7 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage(agentName));
+              setThinkingMessage(getRandomThinkingVerb());
               refreshDerived();
 
               await processConversation([
@@ -1494,14 +1507,8 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-    [
-      appendError,
-      refreshDerived,
-      refreshDerivedThrottled,
-      setStreaming,
-      agentName,
-      agentId,
-    ],
+
+    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
   );
 
   const handleExit = useCallback(() => {
@@ -1845,6 +1852,37 @@ export default function App({
         // Special handling for /memory command - opens memory viewer
         if (trimmed === "/memory") {
           setActiveOverlay("memory");
+          return { submitted: true };
+        }
+
+        // Special handling for /mcp command - manage MCP servers
+        if (msg.trim().startsWith("/mcp")) {
+          const mcpCtx: McpCommandContext = {
+            buffersRef,
+            refreshDerived,
+            setCommandRunning,
+          };
+
+          // Check for subcommand by looking at the first word after /mcp
+          const afterMcp = msg.trim().slice(4).trim(); // Remove "/mcp" prefix
+          const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
+
+          // /mcp - open MCP server selector
+          if (!firstWord) {
+            setActiveOverlay("mcp");
+            return { submitted: true };
+          }
+
+          // /mcp add --transport <type> <name> <url/command> [options]
+          if (firstWord === "add") {
+            // Pass the full command string after "add" to preserve quotes
+            const afterAdd = afterMcp.slice(firstWord.length).trim();
+            await handleMcpAdd(mcpCtx, msg, afterAdd);
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          handleMcpUsage(mcpCtx, msg);
           return { submitted: true };
         }
 
@@ -3073,8 +3111,10 @@ ${recentCommits}
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
+      // Clear interrupted flag from previous turn
+      buffersRef.current.interrupted = false;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage(agentName));
+      setThinkingMessage(getRandomThinkingVerb());
       // Show streaming state immediately for responsiveness
       setStreaming(true);
       refreshDerived();
@@ -3472,6 +3512,8 @@ ${recentCommits}
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
+        // Ensure interrupted flag is cleared for this execution
+        buffersRef.current.interrupted = false;
 
         const approvalAbortController = new AbortController();
         toolAbortControllerRef.current = approvalAbortController;
@@ -3553,7 +3595,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -3590,7 +3632,6 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
-      agentName,
       setStreaming,
     ],
   );
@@ -3707,7 +3748,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage(agentName));
+          setThinkingMessage(getRandomThinkingVerb());
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -3728,7 +3769,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
-      agentName,
       setStreaming,
     ],
   );
@@ -4158,7 +4198,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const decision = {
@@ -4186,7 +4226,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
-      agentName,
       setStreaming,
     ],
   );
@@ -4269,7 +4308,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage(agentName));
+      setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
 
       const decision = {
@@ -4285,13 +4324,7 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      refreshDerived,
-      agentName,
-    ],
+    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -4341,7 +4374,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage(agentName));
+    setThinkingMessage(getRandomThinkingVerb());
     refreshDerived();
 
     const decision = {
@@ -4356,13 +4389,7 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    agentName,
-  ]);
+  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -4699,6 +4726,30 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+              />
+            )}
+
+            {/* MCP Server Selector - conditionally mounted as overlay */}
+            {activeOverlay === "mcp" && (
+              <McpSelector
+                agentId={agentId}
+                onAdd={() => {
+                  // Close overlay and prompt user to use /mcp add command
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/mcp",
+                    output:
+                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
               />
             )}
 
