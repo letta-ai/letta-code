@@ -17,10 +17,6 @@ interface ProviderResponse {
   base_url?: string;
 }
 
-interface ProviderListResponse {
-  providers: ProviderResponse[];
-}
-
 /**
  * Get the Letta API base URL and auth token
  */
@@ -88,9 +84,7 @@ export async function listProviders(): Promise<ProviderResponse[]> {
  */
 export async function getAnthropicProvider(): Promise<ProviderResponse | null> {
   const providers = await listProviders();
-  return (
-    providers.find((p) => p.name === ANTHROPIC_PROVIDER_NAME) || null
-  );
+  return providers.find((p) => p.name === ANTHROPIC_PROVIDER_NAME) || null;
 }
 
 /**

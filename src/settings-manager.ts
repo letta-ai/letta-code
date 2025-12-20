@@ -670,14 +670,21 @@ class SettingsManager {
     const { anthropicOAuth: _, oauthState: __, ...rest } = settings;
     this.settings = { ...DEFAULT_SETTINGS, ...rest };
     this.persistSettings().catch((error) => {
-      console.error("Failed to persist settings after clearing Anthropic OAuth:", error);
+      console.error(
+        "Failed to persist settings after clearing Anthropic OAuth:",
+        error,
+      );
     });
   }
 
   /**
    * Store OAuth state for pending authorization
    */
-  storeOAuthState(state: string, codeVerifier: string, provider: "anthropic"): void {
+  storeOAuthState(
+    state: string,
+    codeVerifier: string,
+    provider: "anthropic",
+  ): void {
     this.updateSettings({
       oauthState: {
         state,
@@ -704,7 +711,10 @@ class SettingsManager {
     const { oauthState: _, ...rest } = settings;
     this.settings = { ...DEFAULT_SETTINGS, ...rest };
     this.persistSettings().catch((error) => {
-      console.error("Failed to persist settings after clearing OAuth state:", error);
+      console.error(
+        "Failed to persist settings after clearing OAuth state:",
+        error,
+      );
     });
   }
 

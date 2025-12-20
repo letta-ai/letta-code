@@ -2,14 +2,14 @@
 // Command handlers for OAuth connection management
 
 import {
-  startAnthropicOAuth,
   exchangeCodeForTokens,
+  startAnthropicOAuth,
   validateAnthropicCredentials,
 } from "../../auth/anthropic-oauth";
 import {
+  ANTHROPIC_PROVIDER_NAME,
   createOrUpdateAnthropicProvider,
   removeAnthropicProvider,
-  ANTHROPIC_PROVIDER_NAME,
 } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
 import type { Buffers, Line } from "../helpers/accumulator";
@@ -124,7 +124,10 @@ export async function handleConnect(
   }
 
   // Check if already connected
-  if (settingsManager.hasAnthropicOAuth() && !settingsManager.isAnthropicTokenExpired()) {
+  if (
+    settingsManager.hasAnthropicOAuth() &&
+    !settingsManager.isAnthropicTokenExpired()
+  ) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -140,7 +143,8 @@ export async function handleConnect(
 
   try {
     // 1. Start OAuth flow - generate PKCE and authorization URL
-    const { authorizationUrl, state, codeVerifier } = await startAnthropicOAuth();
+    const { authorizationUrl, state, codeVerifier } =
+      await startAnthropicOAuth();
 
     // 2. Store state for validation when user returns with code
     settingsManager.storeOAuthState(state, codeVerifier, "anthropic");
@@ -251,7 +255,11 @@ async function completeOAuthFlow(
     const stateToUse = stateFromInput || storedState.state;
 
     // 4. Exchange code for tokens
-    const tokens = await exchangeCodeForTokens(authCode, storedState.codeVerifier, stateToUse);
+    const tokens = await exchangeCodeForTokens(
+      authCode,
+      storedState.codeVerifier,
+      stateToUse,
+    );
 
     // 4. Update status
     updateCommandResult(

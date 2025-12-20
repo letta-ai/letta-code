@@ -160,9 +160,12 @@ export class OAuthCallbackServer {
               }
             }
 
-            return new Response(errorHtml(error, errorDescription || undefined), {
-              headers: { "Content-Type": "text/html" },
-            });
+            return new Response(
+              errorHtml(error, errorDescription || undefined),
+              {
+                headers: { "Content-Type": "text/html" },
+              },
+            );
           }
 
           // Validate required params
@@ -216,7 +219,9 @@ export class OAuthCallbackServer {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pendingCallbacks.delete(state);
-        reject(new Error(`OAuth callback timeout after ${timeout / 1000} seconds`));
+        reject(
+          new Error(`OAuth callback timeout after ${timeout / 1000} seconds`),
+        );
       }, timeout);
 
       this.pendingCallbacks.set(state, {

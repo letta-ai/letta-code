@@ -27,7 +27,9 @@ function buildModelSettings(
 ): ModelSettings {
   const isOpenAI = modelHandle.startsWith("openai/");
   // Include our custom Anthropic OAuth provider (claude-pro-max)
-  const isAnthropic = modelHandle.startsWith("anthropic/") || modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+  const isAnthropic =
+    modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
