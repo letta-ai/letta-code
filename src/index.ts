@@ -8,6 +8,7 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { telemetry } from "./telemetry";
 import {
   forceUpsertTools,
   isToolsNotFoundError,
@@ -213,6 +214,9 @@ async function main(): Promise<void> {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
+
+  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
+  telemetry.init();
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
