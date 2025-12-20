@@ -100,6 +100,12 @@ class TelemetryManager {
       return false;
     }
 
+    // Disable telemetry if no API key is set
+    const apiKey = process.env.LETTA_API_KEY;
+    if (!apiKey) {
+      return false;
+    }
+
     return true;
   }
 
@@ -367,11 +373,16 @@ class TelemetryManager {
     const eventsToSend = [...this.events];
     this.events = [];
 
-    try {
-      const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
-      const apiKey = process.env.LETTA_API_KEY;
+    const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+    const apiKey = process.env.LETTA_API_KEY;
 
-      const response = await fetch(`${baseURL}/v1/metadata/telemetry`, {
+    try {
+      // Add 5 second timeout to prevent telemetry from blocking shutdown
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Telemetry request timeout")), 5000),
+      );
+
+      const fetchPromise = fetch(`${baseURL}/v1/metadata/telemetry`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -384,15 +395,17 @@ class TelemetryManager {
         }),
       });
 
+      const response = (await Promise.race([
+        fetchPromise,
+        timeoutPromise,
+      ])) as Response;
+
       if (!response.ok) {
-        // If flush fails, put events back in queue
-        this.events.unshift(...eventsToSend);
         throw new Error(`Telemetry flush failed: ${response.status}`);
       }
-    } catch (error) {
-      // If flush fails, put events back in queue
+    } catch {
+      // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
-      throw error;
     }
   }
 
