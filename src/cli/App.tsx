@@ -1458,12 +1458,15 @@ export default function App({
     ],
   );
 
-  const handleExit = useCallback(() => {
+  const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
+
+    // Flush telemetry before exit
+    await telemetry.flush();
 
     setShowExitStats(true);
     // Give React time to render the stats, then exit
@@ -2009,6 +2012,9 @@ export default function App({
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
             telemetry.trackSessionEnd(stats, "logout");
+
+            // Flush telemetry before exit
+            await telemetry.flush();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);

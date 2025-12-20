@@ -129,24 +129,31 @@ class TelemetryManager {
       });
     }, this.FLUSH_INTERVAL_MS);
 
-    // Safety net: Track session end on process exit (in case handleExit wasn't called)
-    // Note: handleExit in App.tsx should call trackSessionEnd() explicitly for normal exits
-    process.on("exit", () => {
-      this.trackSessionEnd(undefined, "process_exit");
-      // Synchronous flush on exit
-      this.flushSync().catch(() => {
-        // Ignore errors on exit
-      });
-    });
+    // Don't let the interval prevent process from exiting
+    this.flushInterval.unref();
 
     // Safety net: Handle Ctrl+C interruption
+    // Note: Normal exits via handleExit flush explicitly
     process.on("SIGINT", () => {
-      this.trackSessionEnd(undefined, "sigint");
-      this.flushSync().catch(() => {
-        // Ignore errors
-      });
+      try {
+        this.trackSessionEnd(undefined, "sigint");
+        // Fire and forget - try to flush but don't wait (might not complete)
+        this.flush().catch(() => {
+          // Silently ignore
+        });
+      } catch {
+        // Silently ignore - don't prevent process from exiting
+      }
+      // Exit immediately - don't wait for flush
       process.exit(0);
     });
+
+    // TODO: Add telemetry for crashes and abnormal exits
+    // Current limitation: We can't reliably flush telemetry on process.on("exit")
+    // because the event loop is shut down and async operations don't work.
+    // Potential solution: Write unsent events to ~/.letta/telemetry-queue.json
+    // and send them on next startup. This would capture crash telemetry without
+    // risking hangs on exit.
   }
 
   /**
@@ -407,13 +414,6 @@ class TelemetryManager {
       // If flush fails, put events back in queue, but don't throw error
       this.events.unshift(...eventsToSend);
     }
-  }
-
-  /**
-   * Synchronous flush for process exit
-   */
-  private async flushSync(): Promise<void> {
-    await this.flush();
   }
 
   /**
