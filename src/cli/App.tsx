@@ -1724,7 +1724,7 @@ export default function App({
       if (!msg) return { submitted: false };
 
       // Track user input (agent_id automatically added from telemetry.currentAgentId)
-      telemetry.trackUserInput(msg, "user");
+      telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
 
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen

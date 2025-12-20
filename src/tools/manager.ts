@@ -928,18 +928,13 @@ export async function executeTool(
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
-    // Track tool usage
-    const success =
-      typeof recordResult?.success === "string"
-        ? recordResult.success === "success"
-        : false;
-    const errorType = success ? undefined : "tool_execution";
+    // Track tool usage (success path - we're in the try block)
     telemetry.trackToolUsage(
       internalName,
-      success,
+      true, // Hardcoded to true since tool execution succeeded
       duration,
       flattenedResponse.length,
-      errorType,
+      undefined, // no error_type on success
       stderr ? stderr.join("\n") : undefined,
     );
 

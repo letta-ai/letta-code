@@ -48,6 +48,7 @@ export interface UserInputData {
   is_command: boolean;
   command_name?: string;
   message_type: string;
+  model_id: string;
 }
 
 class TelemetryManager {
@@ -354,7 +355,7 @@ class TelemetryManager {
    * Track user input
    * Note: agent_id is automatically added from currentAgentId
    */
-  trackUserInput(input: string, messageType: string) {
+  trackUserInput(input: string, messageType: string, modelId: string) {
     this.messageCount++;
 
     const isCommand = input.trim().startsWith("/");
@@ -365,6 +366,7 @@ class TelemetryManager {
       is_command: isCommand,
       command_name: commandName,
       message_type: messageType,
+      model_id: modelId,
     };
     this.track("user_input", data);
   }
