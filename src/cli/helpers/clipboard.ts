@@ -4,6 +4,43 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, resolve } from "node:path";
 import { allocateImage } from "./pasteRegistry";
 
+/**
+ * Copy text to system clipboard
+ * Returns true if successful, false otherwise
+ */
+export function copyToClipboard(text: string): boolean {
+  try {
+    if (process.platform === "darwin") {
+      execFileSync("pbcopy", [], { input: text, encoding: "utf8" });
+      return true;
+    } else if (process.platform === "win32") {
+      execFileSync("clip", [], { input: text, encoding: "utf8" });
+      return true;
+    } else {
+      // Linux - try xclip first, then xsel
+      try {
+        execFileSync("xclip", ["-selection", "clipboard"], {
+          input: text,
+          encoding: "utf8",
+        });
+        return true;
+      } catch {
+        try {
+          execFileSync("xsel", ["--clipboard", "--input"], {
+            input: text,
+            encoding: "utf8",
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
 const IMAGE_EXTS = new Set([
   ".png",
   ".jpg",
