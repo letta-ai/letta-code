@@ -2,6 +2,7 @@
 // Utilities for modifying agent configuration
 
 import type {
+  AgentState,
   AnthropicModelSettings,
   GoogleAIModelSettings,
   OpenAIModelSettings,
@@ -316,21 +317,21 @@ export interface SystemPromptUpdateResult {
 }
 
 /**
- * Updates an agent's system prompt.
+ * Updates an agent's system prompt with raw content.
  *
  * @param agentId - The agent ID
- * @param systemPrompt - The new system prompt content
+ * @param systemPromptContent - The raw system prompt content to update
  * @returns Result with success status and message
  */
-export async function updateAgentSystemPrompt(
+export async function updateAgentSystemPromptRaw(
   agentId: string,
-  systemPrompt: string,
+  systemPromptContent: string,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const client = await getClient();
 
     await client.agents.update(agentId, {
-      system: systemPrompt,
+      system: systemPromptContent,
     });
 
     return {
@@ -341,6 +342,61 @@ export async function updateAgentSystemPrompt(
     return {
       success: false,
       message: `Failed to update system prompt: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Result from updating a system prompt on an agent
+ */
+export interface UpdateSystemPromptResult {
+  success: boolean;
+  message: string;
+  agent: AgentState | null;
+}
+
+/**
+ * Updates an agent's system prompt by ID or subagent name.
+ * Resolves the ID to content, updates the agent, and returns the refreshed agent state.
+ *
+ * @param agentId - The agent ID to update
+ * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @returns Result with success status, message, and updated agent state
+ */
+export async function updateAgentSystemPrompt(
+  agentId: string,
+  systemPromptId: string,
+): Promise<UpdateSystemPromptResult> {
+  try {
+    const { resolveSystemPrompt } = await import("./promptAssets");
+    const systemPromptContent = await resolveSystemPrompt(systemPromptId);
+
+    const updateResult = await updateAgentSystemPromptRaw(
+      agentId,
+      systemPromptContent,
+    );
+    if (!updateResult.success) {
+      return {
+        success: false,
+        message: updateResult.message,
+        agent: null,
+      };
+    }
+
+    // Re-fetch agent to get updated state
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+
+    return {
+      success: true,
+      message: "System prompt applied successfully",
+      agent,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to apply system prompt: ${error instanceof Error ? error.message : String(error)}`,
+      agent: null,
     };
   }
 }
