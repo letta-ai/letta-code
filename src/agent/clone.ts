@@ -8,8 +8,6 @@ import { getClient } from "./client";
 export interface CloneAgentOptions {
   /** The ID of the agent to clone */
   agentId: string;
-  /** Whether to strip messages from the cloned agent (default: false) */
-  stripMessages?: boolean;
 }
 
 export interface CloneAgentResult {
@@ -20,7 +18,7 @@ export interface CloneAgentResult {
 /**
  * Clone an agent by exporting and re-importing it.
  * The cloned agent will have a new ID and name (with "_copy" suffix).
- * Message history is preserved by default.
+ * Message history is always preserved.
  */
 export async function cloneAgent(
   options: CloneAgentOptions,
@@ -42,7 +40,7 @@ export async function cloneAgent(
   // Step 3: Import to create a new agent
   const importResponse = await client.agents.importFile({
     file,
-    strip_messages: options.stripMessages ?? false,
+    strip_messages: false,
     override_existing_tools: false,
   });
 
