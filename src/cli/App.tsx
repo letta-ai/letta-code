@@ -1508,7 +1508,13 @@ export default function App({
       }
     },
 
-    [appendError, refreshDerived, refreshDerivedThrottled, setStreaming],
+    [
+      appendError,
+      refreshDerived,
+      refreshDerivedThrottled,
+      setStreaming,
+      agentId,
+    ],
   );
 
   const handleExit = useCallback(() => {
