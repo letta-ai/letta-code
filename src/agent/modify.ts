@@ -8,6 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
 import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
@@ -26,7 +27,10 @@ function buildModelSettings(
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
   const isOpenAI = modelHandle.startsWith("openai/");
-  const isAnthropic = modelHandle.startsWith("anthropic/");
+  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  const isAnthropic =
+    modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");

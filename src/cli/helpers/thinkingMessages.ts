@@ -32,6 +32,15 @@ const THINKING_VERBS = [
   "rendering",
   "executing",
   "initializing",
+  "absolutely right",
+  "thinking about thinking",
+  "metathinking",
+  "learning",
+  "adapting",
+  "evolving",
+  "remembering",
+  "absorbing",
+  "internalizing",
 ] as const;
 
 // Get a random thinking verb (e.g., "thinking", "processing")

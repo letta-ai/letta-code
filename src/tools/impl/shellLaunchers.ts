@@ -17,12 +17,10 @@ function windowsLaunchers(command: string): string[][] {
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
-  const envComSpecRaw = process.env.ComSpec || process.env.COMSPEC;
-  const envComSpec = envComSpecRaw?.trim();
-  if (envComSpec) {
-    pushUnique(launchers, seen, [envComSpec, "/d", "/s", "/c", trimmed]);
-  }
-  pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
+
+  // Default to PowerShell on Windows (same as Gemini CLI and Codex CLI)
+  // This ensures better PATH compatibility since many tools are configured
+  // in PowerShell profiles rather than system-wide cmd.exe PATH
   pushUnique(launchers, seen, [
     "powershell.exe",
     "-NoProfile",
@@ -30,6 +28,15 @@ function windowsLaunchers(command: string): string[][] {
     trimmed,
   ]);
   pushUnique(launchers, seen, ["pwsh", "-NoProfile", "-Command", trimmed]);
+
+  // Fall back to cmd.exe if PowerShell fails
+  const envComSpecRaw = process.env.ComSpec || process.env.COMSPEC;
+  const envComSpec = envComSpecRaw?.trim();
+  if (envComSpec) {
+    pushUnique(launchers, seen, [envComSpec, "/d", "/s", "/c", trimmed]);
+  }
+  pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
+
   return launchers;
 }
 

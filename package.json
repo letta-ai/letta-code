@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "bin": {
@@ -53,7 +53,7 @@
     "dev": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "bun run build.js",
     "prepare": "bun run build",
-    "postinstall": "bun scripts/postinstall-patches.js || true"
+    "postinstall": "node scripts/postinstall-patches.js"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [

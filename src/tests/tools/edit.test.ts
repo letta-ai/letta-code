@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { edit } from "../../tools/impl/Edit";
 import { TestDirectory } from "../helpers/testFs";
 
@@ -110,5 +110,44 @@ describe("Edit tool", () => {
         new_str: "Bun",
       } as unknown as Parameters<typeof edit>[0]),
     ).rejects.toThrow(/missing required parameter.*new_string/);
+  });
+
+  test("handles CRLF line endings (Windows compatibility)", async () => {
+    testDir = new TestDirectory();
+    // Create file with CRLF line endings (Windows style)
+    const file = testDir.createFile("crlf.txt", "");
+    writeFileSync(file, "line1\r\nline2\r\nline3\r\n", "utf-8");
+
+    // Edit with LF line endings (what the model typically sends)
+    const result = await edit({
+      file_path: file,
+      old_string: "line1\nline2",
+      new_string: "changed1\nchanged2",
+    });
+
+    // Should successfully find and replace despite CRLF vs LF mismatch
+    expect(result.replacements).toBe(1);
+    const content = readFileSync(file, "utf-8");
+    expect(content).toContain("changed1");
+    expect(content).toContain("changed2");
+  });
+
+  test("handles mixed line endings", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("mixed.txt", "");
+    // File with CRLF
+    writeFileSync(file, "function foo() {\r\n  return 1;\r\n}\r\n", "utf-8");
+
+    // Model sends LF
+    const result = await edit({
+      file_path: file,
+      old_string: "function foo() {\n  return 1;\n}",
+      new_string: "function bar() {\n  return 2;\n}",
+    });
+
+    expect(result.replacements).toBe(1);
+    const content = readFileSync(file, "utf-8");
+    expect(content).toContain("function bar()");
+    expect(content).toContain("return 2");
   });
 });
