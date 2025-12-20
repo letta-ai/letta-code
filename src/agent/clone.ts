@@ -1,8 +1,9 @@
 /**
  * Clone an existing agent by exporting and re-importing it
  */
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+
 import { toFile } from "@letta-ai/letta-client";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "./client";
 
 export interface CloneAgentOptions {
