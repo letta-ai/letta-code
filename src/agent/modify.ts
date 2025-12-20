@@ -313,21 +313,21 @@ export interface SystemPromptUpdateResult {
 }
 
 /**
- * Updates an agent's system prompt.
+ * Updates an agent's system prompt with raw content.
  *
  * @param agentId - The agent ID
- * @param systemPrompt - The new system prompt content
+ * @param systemPromptContent - The raw system prompt content to update
  * @returns Result with success status and message
  */
-export async function updateAgentSystemPrompt(
+export async function updateAgentSystemPromptRaw(
   agentId: string,
-  systemPrompt: string,
+  systemPromptContent: string,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const client = await getClient();
 
     await client.agents.update(agentId, {
-      system: systemPrompt,
+      system: systemPromptContent,
     });
 
     return {
@@ -343,31 +343,34 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Result from applying a system prompt to an agent
+ * Result from updating a system prompt on an agent
  */
-export interface ApplySystemPromptResult {
+export interface UpdateSystemPromptResult {
   success: boolean;
   message: string;
   agent: AgentState | null;
 }
 
 /**
- * Resolves a system prompt input (ID or subagent name) and applies it to an agent.
- * This is a convenience function that combines resolution, update, and re-fetch.
+ * Updates an agent's system prompt by ID or subagent name.
+ * Resolves the ID to content, updates the agent, and returns the refreshed agent state.
  *
  * @param agentId - The agent ID to update
- * @param systemPromptInput - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
  * @returns Result with success status, message, and updated agent state
  */
-export async function applySystemPrompt(
+export async function updateAgentSystemPrompt(
   agentId: string,
-  systemPromptInput: string,
-): Promise<ApplySystemPromptResult> {
+  systemPromptId: string,
+): Promise<UpdateSystemPromptResult> {
   try {
     const { resolveSystemPrompt } = await import("./promptAssets");
-    const resolvedPrompt = await resolveSystemPrompt(systemPromptInput);
+    const systemPromptContent = await resolveSystemPrompt(systemPromptId);
 
-    const updateResult = await updateAgentSystemPrompt(agentId, resolvedPrompt);
+    const updateResult = await updateAgentSystemPromptRaw(
+      agentId,
+      systemPromptContent,
+    );
     if (!updateResult.success) {
       return {
         success: false,
