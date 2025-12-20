@@ -41,7 +41,7 @@ OPTIONS
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
-  -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
+  -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
@@ -763,7 +763,29 @@ async function main(): Promise<void> {
         if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
-            // console.log(`Using agent ${agentIdArg}...`);
+
+            // Apply --system flag to existing agent if provided
+            if (system) {
+              const { resolveSystemPrompt } = await import(
+                "./agent/promptAssets"
+              );
+              const { updateAgentSystemPrompt } = await import(
+                "./agent/modify"
+              );
+              const resolvedPrompt = await resolveSystemPrompt(system);
+              const result = await updateAgentSystemPrompt(
+                agent.id,
+                resolvedPrompt,
+              );
+              if (!result.success) {
+                console.error(
+                  `Failed to update system prompt: ${result.message}`,
+                );
+                process.exit(1);
+              }
+              // Re-fetch agent to get updated state
+              agent = await client.agents.retrieve(agentIdArg);
+            }
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
