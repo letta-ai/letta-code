@@ -337,11 +337,11 @@ export async function handleHeadlessCommand(
     if (systemPromptId) {
       const { updateAgentSystemPrompt } = await import("./agent/modify");
       const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
-      if (!result.success) {
+      if (!result.success || !result.agent) {
         console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
       }
-      agent = result.agent!;
+      agent = result.agent;
     }
   }
 

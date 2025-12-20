@@ -3875,7 +3875,9 @@ ${recentCommits}
           refreshDerived();
 
           // Update the agent's system prompt
-          const { updateAgentSystemPromptRaw } = await import("../agent/modify");
+          const { updateAgentSystemPromptRaw } = await import(
+            "../agent/modify"
+          );
           const result = await updateAgentSystemPromptRaw(
             agentId,
             selectedPrompt.content,

@@ -766,15 +766,20 @@ async function main(): Promise<void> {
 
             // Apply --system flag to existing agent if provided
             if (systemPromptId) {
-              const { updateAgentSystemPrompt } = await import("./agent/modify");
-              const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
-              if (!result.success) {
+              const { updateAgentSystemPrompt } = await import(
+                "./agent/modify"
+              );
+              const result = await updateAgentSystemPrompt(
+                agent.id,
+                systemPromptId,
+              );
+              if (!result.success || !result.agent) {
                 console.error(
                   `Failed to update system prompt: ${result.message}`,
                 );
                 process.exit(1);
               }
-              agent = result.agent!;
+              agent = result.agent;
             }
           } catch (error) {
             console.error(
@@ -1006,12 +1011,15 @@ async function main(): Promise<void> {
 
           if (systemPromptId) {
             const { updateAgentSystemPrompt } = await import("./agent/modify");
-            const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
-            if (!result.success) {
+            const result = await updateAgentSystemPrompt(
+              agent.id,
+              systemPromptId,
+            );
+            if (!result.success || !result.agent) {
               console.error(`Error: ${result.message}`);
               process.exit(1);
             }
-            agent = result.agent!;
+            agent = result.agent;
           }
         }
 
