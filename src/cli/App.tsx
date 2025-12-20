@@ -60,6 +60,7 @@ import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
@@ -418,6 +419,7 @@ export default function App({
     | "pin"
     | "mcp"
     | "help"
+    | "oauth"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -1791,6 +1793,45 @@ export default function App({
 
           // Unknown subcommand
           handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /connect command - OAuth connection
+        if (msg.trim().startsWith("/connect")) {
+          const parts = msg.trim().split(/\s+/);
+          const provider = parts[1]?.toLowerCase();
+          const hasCode = parts.length > 2;
+
+          // If no code provided and provider is claude, show the OAuth dialog
+          if (provider === "claude" && !hasCode) {
+            setActiveOverlay("oauth");
+            return { submitted: true };
+          }
+
+          // Otherwise (with code or invalid provider), use existing handler
+          const { handleConnect } = await import("./commands/connect");
+          await handleConnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
+          return { submitted: true };
+        }
+
+        // Special handling for /disconnect command - remove OAuth connection
+        if (msg.trim().startsWith("/disconnect")) {
+          const { handleDisconnect } = await import("./commands/connect");
+          await handleDisconnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
           return { submitted: true };
         }
 
@@ -4663,6 +4704,35 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* OAuth Code Dialog - for Claude OAuth connection */}
+            {activeOverlay === "oauth" && (
+              <OAuthCodeDialog
+                onComplete={(success, message) => {
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/connect claude",
+                    output: message,
+                    phase: "finished",
+                    success,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+                onModelSwitch={async (modelHandle: string) => {
+                  const { updateAgentLLMConfig } = await import(
+                    "../agent/modify"
+                  );
+                  await updateAgentLLMConfig(agentId, modelHandle);
+                  // Update current model display
+                  setCurrentModelId(modelHandle);
+                }}
+              />
+            )}
 
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (
