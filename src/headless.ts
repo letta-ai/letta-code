@@ -22,7 +22,11 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission } from "./tools/manager";
+import {
+  checkToolPermission,
+  forceUpsertTools,
+  isToolsNotFoundError,
+} from "./tools/manager";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -99,6 +103,12 @@ export async function handleHeadlessCommand(
   }
 
   const client = await getClient();
+
+  // Get base URL for tool upsert operations
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    "https://api.letta.com";
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -190,19 +200,41 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      initBlocks,
-      baseTools,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        undefined,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        specifiedSystem,
+        initBlocks,
+        baseTools,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (isToolsNotFoundError(err)) {
+        console.warn("Tools missing on server, re-uploading and retrying...");
+        await forceUpsertTools(client, baseURL);
+        const result = await createAgent(
+          undefined,
+          model,
+          undefined,
+          updateArgs,
+          skillsDirectory,
+          true,
+          sleeptimeFlag ?? settings.enableSleeptime,
+          specifiedSystem,
+          initBlocks,
+          baseTools,
+        );
+        agent = result.agent;
+      } else {
+        throw err;
+      }
+    }
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -234,19 +266,41 @@ export async function handleHeadlessCommand(
   // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      undefined,
-      undefined,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        undefined,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        specifiedSystem,
+        undefined,
+        undefined,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (isToolsNotFoundError(err)) {
+        console.warn("Tools missing on server, re-uploading and retrying...");
+        await forceUpsertTools(client, baseURL);
+        const result = await createAgent(
+          undefined,
+          model,
+          undefined,
+          updateArgs,
+          skillsDirectory,
+          true,
+          sleeptimeFlag ?? settings.enableSleeptime,
+          specifiedSystem,
+          undefined,
+          undefined,
+        );
+        agent = result.agent;
+      } else {
+        throw err;
+      }
+    }
   }
 
   // Check if we're resuming an existing agent (not creating a new one)

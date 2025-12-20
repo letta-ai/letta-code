@@ -395,14 +395,16 @@ export function Input({
 
     const id = setInterval(() => {
       setShimmerOffset((prev) => {
-        const len = thinkingMessage.length;
+        // Include agent name length (+1 for space) in shimmer cycle
+        const prefixLen = agentName ? agentName.length + 1 : 0;
+        const len = prefixLen + thinkingMessage.length;
         const next = prev + 1;
         return next > len + 3 ? -3 : next;
       });
     }, 120); // Speed of shimmer animation
 
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible]);
+  }, [streaming, thinkingMessage, visible, agentName]);
 
   const handleSubmit = async () => {
     // Don't submit if autocomplete is active with matches
@@ -527,6 +529,7 @@ export function Input({
           </Box>
           <Box flexGrow={1}>
             <ShimmerText
+              boldPrefix={agentName || undefined}
               message={thinkingMessage}
               shimmerOffset={shimmerOffset}
             />

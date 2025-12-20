@@ -62,6 +62,7 @@ export type Buffers = {
   toolCallIdToLineId: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
   pendingRefresh?: boolean; // Track throttled refresh state
+  interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -162,6 +163,9 @@ export function markCurrentLineAsFinished(b: Buffers) {
  * This prevents blinking tool calls from staying in progress state.
  */
 export function markIncompleteToolsAsCancelled(b: Buffers) {
+  // Mark buffer as interrupted to skip stale throttled refreshes
+  b.interrupted = true;
+
   for (const [id, line] of b.byId.entries()) {
     if (line.kind === "tool_call" && line.phase !== "finished") {
       const updatedLine = {
