@@ -446,7 +446,7 @@ function formatSkillsWithMetadata(
 
   output += "Available Skills:\n";
   output +=
-    "(source: bundled = ships with package, global = ~/.letta/skills/, project = .skills/)\n\n";
+    "(source: bundled = built-in to Letta Code, global = ~/.letta/skills/, project = .skills/)\n\n";
 
   // Group skills by category if categories exist
   const categorized = new Map<string, Skill[]>();
