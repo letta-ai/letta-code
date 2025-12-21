@@ -131,7 +131,7 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
           <Text dimColor>{" ⎿  Done"}</Text>
         ) : agent.status === "error" ? (
           <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
+            {" ⎿  "}
             {agent.error}
           </Text>
         ) : lastTool ? (
@@ -151,21 +151,27 @@ AgentRow.displayName = "AgentRow";
 interface GroupHeaderProps {
   count: number;
   allCompleted: boolean;
+  hasErrors: boolean;
   expanded: boolean;
 }
 
 const GroupHeader = memo(
-  ({ count, allCompleted, expanded }: GroupHeaderProps) => {
+  ({ count, allCompleted, hasErrors, expanded }: GroupHeaderProps) => {
     const statusText = allCompleted
       ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
       : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
 
     const hint = expanded ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
 
+    // Use error color for dot if any subagent errored
+    const dotColor = hasErrors
+      ? colors.subagent.error
+      : colors.subagent.completed;
+
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={colors.subagent.completed}>⏺</Text>
+          <Text color={dotColor}>⏺</Text>
         ) : (
           <BlinkDot color={colors.subagent.header} />
         )}
@@ -200,12 +206,14 @@ export const SubagentGroupDisplay = memo(() => {
   const allCompleted = agents.every(
     (a) => a.status === "completed" || a.status === "error",
   );
+  const hasErrors = agents.some((a) => a.status === "error");
 
   return (
     <Box flexDirection="column" marginTop={1}>
       <GroupHeader
         count={agents.length}
         allCompleted={allCompleted}
+        hasErrors={hasErrors}
         expanded={expanded}
       />
       {agents.map((agent, index) => (

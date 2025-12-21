@@ -87,7 +87,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
           <Text dimColor>{" ⎿  Done"}</Text>
         ) : (
           <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
+            {" ⎿  "}
             {agent.error}
           </Text>
         )}
@@ -109,12 +109,18 @@ export const SubagentGroupStatic = memo(
     }
 
     const statusText = `Ran ${agents.length} subagent${agents.length !== 1 ? "s" : ""}`;
+    const hasErrors = agents.some((a) => a.status === "error");
+
+    // Use error color for dot if any subagent errored
+    const dotColor = hasErrors
+      ? colors.subagent.error
+      : colors.subagent.completed;
 
     return (
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
-          <Text color={colors.subagent.completed}>⏺</Text>
+          <Text color={dotColor}>⏺</Text>
           <Text color={colors.subagent.header}> {statusText}</Text>
         </Box>
 
