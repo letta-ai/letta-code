@@ -308,7 +308,7 @@
   },
   {
     "id": "glm-4.6",
-    "handle": "z-ai/glm-4.6",
+    "handle": "zai/glm-4.6",
     "label": "GLM-4.6",
     "description": "The best open weights coding model",
     "updateArgs": {
