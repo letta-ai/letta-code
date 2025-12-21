@@ -3003,11 +3003,6 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            // Import the initialization prompt
-            const { INITIALIZE_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
-
             // Gather git context if available
             let gitContext = "";
             try {
@@ -3078,8 +3073,27 @@ ${recentCommits}
             });
             refreshDerived();
 
-            // Send initialization prompt with git context as a system reminder
-            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n${gitContext}\n</system-reminder>`;
+            // Send trigger message instructing agent to load the memory-init skill
+            const initMessage = `<system-reminder>
+The user has requested memory initialization via /init.
+
+## 1. Load the memory-init skill
+
+First, check your \`loaded_skills\` memory block. If the \`memory-init\` skill is not already loaded:
+1. Use the \`Skill\` tool with \`command: "load", skills: ["memory-init"]\`
+2. The skill contains comprehensive instructions for memory initialization
+
+If the skill fails to load, proceed with your best judgment based on these guidelines:
+- Ask upfront questions (research depth, identity, related repos, workflow style)
+- Research the project based on chosen depth
+- Create/update memory blocks incrementally
+- Reflect and verify completeness
+
+## 2. Follow the loaded skill instructions
+
+Once loaded, follow the instructions in the \`memory-init\` skill to complete the initialization.
+${gitContext}
+</system-reminder>`;
 
             // Process conversation with the init prompt
             await processConversation([
