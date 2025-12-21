@@ -2994,7 +2994,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Gathering project context...",
+            output: "Loading init skill and gathering project context...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -3003,10 +3003,19 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            // Import the initialization prompt
-            const { INITIALIZE_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            // Load the init skill (it's a bundled skill)
+            const { skill } = await import("../tools/impl/Skill.js");
+            try {
+              await skill({ command: "load", skills: ["init"] });
+            } catch (skillError) {
+              // Log but don't fail - the skill might already be loaded
+              console.warn(
+                "Note: Could not load init skill:",
+                skillError instanceof Error
+                  ? skillError.message
+                  : String(skillError),
+              );
+            }
 
             // Gather git context if available
             let gitContext = "";
@@ -3078,8 +3087,18 @@ ${recentCommits}
             });
             refreshDerived();
 
-            // Send initialization prompt with git context as a system reminder
-            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n${gitContext}\n</system-reminder>`;
+            // Send a short trigger message - the full instructions are in the loaded init skill
+            const initMessage = `<system-reminder>
+The user has requested memory initialization via /init.
+
+The 'init' skill has been loaded with comprehensive instructions for initializing agent memory.
+Follow the instructions in the loaded skill to:
+1. Ask upfront questions (research depth, identity, related repos, workflow style)
+2. Research the project based on chosen depth
+3. Create/update memory blocks incrementally
+4. Reflect and verify completeness
+${gitContext}
+</system-reminder>`;
 
             // Process conversation with the init prompt
             await processConversation([
