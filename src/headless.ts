@@ -115,7 +115,7 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
-  const specifiedSystem = values.system as string | undefined;
+  const systemPromptId = values.system as string | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -209,7 +209,7 @@ export async function handleHeadlessCommand(
         skillsDirectory,
         true, // parallelToolCalls always enabled
         sleeptimeFlag ?? settings.enableSleeptime,
-        specifiedSystem,
+        systemPromptId,
         initBlocks,
         baseTools,
       );
@@ -226,7 +226,7 @@ export async function handleHeadlessCommand(
           skillsDirectory,
           true,
           sleeptimeFlag ?? settings.enableSleeptime,
-          specifiedSystem,
+          systemPromptId,
           initBlocks,
           baseTools,
         );
@@ -275,7 +275,7 @@ export async function handleHeadlessCommand(
         skillsDirectory,
         true, // parallelToolCalls always enabled
         sleeptimeFlag ?? settings.enableSleeptime,
-        specifiedSystem,
+        systemPromptId,
         undefined,
         undefined,
       );
@@ -292,7 +292,7 @@ export async function handleHeadlessCommand(
           skillsDirectory,
           true,
           sleeptimeFlag ?? settings.enableSleeptime,
-          specifiedSystem,
+          systemPromptId,
           undefined,
           undefined,
         );
@@ -311,7 +311,7 @@ export async function handleHeadlessCommand(
   );
 
   // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || specifiedSystem)) {
+  if (isResumingAgent && (model || systemPromptId)) {
     if (model) {
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
@@ -334,19 +334,14 @@ export async function handleHeadlessCommand(
       }
     }
 
-    if (specifiedSystem) {
+    if (systemPromptId) {
       const { updateAgentSystemPrompt } = await import("./agent/modify");
-      const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-      const systemPromptOption = SYSTEM_PROMPTS.find(
-        (p) => p.id === specifiedSystem,
-      );
-      if (!systemPromptOption) {
-        console.error(`Error: Invalid system prompt "${specifiedSystem}"`);
+      const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
+      if (!result.success || !result.agent) {
+        console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
       }
-      await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
-      // Refresh agent state after system prompt update
-      agent = await client.agents.retrieve(agent.id);
+      agent = result.agent;
     }
   }
 

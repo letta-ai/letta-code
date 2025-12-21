@@ -29,6 +29,7 @@ import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
+import { telemetry } from "../telemetry";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -64,6 +65,7 @@ import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
@@ -317,6 +319,7 @@ export default function App({
   const agentIdRef = useRef(agentId);
   useEffect(() => {
     agentIdRef.current = agentId;
+    telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
   const resumeKey = useSuspend();
@@ -422,6 +425,7 @@ export default function App({
     | "pin"
     | "mcp"
     | "help"
+    | "oauth"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
@@ -474,6 +478,18 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Wire up session stats to telemetry for safety net handlers
+  useEffect(() => {
+    telemetry.setSessionStatsGetter(() =>
+      sessionStatsRef.current.getSnapshot(),
+    );
+
+    // Cleanup on unmount (defensive, prevents potential memory leak)
+    return () => {
+      telemetry.setSessionStatsGetter(undefined);
+    };
+  }, []);
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
@@ -1498,6 +1514,25 @@ export default function App({
           return;
         }
 
+        // Track error with enhanced context
+        const errorType =
+          e instanceof Error ? e.constructor.name : "UnknownError";
+        const errorMessage = e instanceof Error ? e.message : String(e);
+
+        // Extract HTTP status code if available (API errors often have this)
+        const httpStatus =
+          e &&
+          typeof e === "object" &&
+          "status" in e &&
+          typeof e.status === "number"
+            ? e.status
+            : undefined;
+
+        telemetry.trackError(errorType, errorMessage, "message_stream", {
+          httpStatus,
+          modelId: currentModelId || undefined,
+        });
+
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails);
@@ -1514,11 +1549,20 @@ export default function App({
       refreshDerivedThrottled,
       setStreaming,
       agentId,
+      currentModelId,
     ],
   );
 
-  const handleExit = useCallback(() => {
+  const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
+
+    // Track session end explicitly (before exit) with stats
+    const stats = sessionStatsRef.current.getSnapshot();
+    telemetry.trackSessionEnd(stats, "exit_command");
+
+    // Flush telemetry before exit
+    await telemetry.flush();
+
     setShowExitStats(true);
     // Give React time to render the stats, then exit
     setTimeout(() => {
@@ -1774,6 +1818,9 @@ export default function App({
 
       if (!msg) return { submitted: false };
 
+      // Track user input (agent_id automatically added from telemetry.currentAgentId)
+      telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
+
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
       if (pendingApprovals.length > 0) {
@@ -1889,6 +1936,45 @@ export default function App({
 
           // Unknown subcommand
           handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /connect command - OAuth connection
+        if (msg.trim().startsWith("/connect")) {
+          const parts = msg.trim().split(/\s+/);
+          const provider = parts[1]?.toLowerCase();
+          const hasCode = parts.length > 2;
+
+          // If no code provided and provider is claude, show the OAuth dialog
+          if (provider === "claude" && !hasCode) {
+            setActiveOverlay("oauth");
+            return { submitted: true };
+          }
+
+          // Otherwise (with code or invalid provider), use existing handler
+          const { handleConnect } = await import("./commands/connect");
+          await handleConnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
+          return { submitted: true };
+        }
+
+        // Special handling for /disconnect command - remove OAuth connection
+        if (msg.trim().startsWith("/disconnect")) {
+          const { handleDisconnect } = await import("./commands/connect");
+          await handleDisconnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
           return { submitted: true };
         }
 
@@ -2056,6 +2142,13 @@ export default function App({
             refreshDerived();
 
             saveLastAgentBeforeExit();
+
+            // Track session end explicitly (before exit) with stats
+            const stats = sessionStatsRef.current.getSnapshot();
+            telemetry.trackSessionEnd(stats, "logout");
+
+            // Flush telemetry before exit
+            await telemetry.flush();
 
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
@@ -3973,8 +4066,10 @@ ${recentCommits}
           refreshDerived();
 
           // Update the agent's system prompt
-          const { updateAgentSystemPrompt } = await import("../agent/modify");
-          const result = await updateAgentSystemPrompt(
+          const { updateAgentSystemPromptRaw } = await import(
+            "../agent/modify"
+          );
+          const result = await updateAgentSystemPromptRaw(
             agentId,
             selectedPrompt.content,
           );
@@ -4761,6 +4856,35 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* OAuth Code Dialog - for Claude OAuth connection */}
+            {activeOverlay === "oauth" && (
+              <OAuthCodeDialog
+                onComplete={(success, message) => {
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/connect claude",
+                    output: message,
+                    phase: "finished",
+                    success,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+                onModelSwitch={async (modelHandle: string) => {
+                  const { updateAgentLLMConfig } = await import(
+                    "../agent/modify"
+                  );
+                  await updateAgentLLMConfig(agentId, modelHandle);
+                  // Update current model display
+                  setCurrentModelId(modelHandle);
+                }}
+              />
+            )}
 
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (

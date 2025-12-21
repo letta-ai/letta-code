@@ -8,6 +8,7 @@ import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { telemetry } from "./telemetry";
 import {
   forceUpsertTools,
   isToolsNotFoundError,
@@ -41,7 +42,7 @@ OPTIONS
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
   -a, --agent <id>      Use a specific agent ID
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
-  -s, --system <id>     System prompt ID (e.g., "codex", "gpt-5.1", "review")
+  -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
@@ -214,6 +215,9 @@ async function main(): Promise<void> {
   await settingsManager.initialize();
   const settings = settingsManager.getSettings();
 
+  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
+  telemetry.init();
+
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
   checkAndAutoUpdate().catch(() => {
@@ -308,7 +312,7 @@ async function main(): Promise<void> {
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
-  const specifiedSystem = (values.system as string | undefined) ?? undefined;
+  const systemPromptId = (values.system as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -379,7 +383,7 @@ async function main(): Promise<void> {
   }
 
   // Validate system prompt if provided (can be a system prompt ID or subagent name)
-  if (specifiedSystem) {
+  if (systemPromptId) {
     const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
     const { getAllSubagentConfigs } = await import("./agent/subagents");
 
@@ -387,13 +391,13 @@ async function main(): Promise<void> {
     const subagentConfigs = await getAllSubagentConfigs();
     const validSubagentNames = Object.keys(subagentConfigs);
 
-    const isValidSystemPrompt = validSystemPrompts.includes(specifiedSystem);
-    const isValidSubagent = validSubagentNames.includes(specifiedSystem);
+    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptId);
+    const isValidSubagent = validSubagentNames.includes(systemPromptId);
 
     if (!isValidSystemPrompt && !isValidSubagent) {
       const allValid = [...validSystemPrompts, ...validSubagentNames];
       console.error(
-        `Error: Invalid system prompt "${specifiedSystem}". Must be one of: ${allValid.join(", ")}.`,
+        `Error: Invalid system prompt "${systemPromptId}". Must be one of: ${allValid.join(", ")}.`,
       );
       process.exit(1);
     }
@@ -593,7 +597,7 @@ async function main(): Promise<void> {
     baseTools,
     agentIdArg,
     model,
-    system,
+    systemPromptId,
     toolset,
     skillsDirectory,
     fromAfFile,
@@ -604,7 +608,7 @@ async function main(): Promise<void> {
     baseTools?: string[];
     agentIdArg: string | null;
     model?: string;
-    system?: string;
+    systemPromptId?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
@@ -763,7 +767,24 @@ async function main(): Promise<void> {
         if (!agent && agentIdArg) {
           try {
             agent = await client.agents.retrieve(agentIdArg);
-            // console.log(`Using agent ${agentIdArg}...`);
+
+            // Apply --system flag to existing agent if provided
+            if (systemPromptId) {
+              const { updateAgentSystemPrompt } = await import(
+                "./agent/modify"
+              );
+              const result = await updateAgentSystemPrompt(
+                agent.id,
+                systemPromptId,
+              );
+              if (!result.success || !result.agent) {
+                console.error(
+                  `Failed to update system prompt: ${result.message}`,
+                );
+                process.exit(1);
+              }
+              agent = result.agent;
+            }
           } catch (error) {
             console.error(
               `Agent ${agentIdArg} not found (error: ${JSON.stringify(error)})`,
@@ -788,7 +809,7 @@ async function main(): Promise<void> {
               skillsDirectory,
               true, // parallelToolCalls always enabled
               sleeptimeFlag ?? settings.enableSleeptime,
-              system,
+              systemPromptId,
               initBlocks,
               baseTools,
             );
@@ -810,7 +831,7 @@ async function main(): Promise<void> {
                 skillsDirectory,
                 true,
                 sleeptimeFlag ?? settings.enableSleeptime,
-                system,
+                systemPromptId,
                 initBlocks,
                 baseTools,
               );
@@ -865,7 +886,7 @@ async function main(): Promise<void> {
               skillsDirectory,
               true, // parallelToolCalls always enabled
               sleeptimeFlag ?? settings.enableSleeptime,
-              system,
+              systemPromptId,
               undefined,
               undefined,
             );
@@ -887,7 +908,7 @@ async function main(): Promise<void> {
                 skillsDirectory,
                 true,
                 sleeptimeFlag ?? settings.enableSleeptime,
-                system,
+                systemPromptId,
                 undefined,
                 undefined,
               );
@@ -968,7 +989,7 @@ async function main(): Promise<void> {
         setIsResumingSession(resuming);
 
         // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || system)) {
+        if (resuming && (model || systemPromptId)) {
           if (model) {
             const { resolveModel } = await import("./agent/model");
             const modelHandle = resolveModel(model);
@@ -992,19 +1013,17 @@ async function main(): Promise<void> {
             }
           }
 
-          if (system) {
+          if (systemPromptId) {
             const { updateAgentSystemPrompt } = await import("./agent/modify");
-            const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-            const systemPromptOption = SYSTEM_PROMPTS.find(
-              (p) => p.id === system,
+            const result = await updateAgentSystemPrompt(
+              agent.id,
+              systemPromptId,
             );
-            if (!systemPromptOption) {
-              console.error(`Error: Invalid system prompt "${system}"`);
+            if (!result.success || !result.agent) {
+              console.error(`Error: ${result.message}`);
               process.exit(1);
             }
-            await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
-            // Refresh agent state after system prompt update
-            agent = await client.agents.retrieve(agent.id);
+            agent = result.agent;
           }
         }
 
@@ -1035,7 +1054,7 @@ async function main(): Promise<void> {
       forceNew,
       agentIdArg,
       model,
-      system,
+      systemPromptId,
       fromAfFile,
       loadingState,
     ]);
@@ -1078,7 +1097,7 @@ async function main(): Promise<void> {
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
-      system: specifiedSystem,
+      systemPromptId: systemPromptId,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,

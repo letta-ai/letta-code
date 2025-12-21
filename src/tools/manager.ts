@@ -6,6 +6,7 @@ import {
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { telemetry } from "../telemetry";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -899,6 +900,8 @@ export async function executeTool(
     };
   }
 
+  const startTime = Date.now();
+
   try {
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
@@ -914,6 +917,7 @@ export async function executeTool(
     }
 
     const result = await tool.fn(enhancedArgs);
+    const duration = Date.now() - startTime;
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;
@@ -924,6 +928,16 @@ export async function executeTool(
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
+    // Track tool usage (success path - we're in the try block)
+    telemetry.trackToolUsage(
+      internalName,
+      true, // Hardcoded to true since tool execution succeeded
+      duration,
+      flattenedResponse.length,
+      undefined, // no error_type on success
+      stderr ? stderr.join("\n") : undefined,
+    );
+
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
@@ -932,24 +946,38 @@ export async function executeTool(
       ...(stderr && { stderr }),
     };
   } catch (error) {
+    const duration = Date.now() - startTime;
     const isAbort =
       error instanceof Error &&
       (error.name === "AbortError" ||
         error.message === "The operation was aborted" ||
         // node:child_process AbortError may include code/message variants
         ("code" in error && error.code === "ABORT_ERR"));
+    const errorType = isAbort
+      ? "abort"
+      : error instanceof Error
+        ? error.name
+        : "unknown";
+    const errorMessage = isAbort
+      ? "User interrupted tool execution"
+      : error instanceof Error
+        ? error.message
+        : String(error);
 
-    if (isAbort) {
-      return {
-        toolReturn: "User interrupted tool execution",
-        status: "error",
-      };
-    }
+    // Track tool usage error
+    telemetry.trackToolUsage(
+      internalName,
+      false,
+      duration,
+      errorMessage.length,
+      errorType,
+      errorMessage,
+    );
 
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
     return {
-      toolReturn: error instanceof Error ? error.message : String(error),
+      toolReturn: errorMessage,
       status: "error",
     };
   }
