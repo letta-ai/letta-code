@@ -4,7 +4,7 @@ import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
 import humanPrompt from "./prompts/human.mdx";
-import initializePrompt from "./prompts/init_memory.md";
+// init_memory.md is now a bundled skill at src/skills/builtin/init/SKILL.md
 import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
@@ -24,7 +24,6 @@ import systemPrompt from "./prompts/system_prompt.txt";
 export const SYSTEM_PROMPT = systemPrompt;
 export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
-export const INITIALIZE_PROMPT = initializePrompt;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 

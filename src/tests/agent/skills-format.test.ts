@@ -9,12 +9,14 @@ describe("Skills formatting", () => {
         name: "Testing",
         description: "Unit testing patterns and conventions",
         path: "/test/.skills/testing/SKILL.md",
+        source: "project",
       },
       {
         id: "deployment",
         name: "Deployment",
         description: "Deployment workflows and scripts",
         path: "/test/.skills/deployment/SKILL.md",
+        source: "project",
       },
     ];
 
@@ -42,6 +44,7 @@ describe("Skills formatting", () => {
         name: `Skill ${i}`,
         description: longDescription,
         path: `/test/.skills/category-${i}/skill-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
@@ -71,6 +74,7 @@ describe("Skills formatting", () => {
         name: `Tool ${i}`,
         description: longDescription,
         path: `/test/.skills/ai/tools/tool-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
@@ -99,6 +103,7 @@ describe("Skills formatting", () => {
         name: `Skill ${i}`,
         description: longDescription,
         path: `/test/.skills/skill-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
@@ -122,6 +127,7 @@ describe("Skills formatting", () => {
         name: `Skill ${i}`,
         description: "Short description",
         path: `/test/.skills/skill-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
@@ -142,6 +148,7 @@ describe("Skills formatting", () => {
         name: `Agent ${i}`,
         description: longDescription,
         path: `/test/.skills/ai/agents/agent-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
@@ -151,6 +158,7 @@ describe("Skills formatting", () => {
         name: `Pattern ${i}`,
         description: longDescription,
         path: `/test/.skills/development/patterns/pattern-${i}/SKILL.md`,
+        source: "project",
       });
     }
 
