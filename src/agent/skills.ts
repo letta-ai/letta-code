@@ -11,14 +11,14 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 // Import bundled skills (embedded at build time)
-import initSkillMd from "../skills/builtin/init/SKILL.md";
+import memoryInitSkillMd from "../skills/builtin/memory-init/SKILL.md";
 import { parseFrontmatter } from "../utils/frontmatter";
 
 /**
  * Bundled skill sources - embedded at build time
  */
 const BUNDLED_SKILL_SOURCES: Array<{ id: string; content: string }> = [
-  { id: "init", content: initSkillMd },
+  { id: "memory-init", content: memoryInitSkillMd },
 ];
 
 /**
