@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import {
@@ -109,14 +110,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       );
     }
 
-    if (line.resultText === "Interrupted by user") {
+    if (line.resultText === INTERRUPTED_BY_USER) {
       return (
         <Box flexDirection="row">
           <Box width={prefixWidth} flexShrink={0}>
             <Text>{prefix}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
-            <Text color={colors.status.interrupt}>Interrupted by user</Text>
+            <Text color={colors.status.interrupt}>{INTERRUPTED_BY_USER}</Text>
           </Box>
         </Box>
       );

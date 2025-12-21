@@ -5,6 +5,7 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { INTERRUPTED_BY_USER } from "../../constants";
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -172,7 +173,7 @@ export function markIncompleteToolsAsCancelled(b: Buffers) {
         ...line,
         phase: "finished" as const,
         resultOk: false,
-        resultText: "Interrupted by user",
+        resultText: INTERRUPTED_BY_USER,
       };
       b.byId.set(id, updatedLine);
     }

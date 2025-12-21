@@ -6,6 +6,7 @@ import {
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { INTERRUPTED_BY_USER } from "../constants";
 import { telemetry } from "../telemetry";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
@@ -930,23 +931,27 @@ export async function executeTool(
     const stderrValue = recordResult?.stderr;
     const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
     const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
+
+    // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
+    const toolStatus = recordResult?.status === "error" ? "error" : "success";
+
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
-    // Track tool usage (success path - we're in the try block)
+    // Track tool usage
     telemetry.trackToolUsage(
       internalName,
-      true, // Hardcoded to true since tool execution succeeded
+      toolStatus === "success",
       duration,
       flattenedResponse.length,
-      undefined, // no error_type on success
+      toolStatus === "error" ? "tool_error" : undefined,
       stderr ? stderr.join("\n") : undefined,
     );
 
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
-      status: "success",
+      status: toolStatus,
       ...(stdout && { stdout }),
       ...(stderr && { stderr }),
     };
@@ -964,7 +969,7 @@ export async function executeTool(
         ? error.name
         : "unknown";
     const errorMessage = isAbort
-      ? "User interrupted tool execution"
+      ? INTERRUPTED_BY_USER
       : error instanceof Error
         ? error.message
         : String(error);

@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
+import { INTERRUPTED_BY_USER } from "../constants";
 import { executeTool, type ToolExecutionResult } from "../tools/manager";
 
 export type ApprovalDecision =
@@ -37,14 +38,14 @@ async function executeSingleDecision(
         id: "dummy",
         date: new Date().toISOString(),
         tool_call_id: decision.approval.toolCallId,
-        tool_return: "User interrupted tool execution",
+        tool_return: INTERRUPTED_BY_USER,
         status: "error",
       });
     }
     return {
       type: "tool",
       tool_call_id: decision.approval.toolCallId,
-      tool_return: "User interrupted tool execution",
+      tool_return: INTERRUPTED_BY_USER,
       status: "error",
     };
   }
@@ -105,7 +106,7 @@ async function executeSingleDecision(
         e instanceof Error &&
         (e.name === "AbortError" || e.message === "The operation was aborted");
       const errorMessage = isAbortError
-        ? "User interrupted tool execution"
+        ? INTERRUPTED_BY_USER
         : `Error executing tool: ${String(e)}`;
 
       if (onChunk) {

@@ -131,7 +131,7 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
           <Text dimColor>{" ⎿  Done"}</Text>
         ) : agent.status === "error" ? (
           <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
+            {" ⎿  "}
             {agent.error}
           </Text>
         ) : lastTool ? (

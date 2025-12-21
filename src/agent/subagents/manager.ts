@@ -13,6 +13,7 @@ import {
   addToolCall,
   updateSubagent,
 } from "../../cli/helpers/subagentState.js";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
@@ -371,7 +372,7 @@ async function executeSubagent(
       agentId: "",
       report: "",
       success: false,
-      error: "Interrupted by user",
+      error: INTERRUPTED_BY_USER,
     };
   }
 
@@ -438,7 +439,7 @@ async function executeSubagent(
         agentId: state.agentId || "",
         report: "",
         success: false,
-        error: "Interrupted by user",
+        error: INTERRUPTED_BY_USER,
       };
     }
 

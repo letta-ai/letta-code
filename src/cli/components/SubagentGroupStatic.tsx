@@ -87,7 +87,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
           <Text dimColor>{" ⎿  Done"}</Text>
         ) : (
           <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
+            {" ⎿  "}
             {agent.error}
           </Text>
         )}
