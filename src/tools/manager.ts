@@ -911,9 +911,14 @@ export async function executeTool(
       enhancedArgs = { ...enhancedArgs, signal: options.signal };
     }
 
-    // Inject toolCallId for Task tool (for linking subagents to their parent tool call)
-    if (internalName === "Task" && options?.toolCallId) {
-      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    // Inject toolCallId and abort signal for Task tool
+    if (internalName === "Task") {
+      if (options?.toolCallId) {
+        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+      }
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
     }
 
     const result = await tool.fn(enhancedArgs);

@@ -46,8 +46,14 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   const argsText = line.argsText ?? "...";
 
   // Task tool - handled by SubagentGroupDisplay, don't render here
+  // Exception: Cancelled/rejected Task tools should be rendered inline
+  // since they won't appear in SubagentGroupDisplay
   if (isTaskTool(rawName)) {
-    return null;
+    const isCancelledOrRejected =
+      line.phase === "finished" && line.resultOk === false;
+    if (!isCancelledOrRejected) {
+      return null;
+    }
   }
 
   // Apply tool name remapping
