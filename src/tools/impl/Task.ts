@@ -20,6 +20,7 @@ interface TaskArgs {
   description: string;
   model?: string;
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
+  signal?: AbortSignal; // Injected by executeTool for interruption handling
 }
 
 /**
@@ -33,7 +34,8 @@ export async function task(args: TaskArgs): Promise<string> {
     "Task",
   );
 
-  const { subagent_type, prompt, description, model, toolCallId } = args;
+  const { subagent_type, prompt, description, model, toolCallId, signal } =
+    args;
 
   // Get all available subagent configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
@@ -54,12 +56,14 @@ export async function task(args: TaskArgs): Promise<string> {
       prompt,
       model,
       subagentId,
+      signal,
     );
 
     // Mark subagent as completed in state store
     completeSubagent(subagentId, {
       success: result.success,
       error: result.error,
+      totalTokens: result.totalTokens,
     });
 
     if (!result.success) {

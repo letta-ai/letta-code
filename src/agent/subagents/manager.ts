@@ -13,6 +13,7 @@ import {
   addToolCall,
   updateSubagent,
 } from "../../cli/helpers/subagentState.js";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
@@ -35,6 +36,7 @@ export interface SubagentResult {
   report: string;
   success: boolean;
   error?: string;
+  totalTokens?: number;
 }
 
 /**
@@ -362,7 +364,18 @@ async function executeSubagent(
   baseURL: string,
   subagentId: string,
   isRetry = false,
+  signal?: AbortSignal,
 ): Promise<SubagentResult> {
+  // Check if already aborted before starting
+  if (signal?.aborted) {
+    return {
+      agentId: "",
+      report: "",
+      success: false,
+      error: INTERRUPTED_BY_USER,
+    };
+  }
+
   // Update the state with the model being used (may differ on retry/fallback)
   updateSubagent(subagentId, { model });
 
@@ -374,6 +387,14 @@ async function executeSubagent(
       cwd: process.cwd(),
       env: process.env,
     });
+
+    // Set up abort handler to kill the child process
+    let wasAborted = false;
+    const abortHandler = () => {
+      wasAborted = true;
+      proc.kill("SIGTERM");
+    };
+    signal?.addEventListener("abort", abortHandler);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -409,6 +430,19 @@ async function executeSubagent(
       proc.on("error", () => resolve(null));
     });
 
+    // Clean up abort listener
+    signal?.removeEventListener("abort", abortHandler);
+
+    // Check if process was aborted by user
+    if (wasAborted) {
+      return {
+        agentId: state.agentId || "",
+        report: "",
+        success: false,
+        error: INTERRUPTED_BY_USER,
+      };
+    }
+
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
     // Handle non-zero exit code
@@ -426,6 +460,7 @@ async function executeSubagent(
             baseURL,
             subagentId,
             true, // Mark as retry to prevent infinite loops
+            signal,
           );
         }
       }
@@ -445,6 +480,7 @@ async function executeSubagent(
         report: state.finalResult,
         success: !state.finalError,
         error: state.finalError || undefined,
+        totalTokens: state.resultStats?.totalTokens,
       };
     }
 
@@ -455,6 +491,7 @@ async function executeSubagent(
         report: "",
         success: false,
         error: state.finalError,
+        totalTokens: state.resultStats?.totalTokens,
       };
     }
 
@@ -497,12 +534,14 @@ function getBaseURL(): string {
  * @param prompt - The task prompt for the subagent
  * @param userModel - Optional model override from the parent agent
  * @param subagentId - ID for tracking in the state store (registered by Task tool)
+ * @param signal - Optional abort signal for interruption handling
  */
 export async function spawnSubagent(
   type: string,
   prompt: string,
   userModel: string | undefined,
   subagentId: string,
+  signal?: AbortSignal,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -527,6 +566,8 @@ export async function spawnSubagent(
     prompt,
     baseURL,
     subagentId,
+    false,
+    signal,
   );
 
   return result;

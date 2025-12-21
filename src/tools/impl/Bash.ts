@@ -1,6 +1,7 @@
 import type { ExecOptions } from "node:child_process";
 import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
@@ -156,7 +157,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
     let errorMessage = "";
     if (isAbort) {
-      errorMessage = "User interrupted tool execution";
+      errorMessage = INTERRUPTED_BY_USER;
     } else {
       if (err.killed && err.signal === "SIGTERM")
         errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;

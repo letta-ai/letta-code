@@ -1577,11 +1577,11 @@ export default function App({
 
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them locally instead of hitting the backend
+    // Don't show "Stream interrupted" banner - the tool result will show "Interrupted by user"
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
       setStreaming(false);
       setIsExecutingTool(false);
-      appendError("Stream interrupted by user");
       refreshDerived();
       return;
     }

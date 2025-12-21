@@ -252,6 +252,45 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     );
   }
 
+  // Task tool (subagent) - show nicely formatted preview
+  if (t === "task") {
+    const subagentType =
+      typeof parsedArgs?.subagent_type === "string"
+        ? parsedArgs.subagent_type
+        : "unknown";
+    const description =
+      typeof parsedArgs?.description === "string"
+        ? parsedArgs.description
+        : "(no description)";
+    const prompt =
+      typeof parsedArgs?.prompt === "string"
+        ? parsedArgs.prompt
+        : "(no prompt)";
+    const model =
+      typeof parsedArgs?.model === "string" ? parsedArgs.model : undefined;
+
+    // Truncate long prompts for preview (show first ~200 chars)
+    const maxPromptLength = 200;
+    const promptPreview =
+      prompt.length > maxPromptLength
+        ? `${prompt.slice(0, maxPromptLength)}...`
+        : prompt;
+
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        <Box flexDirection="row">
+          <Text bold>{subagentType}</Text>
+          <Text dimColor> · </Text>
+          <Text>{description}</Text>
+        </Box>
+        {model && <Text dimColor>Model: {model}</Text>}
+        <Box marginTop={1}>
+          <Text dimColor>{promptPreview}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   // File edit previews: write/edit/multi_edit/replace/write_file/write_file_gemini
   if (
     (t === "write" ||
@@ -714,5 +753,6 @@ function getHeaderLabel(toolName: string): string {
   if (t === "write_file" || t === "writefile") return "Write File";
   if (t === "killbash") return "Kill Shell";
   if (t === "bashoutput") return "Shell Output";
+  if (t === "task") return "Task";
   return toolName;
 }
