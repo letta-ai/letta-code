@@ -2994,8 +2994,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output:
-              "Loading memory-init skill and gathering project context...",
+            output: "Gathering project context...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -3004,20 +3003,6 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            // Load the memory-init skill (bundled skill with comprehensive instructions)
-            const { skill } = await import("../tools/impl/Skill.js");
-            try {
-              await skill({ command: "load", skills: ["memory-init"] });
-            } catch (skillError) {
-              // Log but don't fail - the skill might already be loaded
-              console.warn(
-                "Note: Could not load memory-init skill:",
-                skillError instanceof Error
-                  ? skillError.message
-                  : String(skillError),
-              );
-            }
-
             // Gather git context if available
             let gitContext = "";
             try {
@@ -3088,16 +3073,25 @@ ${recentCommits}
             });
             refreshDerived();
 
-            // Send a short trigger message - the full instructions are in the loaded memory-init skill
+            // Send trigger message instructing agent to load the memory-init skill
             const initMessage = `<system-reminder>
 The user has requested memory initialization via /init.
 
-The 'memory-init' skill has been loaded with comprehensive instructions for initializing agent memory.
-Follow the instructions in the loaded skill to:
-1. Ask upfront questions (research depth, identity, related repos, workflow style)
-2. Research the project based on chosen depth
-3. Create/update memory blocks incrementally
-4. Reflect and verify completeness
+## 1. Load the memory-init skill
+
+First, check your \`loaded_skills\` memory block. If the \`memory-init\` skill is not already loaded:
+1. Use the \`Skill\` tool with \`command: "load", skills: ["memory-init"]\`
+2. The skill contains comprehensive instructions for memory initialization
+
+If the skill fails to load, proceed with your best judgment based on these guidelines:
+- Ask upfront questions (research depth, identity, related repos, workflow style)
+- Research the project based on chosen depth
+- Create/update memory blocks incrementally
+- Reflect and verify completeness
+
+## 2. Follow the loaded skill instructions
+
+Once loaded, follow the instructions in the \`memory-init\` skill to complete the initialization.
 ${gitContext}
 </system-reminder>`;
 
