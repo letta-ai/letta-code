@@ -17,7 +17,7 @@ export type ApprovalRequest = {
   toolArgs: string;
 };
 
-type DrainResult = {
+export type DrainResult = {
   stopReason: StopReasonType;
   lastRunId?: string | null;
   lastSeqId?: number | null;
@@ -263,10 +263,14 @@ export async function drainStreamWithResume(
     try {
       const client = await getClient();
       // Resume from Redis where we left off
-      const resumeStream = await client.runs.messages.stream(result.lastRunId, {
-        starting_after: result.lastSeqId,
-        batch_size: 1000, // Fetch buffered chunks quickly
-      });
+      const resumeStream = await client.runs.messages.stream(
+        result.lastRunId,
+        {
+          starting_after: result.lastSeqId,
+          batch_size: 1000, // Fetch buffered chunks quickly
+        },
+        { maxRetries: 0 },
+      );
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain
