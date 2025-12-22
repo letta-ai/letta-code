@@ -527,7 +527,7 @@ export function Input({
               <Spinner type="layer" />
             </Text>
           </Box>
-          <Box flexGrow={1}>
+          <Box flexGrow={1} flexDirection="row">
             <ShimmerText
               boldPrefix={agentName || undefined}
               message={thinkingMessage}
