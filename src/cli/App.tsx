@@ -862,8 +862,12 @@ export default function App({
         clearCompletedSubagents();
 
         while (true) {
+          // Capture the signal BEFORE any async operations
+          // This prevents a race where handleInterrupt nulls the ref during await
+          const signal = abortControllerRef.current?.signal;
+
           // Check if cancelled before starting new stream
-          if (abortControllerRef.current?.signal.aborted) {
+          if (signal?.aborted) {
             setStreaming(false);
             return;
           }
@@ -873,6 +877,12 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
+
+          // Check again after network call - user may have pressed Escape during sendMessageStream
+          if (signal?.aborted) {
+            setStreaming(false);
+            return;
+          }
 
           // Define callback to sync agent state on first message chunk
           // This ensures the UI shows the correct model as early as possible
@@ -929,7 +939,7 @@ export default function App({
               stream,
               buffersRef.current,
               refreshDerivedThrottled,
-              abortControllerRef.current?.signal,
+              signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
               syncAgentState,
             );
 
@@ -1510,6 +1520,9 @@ export default function App({
 
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
+      // Prevent multiple handleInterrupt calls while state updates are pending
+      setInterruptRequested(true);
+
       // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -1540,12 +1553,13 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
-      // Reset cancellation flag after cleanup is complete.
+      // Reset cancellation flags after cleanup is complete.
       // This allows the dequeue effect to process any queued messages.
       // We use setTimeout to ensure React state updates (setStreaming, etc.)
       // have been processed before the dequeue effect runs.
       setTimeout(() => {
         userCancelledRef.current = false;
+        setInterruptRequested(false);
       }, 0);
 
       return;
