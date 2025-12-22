@@ -10,6 +10,7 @@ import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
+import { charsToTokens, formatCompact } from "../helpers/format";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -535,8 +536,15 @@ export function Input({
             />
             <Text dimColor>
               {" ("}
-              {interruptRequested ? "interrupting" : "esc to interrupt"}
-              {shouldShowTokenCount && ` · ${tokenCount} ↑`}
+              {interruptRequested ? (
+                "interrupting"
+              ) : (
+                <>
+                  <Text bold>esc</Text> to interrupt
+                </>
+              )}
+              {shouldShowTokenCount &&
+                ` · ${formatCompact(charsToTokens(tokenCount))} ↑`}
               {")"}
             </Text>
           </Box>
