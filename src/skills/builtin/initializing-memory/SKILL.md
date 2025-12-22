@@ -1,5 +1,5 @@
 ---
-name: Memory Initialization
+name: initializing-memory
 description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory blocks.
 ---
 

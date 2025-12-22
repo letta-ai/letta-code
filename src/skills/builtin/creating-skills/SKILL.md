@@ -1,5 +1,5 @@
 ---
-name: skill-creator
+name: creating-skills
 description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations.
 ---
 
