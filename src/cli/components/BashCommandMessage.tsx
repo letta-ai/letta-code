@@ -1,6 +1,5 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
-import { clipToolReturn } from "../../tools/manager.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
@@ -62,9 +61,7 @@ export const BashCommandMessage = memo(
               <Text>{"  ⎿  "}</Text>
             </Box>
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-              <MarkdownDisplay
-                text={clipToolReturn(line.output).replace(/\n+$/, "")}
-              />
+              <MarkdownDisplay text={line.output.replace(/\n+$/, "")} />
             </Box>
           </Box>
         )}
