@@ -3,7 +3,7 @@ name: adding-models
 description: Guide for adding new LLM models to Letta Code. Use when the user wants to add support for a new model, needs to know valid model handles, or wants to update the model configuration. Covers models.json configuration, CI test matrix, and handle validation.
 ---
 
-# Add New Model
+# Adding Models
 
 This skill guides you through adding a new LLM model to Letta Code.
 

@@ -3,7 +3,7 @@ name: initializing-memory
 description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory blocks.
 ---
 
-# Memory Initialization Guide
+# Initializing Memory
 
 The user has requested that you initialize or reorganize your memory state. You have access to the `memory` tool which allows you to create, edit, and manage memory blocks.
 
