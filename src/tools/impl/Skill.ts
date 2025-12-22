@@ -108,11 +108,15 @@ async function readSkillContent(
   skillId: string,
   skillsDir: string,
 ): Promise<string> {
-  // 1. Check bundled skills first (they have embedded content)
-  const bundledSkills = getBundledSkills();
+  // 1. Check bundled skills first (they have a path now)
+  const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
-  if (bundledSkill?.content) {
-    return bundledSkill.content;
+  if (bundledSkill?.path) {
+    try {
+      return await readFile(bundledSkill.path, "utf-8");
+    } catch {
+      // Bundled skill path not found, continue to other sources
+    }
   }
 
   // 2. Try global skills directory
