@@ -66,25 +66,21 @@ jobs:
           MINOR=${VERSION_PARTS[1]}
           PATCH=${VERSION_PARTS[2]}
           
-          # Determine if we should bump the base version
-          # - Stable → Stable: bump
-          # - Stable → Prerelease: bump
-          # - Prerelease → Stable: no bump (just drop suffix)
-          # - Prerelease → Prerelease: no bump (just increment prerelease number)
-          if [ "$OLD_IS_PRERELEASE" = "false" ]; then
-            # Bump based on type
-            if [ "$VERSION_TYPE" = "major" ]; then
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-            elif [ "$VERSION_TYPE" = "minor" ]; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
-            else
+          # Always bump based on version_type
+          if [ "$VERSION_TYPE" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$VERSION_TYPE" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            # patch - only bump if not coming from prerelease
+            # (prerelease → stable with patch just drops the suffix)
+            if [ "$OLD_IS_PRERELEASE" = "false" ]; then
               PATCH=$((PATCH + 1))
             fi
           fi
-          # If old version is prerelease, we keep the same base version
           
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           
