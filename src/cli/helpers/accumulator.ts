@@ -48,6 +48,14 @@ export type Line =
       dimOutput?: boolean;
     }
   | {
+      kind: "bash_command";
+      id: string;
+      input: string;
+      output: string;
+      phase?: "running" | "finished";
+      success?: boolean;
+    }
+  | {
       kind: "status";
       id: string;
       lines: string[]; // Multi-line status message with arrow formatting
