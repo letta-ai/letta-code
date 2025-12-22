@@ -206,6 +206,11 @@ export async function createAgent(
   const systemPromptContent = await resolveSystemPrompt(systemPromptId);
 
   // Create agent with all block IDs (existing + newly created)
+  const tags = ["origin:letta-code"];
+  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+    tags.push("role:subagent");
+  }
+
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPromptContent,
@@ -216,7 +221,7 @@ export async function createAgent(
     context_window_limit: contextWindow,
     tools: toolNames,
     block_ids: blockIds,
-    tags: ["origin:letta-code"],
+    tags,
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,
