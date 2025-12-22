@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bash } from "../../tools/impl/Bash";
 
-describe("Bash HEREDOC support", () => {
+const isWindows = process.platform === "win32";
+
+// HEREDOC is bash/zsh syntax, not available in PowerShell
+describe.skipIf(isWindows)("Bash HEREDOC support", () => {
   test("simple HEREDOC works", async () => {
     const result = await bash({
       command: `cat <<'EOF'
