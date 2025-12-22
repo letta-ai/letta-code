@@ -7,6 +7,10 @@ on:
         description: "Version bump type (patch, minor, major)"
         required: false
         default: "patch"
+      prerelease:
+        description: "Publish as prerelease? (leave empty for stable, or enter tag like 'next')"
+        required: false
+        default: ""
 
 jobs:
   publish:
@@ -44,27 +48,65 @@ jobs:
         id: version
         run: |
           VERSION_TYPE="${{ github.event.inputs.version_type || 'patch' }}"
+          PRERELEASE_TAG="${{ github.event.inputs.prerelease }}"
           OLD_VERSION=$(jq -r '.version' package.json)
           
-          # Split version into parts
-          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION"
+          # Check if old version is a prerelease (contains -)
+          if [[ "$OLD_VERSION" == *-* ]]; then
+            OLD_IS_PRERELEASE=true
+            BASE_VERSION=$(echo "$OLD_VERSION" | sed 's/-.*//')
+          else
+            OLD_IS_PRERELEASE=false
+            BASE_VERSION="$OLD_VERSION"
+          fi
+          
+          # Split base version into parts
+          IFS='.' read -ra VERSION_PARTS <<< "$BASE_VERSION"
           MAJOR=${VERSION_PARTS[0]}
           MINOR=${VERSION_PARTS[1]}
           PATCH=${VERSION_PARTS[2]}
           
-          # Bump based on type
-          if [ "$VERSION_TYPE" = "major" ]; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif [ "$VERSION_TYPE" = "minor" ]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            PATCH=$((PATCH + 1))
+          # Determine if we should bump the base version
+          # - Stable → Stable: bump
+          # - Stable → Prerelease: bump
+          # - Prerelease → Stable: no bump (just drop suffix)
+          # - Prerelease → Prerelease: no bump (just increment prerelease number)
+          if [ "$OLD_IS_PRERELEASE" = "false" ]; then
+            # Bump based on type
+            if [ "$VERSION_TYPE" = "major" ]; then
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+            elif [ "$VERSION_TYPE" = "minor" ]; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
           fi
+          # If old version is prerelease, we keep the same base version
           
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          
+          # Handle prerelease suffix
+          if [ -n "$PRERELEASE_TAG" ]; then
+            # Making a prerelease
+            if [[ "$OLD_VERSION" == "${NEW_VERSION}-${PRERELEASE_TAG}."* ]]; then
+              # Same base + same tag: increment prerelease number
+              PRERELEASE_NUM=$(echo "$OLD_VERSION" | sed "s/${NEW_VERSION}-${PRERELEASE_TAG}\.\([0-9]*\)/\1/")
+              PRERELEASE_NUM=$((PRERELEASE_NUM + 1))
+            else
+              # Different base or different tag: start at 1
+              PRERELEASE_NUM=1
+            fi
+            NEW_VERSION="${NEW_VERSION}-${PRERELEASE_TAG}.${PRERELEASE_NUM}"
+            echo "npm_tag=$PRERELEASE_TAG" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            # Making a stable release - NEW_VERSION is already just the base
+            echo "npm_tag=latest" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
           
           # Update package.json
           jq --arg version "$NEW_VERSION" '.version = $version' package.json > package.json.tmp
@@ -105,6 +147,7 @@ jobs:
         run: ./letta.js --prompt "ping" --tools "" --permission-mode plan
 
       - name: Create GitHub Release
+        if: steps.version.outputs.is_prerelease == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -117,4 +160,4 @@ jobs:
           fail_on_unmatched_files: true
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
