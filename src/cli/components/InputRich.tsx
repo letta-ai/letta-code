@@ -705,9 +705,7 @@ export function Input({
               </Text>
             </Text>
           ) : (
-            <Text dimColor>
-              Press / for commands, @ for files, or ! for bash
-            </Text>
+            <Text dimColor>Press / for commands or @ for files</Text>
           )}
           <Text dimColor>
             {`Letta Code v${appVersion} [${currentModel ?? "unknown"}]`}
