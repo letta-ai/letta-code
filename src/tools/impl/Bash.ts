@@ -1,13 +1,153 @@
-import type { ExecOptions } from "node:child_process";
-import { exec, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
-const execAsync = promisify(exec);
+// Cache the shell configuration
+let cachedShellConfig: {
+  executable: string;
+  args: (cmd: string) => string[];
+} | null = null;
+
+/**
+ * Get shell configuration for the current platform.
+ * Uses spawn with explicit shell executable + args to avoid double-shell parsing issues.
+ * This approach (like gemini-cli and codex) passes the command directly to the shell
+ * as an argument, avoiding issues with HEREDOC and special characters.
+ *
+ * On macOS, we prefer zsh because bash 3.2 (shipped with macOS due to GPL licensing)
+ * has a bug with HEREDOC parsing when there's an odd number of apostrophes.
+ * zsh handles this correctly and is the default shell on modern macOS.
+ */
+function getShellConfig(): {
+  executable: string;
+  args: (cmd: string) => string[];
+} {
+  if (cachedShellConfig) {
+    return cachedShellConfig;
+  }
+
+  if (process.platform === "win32") {
+    // Windows: use PowerShell
+    cachedShellConfig = {
+      executable: "powershell.exe",
+      args: (cmd) => ["-NoProfile", "-Command", cmd],
+    };
+    return cachedShellConfig;
+  }
+
+  // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
+  if (process.platform === "darwin" && existsSync("/bin/zsh")) {
+    cachedShellConfig = {
+      executable: "/bin/zsh",
+      args: (cmd) => ["-c", cmd],
+    };
+    return cachedShellConfig;
+  }
+
+  // Linux or macOS without zsh: use bash
+  cachedShellConfig = {
+    executable: "bash",
+    args: (cmd) => ["-c", cmd],
+  };
+  return cachedShellConfig;
+}
+
+/**
+ * Execute a command using spawn with explicit shell.
+ * This avoids the double-shell parsing that exec() does.
+ */
+function spawnCommand(
+  command: string,
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    timeout: number;
+    signal?: AbortSignal;
+  },
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  return new Promise((resolve, reject) => {
+    const { executable, args } = getShellConfig();
+    const childProcess = spawn(executable, args(command), {
+      cwd: options.cwd,
+      env: options.env,
+      shell: false, // Don't use another shell layer
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      childProcess.kill("SIGTERM");
+    }, options.timeout);
+
+    const abortHandler = () => {
+      childProcess.kill("SIGTERM");
+    };
+    if (options.signal) {
+      options.signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
+    childProcess.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+
+    childProcess.stderr?.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
+
+    childProcess.on("error", (err) => {
+      clearTimeout(timeoutId);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", abortHandler);
+      }
+      reject(err);
+    });
+
+    childProcess.on("close", (code) => {
+      clearTimeout(timeoutId);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", abortHandler);
+      }
+
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+
+      if (timedOut) {
+        reject(
+          Object.assign(new Error("Command timed out"), {
+            killed: true,
+            signal: "SIGTERM",
+            stdout,
+            stderr,
+            code,
+          }),
+        );
+        return;
+      }
+
+      if (options.signal?.aborted) {
+        reject(
+          Object.assign(new Error("The operation was aborted"), {
+            name: "AbortError",
+            code: "ABORT_ERR",
+            stdout,
+            stderr,
+          }),
+        );
+        return;
+      }
+
+      resolve({ stdout, stderr, exitCode: code });
+    });
+  });
+}
 
 interface BashArgs {
   command: string;
@@ -59,8 +199,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
   if (run_in_background) {
     const bashId = getNextBashId();
-    const childProcess = spawn(command, [], {
-      shell: true,
+    const { executable, args } = getShellConfig();
+    const childProcess = spawn(executable, args(command), {
+      shell: false,
       cwd: userCwd,
       env: getShellEnv(),
     });
@@ -116,18 +257,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
   const effectiveTimeout = Math.min(Math.max(timeout, 1), 600000);
   try {
-    const options: ExecOptions = {
-      timeout: effectiveTimeout,
-      maxBuffer: 10 * 1024 * 1024,
+    const { stdout, stderr, exitCode } = await spawnCommand(command, {
       cwd: userCwd,
       env: getShellEnv(),
+      timeout: effectiveTimeout,
       signal,
-    };
-    const { stdout, stderr } = await execAsync(command, options);
-    const stdoutStr = typeof stdout === "string" ? stdout : stdout.toString();
-    const stderrStr = typeof stderr === "string" ? stderr : stderr.toString();
-    let output = stdoutStr;
-    if (stderrStr) output = output ? `${output}\n${stderrStr}` : stderrStr;
+    });
+
+    let output = stdout;
+    if (stderr) output = output ? `${output}\n${stderr}` : stderr;
 
     // Apply character limit to prevent excessive token usage
     const { content: truncatedOutput } = truncateByChars(
@@ -135,6 +273,19 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       LIMITS.BASH_OUTPUT_CHARS,
       "Bash",
     );
+
+    // Non-zero exit code is an error
+    if (exitCode !== 0 && exitCode !== null) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Exit code: ${exitCode}\n${truncatedOutput}`,
+          },
+        ],
+        status: "error",
+      };
+    }
 
     return {
       content: [{ type: "text", text: truncatedOutput }],
@@ -146,7 +297,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       stderr?: string;
       killed?: boolean;
       signal?: string;
-      code?: string;
+      code?: string | number;
       name?: string;
     };
     const isAbort =
@@ -161,7 +312,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     } else {
       if (err.killed && err.signal === "SIGTERM")
         errorMessage = `Command timed out after ${effectiveTimeout}ms\n`;
-      if (err.code) errorMessage += `Exit code: ${err.code}\n`;
+      if (err.code && typeof err.code === "number")
+        errorMessage += `Exit code: ${err.code}\n`;
       if (err.stderr) errorMessage += err.stderr;
       else if (err.message) errorMessage += err.message;
       if (err.stdout) errorMessage = `${err.stdout}\n${errorMessage}`;

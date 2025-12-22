@@ -42,9 +42,9 @@ async function ensurePrereqs(): Promise<"ok" | "skip"> {
 function windowsScenarioPrompt(): string {
   return (
     "I want to test Windows shell compatibility (do not ask for any clarifications, this is an automated test on a Windows CI runner). " +
-    "IMPORTANT: You are running on Windows. Do NOT use bash-specific syntax like heredoc ($(cat <<'EOF'...EOF)). Use simple quoted strings. " +
+    "IMPORTANT: You are running on Windows with PowerShell. Do NOT use bash-specific syntax like heredoc ($(cat <<'EOF'...EOF)) or && for chaining. " +
     "Step 1: Run a simple shell command: echo 'Hello from Windows' " +
-    "Step 2: Run a multiline echo command. Do NOT use heredoc syntax. Use a simple approach like: echo 'Line1' && echo 'Line2' " +
+    "Step 2: Run a multiline echo command. Do NOT use heredoc or && syntax. Use PowerShell semicolon syntax: echo 'Line1'; echo 'Line2' " +
     "Step 3: Check if git is available by running: git --version " +
     "IMPORTANT: If all three steps completed successfully (no errors), include the word BANANA (uppercase) in your final response. " +
     "If any step failed due to shell syntax issues, do NOT include BANANA."
