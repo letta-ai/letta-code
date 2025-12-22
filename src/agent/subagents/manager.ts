@@ -387,7 +387,11 @@ async function executeSubagent(
     const lettaCmd = process.env.LETTA_CODE_BIN || "letta";
     const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),
-      env: process.env,
+      env: {
+        ...process.env,
+        // Tag Task-spawned agents for easy filtering.
+        LETTA_CODE_AGENT_ROLE: "subagent",
+      },
     });
 
     // Set up abort handler to kill the child process
