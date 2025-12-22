@@ -108,6 +108,13 @@ export const colors = {
     prompt: brandColors.textMain,
   },
 
+  // Bash mode
+  bash: {
+    prompt: brandColors.statusError, // Red ! prompt
+    border: brandColors.statusError, // Red horizontal bars
+    dot: brandColors.statusError, // Red dot in output
+  },
+
   // Todo list
   todo: {
     completed: brandColors.blue,
