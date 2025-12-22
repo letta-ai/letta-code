@@ -3,9 +3,9 @@ name: creating-skills
 description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations.
 ---
 
-# Skill Creator
+# Creating Skills
 
-This skill provides guidance for creating effective skills in Letta Code.
+This skill provides guidance for creating effective skills in Letta Code. For the complete official specification, see [agentskills.io](https://agentskills.io/specification).
 
 ## About Skills
 
@@ -48,10 +48,10 @@ Think of the Letta Code agent as exploring a path: a narrow bridge with cliffs n
 Every skill consists of a required SKILL.md file and optional bundled resources:
 
 ```
-skill-name/
+processing-pdfs/
 ├── SKILL.md (required)
 │   ├── YAML frontmatter metadata (required)
-│   │   ├── name: (required)
+│   │   ├── name: (required, must match directory name)
 │   │   └── description: (required)
 │   └── Markdown instructions (required)
 └── Bundled Resources (optional)
@@ -148,9 +148,9 @@ The Letta Code agent loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when need
 For Skills with multiple domains, organize content by domain to avoid loading irrelevant context:
 
 ```
-bigquery-skill/
+querying-bigquery/
 ├── SKILL.md (overview and navigation)
-└── reference/
+└── references/
     ├── finance.md (revenue, billing metrics)
     ├── sales.md (opportunities, pipeline)
     ├── product.md (API usage, features)
@@ -162,7 +162,7 @@ When a user asks about sales metrics, the Letta Code agent only reads sales.md.
 Similarly, for skills supporting multiple frameworks or variants, organize by variant:
 
 ```
-cloud-deploy/
+deploying-to-cloud/
 ├── SKILL.md (workflow + provider selection)
 └── references/
     ├── aws.md (AWS deployment patterns)
@@ -217,9 +217,9 @@ Skip this step only when the skill's usage patterns are already clearly understo
 
 To create an effective skill, clearly understand concrete examples of how the skill will be used. This understanding can come from either direct user examples or generated examples that are validated with user feedback.
 
-For example, when building an image-editor skill, relevant questions include:
+For example, when building an `editing-images` skill, relevant questions include:
 
-- "What functionality should the image-editor skill support? Editing, rotating, anything else?"
+- "What functionality should the editing-images skill support? Editing, rotating, anything else?"
 - "Can you give some examples of how this skill would be used?"
 - "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
 - "What would a user say that should trigger this skill?"
@@ -235,17 +235,17 @@ To turn concrete examples into an effective skill, analyze each example by:
 1. Considering how to execute on the example from scratch
 2. Identifying what scripts, references, and assets would be helpful when executing these workflows repeatedly
 
-Example: When building a `pdf-editor` skill to handle queries like "Help me rotate this PDF," the analysis shows:
+Example: When building an `editing-pdfs` skill to handle queries like "Help me rotate this PDF," the analysis shows:
 
 1. Rotating a PDF requires re-writing the same code each time
 2. A `scripts/rotate-pdf.ts` script would be helpful to store in the skill
 
-Example: When designing a `frontend-webapp-builder` skill for queries like "Build me a todo app" or "Build me a dashboard to track my steps," the analysis shows:
+Example: When designing a `building-frontend-apps` skill for queries like "Build me a todo app" or "Build me a dashboard to track my steps," the analysis shows:
 
 1. Writing a frontend webapp requires the same boilerplate HTML/React each time
 2. An `assets/hello-world/` template containing the boilerplate HTML/React project files would be helpful to store in the skill
 
-Example: When building a `big-query` skill to handle queries like "How many users have logged in today?" the analysis shows:
+Example: When building a `querying-bigquery` skill to handle queries like "How many users have logged in today?" the analysis shows:
 
 1. Querying BigQuery requires re-discovering the table schemas and relationships each time
 2. A `references/schema.md` file documenting the table schemas would be helpful to store in the skill
@@ -304,13 +304,27 @@ Any example files and directories not needed for the skill should be deleted. Th
 
 Write the YAML frontmatter with `name` and `description`:
 
-- `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps the Letta Code agent understand when to use the skill.
-  - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to the Letta Code agent.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when the Letta Code agent needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+**`name`** (required):
+- Use gerund form: `processing-pdfs`, `analyzing-data`, `creating-reports` (not `pdf-processor`)
+- Lowercase letters, numbers, and hyphens only
+- Must match the directory name exactly
+- Max 64 characters
 
-Do not include any other fields in YAML frontmatter.
+**`description`** (required):
+- Write in third person: "Processes PDF files..." (not "I help process..." or "You can use this to...")
+- Include both what the skill does AND when to use it
+- Include trigger keywords that help the agent identify relevant tasks
+- Max 1024 characters
+
+Example:
+```yaml
+---
+name: processing-pdfs
+description: Extracts text and tables from PDF files, fills forms, and merges documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.
+---
+```
+
+**Note:** The spec allows optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) but most skills don't need them. See [agentskills.io/specification](https://agentskills.io/specification) for details.
 
 ##### Body
 
