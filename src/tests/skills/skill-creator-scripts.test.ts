@@ -8,9 +8,9 @@ import { join } from "node:path";
 import {
   initSkill,
   titleCaseSkillName,
-} from "../../skills/builtin/skill-creator/scripts/init-skill";
-import { packageSkill } from "../../skills/builtin/skill-creator/scripts/package-skill";
-import { validateSkill } from "../../skills/builtin/skill-creator/scripts/validate-skill";
+} from "../../skills/builtin/creating-skills/scripts/init-skill";
+import { packageSkill } from "../../skills/builtin/creating-skills/scripts/package-skill";
+import { validateSkill } from "../../skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
 
@@ -167,25 +167,72 @@ description: A skill with <invalid> description
     expect(result.message).toContain("cannot contain angle brackets");
   });
 
-  test("fails when unexpected frontmatter keys are present", () => {
-    const skillDir = join(TEST_DIR, "unexpected-keys");
+  test("warns but passes when unknown frontmatter keys are present", () => {
+    const skillDir = join(TEST_DIR, "unknown-keys");
     mkdirSync(skillDir);
     writeFileSync(
       join(skillDir, "SKILL.md"),
       `---
-name: unexpected-keys
-description: A skill with unexpected keys
+name: unknown-keys
+description: A skill with unknown keys
 author: Someone
 version: 1.0.0
 ---
 
-# Unexpected Keys
+# Unknown Keys
 `,
     );
 
     const result = validateSkill(skillDir);
-    expect(result.valid).toBe(false);
-    expect(result.message).toContain("Unexpected key(s)");
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.length).toBeGreaterThan(0);
+    expect(result.warnings?.[0]).toContain("Unknown frontmatter key(s)");
+  });
+
+  test("accepts all official spec frontmatter fields without warnings", () => {
+    const skillDir = join(TEST_DIR, "full-spec");
+    mkdirSync(skillDir);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: full-spec
+description: A skill with all official spec fields
+license: MIT
+compatibility: Requires Node.js 18+
+metadata:
+  author: test
+  version: "1.0"
+allowed-tools: Bash Read Write
+---
+
+# Full Spec Skill
+`,
+    );
+
+    const result = validateSkill(skillDir);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toBeUndefined();
+  });
+
+  test("warns when name doesn't match directory name", () => {
+    const skillDir = join(TEST_DIR, "my-directory");
+    mkdirSync(skillDir);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: different-name
+description: Name doesn't match directory
+---
+
+# Mismatched Name
+`,
+    );
+
+    const result = validateSkill(skillDir);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.[0]).toContain("doesn't match directory name");
   });
 });
 
