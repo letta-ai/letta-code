@@ -385,7 +385,11 @@ async function executeSubagent(
     // Spawn letta in headless mode with stream-json output
     const proc = spawn("letta", cliArgs, {
       cwd: process.cwd(),
-      env: process.env,
+      env: {
+        ...process.env,
+        // Tag Task-spawned agents for easy filtering.
+        LETTA_CODE_AGENT_ROLE: "subagent",
+      },
     });
 
     // Set up abort handler to kill the child process
