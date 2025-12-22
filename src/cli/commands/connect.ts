@@ -387,8 +387,7 @@ export async function handleDisconnect(
       cmdId,
       msg,
       `✓ Disconnected from Claude OAuth.\n\n` +
-        `Provider '${ANTHROPIC_PROVIDER_NAME}' removed from Letta.\n` +
-        `Your OAuth tokens have been removed from ~/.letta/settings.json`,
+        `Provider '${ANTHROPIC_PROVIDER_NAME}' removed from Letta.`,
       true,
       "finished",
     );
