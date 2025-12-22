@@ -70,7 +70,16 @@ export async function task(args: TaskArgs): Promise<string> {
       return `Error: ${result.error || "Subagent execution failed"}`;
     }
 
-    return result.report;
+    // Include stable subagent metadata so orchestrators can attribute results.
+    // Keep the tool return type as a string for compatibility.
+    const header = [
+      `subagent_type=${subagent_type}`,
+      result.agentId ? `agent_id=${result.agentId}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return `${header}\n\n${result.report}`;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     completeSubagent(subagentId, { success: false, error: errorMessage });
