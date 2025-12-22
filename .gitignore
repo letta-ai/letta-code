@@ -10,6 +10,7 @@ bun.lockb
 bin/
 letta.js
 letta.js.map
+/skills/
 .DS_Store
 
 # Logs

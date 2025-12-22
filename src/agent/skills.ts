@@ -9,17 +9,27 @@
 
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
-// Import bundled skills (embedded at build time)
-import memoryInitSkillMd from "../skills/builtin/memory-init/SKILL.md";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../utils/frontmatter";
 
 /**
- * Bundled skill sources - embedded at build time
+ * Get the bundled skills directory path
+ * This is where skills ship with the package (skills/ directory next to letta.js)
  */
-const BUNDLED_SKILL_SOURCES: Array<{ id: string; content: string }> = [
-  { id: "memory-init", content: memoryInitSkillMd },
-];
+function getBundledSkillsPath(): string {
+  // In dev mode (running from src/), look in src/skills/builtin/
+  // In production (running from letta.js), look in skills/ next to letta.js
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+
+  // Check if we're in dev mode (thisDir contains 'src/agent')
+  if (thisDir.includes("src/agent") || thisDir.includes("src\\agent")) {
+    return join(thisDir, "../skills/builtin");
+  }
+
+  // Production mode - skills/ is next to the bundled letta.js
+  return join(thisDir, "skills");
+}
 
 /**
  * Source of a skill (for display and override resolution)
@@ -90,65 +100,13 @@ const SKILLS_BLOCK_CHAR_LIMIT = 20000;
 /**
  * Parse a bundled skill from its embedded content
  */
-function parseBundledSkill(id: string, content: string): Skill {
-  const { frontmatter, body } = parseFrontmatter(content);
-
-  const name =
-    (typeof frontmatter.name === "string" ? frontmatter.name : null) ||
-    id
-      .split("/")
-      .pop()
-      ?.replace(/-/g, " ")
-      .replace(/\b\w/g, (l) => l.toUpperCase()) ||
-    id;
-
-  let description =
-    typeof frontmatter.description === "string"
-      ? frontmatter.description
-      : null;
-  if (!description) {
-    const firstParagraph = body.trim().split("\n\n")[0];
-    description = firstParagraph || "No description available";
-  }
-
-  // Strip surrounding quotes
-  description = description.trim();
-  if (
-    (description.startsWith('"') && description.endsWith('"')) ||
-    (description.startsWith("'") && description.endsWith("'"))
-  ) {
-    description = description.slice(1, -1);
-  }
-
-  let tags: string[] | undefined;
-  if (Array.isArray(frontmatter.tags)) {
-    tags = frontmatter.tags;
-  } else if (typeof frontmatter.tags === "string") {
-    tags = [frontmatter.tags];
-  }
-
-  return {
-    id,
-    name,
-    description,
-    category:
-      typeof frontmatter.category === "string"
-        ? frontmatter.category
-        : undefined,
-    tags,
-    path: "", // Bundled skills don't have a file path
-    source: "bundled",
-    content, // Store the full content for bundled skills
-  };
-}
-
 /**
- * Get bundled skills (embedded at build time)
+ * Get bundled skills by discovering from the bundled skills directory
  */
-export function getBundledSkills(): Skill[] {
-  return BUNDLED_SKILL_SOURCES.map(({ id, content }) =>
-    parseBundledSkill(id, content),
-  );
+export async function getBundledSkills(): Promise<Skill[]> {
+  const bundledPath = getBundledSkillsPath();
+  const result = await discoverSkillsFromDir(bundledPath, "bundled");
+  return result.skills;
 }
 
 /**
@@ -202,7 +160,8 @@ export async function discoverSkills(
   const skillsById = new Map<string, Skill>();
 
   // 1. Start with bundled skills (lowest priority)
-  for (const skill of getBundledSkills()) {
+  const bundledSkills = await getBundledSkills();
+  for (const skill of bundledSkills) {
     skillsById.set(skill.id, skill);
   }
 
