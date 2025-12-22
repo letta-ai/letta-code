@@ -56,9 +56,13 @@ export async function getResumeData(
         ? agent.message_ids[agent.message_ids.length - 1]
         : null;
 
-    let messageToCheck = cursorLastMessage;
+    // Determine which message to check for pending approvals.
+    // The server uses agent.message_ids[-1] (last in-context message) as the source of truth.
+    // We must check the same message - falling back to cursor data can cause infinite loops
+    // when the cursor contains stale approval_request_messages that are no longer in-context.
+    let messageToCheck: Message | null = cursorLastMessage;
 
-    // If there's a desync, find the in-context message in the cursor fetch
+    // If there's a desync between cursor and in-context, we MUST find the in-context message
     if (
       inContextLastMessageId &&
       cursorLastMessage.id !== inContextLastMessageId
@@ -96,13 +100,18 @@ export async function getResumeData(
           messageToCheck = inContextMessage;
         }
       } else {
+        // IMPORTANT: Do NOT fall back to cursor message when we can't find the in-context message.
+        // The cursor might contain stale approval_request_messages that are no longer in-context,
+        // which would cause an infinite loop: client shows stale approval → user approves →
+        // server rejects ("No tool call awaiting approval") → recovery finds stale approval → loop.
+        // Instead, return no pending approvals and let the caller handle the desync.
         debugWarn(
           "check-approval",
           `In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
-            `  This likely means the in-context message is older than the cursor window.\n` +
-            `  Falling back to cursor message - approval state may be incorrect.`,
+            `  Cannot determine approval state - returning no pending approvals.\n` +
+            `  This prevents potential infinite loops from stale cursor data.`,
         );
-        // Fall back to cursor message if we can't find the in-context one
+        messageToCheck = null;
       }
     }
 
@@ -113,7 +122,7 @@ export async function getResumeData(
     // Log the agent's last_stop_reason for debugging
     const lastStopReason = (agent as { last_stop_reason?: string })
       .last_stop_reason;
-    if (lastStopReason === "requires_approval") {
+    if (lastStopReason === "requires_approval" && messageToCheck) {
       debugWarn("check-approval", `Agent last_stop_reason: ${lastStopReason}`);
       debugWarn(
         "check-approval",
@@ -121,7 +130,12 @@ export async function getResumeData(
       );
     }
 
-    if (messageToCheck.message_type === "approval_request_message") {
+    // Only check for approvals if we have a valid message to check
+    // (messageToCheck is null when we couldn't find the in-context message)
+    if (
+      messageToCheck &&
+      messageToCheck.message_type === "approval_request_message"
+    ) {
       // Cast to access tool_calls with proper typing
       const approvalMsg = messageToCheck as Message & {
         tool_calls?: Array<{
