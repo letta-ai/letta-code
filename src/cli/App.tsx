@@ -1790,6 +1790,7 @@ export default function App({
   );
 
   // Handle bash mode command submission
+  // Uses the same shell runner as the Bash tool for consistency
   const handleBashSubmit = useCallback(
     async (command: string) => {
       const cmdId = uid("bash");
@@ -1806,35 +1807,37 @@ export default function App({
       refreshDerived();
 
       try {
-        // Import execSync dynamically to avoid issues
-        const { execSync } = await import("node:child_process");
+        // Use the same spawnCommand as the Bash tool for consistent behavior
+        const { spawnCommand } = await import("../tools/impl/Bash.js");
+        const { getShellEnv } = await import("../tools/impl/shellEnv.js");
 
-        // Execute the bash command
-        const output = execSync(command, {
+        const result = await spawnCommand(command, {
           cwd: process.cwd(),
-          encoding: "utf-8",
+          env: getShellEnv(),
           timeout: 30000, // 30 second timeout
-          maxBuffer: 1024 * 1024 * 10, // 10MB
-          stdio: ["pipe", "pipe", "pipe"],
         });
+
+        // Combine stdout and stderr for output
+        const output = (result.stdout + result.stderr).trim();
+        const success = result.exitCode === 0;
 
         // Update line with output
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
           input: command,
-          output: output.trim(),
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
           phase: "finished",
-          success: true,
+          success,
         });
 
         // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
-          output: output.trim(),
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
         });
       } catch (error: unknown) {
-        // Handle command errors
+        // Handle command errors (timeout, abort, etc.)
         const errOutput =
           error instanceof Error
             ? (error as { stderr?: string; stdout?: string }).stderr ||

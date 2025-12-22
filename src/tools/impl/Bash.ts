@@ -59,8 +59,9 @@ function getShellConfig(): {
 /**
  * Execute a command using spawn with explicit shell.
  * This avoids the double-shell parsing that exec() does.
+ * Exported for use by bash mode in the CLI.
  */
-function spawnCommand(
+export function spawnCommand(
   command: string,
   options: {
     cwd: string;
