@@ -22,6 +22,18 @@ interface PasteAwareTextInputProps {
   focus?: boolean;
   cursorPosition?: number;
   onCursorMove?: (position: number) => void;
+
+  /**
+   * Called when the user presses `!` while the input is empty.
+   * Return true to consume the keystroke (it will NOT appear in the input).
+   */
+  onBangAtEmpty?: () => boolean;
+
+  /**
+   * Called when the user presses Backspace while the input is empty.
+   * Return true to consume the keystroke.
+   */
+  onBackspaceAtEmpty?: () => boolean;
 }
 
 function countLines(text: string): number {
@@ -101,6 +113,8 @@ export function PasteAwareTextInput({
   focus = true,
   cursorPosition,
   onCursorMove,
+  onBangAtEmpty,
+  onBackspaceAtEmpty,
 }: PasteAwareTextInputProps) {
   const { internal_eventEmitter } = useStdin();
   const [displayValue, setDisplayValue] = useState(value);
@@ -145,6 +159,17 @@ export function PasteAwareTextInput({
     // Recompute ACTUAL by substituting placeholders via shared registry
     const resolved = resolvePlaceholders(value);
     setActualValue(resolved);
+
+    // Keep caret in bounds when parent updates value (e.g. clearing input).
+    // This also ensures mode-switch hotkeys that depend on caret position behave correctly.
+    const nextCaret = Math.max(
+      0,
+      Math.min(caretOffsetRef.current, value.length),
+    );
+    if (nextCaret !== caretOffsetRef.current) {
+      setNudgeCursorOffset(nextCaret);
+      caretOffsetRef.current = nextCaret;
+    }
   }, [value]);
 
   // Intercept paste events and macOS fallback for image clipboard imports
@@ -224,15 +249,29 @@ export function PasteAwareTextInput({
           caretOffsetRef.current = nextCaret;
         }
       }
+
+      // Backspace on empty input - handle here since handleChange won't fire
+      // (value doesn't change when backspacing on empty)
+      // Use ref to avoid stale closure issues
+      // Note: On macOS, backspace sends \x7f which Ink parses as "delete", not "backspace"
+      if ((key.backspace || key.delete) && displayValueRef.current === "") {
+        onBackspaceAtEmptyRef.current?.();
+        return;
+      }
     },
     { isActive: focus },
   );
 
-  // Store onChange in a ref to avoid stale closures in event handlers
+  // Store callbacks in refs to avoid stale closures in event handlers
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  const onBackspaceAtEmptyRef = useRef(onBackspaceAtEmpty);
+  useEffect(() => {
+    onBackspaceAtEmptyRef.current = onBackspaceAtEmpty;
+  }, [onBackspaceAtEmpty]);
 
   // Consolidated raw stdin handler for Option+Arrow navigation and Option+Delete
   // Uses internal_eventEmitter (Ink's private API) for escape sequences that useInput doesn't parse correctly.
@@ -333,6 +372,15 @@ export function PasteAwareTextInput({
   }, [internal_eventEmitter]);
 
   const handleChange = (newValue: string) => {
+    // Bash mode entry: intercept "!" typed on empty input BEFORE updating state
+    // This prevents any flicker since we never commit the "!" to displayValue
+    if (displayValue === "" && newValue === "!") {
+      if (onBangAtEmpty?.()) {
+        // Parent handled it (entered bash mode) - don't update our state
+        return;
+      }
+    }
+
     // Drop lone escape characters that Ink's text input would otherwise insert;
     // they are used as control keys for double-escape handling and should not
     // mutate the input value.

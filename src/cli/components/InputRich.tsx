@@ -44,6 +44,7 @@ export function Input({
   tokenCount,
   thinkingMessage,
   onSubmit,
+  onBashSubmit,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -61,6 +62,7 @@ export function Input({
   tokenCount: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
+  onBashSubmit?: (command: string) => Promise<void>;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -94,6 +96,21 @@ export function Input({
   // Track if we just moved to a boundary (for two-step history navigation)
   const [atStartBoundary, setAtStartBoundary] = useState(false);
   const [atEndBoundary, setAtEndBoundary] = useState(false);
+
+  // Bash mode state
+  const [isBashMode, setIsBashMode] = useState(false);
+
+  const handleBangAtEmpty = () => {
+    if (isBashMode) return false;
+    setIsBashMode(true);
+    return true;
+  };
+
+  const handleBackspaceAtEmpty = () => {
+    if (!isBashMode) return false;
+    setIsBashMode(false);
+    return true;
+  };
 
   // Reset cursor position after it's been applied
   useEffect(() => {
@@ -190,12 +207,14 @@ export function Input({
     if (!visible) return;
 
     // Handle CTRL-C for double-ctrl-c-to-exit
+    // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
       } else {
         // First CTRL-C - wipe input and start 1-second timer
+        // Note: In bash mode, this clears input but keeps bash mode active
         setValue("");
         setCtrlCPressed(true);
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
@@ -205,6 +224,9 @@ export function Input({
       }
     }
   });
+
+  // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
+  // consume the keystroke before it renders (no flicker).
 
   // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
@@ -439,6 +461,27 @@ export function Input({
 
     const previousValue = value;
 
+    // Handle bash mode submission
+    if (isBashMode) {
+      if (!previousValue.trim()) return;
+
+      // Add to history if not empty and not a duplicate of the last entry
+      if (previousValue.trim() !== history[history.length - 1]) {
+        setHistory([...history, previousValue]);
+      }
+
+      // Reset history navigation
+      setHistoryIndex(-1);
+      setTemporaryInput("");
+
+      setValue(""); // Clear immediately for responsiveness
+      // Stay in bash mode after submitting (don't exit)
+      if (onBashSubmit) {
+        await onBashSubmit(previousValue);
+      }
+      return;
+    }
+
     // Add to history if not empty and not a duplicate of the last entry
     if (previousValue.trim() && previousValue !== history[history.length - 1]) {
       setHistory([...history, previousValue]);
@@ -590,12 +633,19 @@ export function Input({
 
       <Box flexDirection="column">
         {/* Top horizontal divider */}
-        <Text dimColor>{horizontalLine}</Text>
+        <Text
+          dimColor={!isBashMode}
+          color={isBashMode ? colors.bash.border : undefined}
+        >
+          {horizontalLine}
+        </Text>
 
         {/* Two-column layout for input, matching message components */}
         <Box flexDirection="row">
           <Box width={2} flexShrink={0}>
-            <Text color={colors.input.prompt}>{">"}</Text>
+            <Text color={isBashMode ? colors.bash.prompt : colors.input.prompt}>
+              {isBashMode ? "!" : ">"}
+            </Text>
             <Text> </Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
@@ -606,12 +656,19 @@ export function Input({
               cursorPosition={cursorPos}
               onCursorMove={setCurrentCursorPosition}
               focus={!onEscapeCancel}
+              onBangAtEmpty={handleBangAtEmpty}
+              onBackspaceAtEmpty={handleBackspaceAtEmpty}
             />
           </Box>
         </Box>
 
         {/* Bottom horizontal divider */}
-        <Text dimColor>{horizontalLine}</Text>
+        <Text
+          dimColor={!isBashMode}
+          color={isBashMode ? colors.bash.border : undefined}
+        >
+          {horizontalLine}
+        </Text>
 
         <InputAssist
           currentInput={value}
@@ -631,6 +688,14 @@ export function Input({
             <Text dimColor>Press CTRL-C again to exit</Text>
           ) : escapePressed ? (
             <Text dimColor>Press Esc again to clear</Text>
+          ) : isBashMode ? (
+            <Text>
+              <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+              <Text color={colors.bash.prompt} dimColor>
+                {" "}
+                (backspace to exit)
+              </Text>
+            </Text>
           ) : modeInfo ? (
             <Text>
               <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
