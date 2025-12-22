@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 interface ValidationResult {
@@ -117,6 +117,14 @@ export function validateSkill(skillPath: string): ValidationResult {
         valid: false,
         message: `Name is too long (${trimmedName.length} characters). Maximum is 64 characters.`,
       };
+    }
+
+    // Check name matches directory name (warn if not)
+    const dirName = basename(skillPath);
+    if (trimmedName !== dirName) {
+      warnings.push(
+        `Name '${trimmedName}' doesn't match directory name '${dirName}'. For portability, these should match.`,
+      );
     }
   }
 

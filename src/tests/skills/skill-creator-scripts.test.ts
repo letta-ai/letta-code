@@ -214,6 +214,26 @@ allowed-tools: Bash Read Write
     expect(result.valid).toBe(true);
     expect(result.warnings).toBeUndefined();
   });
+
+  test("warns when name doesn't match directory name", () => {
+    const skillDir = join(TEST_DIR, "my-directory");
+    mkdirSync(skillDir);
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      `---
+name: different-name
+description: Name doesn't match directory
+---
+
+# Mismatched Name
+`,
+    );
+
+    const result = validateSkill(skillDir);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.[0]).toContain("doesn't match directory name");
+  });
 });
 
 describe("init-skill", () => {
