@@ -266,8 +266,8 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const skillName = args[0];
-  const path = args[2];
+  const skillName = args[0] as string;
+  const path = args[2] as string;
 
   console.log(`Initializing skill: ${skillName}`);
   console.log(`Location: ${path}\n`);

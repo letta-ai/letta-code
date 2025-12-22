@@ -116,7 +116,8 @@ function crc32(data: Buffer): number {
   const table = getCrc32Table();
 
   for (let i = 0; i < data.length; i++) {
-    crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xff];
+    // biome-ignore lint/style/noNonNullAssertion: array access within bounds
+    crc = (crc >>> 8) ^ (table[(crc ^ data[i]!) & 0xff] as number);
   }
 
   return (crc ^ 0xffffffff) >>> 0;
@@ -251,7 +252,7 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const skillPath = args[0];
+  const skillPath = args[0] as string;
   const outputDir = args[1];
 
   console.log(`Packaging skill: ${skillPath}`);

@@ -47,7 +47,7 @@ export function validateSkill(skillPath: string): ValidationResult {
     return { valid: false, message: "Invalid frontmatter format" };
   }
 
-  const frontmatterText = match[1];
+  const frontmatterText = match[1] as string;
 
   // Parse YAML frontmatter
   let frontmatter: Record<string, unknown>;
@@ -155,7 +155,7 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const { valid, message } = validateSkill(args[0]);
+  const { valid, message } = validateSkill(args[0] as string);
   console.log(message);
   process.exit(valid ? 0 : 1);
 }
