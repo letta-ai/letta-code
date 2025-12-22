@@ -16,14 +16,16 @@ import { parse as parseYaml } from "yaml";
 interface ValidationResult {
   valid: boolean;
   message: string;
+  warnings?: string[];
 }
 
 const ALLOWED_PROPERTIES = new Set([
   "name",
   "description",
   "license",
-  "allowed-tools",
+  "compatibility",
   "metadata",
+  "allowed-tools",
 ]);
 
 export function validateSkill(skillPath: string): ValidationResult {
@@ -63,15 +65,15 @@ export function validateSkill(skillPath: string): ValidationResult {
     };
   }
 
-  // Check for unexpected properties
+  // Check for unexpected properties (warn but don't fail for forward-compatibility)
+  const warnings: string[] = [];
   const unexpectedKeys = Object.keys(frontmatter).filter(
     (key) => !ALLOWED_PROPERTIES.has(key),
   );
   if (unexpectedKeys.length > 0) {
-    return {
-      valid: false,
-      message: `Unexpected key(s) in SKILL.md frontmatter: ${unexpectedKeys.sort().join(", ")}. Allowed properties are: ${[...ALLOWED_PROPERTIES].sort().join(", ")}`,
-    };
+    warnings.push(
+      `Unknown frontmatter key(s): ${unexpectedKeys.sort().join(", ")}. Known properties are: ${[...ALLOWED_PROPERTIES].sort().join(", ")}`,
+    );
   }
 
   // Check required fields
@@ -144,7 +146,11 @@ export function validateSkill(skillPath: string): ValidationResult {
     }
   }
 
-  return { valid: true, message: "Skill is valid!" };
+  return {
+    valid: true,
+    message: "Skill is valid!",
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }
 
 // CLI entry point
@@ -155,7 +161,12 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const { valid, message } = validateSkill(args[0] as string);
+  const { valid, message, warnings } = validateSkill(args[0] as string);
   console.log(message);
+  if (warnings && warnings.length > 0) {
+    for (const warning of warnings) {
+      console.warn(`Warning: ${warning}`);
+    }
+  }
   process.exit(valid ? 0 : 1);
 }
