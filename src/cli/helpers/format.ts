@@ -12,7 +12,7 @@ export function formatCompact(n: number): string {
     // Show 1 decimal place if < 10k, otherwise round to whole number
     if (k < 10) {
       const rounded = Math.round(k * 10) / 10;
-      return rounded % 1 === 0 ? `${rounded}k` : `${rounded}k`;
+      return `${rounded}k`;
     }
     return `${Math.round(k)}k`;
   }
