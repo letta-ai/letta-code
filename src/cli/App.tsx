@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -20,10 +20,6 @@ import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
-import {
-  recoverFromStaleApproval,
-  resyncPendingApprovals,
-} from "../agent/recover";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { permissionMode } from "../permissions/mode";
@@ -845,9 +841,6 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
     ): Promise<void> => {
       const currentInput = initialInput;
-      // Track lastRunId outside the while loop so it's available in catch block
-      let lastKnownRunId: string | null = null;
-      let lastKnownSeqId: number | null = null;
 
       try {
         // Check if user hit escape before we started
@@ -931,28 +924,14 @@ export default function App({
             }
           };
 
-          const {
-            stopReason,
-            approval,
-            approvals,
-            apiDurationMs,
-            lastRunId,
-            lastSeqId,
-          } = await drainStreamWithResume(
-            stream,
-            buffersRef.current,
-            refreshDerivedThrottled,
-            abortControllerRef.current?.signal,
-            syncAgentState,
-          );
-
-          // Update lastKnownRunId for error handling in catch block
-          if (lastRunId) {
-            lastKnownRunId = lastRunId;
-          }
-          if (lastSeqId !== null && lastSeqId !== undefined) {
-            lastKnownSeqId = lastSeqId;
-          }
+          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
+            await drainStreamWithResume(
+              stream,
+              buffersRef.current,
+              refreshDerivedThrottled,
+              abortControllerRef.current?.signal,
+              syncAgentState,
+            );
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -1440,76 +1419,6 @@ export default function App({
           return;
         }
       } catch (e) {
-        // Stale approval recovery:
-        // If the approval submission succeeded server-side but the client observed a stale state
-        // (or a retried request), the backend returns a 400 ValueError saying no approvals are pending.
-        // In that case, resync + relatch to the active run stream instead of erroring.
-        if (
-          e instanceof APIError &&
-          e.status === 400 &&
-          typeof currentInput?.[0] === "object" &&
-          currentInput[0] &&
-          "type" in currentInput[0] &&
-          currentInput[0].type === "approval"
-        ) {
-          const detail =
-            (e.error as Record<string, unknown>)?.detail ??
-            (e.error as Record<string, Record<string, unknown>>)?.error
-              ?.detail ??
-            e.message ??
-            "";
-          if (
-            typeof detail === "string" &&
-            detail.includes(
-              "Cannot process approval response: No tool call is currently awaiting approval",
-            )
-          ) {
-            try {
-              const client = await getClient();
-              const recovery = await recoverFromStaleApproval(
-                client,
-                agentId,
-                buffersRef.current,
-                refreshDerivedThrottled,
-                abortControllerRef.current?.signal,
-                { lastKnownRunId, lastKnownSeqId },
-              );
-
-              let approvalsToShow: ApprovalRequest[] = [];
-              if (recovery.kind === "pending_approval") {
-                approvalsToShow = recovery.approvals;
-              } else {
-                // After relatching, re-check in case a new approval request was produced.
-                const agent = await client.agents.retrieve(agentId);
-                approvalsToShow = await resyncPendingApprovals(client, agent);
-              }
-
-              if (approvalsToShow.length > 0) {
-                setPendingApprovals(approvalsToShow);
-                const contexts = await Promise.all(
-                  approvalsToShow.map(async (approvalItem) => {
-                    const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                      approvalItem.toolArgs,
-                      {},
-                    );
-                    return await analyzeToolApproval(
-                      approvalItem.toolName,
-                      parsedArgs,
-                    );
-                  }),
-                );
-                setApprovalContexts(contexts);
-              }
-
-              setStreaming(false);
-              refreshDerived();
-              return;
-            } catch (_recoveryError) {
-              // Fall through to normal error handling if recovery fails.
-            }
-          }
-        }
-
         // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(buffersRef.current);
 
@@ -1549,13 +1458,11 @@ export default function App({
         abortControllerRef.current = null;
       }
     },
-
     [
       appendError,
       refreshDerived,
       refreshDerivedThrottled,
       setStreaming,
-      agentId,
       currentModelId,
     ],
   );
