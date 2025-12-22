@@ -134,7 +134,6 @@ export async function handleHeadlessCommand(
     const { toolFilter } = await import("./tools/filter");
     toolFilter.setEnabledTools(values.tools as string);
   }
-
   // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue = values["permission-mode"] as string | undefined;
   const yoloMode = values.yolo as boolean | undefined;
@@ -175,6 +174,25 @@ export async function handleHeadlessCommand(
   // Check for input-format early - if stream-json, we don't need a prompt
   const inputFormat = values["input-format"] as string | undefined;
   const isBidirectionalMode = inputFormat === "stream-json";
+
+  // If headless output is being piped and the downstream closes early (e.g.
+  // `| head`), Node will throw EPIPE on stdout writes. Treat this as a normal
+  // termination rather than crashing with a stack trace.
+  //
+  // Note: this must be registered before any `console.log` in headless mode.
+  process.stdout.on("error", (err: unknown) => {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+
+    if (code === "EPIPE") {
+      process.exit(0);
+    }
+
+    // Re-throw unknown stdout errors so they surface during tests/debugging.
+    throw err;
+  });
 
   // Get prompt from either positional args or stdin (unless in bidirectional mode)
   let prompt = positionals.slice(2).join(" ");
