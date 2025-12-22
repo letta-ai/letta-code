@@ -123,6 +123,19 @@ class SettingsManager {
   }
 
   /**
+   * Get or create device ID (generates UUID if not exists)
+   */
+  getOrCreateDeviceId(): string {
+    const settings = this.getSettings();
+    let deviceId = settings.deviceId;
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      this.updateSettings({ deviceId });
+    }
+    return deviceId;
+  }
+
+  /**
    * Update settings (synchronous in-memory, async persist)
    */
   updateSettings(updates: Partial<Settings>): void {
