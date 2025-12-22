@@ -104,6 +104,13 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
         block.description = frontmatter.description;
       }
 
+      if (frontmatter.limit) {
+        const limit = parseInt(frontmatter.limit, 10);
+        if (!Number.isNaN(limit) && limit > 0) {
+          block.limit = limit;
+        }
+      }
+
       // Set read-only for skills blocks (managed by Skill tool, not memory tools)
       if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
         block.read_only = true;
