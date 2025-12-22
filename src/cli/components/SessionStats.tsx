@@ -1,4 +1,5 @@
 import type { SessionStatsSnapshot } from "../../agent/stats";
+import { formatCompact } from "../helpers/format";
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) {
@@ -45,7 +46,7 @@ export function formatUsageStats({
   const outputLines = [
     `Total duration (API):  ${formatDuration(stats.totalApiMs)}`,
     `Total duration (wall): ${formatDuration(stats.totalWallMs)}`,
-    `Session usage:         ${stats.usage.stepCount} steps, ${formatNumber(stats.usage.promptTokens)} input, ${formatNumber(stats.usage.completionTokens)} output`,
+    `Session usage:         ${stats.usage.stepCount} steps, ${formatCompact(stats.usage.promptTokens)} input, ${formatCompact(stats.usage.completionTokens)} output`,
     "",
   ];
 
