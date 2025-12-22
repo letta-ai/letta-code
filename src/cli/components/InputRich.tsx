@@ -2,10 +2,15 @@
 
 import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
+import chalk from "chalk";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
+import {
+  ELAPSED_DISPLAY_THRESHOLD_MS,
+  TOKEN_DISPLAY_THRESHOLD,
+} from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { settingsManager } from "../../settings-manager";
@@ -22,8 +27,6 @@ import { ShimmerText } from "./ShimmerText";
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const appVersion = getVersion();
 
-// Only show token count when it exceeds this threshold
-const COUNTER_VISIBLE_THRESHOLD = 1000;
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
 
@@ -119,6 +122,8 @@ export function Input({
 
   // Shimmer animation state
   const [shimmerOffset, setShimmerOffset] = useState(-3);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const streamStartRef = useRef<number | null>(null);
 
   // Terminal width (reactive to window resizing)
   const columns = useTerminalWidth();
@@ -407,6 +412,25 @@ export function Input({
     return () => clearInterval(id);
   }, [streaming, thinkingMessage, visible, agentName]);
 
+  // Elapsed time tracking
+  useEffect(() => {
+    if (streaming && visible) {
+      // Start tracking when streaming begins
+      if (streamStartRef.current === null) {
+        streamStartRef.current = Date.now();
+      }
+      const id = setInterval(() => {
+        if (streamStartRef.current !== null) {
+          setElapsedMs(Date.now() - streamStartRef.current);
+        }
+      }, 1000);
+      return () => clearInterval(id);
+    }
+    // Reset when streaming stops
+    streamStartRef.current = null;
+    setElapsedMs(0);
+  }, [streaming, visible]);
+
   const handleSubmit = async () => {
     // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
@@ -507,8 +531,28 @@ export function Input({
 
   const modeInfo = getModeInfo();
 
+  const estimatedTokens = charsToTokens(tokenCount);
   const shouldShowTokenCount =
-    streaming && tokenCount > COUNTER_VISIBLE_THRESHOLD;
+    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
+  const shouldShowElapsed =
+    streaming && elapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
+  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+
+  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
+  const statusHintText = (() => {
+    const hintColor = chalk.hex(colors.subagent.hint);
+    const hintBold = hintColor.bold;
+    const suffix =
+      (shouldShowElapsed ? ` · ${elapsedMinutes}m` : "") +
+      (shouldShowTokenCount ? ` · ${formatCompact(estimatedTokens)} ↑` : "") +
+      ")";
+    if (interruptRequested) {
+      return hintColor(` (interrupting${suffix}`);
+    }
+    return (
+      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
+    );
+  })();
 
   // Create a horizontal line using box-drawing characters
   const horizontalLine = "─".repeat(columns);
@@ -534,19 +578,7 @@ export function Input({
               message={thinkingMessage}
               shimmerOffset={shimmerOffset}
             />
-            <Text dimColor>
-              {" ("}
-              {interruptRequested ? (
-                "interrupting"
-              ) : (
-                <>
-                  <Text bold>esc</Text> to interrupt
-                </>
-              )}
-              {shouldShowTokenCount &&
-                ` · ${formatCompact(charsToTokens(tokenCount))} ↑`}
-              {")"}
-            </Text>
+            <Text>{statusHintText}</Text>
           </Box>
         </Box>
       )}
