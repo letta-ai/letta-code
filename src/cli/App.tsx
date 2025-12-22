@@ -2848,7 +2848,7 @@ export default function App({
 
           const initialOutput = description
             ? `Starting skill creation for: ${description}`
-            : "Starting skill creation. I’ll load the skill-creator skill and ask a few questions about the skill you want to build...";
+            : "Starting skill creation. I’ll load the creating-skills skill and ask a few questions about the skill you want to build...";
 
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -3073,14 +3073,14 @@ ${recentCommits}
             });
             refreshDerived();
 
-            // Send trigger message instructing agent to load the memory-init skill
+            // Send trigger message instructing agent to load the initializing-memory skill
             const initMessage = `<system-reminder>
 The user has requested memory initialization via /init.
 
-## 1. Load the memory-init skill
+## 1. Load the initializing-memory skill
 
-First, check your \`loaded_skills\` memory block. If the \`memory-init\` skill is not already loaded:
-1. Use the \`Skill\` tool with \`command: "load", skills: ["memory-init"]\`
+First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
+1. Use the \`Skill\` tool with \`command: "load", skills: ["initializing-memory"]\`
 2. The skill contains comprehensive instructions for memory initialization
 
 If the skill fails to load, proceed with your best judgment based on these guidelines:
@@ -3091,7 +3091,7 @@ If the skill fails to load, proceed with your best judgment based on these guide
 
 ## 2. Follow the loaded skill instructions
 
-Once loaded, follow the instructions in the \`memory-init\` skill to complete the initialization.
+Once loaded, follow the instructions in the \`initializing-memory\` skill to complete the initialization.
 ${gitContext}
 </system-reminder>`;
 
