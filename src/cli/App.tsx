@@ -4335,7 +4335,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             id: cmdId,
             input: "/feedback",
             output:
-              "Thank you for your feedback! Your message has been sent to the Letta team.",
+              "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
             phase: "finished",
             success: true,
           });
