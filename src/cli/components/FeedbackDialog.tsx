@@ -6,10 +6,15 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 interface FeedbackDialogProps {
   onSubmit: (message: string) => void;
   onCancel: () => void;
+  initialValue?: string;
 }
 
-export function FeedbackDialog({ onSubmit, onCancel }: FeedbackDialogProps) {
-  const [feedbackText, setFeedbackText] = useState("");
+export function FeedbackDialog({
+  onSubmit,
+  onCancel,
+  initialValue = "",
+}: FeedbackDialogProps) {
+  const [feedbackText, setFeedbackText] = useState(initialValue);
   const [error, setError] = useState("");
 
   useInput((_input, key) => {
