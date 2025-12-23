@@ -9,6 +9,30 @@ import type { ApprovalRequest } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { executeTool, type ToolExecutionResult } from "../tools/manager";
 
+/**
+ * Tools that are safe to execute in parallel (read-only or independent).
+ * These tools don't modify files or shared state, so they can't race with each other.
+ * Note: Bash is intentionally excluded - it can run arbitrary commands that may write files.
+ */
+const PARALLEL_SAFE_TOOLS = new Set([
+  // Read-only file tools
+  "Read",
+  "Grep",
+  "Glob",
+  // Search/fetch tools (external APIs or read-only queries)
+  "conversation_search",
+  "web_search",
+  "fetch_webpage",
+  // Background shell output (read-only check)
+  "BashOutput",
+  // Task spawns independent subagents
+  "Task",
+]);
+
+function isParallelSafe(toolName: string): boolean {
+  return PARALLEL_SAFE_TOOLS.has(toolName);
+}
+
 export type ApprovalDecision =
   | {
       type: "approve";
@@ -156,7 +180,8 @@ async function executeSingleDecision(
  * - Executing approved tools (with error handling)
  * - Formatting denials
  * - Combining all results into a single batch
- * - Task tools are executed in parallel for better performance
+ * - Parallel-safe tools (read-only + Task) are executed in parallel for performance
+ * - Write/stateful tools (Edit, Write, Bash, etc.) are executed sequentially to avoid race conditions
  *
  * Used by both interactive (App.tsx) and headless (headless.ts) modes.
  *
@@ -174,41 +199,41 @@ export async function executeApprovalBatch(
     null,
   );
 
-  // Identify Task tools for parallel execution
-  const taskIndices: number[] = [];
+  // Identify parallel-safe tools (read-only + Task)
+  const parallelIndices: number[] = [];
   for (let i = 0; i < decisions.length; i++) {
     const decision = decisions[i];
     if (
       decision &&
       decision.type === "approve" &&
-      decision.approval.toolName === "Task"
+      isParallelSafe(decision.approval.toolName)
     ) {
-      taskIndices.push(i);
+      parallelIndices.push(i);
     }
   }
 
-  // Execute non-Task tools sequentially (existing behavior)
+  // Execute write/stateful tools sequentially to avoid race conditions
   for (let i = 0; i < decisions.length; i++) {
     const decision = decisions[i];
-    if (!decision || taskIndices.includes(i)) continue; // Skip Task tools for now
+    if (!decision || parallelIndices.includes(i)) continue;
     results[i] = await executeSingleDecision(decision, onChunk, options);
   }
 
-  // Execute Task tools in parallel
-  if (taskIndices.length > 0) {
-    const taskDecisions = taskIndices
+  // Execute parallel-safe tools (read-only + Task) in parallel
+  if (parallelIndices.length > 0) {
+    const parallelDecisions = parallelIndices
       .map((i) => decisions[i])
       .filter((d): d is ApprovalDecision => d !== undefined);
-    const taskResults = await Promise.all(
-      taskDecisions.map((decision) =>
+    const parallelResults = await Promise.all(
+      parallelDecisions.map((decision) =>
         executeSingleDecision(decision, onChunk, options),
       ),
     );
 
-    // Place Task results in original positions
-    for (let j = 0; j < taskIndices.length; j++) {
-      const idx = taskIndices[j];
-      const result = taskResults[j];
+    // Place parallel results in original positions
+    for (let j = 0; j < parallelIndices.length; j++) {
+      const idx = parallelIndices[j];
+      const result = parallelResults[j];
       if (idx !== undefined && result !== undefined) {
         results[idx] = result;
       }
