@@ -4250,26 +4250,37 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           refreshDerived();
 
           const settings = settingsManager.getSettings();
-          const baseURL =
-            process.env.LETTA_BASE_URL ||
-            settings.env?.LETTA_BASE_URL ||
-            "https://api.letta.com";
           const apiKey =
             process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
-          // Send feedback request manually since it's not in the SDK
-          const response = await fetch(`${baseURL}/v1/metadata/feedback`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-              "X-Letta-Source": "letta-code",
+          // Only send anonymized, safe settings for debugging
+          const {
+            env: _env,
+            refreshToken: _refreshToken,
+            anthropicOAuth: _anthropicOAuth,
+            ...safeSettings
+          } = settings;
+
+          const response = await fetch(
+            "https://api.letta.com/v1/metadata/feedback",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+                "X-Letta-Source": "letta-code",
+              },
+              body: JSON.stringify({
+                message: message,
+                feature: "letta-code",
+                agent_id: agentId,
+                session_id: telemetry.getSessionId(),
+                version: process.env.npm_package_version || "unknown",
+                platform: process.platform,
+                settings: JSON.stringify(safeSettings),
+              }),
             },
-            body: JSON.stringify({
-              message: message,
-              feature: "letta-code",
-            }),
-          });
+          );
 
           if (!response.ok) {
             const errorText = await response.text();
