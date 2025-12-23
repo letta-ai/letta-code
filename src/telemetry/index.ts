@@ -221,6 +221,13 @@ class TelemetryManager {
   }
 
   /**
+   * Get the current session ID
+   */
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
+  /**
    * Track session start
    */
   trackSessionStart() {
