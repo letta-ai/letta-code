@@ -480,6 +480,7 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
+  const currentModelProvider = llmConfig?.provider_name ?? null;
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -4850,6 +4851,7 @@ Plan file path: ${planFilePath}`;
               agentId={agentId}
               agentName={agentName}
               currentModel={currentModelDisplay}
+              currentModelProvider={currentModelProvider}
               messageQueue={messageQueue}
               onEnterQueueEditMode={handleEnterQueueEditMode}
               onEscapeCancel={

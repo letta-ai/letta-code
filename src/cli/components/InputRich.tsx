@@ -13,6 +13,7 @@ import {
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { charsToTokens, formatCompact } from "../helpers/format";
@@ -53,6 +54,7 @@ export function Input({
   agentId,
   agentName,
   currentModel,
+  currentModelProvider,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -71,6 +73,7 @@ export function Input({
   agentId?: string;
   agentName?: string | null;
   currentModel?: string | null;
+  currentModelProvider?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -708,7 +711,8 @@ export function Input({
             <Text dimColor>Press / for commands or @ for files</Text>
           )}
           <Text dimColor>
-            {`Letta Code v${appVersion} [${currentModel ?? "unknown"}]`}
+            {`Letta Code v${appVersion} `}
+            {`[${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
           </Text>
         </Box>
       </Box>
