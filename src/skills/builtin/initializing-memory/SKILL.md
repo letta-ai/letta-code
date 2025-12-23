@@ -216,8 +216,9 @@ You should ask these questions at the start (bundle them together in one AskUser
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
 4. **Workflow style**: "How proactive should I be?" (auto-commit vs ask-first)
-5. **Communication style**: "Terse or detailed responses?"
-6. **Any specific rules**: "Rules I should always follow?"
+5. **Memory updates**: "How proactive should I be about remembering things from our conversation?" (Proactive = check frequently, Less proactive = check occasionally). Use "Memory" as the header for this question.
+6. **Communication style**: "Terse or detailed responses?"
+7. **Any specific rules**: "Rules I should always follow?"
 
 **Why these matter:**
 - Identity lets you correlate git history to the user (their commits, PRs, coding style)

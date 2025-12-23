@@ -4446,6 +4446,38 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       // Get questions from approval args
       const questions = getQuestionsFromApproval(approval);
 
+      // Check for memory preference question and update setting
+      for (const q of questions) {
+        const questionLower = q.question.toLowerCase();
+        const headerLower = q.header?.toLowerCase() || "";
+
+        // Match memory-related questions
+        if (
+          questionLower.includes("memory") ||
+          questionLower.includes("remember") ||
+          headerLower.includes("memory")
+        ) {
+          const answer = answers[q.question]?.toLowerCase() || "";
+
+          // Parse answer: "proactive" / "frequent" / "more" → 5, "less" / "occasional" → 10
+          if (
+            answer.includes("proactive") ||
+            answer.includes("frequent") ||
+            answer.includes("more") ||
+            answer.includes("often")
+          ) {
+            settingsManager.updateSettings({ memoryReminderInterval: 5 });
+          } else if (
+            answer.includes("less") ||
+            answer.includes("occasional") ||
+            answer.includes("infrequent")
+          ) {
+            settingsManager.updateSettings({ memoryReminderInterval: 10 });
+          }
+          break; // Only process first matching question
+        }
+      }
+
       // Format the answer string like Claude Code does
       const answerParts = questions.map((q) => {
         const answer = answers[q.question] || "";

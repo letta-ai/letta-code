@@ -55,7 +55,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
-  memoryReminderInterval: null, // disabled by default
+  memoryReminderInterval: 5, // default to proactive (every 5 turns)
   globalSharedBlockIds: {},
 };
 
