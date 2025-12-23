@@ -133,7 +133,10 @@ export async function getResumeData(
       const lastStopReason = (agent as { last_stop_reason?: string })
         .last_stop_reason;
       if (lastStopReason === "requires_approval") {
-        debugWarn("check-approval", `Agent last_stop_reason: ${lastStopReason}`);
+        debugWarn(
+          "check-approval",
+          `Agent last_stop_reason: ${lastStopReason}`,
+        );
         debugWarn(
           "check-approval",
           `Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
@@ -172,7 +175,9 @@ export async function getResumeData(
         };
         pendingApprovals = toolCalls
           .filter(
-            (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
+            (
+              tc: ToolCallEntry,
+            ): tc is ToolCallEntry & { tool_call_id: string } =>
               !!tc && !!tc.tool_call_id,
           )
           .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
