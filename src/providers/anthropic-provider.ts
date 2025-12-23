@@ -65,7 +65,6 @@ async function providersRequest<T>(
   });
 
   if (!response.ok) {
-
     const errorText = await response.text();
 
     // Check if this is a pro/enterprise plan limitation error
