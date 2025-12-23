@@ -353,6 +353,11 @@ export default function App({
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
 
+  // Guard ref for preventing concurrent processConversation calls
+  // Separate from streaming state which may be set early for UI responsiveness
+  // Tracks depth to allow intentional reentry while blocking parallel calls
+  const processingConversationRef = useRef(0);
+
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
@@ -840,19 +845,23 @@ export default function App({
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
+      options?: { allowReentry?: boolean },
     ): Promise<void> => {
       const currentInput = initialInput;
+      const allowReentry = options?.allowReentry ?? false;
+
+      // Guard against concurrent processConversation calls
+      // This can happen if user submits two messages in quick succession
+      // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
+      if (processingConversationRef.current > 0 && !allowReentry) {
+        return;
+      }
+      processingConversationRef.current += 1;
 
       try {
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
-          return;
-        }
-
-        // Guard against concurrent processConversation calls
-        // This can happen if user submits two messages in quick succession
-        if (streamingRef.current) {
           return;
         }
 
@@ -1286,12 +1295,15 @@ export default function App({
               setThinkingMessage(getRandomThinkingVerb());
               refreshDerived();
 
-              await processConversation([
-                {
-                  type: "approval",
-                  approvals: allResults,
-                },
-              ]);
+              await processConversation(
+                [
+                  {
+                    type: "approval",
+                    approvals: allResults,
+                  },
+                ],
+                { allowReentry: true },
+              );
               return;
             }
 
@@ -1473,6 +1485,10 @@ export default function App({
         refreshDerived();
       } finally {
         abortControllerRef.current = null;
+        processingConversationRef.current = Math.max(
+          0,
+          processingConversationRef.current - 1,
+        );
       }
     },
     [
@@ -3258,7 +3274,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       buffersRef.current.interrupted = false;
       // Rotate to a new thinking message for this turn
       setThinkingMessage(getRandomThinkingVerb());
-      // Show streaming state immediately for responsiveness
+      // Show streaming state immediately for responsiveness (pending approval check takes ~100ms)
       setStreaming(true);
       refreshDerived();
 
