@@ -56,7 +56,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
-  memoryReminderInterval: 1, // number = prompt memory check every N turns
+  memoryReminderInterval: 5, // number = prompt memory check every N turns
   globalSharedBlockIds: {},
 };
 

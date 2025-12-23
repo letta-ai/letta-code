@@ -4,8 +4,8 @@
 import { settingsManager } from "../../settings-manager";
 
 // Memory reminder interval presets
-const MEMORY_INTERVAL_FREQUENT = 3;
-const MEMORY_INTERVAL_OCCASIONAL = 8;
+const MEMORY_INTERVAL_FREQUENT = 5;
+const MEMORY_INTERVAL_OCCASIONAL = 10;
 
 /**
  * Get the effective memory reminder interval (local setting takes precedence over global)
