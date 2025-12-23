@@ -90,6 +90,10 @@ import {
 import { backfillBuffers } from "./helpers/backfill";
 import { formatErrorDetails } from "./helpers/errorFormatter";
 import {
+  buildMemoryReminder,
+  parseMemoryPreference,
+} from "./helpers/memoryReminder";
+import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
@@ -3230,18 +3234,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       }
 
       // Build memory reminder if interval is set and we've reached the Nth turn
-      let memoryReminderContent = "";
-      const memoryInterval = settingsManager.getSetting("memoryReminderInterval");
-      if (
-        memoryInterval &&
-        turnCountRef.current > 0 &&
-        turnCountRef.current % memoryInterval === 0
-      ) {
-        const { MEMORY_CHECK_REMINDER } = await import(
-          "../agent/promptAssets.js"
-        );
-        memoryReminderContent = `<system-reminder>\n${MEMORY_CHECK_REMINDER}\n</system-reminder>`;
-      }
+      const memoryReminderContent = await buildMemoryReminder(turnCountRef.current);
 
       // Increment turn count for next iteration
       turnCountRef.current += 1;
@@ -4447,36 +4440,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       const questions = getQuestionsFromApproval(approval);
 
       // Check for memory preference question and update setting
-      for (const q of questions) {
-        const questionLower = q.question.toLowerCase();
-        const headerLower = q.header?.toLowerCase() || "";
-
-        // Match memory-related questions
-        if (
-          questionLower.includes("memory") ||
-          questionLower.includes("remember") ||
-          headerLower.includes("memory")
-        ) {
-          const answer = answers[q.question]?.toLowerCase() || "";
-
-          // Parse answer: "proactive" / "frequent" / "more" → 5, "less" / "occasional" → 10
-          if (
-            answer.includes("proactive") ||
-            answer.includes("frequent") ||
-            answer.includes("more") ||
-            answer.includes("often")
-          ) {
-            settingsManager.updateSettings({ memoryReminderInterval: 5 });
-          } else if (
-            answer.includes("less") ||
-            answer.includes("occasional") ||
-            answer.includes("infrequent")
-          ) {
-            settingsManager.updateSettings({ memoryReminderInterval: 10 });
-          }
-          break; // Only process first matching question
-        }
-      }
+      parseMemoryPreference(questions, answers);
 
       // Format the answer string like Claude Code does
       const answerParts = questions.map((q) => {
