@@ -72,11 +72,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       }
 
       // Get or generate device ID
-      let deviceId = settingsManager.getSetting("deviceId");
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        settingsManager.updateSettings({ deviceId });
-      }
+      const deviceId = settingsManager.getOrCreateDeviceId();
       const deviceName = hostname();
 
       // Start polling in background
