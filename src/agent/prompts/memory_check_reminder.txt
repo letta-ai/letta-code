@@ -1,3 +1,10 @@
 <system-reminder>
-After responding to the user, briefly consider if any information from this conversation should be stored in your memory blocks. Only update if there's genuinely useful information to remember (preferences, facts, corrections, project details). No need to confirm or mention this check to the user.
+MEMORY CHECK: Review this conversation for information worth storing in your memory blocks. Update memory silently (no confirmation needed) if you learned:
+
+- **User info**: Name, role, preferences, working style, current work/goals
+- **Project details**: Architecture, patterns, gotchas, dependencies, conventions, workflow rules
+- **Corrections**: User corrected you or clarified something important
+- **Preferences**: How they want you to behave, communicate, or approach tasks
+
+Ask yourself: "If I started a new session tomorrow, what from this conversation would I want to remember?" If the answer is meaningful, update the appropriate memory block(s) now.
 </system-reminder>
