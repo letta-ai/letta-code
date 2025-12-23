@@ -5000,7 +5000,9 @@ Plan file path: ${planFilePath}`;
                   const { updateAgentLLMConfig } = await import(
                     "../agent/modify"
                   );
-                  await updateAgentLLMConfig(agentId, modelHandle);
+                  const { getModelUpdateArgs } = await import("../agent/model");
+                  const updateArgs = getModelUpdateArgs(modelHandle);
+                  await updateAgentLLMConfig(agentId, modelHandle, updateArgs);
                   // Update current model display
                   setCurrentModelId(modelHandle);
                 }}
