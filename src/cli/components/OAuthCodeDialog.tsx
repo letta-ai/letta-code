@@ -7,6 +7,7 @@ import {
 } from "../../auth/anthropic-oauth";
 import {
   ANTHROPIC_PROVIDER_NAME,
+  checkAnthropicOAuthEligibility,
   createOrUpdateAnthropicProvider,
 } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
@@ -21,6 +22,7 @@ type Props = {
 
 type FlowState =
   | "initializing"
+  | "checking_eligibility"
   | "waiting_for_code"
   | "exchanging"
   | "validating"
@@ -54,6 +56,23 @@ export const OAuthCodeDialog = memo(
             onComplete(
               false,
               "Already connected to Claude via OAuth.\n\nUse /disconnect to remove the current connection first.",
+            );
+            return;
+          }
+
+          // Check eligibility before starting OAuth flow
+          setFlowState("checking_eligibility");
+          const eligibility = await checkAnthropicOAuthEligibility();
+          if (!eligibility.eligible) {
+            onComplete(
+              false,
+              `✗ Claude OAuth requires a Pro or Enterprise plan\n\n` +
+                `This feature is only available for Letta Pro or Enterprise customers.\n` +
+                `Current plan: ${eligibility.billing_tier}\n\n` +
+                `To upgrade your plan, visit:\n\n` +
+                `  https://app.letta.com/settings/organization/usage\n\n` +
+                `If you have an Anthropic API key, you can use it directly by setting:\n` +
+                `  export ANTHROPIC_API_KEY=your-key`,
             );
             return;
           }
@@ -248,11 +267,13 @@ export const OAuthCodeDialog = memo(
       }
     };
 
-    if (flowState === "initializing") {
+    if (flowState === "initializing" || flowState === "checking_eligibility") {
       return (
         <Box flexDirection="column" padding={1}>
           <Text color={colors.status.processing}>
-            Starting Claude OAuth flow...
+            {flowState === "checking_eligibility"
+              ? "Checking account eligibility..."
+              : "Starting Claude OAuth flow..."}
           </Text>
         </Box>
       );

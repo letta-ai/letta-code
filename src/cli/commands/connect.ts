@@ -8,10 +8,12 @@ import {
 } from "../../auth/anthropic-oauth";
 import {
   ANTHROPIC_PROVIDER_NAME,
+  checkAnthropicOAuthEligibility,
   createOrUpdateAnthropicProvider,
   removeAnthropicProvider,
 } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
+import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
 
 // tiny helper for unique ids
@@ -141,15 +143,46 @@ export async function handleConnect(
   // Start the OAuth flow (step 1)
   ctx.setCommandRunning(true);
 
+  // Show initial status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Checking account eligibility...",
+    true,
+    "running",
+  );
+
   try {
-    // 1. Start OAuth flow - generate PKCE and authorization URL
+    // 1. Check eligibility before starting OAuth flow
+    const eligibility = await checkAnthropicOAuthEligibility();
+    if (!eligibility.eligible) {
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `✗ Claude OAuth requires a Pro or Enterprise plan\n\n` +
+          `This feature is only available for Letta Pro or Enterprise customers.\n` +
+          `Current plan: ${eligibility.billing_tier}\n\n` +
+          `To upgrade your plan, visit:\n\n` +
+          `  https://app.letta.com/settings/organization/usage\n\n` +
+          `If you have an Anthropic API key, you can use it directly by setting:\n` +
+          `  export ANTHROPIC_API_KEY=your-key`,
+        false,
+        "finished",
+      );
+      return;
+    }
+
+    // 2. Start OAuth flow - generate PKCE and authorization URL
     const { authorizationUrl, state, codeVerifier } =
       await startAnthropicOAuth();
 
-    // 2. Store state for validation when user returns with code
+    // 3. Store state for validation when user returns with code
     settingsManager.storeOAuthState(state, codeVerifier, "anthropic");
 
-    // 3. Try to open browser
+    // 4. Try to open browser
     let browserOpened = false;
     try {
       const { default: open } = await import("open");
@@ -163,14 +196,15 @@ export async function handleConnect(
       // If auto-open fails, user can still manually visit the URL
     }
 
-    // 4. Show instructions
+    // 5. Show instructions
     const browserMsg = browserOpened
       ? "Opening browser for authorization..."
       : "Please open the following URL in your browser:";
 
-    addCommandResult(
+    updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
+      cmdId,
       msg,
       `${browserMsg}\n\n${authorizationUrl}\n\n` +
         "After authorizing, you'll be redirected to a page showing: code#state\n" +
@@ -178,17 +212,20 @@ export async function handleConnect(
         "  /connect claude <code#state>\n\n" +
         "Example: /connect claude abc123...#def456...",
       true,
+      "finished",
     );
   } catch (error) {
     // Clear any partial state
     settingsManager.clearOAuthState();
 
-    addCommandResult(
+    updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
+      cmdId,
       msg,
-      `✗ Failed to start OAuth flow: ${error instanceof Error ? error.message : String(error)}`,
+      `✗ Failed to start OAuth flow: ${getErrorMessage(error)}`,
       false,
+      "finished",
     );
   } finally {
     ctx.setCommandRunning(false);
@@ -261,7 +298,7 @@ async function completeOAuthFlow(
       stateToUse,
     );
 
-    // 4. Update status
+    // 5. Update status
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -272,7 +309,7 @@ async function completeOAuthFlow(
       "running",
     );
 
-    // 5. Validate tokens work
+    // 6. Validate tokens work
     const isValid = await validateAnthropicCredentials(tokens.access_token);
     if (!isValid) {
       throw new Error(
@@ -280,10 +317,10 @@ async function completeOAuthFlow(
       );
     }
 
-    // 6. Store tokens locally
+    // 7. Store tokens locally
     settingsManager.storeAnthropicTokens(tokens);
 
-    // 7. Update status for provider creation
+    // 8. Update status for provider creation
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -294,13 +331,13 @@ async function completeOAuthFlow(
       "running",
     );
 
-    // 8. Create or update provider in Letta with the access token
+    // 9. Create or update provider in Letta with the access token
     await createOrUpdateAnthropicProvider(tokens.access_token);
 
-    // 9. Clear OAuth state
+    // 10. Clear OAuth state
     settingsManager.clearOAuthState();
 
-    // 10. Success!
+    // 11. Success!
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -313,12 +350,28 @@ async function completeOAuthFlow(
       "finished",
     );
   } catch (error) {
+    // Check if this is a plan upgrade requirement error from provider creation
+    const errorMessage = getErrorMessage(error);
+
+    let displayMessage: string;
+    if (errorMessage === "PLAN_UPGRADE_REQUIRED") {
+      displayMessage =
+        `✗ Claude OAuth requires a Pro or Enterprise plan\n\n` +
+        `This feature is only available for Letta Pro or Enterprise customers.\n` +
+        `To upgrade your plan, visit:\n\n` +
+        `  https://app.letta.com/settings/organization/usage\n\n` +
+        `If you have an Anthropic API key, you can use it directly by setting:\n` +
+        `  export ANTHROPIC_API_KEY=your-key`;
+    } else {
+      displayMessage = `✗ Failed to connect: ${errorMessage}`;
+    }
+
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to connect: ${error instanceof Error ? error.message : String(error)}`,
+      displayMessage,
       false,
       "finished",
     );
@@ -401,7 +454,7 @@ export async function handleDisconnect(
       cmdId,
       msg,
       `✓ Disconnected from Claude OAuth.\n\n` +
-        `Warning: Failed to remove provider from Letta: ${error instanceof Error ? error.message : String(error)}\n` +
+        `Warning: Failed to remove provider from Letta: ${getErrorMessage(error)}\n` +
         `Your local OAuth tokens have been removed.`,
       true,
       "finished",
