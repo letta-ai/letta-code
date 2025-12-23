@@ -310,7 +310,17 @@
     "id": "glm-4.6",
     "handle": "zai/glm-4.6",
     "label": "GLM-4.6",
+    "description": "Zai's GLM-4.6 model",
+    "updateArgs": {
+      "context_window": 200000
+    }
+  },
+  {
+    "id": "glm-4.7",
+    "handle": "zai/glm-4.7",
+    "label": "GLM-4.7",
     "description": "The best open weights coding model",
+    "isFeatured": true,
     "updateArgs": {
       "context_window": 200000
     }
