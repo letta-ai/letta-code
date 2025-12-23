@@ -12,13 +12,41 @@ import { executeTool, type ToolExecutionResult } from "../tools/manager";
 /**
  * Tools that are safe to execute in parallel (read-only or independent).
  * These tools don't modify files or shared state, so they can't race with each other.
- * Note: Bash is intentionally excluded - it can run arbitrary commands that may write files.
+ * Note: Bash/shell tools are intentionally excluded - they can run arbitrary commands that may write files.
+ *
+ * Includes equivalent tools across all toolsets (Anthropic, Codex/OpenAI, Gemini).
  */
 const PARALLEL_SAFE_TOOLS = new Set([
-  // Read-only file tools
+  // === Anthropic toolset (default) ===
   "Read",
   "Grep",
   "Glob",
+
+  // === Codex/OpenAI toolset ===
+  // snake_case variants
+  "read_file",
+  "list_dir",
+  "grep_files",
+  // PascalCase variants
+  "ReadFile",
+  "ListDir",
+  "GrepFiles",
+
+  // === Gemini toolset ===
+  // snake_case variants
+  "read_file_gemini",
+  "list_directory",
+  "glob_gemini",
+  "search_file_content",
+  "read_many_files",
+  // PascalCase variants
+  "ReadFileGemini",
+  "ListDirectory",
+  "GlobGemini",
+  "SearchFileContent",
+  "ReadManyFiles",
+
+  // === Cross-toolset tools ===
   // Search/fetch tools (external APIs or read-only queries)
   "conversation_search",
   "web_search",
