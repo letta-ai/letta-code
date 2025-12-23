@@ -7,6 +7,7 @@ import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
+import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
@@ -711,7 +712,7 @@ export function Input({
           )}
           <Text dimColor>
             {`Letta Code v${appVersion} `}
-            {`[${currentModel ?? "unknown"}${currentModelProvider === "claude-pro-max" ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
+            {`[${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
           </Text>
         </Box>
       </Box>
