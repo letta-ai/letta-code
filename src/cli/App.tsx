@@ -14,8 +14,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  executeApprovalBatch,
-  type ApprovalDecision,
+  executeAutoAllowedTools,
   type ApprovalResult,
 } from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
@@ -1192,29 +1191,11 @@ export default function App({
               }
             }
 
-            // Execute auto-allowed tools sequentially to avoid race conditions on same file
-            const autoAllowedDecisions: ApprovalDecision[] = autoAllowed.map(
-              (ac) => ({
-                type: "approve" as const,
-                approval: ac.approval,
-              }),
-            );
-            const autoAllowedBatchResults = await executeApprovalBatch(
-              autoAllowedDecisions,
+            // Execute auto-allowed tools (sequential for writes, parallel for reads)
+            const autoAllowedResults = await executeAutoAllowedTools(
+              autoAllowed,
               (chunk) => onChunk(buffersRef.current, chunk),
             );
-            // Map batch results to the format expected by downstream code
-            const autoAllowedResults = autoAllowedBatchResults
-              .filter((r): r is ApprovalResult & { type: "tool" } => r.type === "tool")
-              .map((r) => ({
-                toolCallId: r.tool_call_id,
-                result: {
-                  toolReturn: r.tool_return,
-                  status: r.status,
-                  stdout: r.stdout,
-                  stderr: r.stderr,
-                } as ToolExecutionResult,
-              }));
 
             // Create denial results for auto-denied tools and update buffers
             const autoDeniedResults = autoDenied.map((ac) => {
@@ -3400,29 +3381,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
             if (needsUserInput.length === 0) {
-              // Execute auto-allowed tools sequentially to avoid race conditions on same file
-              const autoAllowedDecisions: ApprovalDecision[] = autoAllowed.map(
-                (ac) => ({
-                  type: "approve" as const,
-                  approval: ac.approval,
-                }),
-              );
-              const autoAllowedBatchResults = await executeApprovalBatch(
-                autoAllowedDecisions,
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedResults = await executeAutoAllowedTools(
+                autoAllowed,
                 (chunk) => onChunk(buffersRef.current, chunk),
               );
-              // Map batch results to the format expected by downstream code
-              const autoAllowedResults = autoAllowedBatchResults
-                .filter((r): r is ApprovalResult & { type: "tool" } => r.type === "tool")
-                .map((r) => ({
-                  toolCallId: r.tool_call_id,
-                  result: {
-                    toolReturn: r.tool_return,
-                    status: r.status,
-                    stdout: r.stdout,
-                    stderr: r.stderr,
-                  } as ToolExecutionResult,
-                }));
 
               // Create denial results for auto-denied and update UI
               const autoDeniedResults = autoDenied.map((ac) => {
@@ -3499,29 +3462,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   .filter(Boolean) as ApprovalContext[],
               );
 
-              // Execute auto-allowed tools sequentially to avoid race conditions on same file
-              const autoAllowedDecisions: ApprovalDecision[] = autoAllowed.map(
-                (ac) => ({
-                  type: "approve" as const,
-                  approval: ac.approval,
-                }),
-              );
-              const autoAllowedBatchResults = await executeApprovalBatch(
-                autoAllowedDecisions,
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedWithResults = await executeAutoAllowedTools(
+                autoAllowed,
                 (chunk) => onChunk(buffersRef.current, chunk),
               );
-              // Map batch results to the format expected by downstream code
-              const autoAllowedWithResults = autoAllowedBatchResults
-                .filter((r): r is ApprovalResult & { type: "tool" } => r.type === "tool")
-                .map((r) => ({
-                  toolCallId: r.tool_call_id,
-                  result: {
-                    toolReturn: r.tool_return,
-                    status: r.status,
-                    stdout: r.stdout,
-                    stderr: r.stderr,
-                  } as ToolExecutionResult,
-                }));
 
               // Create denial reasons for auto-denied and update UI
               const autoDeniedWithReasons = autoDenied.map((ac) => {

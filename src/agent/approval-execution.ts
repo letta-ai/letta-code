@@ -33,6 +33,12 @@ function isParallelSafe(toolName: string): boolean {
   return PARALLEL_SAFE_TOOLS.has(toolName);
 }
 
+/** Result format expected by App.tsx for auto-allowed tools */
+export type AutoAllowedResult = {
+  toolCallId: string;
+  result: ToolExecutionResult;
+};
+
 export type ApprovalDecision =
   | {
       type: "approve";
@@ -242,4 +248,39 @@ export async function executeApprovalBatch(
 
   // Filter out nulls (shouldn't happen, but TypeScript needs this)
   return results.filter((r): r is ApprovalResult => r !== null);
+}
+
+/**
+ * Helper to execute auto-allowed tools and map results to the format expected by App.tsx.
+ * Consolidates the common pattern of converting approvals to decisions, executing them,
+ * and mapping the results back.
+ *
+ * @param autoAllowed - Array of auto-allowed approval contexts (must have .approval property)
+ * @param onChunk - Callback to update UI with tool results
+ * @param options - Optional abort signal for cancellation
+ * @returns Array of results with toolCallId and ToolExecutionResult
+ */
+export async function executeAutoAllowedTools(
+  autoAllowed: Array<{ approval: ApprovalRequest }>,
+  onChunk: (chunk: ToolReturnMessage) => void,
+  options?: { abortSignal?: AbortSignal },
+): Promise<AutoAllowedResult[]> {
+  const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({
+    type: "approve" as const,
+    approval: ac.approval,
+  }));
+
+  const batchResults = await executeApprovalBatch(decisions, onChunk, options);
+
+  return batchResults
+    .filter((r): r is ApprovalResult & { type: "tool" } => r.type === "tool")
+    .map((r) => ({
+      toolCallId: r.tool_call_id,
+      result: {
+        toolReturn: r.tool_return,
+        status: r.status,
+        stdout: r.stdout,
+        stderr: r.stderr,
+      } as ToolExecutionResult,
+    }));
 }
