@@ -3972,11 +3972,20 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           // If not found in static list, it might be a BYOK model where id === handle
           if (!selectedModel && modelId.includes("/")) {
             // Treat it as a BYOK model - the modelId is actually the handle
+            // Look up the context window from the API-cached model info
+            const { getModelContextWindow } = await import(
+              "../agent/available-models"
+            );
+            const apiContextWindow = getModelContextWindow(modelId);
+
             selectedModel = {
               id: modelId,
               handle: modelId,
               label: modelId.split("/").pop() ?? modelId,
               description: "Custom model",
+              updateArgs: apiContextWindow
+                ? { context_window: apiContextWindow }
+                : undefined,
             } as unknown as (typeof models)[number];
           }
 
