@@ -17,6 +17,19 @@ interface ProviderResponse {
   base_url?: string;
 }
 
+interface BalanceResponse {
+  total_balance: number;
+  monthly_credit_balance: number;
+  purchased_credit_balance: number;
+  billing_tier: string;
+}
+
+interface EligibilityCheckResult {
+  eligible: boolean;
+  billing_tier: string;
+  reason?: string;
+}
+
 /**
  * Get the Letta API base URL and auth token
  */
@@ -53,6 +66,29 @@ async function providersRequest<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
+
+    // Check if this is a pro/enterprise plan limitation error
+    if (response.status === 403) {
+      try {
+        const errorData = JSON.parse(errorText);
+        if (
+          errorData.error &&
+          typeof errorData.error === "string" &&
+          errorData.error.includes("only available for pro or enterprise")
+        ) {
+          throw new Error("PLAN_UPGRADE_REQUIRED");
+        }
+      } catch (parseError) {
+        // If it's not valid JSON or doesn't match our pattern, fall through to generic error
+        if (
+          parseError instanceof Error &&
+          parseError.message === "PLAN_UPGRADE_REQUIRED"
+        ) {
+          throw parseError;
+        }
+      }
+    }
+
     throw new Error(`Provider API error (${response.status}): ${errorText}`);
   }
 
@@ -185,5 +221,42 @@ export async function removeAnthropicProvider(): Promise<void> {
   const existing = await getAnthropicProvider();
   if (existing) {
     await deleteAnthropicProvider(existing.id);
+  }
+}
+
+/**
+ * Check if user is eligible for Anthropic OAuth
+ * Requires Pro or Enterprise billing tier
+ */
+export async function checkAnthropicOAuthEligibility(): Promise<EligibilityCheckResult> {
+  try {
+    const balance = await providersRequest<BalanceResponse>(
+      "GET",
+      "/v1/metadata/balance",
+    );
+
+    const billingTier = balance.billing_tier.toLowerCase();
+
+    // OAuth is available for pro and enterprise tiers
+    if (billingTier === "pro" || billingTier === "enterprise") {
+      return {
+        eligible: true,
+        billing_tier: balance.billing_tier,
+      };
+    }
+
+    return {
+      eligible: false,
+      billing_tier: balance.billing_tier,
+      reason: `Claude OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
+    };
+  } catch (error) {
+    // If we can't check eligibility, allow the flow to continue
+    // The provider creation will handle the error appropriately
+    console.warn("Failed to check Anthropic OAuth eligibility:", error);
+    return {
+      eligible: true,
+      billing_tier: "unknown",
+    };
   }
 }
