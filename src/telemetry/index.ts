@@ -174,7 +174,6 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
-        device_id: this.deviceId || undefined,
         agent_id: this.currentAgentId || undefined,
       },
     };
