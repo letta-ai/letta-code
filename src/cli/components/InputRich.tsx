@@ -7,13 +7,13 @@ import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
-import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
+import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { charsToTokens, formatCompact } from "../helpers/format";
