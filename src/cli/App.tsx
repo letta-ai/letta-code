@@ -22,7 +22,7 @@ import type { AgentProvenance } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
-import { permissionMode } from "../permissions/mode";
+import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
@@ -4310,6 +4310,17 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     permissionMode.getMode(),
   );
 
+  // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
+  const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
+    // When entering plan mode via tab cycling, generate and set the plan file path
+    if (mode === "plan") {
+      const planPath = generatePlanFilePath();
+      permissionMode.setPlanFilePath(planPath);
+    }
+    // permissionMode.setMode() is called in InputRich.tsx before this callback
+    setUiPermissionMode(mode);
+  }, []);
+
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
       const currentIndex = approvalResults.length;
@@ -4762,7 +4773,7 @@ Plan file path: ${planFilePath}`;
               onSubmit={onSubmit}
               onBashSubmit={handleBashSubmit}
               permissionMode={uiPermissionMode}
-              onPermissionModeChange={setUiPermissionMode}
+              onPermissionModeChange={handlePermissionModeChange}
               onExit={handleExit}
               onInterrupt={handleInterrupt}
               interruptRequested={interruptRequested}
