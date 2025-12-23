@@ -787,7 +787,7 @@ export default function App({
         `Connecting to last used agent in ${shortCwd}`,
         agentState?.name ? `→ Agent: ${agentState.name}` : "",
         agentUrl ? `→ ${agentUrl}` : "",
-        "→ Use /pinned or /resume to switch agents",
+        "→ Use /pinned or /agents to switch agents",
       ].filter(Boolean);
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -2670,7 +2670,7 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /resume command - show session resume selector
+        // Special handling for /agents command - show agent selector (/resume is hidden alias)
         if (msg.trim() === "/agents" || msg.trim() === "/resume") {
           setActiveOverlay("resume");
           return { submitted: true };
