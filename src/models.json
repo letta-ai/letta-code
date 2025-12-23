@@ -47,6 +47,49 @@
     }
   },
   {
+    "id": "sonnet-4.5-pro-max",
+    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
+    "label": "Claude Sonnet 4.5 (Pro/Max)",
+    "description": "Sonnet 4.5 via Claude Pro/Max Plan",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
+  },
+  {
+    "id": "sonnet-4.5-no-reasoning-pro-max",
+    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
+    "label": "Claude Sonnet 4.5 (Pro/Max, no reasoning)",
+    "description": "Sonnet 4.5 via Claude Pro/Max Plan with reasoning disabled",
+    "updateArgs": {
+      "enable_reasoner": false,
+      "context_window": 180000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
+    "id": "opus-pro-max",
+    "handle": "claude-pro-max/claude-opus-4-5-20251101",
+    "label": "Claude Opus 4.5 (Pro/Max)",
+    "description": "Opus 4.5 via Claude Pro/Max Plan",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
+  },
+  {
+    "id": "haiku-pro-max",
+    "handle": "claude-pro-max/claude-haiku-4-5-20251001",
+    "label": "Claude Haiku 4.5 (Pro/Max)",
+    "description": "Haiku 4.5 via Claude Pro/Max Plan",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
     "id": "gpt-5-codex",
     "handle": "openai/gpt-5-codex",
     "label": "GPT-5-Codex",
