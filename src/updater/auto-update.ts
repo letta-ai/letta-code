@@ -48,6 +48,13 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   const currentVersion = getVersion();
   debugLog("Current version:", currentVersion);
 
+  // Skip auto-update for prerelease versions (e.g., 0.2.0-next.3)
+  // Prerelease users should manage updates manually to stay on their channel
+  if (currentVersion.includes("-")) {
+    debugLog("Prerelease version detected, skipping auto-update check");
+    return { updateAvailable: false, currentVersion };
+  }
+
   try {
     debugLog("Checking npm for latest version...");
     const { stdout } = await execAsync(
