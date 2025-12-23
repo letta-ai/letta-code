@@ -34,11 +34,7 @@ function getMemoryInterval(): number | null {
 export async function buildMemoryReminder(turnCount: number): Promise<string> {
   const memoryInterval = getMemoryInterval();
 
-  if (
-    memoryInterval &&
-    turnCount > 0 &&
-    turnCount % memoryInterval === 0
-  ) {
+  if (memoryInterval && turnCount > 0 && turnCount % memoryInterval === 0) {
     const { MEMORY_CHECK_REMINDER } = await import(
       "../../agent/promptAssets.js"
     );
@@ -77,10 +73,14 @@ export function parseMemoryPreference(
 
       // Parse answer: "frequent" → MEMORY_INTERVAL_FREQUENT, "occasional" → MEMORY_INTERVAL_OCCASIONAL
       if (answer.includes("frequent")) {
-        settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_FREQUENT });
+        settingsManager.updateLocalProjectSettings({
+          memoryReminderInterval: MEMORY_INTERVAL_FREQUENT,
+        });
         return true;
       } else if (answer.includes("occasional")) {
-        settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL });
+        settingsManager.updateLocalProjectSettings({
+          memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL,
+        });
         return true;
       }
       break; // Only process first matching question

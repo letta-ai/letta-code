@@ -3234,7 +3234,9 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       }
 
       // Build memory reminder if interval is set and we've reached the Nth turn
-      const memoryReminderContent = await buildMemoryReminder(turnCountRef.current);
+      const memoryReminderContent = await buildMemoryReminder(
+        turnCountRef.current,
+      );
 
       // Increment turn count for next iteration
       turnCountRef.current += 1;
