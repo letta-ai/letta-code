@@ -215,7 +215,7 @@ You should ask these questions at the start (bundle them together in one AskUser
 1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Memory updates**: "How proactive should I be about remembering things from our conversation?" (Proactive = check frequently, Less proactive = check occasionally). Use "Memory" as the header for this question.
+4. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
 5. **Communication style**: "Terse or detailed responses?"
 6. **Any specific rules**: "Rules I should always follow?"
 

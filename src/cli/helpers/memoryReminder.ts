@@ -4,8 +4,8 @@
 import { settingsManager } from "../../settings-manager";
 
 // Memory reminder interval presets
-const MEMORY_INTERVAL_FREQUENT = 5;
-const MEMORY_INTERVAL_OCCASIONAL = 10;
+const MEMORY_INTERVAL_FREQUENT = 3;
+const MEMORY_INTERVAL_OCCASIONAL = 8;
 
 /**
  * Get the effective memory reminder interval (local setting takes precedence over global)
@@ -75,20 +75,11 @@ export function parseMemoryPreference(
     ) {
       const answer = answers[q.question]?.toLowerCase() || "";
 
-      // Parse answer: "proactive" / "frequent" / "more" → FREQUENT, "less" / "occasional" → OCCASIONAL
-      if (
-        answer.includes("proactive") ||
-        answer.includes("frequent") ||
-        answer.includes("more") ||
-        answer.includes("often")
-      ) {
+      // Parse answer: "frequent" → MEMORY_INTERVAL_FREQUENT, "occasional" → MEMORY_INTERVAL_OCCASIONAL
+      if (answer.includes("frequent")) {
         settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_FREQUENT });
         return true;
-      } else if (
-        answer.includes("less") ||
-        answer.includes("occasional") ||
-        answer.includes("infrequent")
-      ) {
+      } else if (answer.includes("occasional")) {
         settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL });
         return true;
       }
