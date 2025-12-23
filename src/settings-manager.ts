@@ -48,6 +48,7 @@ export interface LocalProjectSettings {
   permissions?: PermissionRules;
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned locally
+  memoryReminderInterval?: number | null; // null = disabled, number = overrides global
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -55,7 +56,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
-  memoryReminderInterval: 5, // default to proactive (every 5 turns)
+  memoryReminderInterval: 1, // number = prompt memory check every N turns 
   globalSharedBlockIds: {},
 };
 

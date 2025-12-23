@@ -3,13 +3,36 @@
 
 import { settingsManager } from "../../settings-manager";
 
+// Memory reminder interval presets
+const MEMORY_INTERVAL_FREQUENT = 5;
+const MEMORY_INTERVAL_OCCASIONAL = 10;
+
+/**
+ * Get the effective memory reminder interval (local setting takes precedence over global)
+ * @returns The memory interval setting, or null if disabled
+ */
+function getMemoryInterval(): number | null {
+  // Check local settings first (may not be loaded, so catch errors)
+  try {
+    const localSettings = settingsManager.getLocalProjectSettings();
+    if (localSettings.memoryReminderInterval !== undefined) {
+      return localSettings.memoryReminderInterval;
+    }
+  } catch {
+    // Local settings not loaded, fall through to global
+  }
+
+  // Fall back to global setting
+  return settingsManager.getSetting("memoryReminderInterval");
+}
+
 /**
  * Build a memory check reminder if the turn count matches the interval
  * @param turnCount - Current conversation turn count
  * @returns Promise resolving to the reminder string (empty if not applicable)
  */
 export async function buildMemoryReminder(turnCount: number): Promise<string> {
-  const memoryInterval = settingsManager.getSetting("memoryReminderInterval");
+  const memoryInterval = getMemoryInterval();
 
   if (
     memoryInterval &&
@@ -19,7 +42,7 @@ export async function buildMemoryReminder(turnCount: number): Promise<string> {
     const { MEMORY_CHECK_REMINDER } = await import(
       "../../agent/promptAssets.js"
     );
-    return `<system-reminder>\n${MEMORY_CHECK_REMINDER}\n</system-reminder>`;
+    return MEMORY_CHECK_REMINDER;
   }
 
   return "";
@@ -52,21 +75,21 @@ export function parseMemoryPreference(
     ) {
       const answer = answers[q.question]?.toLowerCase() || "";
 
-      // Parse answer: "proactive" / "frequent" / "more" → 5, "less" / "occasional" → 10
+      // Parse answer: "proactive" / "frequent" / "more" → FREQUENT, "less" / "occasional" → OCCASIONAL
       if (
         answer.includes("proactive") ||
         answer.includes("frequent") ||
         answer.includes("more") ||
         answer.includes("often")
       ) {
-        settingsManager.updateSettings({ memoryReminderInterval: 5 });
+        settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_FREQUENT });
         return true;
       } else if (
         answer.includes("less") ||
         answer.includes("occasional") ||
         answer.includes("infrequent")
       ) {
-        settingsManager.updateSettings({ memoryReminderInterval: 10 });
+        settingsManager.updateLocalProjectSettings({ memoryReminderInterval: MEMORY_INTERVAL_OCCASIONAL });
         return true;
       }
       break; // Only process first matching question
