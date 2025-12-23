@@ -1,3 +1,6 @@
+import { generatePlanFilePath } from "../../cli/helpers/planName";
+import { permissionMode } from "../../permissions/mode";
+
 interface EnterPlanModeArgs {
   [key: string]: never;
 }
@@ -9,13 +12,21 @@ interface EnterPlanModeResult {
 export async function enter_plan_mode(
   _args: EnterPlanModeArgs,
 ): Promise<EnterPlanModeResult> {
-  // This is handled by the UI layer which will:
-  // 1. Show approval dialog
-  // 2. On approve: toggle plan mode on, generate plan file path, inject system reminder
-  // 3. On reject: send rejection, agent proceeds without plan mode
-  //
-  // The message below is returned on successful entry into plan mode.
-  // The UI harness will also inject a <system-reminder> with the plan file path.
+  // Normally this is handled by handleEnterPlanModeApprove in the UI layer,
+  // which sets up state and returns a precomputed result (so this function
+  // never runs). But if the generic approval flow is used for any reason,
+  // we need to set up state here as a defensive fallback.
+  if (
+    permissionMode.getMode() !== "plan" ||
+    !permissionMode.getPlanFilePath()
+  ) {
+    const planFilePath = generatePlanFilePath();
+    permissionMode.setMode("plan");
+    permissionMode.setPlanFilePath(planFilePath);
+  }
+
+  const planFilePath = permissionMode.getPlanFilePath();
+
   return {
     message: `Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
 
@@ -27,6 +38,8 @@ In plan mode, you should:
 5. Design a concrete implementation strategy
 6. When ready, use ExitPlanMode to present your plan for approval
 
-Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.`,
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
+
+Plan file path: ${planFilePath}`,
   };
 }
