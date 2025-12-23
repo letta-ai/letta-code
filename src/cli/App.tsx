@@ -96,6 +96,7 @@ import {
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
+  resolvePlaceholders,
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
@@ -440,7 +441,11 @@ export default function App({
     | "oauth"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
-  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+  const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const closeOverlay = useCallback(() => {
+    setActiveOverlay(null);
+    setFeedbackPrefill("");
+  }, []);
 
   // Pin dialog state
   const [pinDialogLocal, setPinDialogLocal] = useState(false);
@@ -3161,8 +3166,9 @@ ${gitContext}
           return { submitted: true };
         }
 
-        // Special handling for /feedback command - open feedback dialog
-        if (trimmed === "/feedback") {
+        if (trimmed.startsWith("/feedback")) {
+          const maybeMsg = msg.slice("/feedback".length).trim();
+          setFeedbackPrefill(maybeMsg);
           setActiveOverlay("feedback");
           return { submitted: true };
         }
@@ -4269,6 +4275,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         const cmdId = uid("cmd");
 
         try {
+          const resolvedMessage = resolvePlaceholders(message);
+
           // Immediately add command to transcript with "running" phase
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -4298,11 +4306,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
+                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
                 "X-Letta-Source": "letta-code",
+                "X-Letta-Code-Device-ID": settingsManager.getOrCreateDeviceId(),
               },
               body: JSON.stringify({
-                message: message,
+                message: resolvedMessage,
                 feature: "letta-code",
                 agent_id: agentId,
                 session_id: telemetry.getSessionId(),
@@ -4938,6 +4947,7 @@ Plan file path: ${planFilePath}`;
               <FeedbackDialog
                 onSubmit={handleFeedbackSubmit}
                 onCancel={closeOverlay}
+                initialValue={feedbackPrefill}
               />
             )}
 

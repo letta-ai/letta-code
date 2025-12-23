@@ -397,7 +397,7 @@ class TelemetryManager {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
             "X-Letta-Source": "letta-code",
             "X-Letta-Code-Device-ID": this.deviceId || "",
           },
