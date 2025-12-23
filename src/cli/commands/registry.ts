@@ -132,8 +132,16 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
+  "/agents": {
+    desc: "Browse and switch to another agent",
+    handler: () => {
+      // Handled specially in App.tsx to show agent selector
+      return "Opening agent selector...";
+    },
+  },
   "/resume": {
     desc: "Browse and switch to another agent",
+    hidden: true, // Backwards compatibility alias for /agents
     handler: () => {
       // Handled specially in App.tsx to show agent selector
       return "Opening agent selector...";
