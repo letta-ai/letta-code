@@ -11,6 +11,7 @@ export interface Settings {
   tokenStreaming: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
+  memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
@@ -54,6 +55,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
+  memoryReminderInterval: null, // disabled by default
   globalSharedBlockIds: {},
 };
 

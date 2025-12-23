@@ -1,0 +1,3 @@
+<system-reminder>
+After responding to the user, briefly consider if any information from this conversation should be stored in your memory blocks. Only update if there's genuinely useful information to remember (preferences, facts, corrections, project details). No need to confirm or mention this check to the user.
+</system-reminder>
