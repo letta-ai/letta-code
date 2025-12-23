@@ -14,8 +14,8 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  executeAutoAllowedTools,
   type ApprovalResult,
+  executeAutoAllowedTools,
 } from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
