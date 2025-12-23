@@ -836,6 +836,7 @@ export default function App({
   );
 
   // Core streaming function - iterative loop that processes conversation turns
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
@@ -846,6 +847,12 @@ export default function App({
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
+          return;
+        }
+
+        // Guard against concurrent processConversation calls
+        // This can happen if user submits two messages in quick succession
+        if (streamingRef.current) {
           return;
         }
 
@@ -1532,10 +1539,13 @@ export default function App({
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
 
-      // Stop streaming and show error message
+      // Stop streaming and show error message (unless tool calls were cancelled,
+      // since the tool result will show "Interrupted by user")
       setStreaming(false);
-      markIncompleteToolsAsCancelled(buffersRef.current);
-      appendError("Stream interrupted by user");
+      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+      if (!toolsCancelled) {
+        appendError("Stream interrupted by user");
+      }
       refreshDerived();
 
       // Clear any pending approvals since we're cancelling
