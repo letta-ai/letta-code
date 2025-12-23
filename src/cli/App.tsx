@@ -1192,37 +1192,29 @@ export default function App({
               }
             }
 
-            // Execute auto-allowed tools
-            const autoAllowedResults = await Promise.all(
-              autoAllowed.map(async (ac) => {
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  ac.approval.toolArgs,
-                  {},
-                );
-                const result = await executeTool(
-                  ac.approval.toolName,
-                  parsedArgs,
-                  { toolCallId: ac.approval.toolCallId },
-                );
-
-                // Update buffers with tool return for UI
-                onChunk(buffersRef.current, {
-                  message_type: "tool_return_message",
-                  id: "dummy",
-                  date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: result.toolReturn,
-                  status: result.status,
-                  stdout: result.stdout,
-                  stderr: result.stderr,
-                });
-
-                return {
-                  toolCallId: ac.approval.toolCallId,
-                  result,
-                };
+            // Execute auto-allowed tools sequentially to avoid race conditions on same file
+            const autoAllowedDecisions: ApprovalDecision[] = autoAllowed.map(
+              (ac) => ({
+                type: "approve" as const,
+                approval: ac.approval,
               }),
             );
+            const autoAllowedBatchResults = await executeApprovalBatch(
+              autoAllowedDecisions,
+              (chunk) => onChunk(buffersRef.current, chunk),
+            );
+            // Map batch results to the format expected by downstream code
+            const autoAllowedResults = autoAllowedBatchResults
+              .filter((r): r is ApprovalResult & { type: "tool" } => r.type === "tool")
+              .map((r) => ({
+                toolCallId: r.tool_call_id,
+                result: {
+                  toolReturn: r.tool_return,
+                  status: r.status,
+                  stdout: r.stdout,
+                  stderr: r.stderr,
+                } as ToolExecutionResult,
+              }));
 
             // Create denial results for auto-denied tools and update buffers
             const autoDeniedResults = autoDenied.map((ac) => {
