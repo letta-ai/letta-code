@@ -90,6 +90,10 @@ import {
 import { backfillBuffers } from "./helpers/backfill";
 import { formatErrorDetails } from "./helpers/errorFormatter";
 import {
+  buildMemoryReminder,
+  parseMemoryPreference,
+} from "./helpers/memoryReminder";
+import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "./helpers/pasteRegistry";
@@ -504,6 +508,9 @@ export default function App({
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
+
+  // Track conversation turn count for periodic memory reminders
+  const turnCountRef = useRef(0);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -1674,6 +1681,9 @@ export default function App({
         setStaticItems([]);
         setStaticRenderEpoch((e) => e + 1);
 
+        // Reset turn counter for memory reminders when switching agents
+        turnCountRef.current = 0;
+
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
         setAgentId(targetAgentId);
@@ -2286,6 +2296,9 @@ export default function App({
             // buffersRef.current.tokenCount = 0;
             // emittedIdsRef.current.clear();
             // setStaticItems([]);
+
+            // Reset turn counter for memory reminders
+            turnCountRef.current = 0;
 
             // Update command with success
             buffersRef.current.byId.set(cmdId, {
@@ -3246,12 +3259,21 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         bashCommandCacheRef.current = [];
       }
 
-      // Combine reminders with content (session context first, then plan mode, then skill unload, then bash commands)
+      // Build memory reminder if interval is set and we've reached the Nth turn
+      const memoryReminderContent = await buildMemoryReminder(
+        turnCountRef.current,
+      );
+
+      // Increment turn count for next iteration
+      turnCountRef.current += 1;
+
+      // Combine reminders with content (session context first, then plan mode, then skill unload, then bash commands, then memory reminder)
       const allReminders =
         sessionContextReminder +
         planModeReminder +
         skillUnloadReminder +
-        bashCommandPrefix;
+        bashCommandPrefix +
+        memoryReminderContent;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -4475,6 +4497,9 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
       // Get questions from approval args
       const questions = getQuestionsFromApproval(approval);
+
+      // Check for memory preference question and update setting
+      parseMemoryPreference(questions, answers);
 
       // Format the answer string like Claude Code does
       const answerParts = questions.map((q) => {
