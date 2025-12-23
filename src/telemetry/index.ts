@@ -1,3 +1,5 @@
+import { settingsManager } from "../settings-manager";
+
 export interface TelemetryEvent {
   type: "session_start" | "session_end" | "tool_usage" | "error" | "user_input";
   timestamp: string;
@@ -54,6 +56,7 @@ export interface UserInputData {
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
+  private deviceId: string | null = null;
   private currentAgentId: string | null = null;
   private sessionStartTime: number;
   private messageCount = 0;
@@ -95,18 +98,6 @@ class TelemetryManager {
       return false;
     }
 
-    // Disable telemetry if using self-hosted server (not api.letta.com)
-    const baseURL = process.env.LETTA_BASE_URL;
-    if (baseURL && !baseURL.includes("api.letta.com")) {
-      return false;
-    }
-
-    // Disable telemetry if no API key is set
-    const apiKey = process.env.LETTA_API_KEY;
-    if (!apiKey) {
-      return false;
-    }
-
     return true;
   }
 
@@ -117,6 +108,9 @@ class TelemetryManager {
     if (!this.isTelemetryEnabled()) {
       return;
     }
+
+    // Initialize device ID (persistent across sessions)
+    this.deviceId = settingsManager.getOrCreateDeviceId();
 
     this.trackSessionStart();
 
@@ -180,6 +174,7 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
+        device_id: this.deviceId || undefined,
         agent_id: this.currentAgentId || undefined,
       },
     };
@@ -382,7 +377,6 @@ class TelemetryManager {
     const eventsToSend = [...this.events];
     this.events = [];
 
-    const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
     const apiKey = process.env.LETTA_API_KEY;
 
     try {
@@ -391,18 +385,22 @@ class TelemetryManager {
         setTimeout(() => reject(new Error("Telemetry request timeout")), 5000),
       );
 
-      const fetchPromise = fetch(`${baseURL}/v1/metadata/telemetry`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "X-Letta-Source": "letta-code",
+      const fetchPromise = fetch(
+        "https://api.letta.com/v1/metadata/telemetry",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            "X-Letta-Source": "letta-code",
+            "X-Letta-Code-Device-ID": this.deviceId || "",
+          },
+          body: JSON.stringify({
+            service: "letta-code",
+            events: eventsToSend,
+          }),
         },
-        body: JSON.stringify({
-          service: "letta-code",
-          events: eventsToSend,
-        }),
-      });
+      );
 
       const response = (await Promise.race([
         fetchPromise,

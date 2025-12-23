@@ -23,11 +23,7 @@ export async function getClient() {
     if (expiresAt - now < 5 * 60 * 1000) {
       try {
         // Get or generate device ID (should always exist, but fallback just in case)
-        let deviceId = settings.deviceId;
-        if (!deviceId) {
-          deviceId = crypto.randomUUID();
-          settingsManager.updateSettings({ deviceId });
-        }
+        const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
 
         const tokens = await refreshAccessToken(
