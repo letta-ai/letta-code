@@ -836,6 +836,7 @@ export default function App({
   );
 
   // Core streaming function - iterative loop that processes conversation turns
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
@@ -846,6 +847,12 @@ export default function App({
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
+          return;
+        }
+
+        // Guard against concurrent processConversation calls
+        // This can happen if user submits two messages in quick succession
+        if (streamingRef.current) {
           return;
         }
 
