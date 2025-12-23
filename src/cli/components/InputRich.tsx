@@ -53,6 +53,7 @@ export function Input({
   agentId,
   agentName,
   currentModel,
+  currentModelProvider,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -71,6 +72,7 @@ export function Input({
   agentId?: string;
   agentName?: string | null;
   currentModel?: string | null;
+  currentModelProvider?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -708,7 +710,8 @@ export function Input({
             <Text dimColor>Press / for commands or @ for files</Text>
           )}
           <Text dimColor>
-            {`Letta Code v${appVersion} [${currentModel ?? "unknown"}]`}
+            {`Letta Code v${appVersion} `}
+            {`[${currentModel ?? "unknown"}${currentModelProvider === "claude-pro-max" ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
           </Text>
         </Box>
       </Box>
