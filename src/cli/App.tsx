@@ -18,7 +18,7 @@ import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
-import type { AgentProvenance } from "../agent/create";
+import { type AgentProvenance, createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
@@ -62,6 +62,7 @@ import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { NewAgentDialog } from "./components/NewAgentDialog";
 import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
@@ -436,6 +437,7 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "new"
     | "mcp"
     | "help"
     | "oauth"
@@ -1666,6 +1668,18 @@ export default function App({
       setCommandRunning(true);
 
       const inputCmd = "/pinned";
+      const cmdId = uid("cmd");
+
+      // Show loading indicator while switching
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: inputCmd,
+        output: "Switching agent...",
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
 
       try {
         const client = await getClient();
@@ -1731,6 +1745,7 @@ export default function App({
           hasBackfilledRef.current = true;
         } else {
           setStaticItems([successItem]);
+          setLines(toLines(buffersRef.current));
         }
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
@@ -1750,6 +1765,96 @@ export default function App({
       }
     },
     [refreshDerived, agentId, agentName, setCommandRunning],
+  );
+
+  // Handle creating a new agent and switching to it
+  const handleCreateNewAgent = useCallback(
+    async (name: string) => {
+      // Close dialog immediately
+      setActiveOverlay(null);
+
+      // Lock input for async operation
+      setCommandRunning(true);
+
+      const inputCmd = "/new";
+      const cmdId = uid("cmd");
+
+      // Show "Creating..." status while we wait
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: inputCmd,
+        output: `Creating agent "${name}"...`,
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
+
+      try {
+        // Create the new agent
+        const { agent } = await createAgent(name);
+
+        // Update project settings with new agent
+        await updateProjectSettings({ lastAgent: agent.id });
+
+        // Clear current transcript and static items
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        emittedIdsRef.current.clear();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
+
+        // Reset turn counter for memory reminders
+        turnCountRef.current = 0;
+
+        // Update agent state
+        agentIdRef.current = agent.id;
+        setAgentId(agent.id);
+        setAgentState(agent);
+        setAgentName(agent.name);
+        setLlmConfig(agent.llm_config);
+
+        // Build success message with hints
+        const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const successOutput = [
+          `Created **${agent.name || agent.id}** (use /pin to save)`,
+          `⎿  ${agentUrl}`,
+          `⎿  Tip: use /init to initialize your agent's memory system!`,
+        ].join("\n");
+
+        const separator = {
+          kind: "separator" as const,
+          id: uid("sep"),
+        };
+        const successItem: StaticItem = {
+          kind: "command",
+          id: uid("cmd"),
+          input: inputCmd,
+          output: successOutput,
+          phase: "finished",
+          success: true,
+        };
+
+        setStaticItems([separator, successItem]);
+        // Sync lines display after clearing buffers
+        setLines(toLines(buffersRef.current));
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: inputCmd,
+          output: `Failed to create agent: ${errorDetails}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [refreshDerived, agentId, setCommandRunning],
   );
 
   // Handle bash mode command submission
@@ -2656,6 +2761,12 @@ export default function App({
         // Special handling for /profiles and /pinned commands - open pinned agents selector
         if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
           setActiveOverlay("profile");
+          return { submitted: true };
+        }
+
+        // Special handling for /new command - create new agent dialog
+        if (msg.trim() === "/new") {
+          setActiveOverlay("new");
           return { submitted: true };
         }
 
@@ -5021,6 +5132,14 @@ Plan file path: ${planFilePath}`;
                   const modelInfo = getModelInfo(modelHandle);
                   setCurrentModelId(modelInfo?.id || modelHandle);
                 }}
+              />
+            )}
+
+            {/* New Agent Dialog - for naming new agent before creation */}
+            {activeOverlay === "new" && (
+              <NewAgentDialog
+                onSubmit={handleCreateNewAgent}
+                onCancel={closeOverlay}
               />
             )}
 

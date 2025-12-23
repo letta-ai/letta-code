@@ -167,6 +167,13 @@ export const commands: Record<string, Command> = {
       return "Opening pinned agents...";
     },
   },
+  "/new": {
+    desc: "Create a new agent and switch to it",
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Creating new agent...";
+    },
+  },
   "/subagents": {
     desc: "Manage custom subagents",
     handler: () => {
