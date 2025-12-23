@@ -1665,6 +1665,18 @@ export default function App({
       setCommandRunning(true);
 
       const inputCmd = "/pinned";
+      const cmdId = uid("cmd");
+
+      // Show loading indicator while switching
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: inputCmd,
+        output: "Switching agent...",
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
 
       try {
         const client = await getClient();
@@ -1730,6 +1742,7 @@ export default function App({
           hasBackfilledRef.current = true;
         } else {
           setStaticItems([successItem]);
+          setLines(toLines(buffersRef.current));
         }
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
