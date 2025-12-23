@@ -43,6 +43,7 @@ export interface ErrorData {
   context?: string;
   http_status?: number;
   model_id?: string;
+  run_id?: string;
 }
 
 export interface UserInputData {
@@ -340,6 +341,7 @@ class TelemetryManager {
     options?: {
       httpStatus?: number;
       modelId?: string;
+      runId?: string;
     },
   ) {
     const data: ErrorData = {
@@ -348,6 +350,7 @@ class TelemetryManager {
       context,
       http_status: options?.httpStatus,
       model_id: options?.modelId,
+      run_id: options?.runId,
     };
     this.track("error", data);
   }
