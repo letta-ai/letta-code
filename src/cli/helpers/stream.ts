@@ -1,3 +1,4 @@
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
@@ -24,7 +25,7 @@ type DrainResult = {
   approval?: ApprovalRequest | null; // DEPRECATED: kept for backward compat
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
-  streamError?: string | null; // Client-side error message (e.g., JSON parse error)
+  fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
 };
 
 export async function drainStream(
@@ -50,7 +51,7 @@ export async function drainStream(
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
   let hasCalledFirstMessage = false;
-  let streamError: string | null = null;
+  let fallbackError: string | null = null;
 
   try {
     for await (const chunk of stream) {
@@ -63,14 +64,12 @@ export async function drainStream(
         queueMicrotask(refresh);
         break;
       }
-      // Store the run_id and seq_id to re-connect if stream is interrupted
-      if (
-        "run_id" in chunk &&
-        "seq_id" in chunk &&
-        chunk.run_id &&
-        chunk.seq_id
-      ) {
+      // Store the run_id (for error reporting) and seq_id (for stream resumption)
+      // Capture run_id even if seq_id is missing - we need it for error details
+      if ("run_id" in chunk && chunk.run_id) {
         lastRunId = chunk.run_id;
+      }
+      if ("seq_id" in chunk && chunk.seq_id) {
         lastSeqId = chunk.seq_id;
       }
 
@@ -166,8 +165,20 @@ export async function drainStream(
     const errorMessage = e instanceof Error ? e.message : String(e);
     debugWarn("drainStream", "Stream error caught:", errorMessage);
 
-    // Capture the error message for display
-    streamError = errorMessage;
+    // Try to extract run_id from APIError if we don't have one yet
+    if (!lastRunId && e instanceof APIError && e.error) {
+      const errorObj = e.error as Record<string, unknown>;
+      if ("run_id" in errorObj && typeof errorObj.run_id === "string") {
+        lastRunId = errorObj.run_id;
+        debugWarn("drainStream", "Extracted run_id from error:", lastRunId);
+      }
+    }
+
+    // Only set fallbackError if we don't have a run_id - if we have a run_id,
+    // App.tsx will fetch detailed error info from the server which is better
+    if (!lastRunId) {
+      fallbackError = errorMessage;
+    }
 
     // Set error stop reason so drainStreamWithResume can try to reconnect
     stopReason = "error";
@@ -235,7 +246,7 @@ export async function drainStream(
     lastRunId,
     lastSeqId,
     apiDurationMs,
-    streamError,
+    fallbackError,
   };
 }
 
@@ -279,7 +290,7 @@ export async function drainStreamWithResume(
     !abortSignal?.aborted
   ) {
     // Preserve the original error in case resume fails
-    const originalStreamError = result.streamError;
+    const originalFallbackError = result.fallbackError;
 
     try {
       const client = await getClient();
@@ -304,7 +315,7 @@ export async function drainStreamWithResume(
     } catch (_e) {
       // Resume failed - stick with the error stop_reason
       // Restore the original stream error for display
-      result.streamError = originalStreamError;
+      result.fallbackError = originalFallbackError;
     }
   }
 

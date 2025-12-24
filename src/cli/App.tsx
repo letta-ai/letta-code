@@ -985,7 +985,7 @@ export default function App({
             approvals,
             apiDurationMs,
             lastRunId,
-            streamError,
+            fallbackError,
           } = await drainStreamWithResume(
             stream,
             buffersRef.current,
@@ -1411,8 +1411,10 @@ export default function App({
 
           // Track the error in telemetry
           telemetry.trackError(
-            streamError ? "StreamError" : stopReason || "unknown_stop_reason",
-            streamError || `Stream stopped with reason: ${stopReason}`,
+            fallbackError
+              ? "FallbackError"
+              : stopReason || "unknown_stop_reason",
+            fallbackError || `Stream stopped with reason: ${stopReason}`,
             "message_stream",
             {
               modelId: currentModelId || undefined,
@@ -1421,10 +1423,11 @@ export default function App({
           );
 
           // If we have a client-side stream error (e.g., JSON parse error), show it directly
-          if (streamError) {
+          // Fallback error: no run_id available, show whatever error message we have
+          if (fallbackError) {
             const errorMsg = lastRunId
-              ? `Stream error: ${streamError}\n(run_id: ${lastRunId})`
-              : `Stream error: ${streamError}`;
+              ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
+              : `Stream error: ${fallbackError}`;
             appendError(errorMsg, true); // Skip telemetry - already tracked above
             setStreaming(false);
             refreshDerived();
