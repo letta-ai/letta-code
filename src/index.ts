@@ -6,6 +6,7 @@ import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { ProfileSelectionInline } from "./cli/profile-selection";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
@@ -615,6 +616,7 @@ async function main(): Promise<void> {
   }) {
     const [loadingState, setLoadingState] = useState<
       | "selecting"
+      | "selecting_global"
       | "assembling"
       | "upserting"
       | "updating_tools"
@@ -629,16 +631,39 @@ async function main(): Promise<void> {
     const [isResumingSession, setIsResumingSession] = useState(false);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
+    const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
+      string | null
+    >(null);
 
-    // Initialize on mount - no selector, just start immediately
+    // Initialize on mount - check if we should show global agent selector
     useEffect(() => {
       async function checkAndStart() {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
+        const localSettings = settingsManager.getLocalProjectSettings();
+        const globalPinned = settingsManager.getGlobalPinnedAgents();
+
+        // Show selector if:
+        // 1. No lastAgent in this project (fresh directory)
+        // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
+        // 3. Has global pinned agents available
+        const shouldShowSelector =
+          !localSettings.lastAgent &&
+          !forceNew &&
+          !agentIdArg &&
+          !fromAfFile &&
+          !continueSession &&
+          globalPinned.length > 0;
+
+        if (shouldShowSelector) {
+          setLoadingState("selecting_global");
+          return;
+        }
+
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, []);
+    }, [forceNew, agentIdArg, fromAfFile, continueSession]);
 
     // Main initialization effect - runs after profile selection
     useEffect(() => {
@@ -680,6 +705,16 @@ async function main(): Promise<void> {
               resumingAgentId = settings.lastAgent;
             } catch {
               // Agent no longer exists
+            }
+          }
+
+          // Priority 4: Use agent selected from global selector
+          if (!resumingAgentId && selectedGlobalAgentId) {
+            try {
+              await client.agents.retrieve(selectedGlobalAgentId);
+              resumingAgentId = selectedGlobalAgentId;
+            } catch {
+              // Agent doesn't exist, will create new
             }
           }
         }
@@ -1057,16 +1092,40 @@ async function main(): Promise<void> {
       systemPromptId,
       fromAfFile,
       loadingState,
+      selectedGlobalAgentId,
     ]);
 
-    // Profile selector is no longer shown at startup
-    // Users can access it via /pinned or /agents commands
+    // Don't render anything during initial "selecting" phase - wait for checkAndStart
+    if (loadingState === "selecting") {
+      return null;
+    }
+
+    // Show global agent selector in fresh repos with global pinned agents
+    if (loadingState === "selecting_global") {
+      return React.createElement(ProfileSelectionInline, {
+        lruAgentId: null, // No LRU in fresh repo
+        loading: false,
+        freshRepoMode: true, // Hides "(global)" labels and simplifies context message
+        onSelect: (agentId: string) => {
+          // Auto-pin the selected global agent to this project
+          settingsManager.pinLocal(agentId);
+
+          setSelectedGlobalAgentId(agentId);
+          setLoadingState("assembling");
+        },
+        onCreateNew: () => {
+          setLoadingState("assembling");
+        },
+        onExit: () => {
+          process.exit(0);
+        },
+      });
+    }
 
     if (!agentId) {
       return React.createElement(App, {
         agentId: "loading",
-        loadingState:
-          loadingState === "selecting" ? "assembling" : loadingState,
+        loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? [],
@@ -1079,7 +1138,7 @@ async function main(): Promise<void> {
     return React.createElement(App, {
       agentId,
       agentState,
-      loadingState: loadingState === "selecting" ? "assembling" : loadingState,
+      loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? [],
