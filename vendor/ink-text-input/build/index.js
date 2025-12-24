@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { Text, useInput } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import React, { useEffect, useState } from 'react';
 
 /**
@@ -56,18 +56,47 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
     }, [externalCursorOffset, originalValue, onCursorOffsetChange]);
     const cursorActualWidth = highlightPastedText ? cursorWidth : 0;
     const value = mask ? mask.repeat(originalValue.length) : originalValue;
-    let renderedValue = value;
-    let renderedPlaceholder = placeholder ? chalk.grey(placeholder) : undefined;
+    
+    // Split value by newlines for multiline rendering
+    const lines = value.split('\n');
+    const renderedLines = [];
+    
+    // Track cursor position across lines
+    let charCount = 0;
+    
     if (showCursor && focus) {
-        renderedPlaceholder = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.inverse(' ');
-        renderedValue = value.length > 0 ? '' : chalk.inverse(' ');
-        let i = 0;
-        for (const char of value) {
-            renderedValue += i >= cursorOffset - cursorActualWidth && i <= cursorOffset ? chalk.inverse(char) : char;
-            i++;
+        for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const line = lines[lineIdx];
+            let renderedLine = '';
+            
+            for (let i = 0; i < line.length; i++) {
+                const globalIdx = charCount + i;
+                const char = line[i];
+                renderedLine += globalIdx >= cursorOffset - cursorActualWidth && globalIdx <= cursorOffset ? chalk.inverse(char) : char;
+            }
+            
+            // Add cursor at end of line if needed
+            const lineEnd = charCount + line.length;
+            if (cursorOffset === lineEnd && (lineIdx === lines.length - 1 || cursorOffset < value.length)) {
+                renderedLine += chalk.inverse(' ');
+            }
+            
+            renderedLines.push(renderedLine || ' ');
+            charCount += line.length + 1; // +1 for the newline character
         }
-        if (value.length > 0 && cursorOffset === value.length) {
-            renderedValue += chalk.inverse(' ');
+        
+        // Handle empty input with placeholder
+        if (value.length === 0 && placeholder) {
+            renderedLines[0] = placeholder.length > 0 ? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1)) : chalk.inverse(' ');
+        }
+    } else {
+        // No cursor, just render the lines
+        for (const line of lines) {
+            renderedLines.push(line || ' ');
+        }
+        
+        if (value.length === 0 && placeholder) {
+            renderedLines[0] = chalk.grey(placeholder);
         }
     }
     useInput((input, key) => {
@@ -75,7 +104,37 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         if (isControlSequence(input, key)) {
             return;
         }
+        
+        // Ctrl+J or Ctrl+Enter as alternative newline insertion (more reliable than Shift+Enter)
+        if ((key.ctrl && input === 'j') || (key.ctrl && input === 'J') || (key.ctrl && key.return)) {
+            const nextValue = originalValue.slice(0, cursorOffset) + '\n' + originalValue.slice(cursorOffset, originalValue.length);
+            const nextCursorOffset = cursorOffset + 1;
+            setState(prev => ({ ...prev, cursorOffset: nextCursorOffset, cursorWidth: 0 }));
+            if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
+            onChange(nextValue);
+            return;
+        }
+        
         if (key.return) {
+            // Shift+Enter inserts a newline instead of submitting (if terminal supports it)
+            if (key.shift) {
+                const nextValue = originalValue.slice(0, cursorOffset) + '\n' + originalValue.slice(cursorOffset, originalValue.length);
+                const nextCursorOffset = cursorOffset + 1;
+                setState(prev => ({ ...prev, cursorOffset: nextCursorOffset, cursorWidth: 0 }));
+                if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
+                onChange(nextValue);
+                return;
+            }
+            // Backslash+Enter: remove trailing backslash and insert newline
+            if (cursorOffset > 0 && originalValue[cursorOffset - 1] === '\\') {
+                const nextValue = originalValue.slice(0, cursorOffset - 1) + '\n' + originalValue.slice(cursorOffset, originalValue.length);
+                const nextCursorOffset = cursorOffset; // Cursor stays at same position (backslash removed, newline added)
+                setState(prev => ({ ...prev, cursorOffset: nextCursorOffset, cursorWidth: 0 }));
+                if (typeof onCursorOffsetChange === 'function') onCursorOffsetChange(nextCursorOffset);
+                onChange(nextValue);
+                return;
+            }
+            // Regular Enter submits
             if (onSubmit) {
                 onSubmit(originalValue);
             }
@@ -156,7 +215,15 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             onChange(nextValue);
         }
     }, { isActive: focus });
-    return (React.createElement(Text, null, placeholder ? (value.length > 0 ? renderedValue : renderedPlaceholder) : renderedValue));
+    
+    // Render multiline input
+    if (renderedLines.length === 1) {
+        return React.createElement(Text, null, renderedLines[0]);
+    }
+    
+    return React.createElement(Box, { flexDirection: 'column' }, 
+        renderedLines.map((line, idx) => React.createElement(Text, { key: idx }, line))
+    );
 }
 export default TextInput;
 export function UncontrolledTextInput({ initialValue = '', ...props }) {
