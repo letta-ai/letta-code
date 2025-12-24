@@ -51,37 +51,60 @@ export function SlashCommandAutocomplete({
   workingDirectory = process.cwd(),
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
+  const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands
-  const allCommands = useMemo(() => {
-    if (!agentId) return _allCommands;
-
-    try {
-      const globalPinned = settingsManager.getGlobalPinnedAgents();
-      const localPinned =
-        settingsManager.getLocalPinnedAgents(workingDirectory);
-
-      const isPinnedGlobally = globalPinned.includes(agentId);
-      const isPinnedLocally = localPinned.includes(agentId);
-      const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
-      const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
-
-      return _allCommands.filter((cmd) => {
-        // Hide /pin if agent is pinned both locally AND globally
-        if (cmd.cmd === "/pin" && isPinnedBoth) {
-          return false;
-        }
-        // Hide /unpin if agent is not pinned anywhere
-        if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
-          return false;
-        }
-        return true;
+  // Load custom commands once on mount
+  useEffect(() => {
+    import("../commands/custom.js").then(({ getCustomCommands }) => {
+      getCustomCommands().then((customs) => {
+        const matches: CommandMatch[] = customs.map((cmd) => ({
+          cmd: `/${cmd.id}`,
+          // Include source/namespace in description for disambiguation
+          desc: `${cmd.description} (${cmd.source}${cmd.namespace ? `:${cmd.namespace}` : ""})`,
+          order: 200 + (cmd.source === "project" ? 0 : 100),
+        }));
+        setCustomCommands(matches);
       });
-    } catch (_error) {
-      // If settings aren't loaded, just show all commands
-      return _allCommands;
+    });
+  }, []);
+
+  // Check pin status to conditionally show/hide pin/unpin commands, merge with custom commands
+  const allCommands = useMemo(() => {
+    let builtins = _allCommands;
+
+    if (agentId) {
+      try {
+        const globalPinned = settingsManager.getGlobalPinnedAgents();
+        const localPinned =
+          settingsManager.getLocalPinnedAgents(workingDirectory);
+
+        const isPinnedGlobally = globalPinned.includes(agentId);
+        const isPinnedLocally = localPinned.includes(agentId);
+        const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
+        const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+
+        builtins = _allCommands.filter((cmd) => {
+          // Hide /pin if agent is pinned both locally AND globally
+          if (cmd.cmd === "/pin" && isPinnedBoth) {
+            return false;
+          }
+          // Hide /unpin if agent is not pinned anywhere
+          if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+            return false;
+          }
+          return true;
+        });
+      } catch (_error) {
+        // If settings aren't loaded, just use all builtins
+        builtins = _allCommands;
+      }
     }
-  }, [agentId, workingDirectory]);
+
+    // Merge with custom commands and sort by order
+    return [...builtins, ...customCommands].sort(
+      (a, b) => (a.order ?? 100) - (b.order ?? 100),
+    );
+  }, [agentId, workingDirectory, customCommands]);
 
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
