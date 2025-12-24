@@ -844,8 +844,9 @@ export default function App({
   }, [loadingState, agentId]);
 
   // Helper to append an error to the transcript
+  // Also tracks the error in telemetry so we know an error was shown
   const appendError = useCallback(
-    (message: string) => {
+    (message: string, skipTelemetry = false) => {
       const id = uid("err");
       buffersRef.current.byId.set(id, {
         kind: "error",
@@ -854,8 +855,15 @@ export default function App({
       });
       buffersRef.current.order.push(id);
       refreshDerived();
+
+      // Track error in telemetry (unless explicitly skipped for user-initiated actions)
+      if (!skipTelemetry) {
+        telemetry.trackError("ui_error", message, "error_display", {
+          modelId: currentModelId || undefined,
+        });
+      }
     },
-    [refreshDerived],
+    [refreshDerived, currentModelId],
   );
 
   // Core streaming function - iterative loop that processes conversation turns
@@ -875,6 +883,9 @@ export default function App({
         return;
       }
       processingConversationRef.current += 1;
+
+      // Track last run ID for error reporting (accessible in catch block)
+      let currentRunId: string | undefined;
 
       try {
         // Check if user hit escape before we started
@@ -977,6 +988,9 @@ export default function App({
               syncAgentState,
             );
 
+          // Update currentRunId for error reporting in catch block
+          currentRunId = lastRunId ?? undefined;
+
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
           sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
@@ -1044,7 +1058,7 @@ export default function App({
             } else {
               // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
-                appendError("Stream interrupted by user");
+                appendError("Stream interrupted by user", true);
               }
             }
 
@@ -1389,6 +1403,17 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
+          // Track the server-side error in telemetry
+          telemetry.trackError(
+            stopReason || "unknown_stop_reason",
+            `Stream stopped with reason: ${stopReason}`,
+            "message_stream",
+            {
+              modelId: currentModelId || undefined,
+              runId: lastRunId ?? undefined,
+            },
+          );
+
           // Fetch error details from the run if available
           if (lastRunId) {
             try {
@@ -1414,17 +1439,19 @@ export default function App({
                   errorObject,
                   agentIdRef.current,
                 );
-                appendError(errorDetails);
+                appendError(errorDetails, true); // Skip telemetry - already tracked above
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
+                  true, // Skip telemetry - already tracked above
                 );
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
+                true, // Skip telemetry - already tracked above
               );
               return;
             }
@@ -1432,6 +1459,7 @@ export default function App({
             // No run_id available - but this is unusual since errors should have run_ids
             appendError(
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
+              true, // Skip telemetry - already tracked above
             );
           }
 
@@ -1468,11 +1496,12 @@ export default function App({
         telemetry.trackError(errorType, errorMessage, "message_stream", {
           httpStatus,
           modelId: currentModelId || undefined,
+          runId: currentRunId,
         });
 
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
-        appendError(errorDetails);
+        appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
         setStreaming(false);
         refreshDerived();
       } finally {
@@ -1552,7 +1581,7 @@ export default function App({
       setStreaming(false);
       const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
       if (!toolsCancelled) {
-        appendError("Stream interrupted by user");
+        appendError("Stream interrupted by user", true);
       }
       refreshDerived();
 
