@@ -979,14 +979,20 @@ export default function App({
             }
           };
 
-          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
-            await drainStreamWithResume(
-              stream,
-              buffersRef.current,
-              refreshDerivedThrottled,
-              signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-              syncAgentState,
-            );
+          const {
+            stopReason,
+            approval,
+            approvals,
+            apiDurationMs,
+            lastRunId,
+            streamError,
+          } = await drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+            syncAgentState,
+          );
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
@@ -1403,10 +1409,10 @@ export default function App({
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Track the server-side error in telemetry
+          // Track the error in telemetry
           telemetry.trackError(
-            stopReason || "unknown_stop_reason",
-            `Stream stopped with reason: ${stopReason}`,
+            streamError ? "StreamError" : stopReason || "unknown_stop_reason",
+            streamError || `Stream stopped with reason: ${stopReason}`,
             "message_stream",
             {
               modelId: currentModelId || undefined,
@@ -1414,7 +1420,18 @@ export default function App({
             },
           );
 
-          // Fetch error details from the run if available
+          // If we have a client-side stream error (e.g., JSON parse error), show it directly
+          if (streamError) {
+            const errorMsg = lastRunId
+              ? `Stream error: ${streamError}\n(run_id: ${lastRunId})`
+              : `Stream error: ${streamError}`;
+            appendError(errorMsg, true); // Skip telemetry - already tracked above
+            setStreaming(false);
+            refreshDerived();
+            return;
+          }
+
+          // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
               const client = await getClient();
