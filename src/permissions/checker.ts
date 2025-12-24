@@ -120,12 +120,13 @@ export function checkPermission(
     let reason = `Permission mode: ${currentMode}`;
     if (currentMode === "plan" && modeOverride === "deny") {
       const planFilePath = permissionMode.getPlanFilePath();
-      if (planFilePath) {
-        reason =
-          `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
+      reason = planFilePath
+        ? `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
           `Write your plan to: ${planFilePath}. ` +
-          `Use ExitPlanMode when your plan is ready for user approval.`;
-      }
+          `Use ExitPlanMode when your plan is ready for user approval.`
+        : `Plan mode is active. You can only use read-only tools (Read, Grep, Glob, etc.) and write to the plan file. ` +
+          `Plan file path: not set\n` +
+          `Use the Write tool to create your plan, then call ExitPlanMode again.`;
     }
     return {
       decision: modeOverride,
