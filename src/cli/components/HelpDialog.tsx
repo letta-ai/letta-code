@@ -12,6 +12,7 @@ const HELP_TABS: HelpTab[] = ["commands", "shortcuts"];
 interface CommandItem {
   name: string;
   description: string;
+  order: number;
 }
 
 interface ShortcutItem {
@@ -28,15 +29,16 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Get all non-hidden commands
+  // Get all non-hidden commands, sorted by order
   const allCommands = useMemo<CommandItem[]>(() => {
     return Object.entries(commands)
       .filter(([_, cmd]) => !cmd.hidden)
       .map(([name, cmd]) => ({
         name,
         description: cmd.desc,
+        order: cmd.order ?? 100,
       }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.order - b.order);
   }, []);
 
   // Keyboard shortcuts

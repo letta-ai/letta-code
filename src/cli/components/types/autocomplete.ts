@@ -36,4 +36,5 @@ export interface FileMatch {
 export interface CommandMatch {
   cmd: string;
   desc: string;
+  order?: number;
 }
