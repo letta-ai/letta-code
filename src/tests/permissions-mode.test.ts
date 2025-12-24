@@ -273,7 +273,8 @@ test("plan mode - denies Write", () => {
 
   expect(result.decision).toBe("deny");
   expect(result.matchedRule).toBe("plan mode");
-  expect(result.reason).toBe("Permission mode: plan");
+  // Reason now includes detailed guidance (planFilePath not set in test, so shows error fallback)
+  expect(result.reason).toContain("Plan mode is active");
 });
 
 test("plan mode - denies Bash", () => {
@@ -362,7 +363,7 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
 
   // Permission mode denies take precedence over CLI allowedTools
   expect(result.decision).toBe("deny");
-  expect(result.reason).toBe("Permission mode: plan");
+  expect(result.reason).toContain("Plan mode is active");
 
   // Clean up
   cliPermissions.clear();
