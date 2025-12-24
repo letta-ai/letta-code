@@ -6,14 +6,17 @@ import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-// Compute filtered command list (excluding hidden commands)
+const VISIBLE_COMMANDS = 8; // Number of commands visible at once
+
+// Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
-  .map(([cmd, { desc }]) => ({
+  .map(([cmd, { desc, order }]) => ({
     cmd,
     desc,
+    order: order ?? 100, // Default order for commands without explicit order
   }))
-  .sort((a, b) => a.cmd.localeCompare(b.cmd));
+  .sort((a, b) => a.order - b.order);
 
 // Extract the text after the "/" symbol where the cursor is positioned
 function extractSearchQuery(
@@ -134,14 +137,46 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
+  // Calculate visible window based on selected index
+  const totalMatches = matches.length;
+  const needsScrolling = totalMatches > VISIBLE_COMMANDS;
+
+  let startIndex = 0;
+  if (needsScrolling) {
+    // Keep selected item visible, preferring to show it in the middle
+    const halfWindow = Math.floor(VISIBLE_COMMANDS / 2);
+    startIndex = Math.max(0, selectedIndex - halfWindow);
+    startIndex = Math.min(startIndex, totalMatches - VISIBLE_COMMANDS);
+  }
+
+  const visibleMatches = matches.slice(
+    startIndex,
+    startIndex + VISIBLE_COMMANDS,
+  );
+  const showScrollUp = startIndex > 0;
+  const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
+
   return (
     <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
-      {matches.map((item, idx) => (
-        <AutocompleteItem key={item.cmd} selected={idx === selectedIndex}>
-          {item.cmd.padEnd(14)}{" "}
-          <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
-        </AutocompleteItem>
-      ))}
+      {showScrollUp && <Text dimColor> ↑ {startIndex} more above</Text>}
+      {visibleMatches.map((item, idx) => {
+        const actualIndex = startIndex + idx;
+        return (
+          <AutocompleteItem
+            key={item.cmd}
+            selected={actualIndex === selectedIndex}
+          >
+            {item.cmd.padEnd(14)}{" "}
+            <Text dimColor={actualIndex !== selectedIndex}>{item.desc}</Text>
+          </AutocompleteItem>
+        );
+      })}
+      {showScrollDown && (
+        <Text dimColor>
+          {" "}
+          ↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+        </Text>
+      )}
     </AutocompleteBox>
   );
 }
