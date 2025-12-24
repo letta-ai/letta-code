@@ -3308,6 +3308,79 @@ ${gitContext}
           return { submitted: true };
         }
 
+        // === Custom command handling ===
+        // Check BEFORE falling through to executeCommand()
+        const { findCustomCommand, substituteArguments, expandBashCommands } =
+          await import("./commands/custom.js");
+        const commandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
+        const matchedCustom = await findCustomCommand(commandName);
+
+        if (matchedCustom) {
+          const cmdId = uid("cmd");
+
+          // Extract arguments (everything after command name)
+          const args = trimmed.slice(`/${matchedCustom.id}`.length).trim();
+
+          // Build prompt: 1) substitute args, 2) expand bash commands
+          let prompt = substituteArguments(matchedCustom.content, args);
+          prompt = await expandBashCommands(prompt);
+
+          // Show command in transcript (running phase for visual feedback)
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: `Running /${matchedCustom.id}...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Mark command as finished BEFORE sending to agent
+            // (matches /remember pattern - command succeeded in triggering agent)
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Running custom command...`,
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Send prompt to agent
+            // NOTE: Unlike /remember, we DON'T append args separately because
+            // they're already substituted into the prompt via $ARGUMENTS
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: `<system-reminder>\n${prompt}\n</system-reminder>`,
+              },
+            ]);
+          } catch (error) {
+            // Only catch errors from processConversation setup, not agent execution
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Failed to run command: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+        // === END custom command handling ===
+
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
         buffersRef.current.byId.set(cmdId, {
