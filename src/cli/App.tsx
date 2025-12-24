@@ -13,7 +13,10 @@ import type {
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ApprovalResult } from "../agent/approval-execution";
+import {
+  type ApprovalResult,
+  executeAutoAllowedTools,
+} from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
@@ -1191,36 +1194,10 @@ export default function App({
               }
             }
 
-            // Execute auto-allowed tools
-            const autoAllowedResults = await Promise.all(
-              autoAllowed.map(async (ac) => {
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  ac.approval.toolArgs,
-                  {},
-                );
-                const result = await executeTool(
-                  ac.approval.toolName,
-                  parsedArgs,
-                  { toolCallId: ac.approval.toolCallId },
-                );
-
-                // Update buffers with tool return for UI
-                onChunk(buffersRef.current, {
-                  message_type: "tool_return_message",
-                  id: "dummy",
-                  date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: result.toolReturn,
-                  status: result.status,
-                  stdout: result.stdout,
-                  stderr: result.stderr,
-                });
-
-                return {
-                  toolCallId: ac.approval.toolCallId,
-                  result,
-                };
-              }),
+            // Execute auto-allowed tools (sequential for writes, parallel for reads)
+            const autoAllowedResults = await executeAutoAllowedTools(
+              autoAllowed,
+              (chunk) => onChunk(buffersRef.current, chunk),
             );
 
             // Create denial results for auto-denied tools and update buffers
@@ -3516,36 +3493,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
             if (needsUserInput.length === 0) {
-              // Execute auto-allowed tools
-              const autoAllowedResults = await Promise.all(
-                autoAllowed.map(async (ac) => {
-                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                    ac.approval.toolArgs,
-                    {},
-                  );
-                  const result = await executeTool(
-                    ac.approval.toolName,
-                    parsedArgs,
-                    { toolCallId: ac.approval.toolCallId },
-                  );
-
-                  // Update buffers with tool return for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: result.toolReturn,
-                    status: result.status,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  });
-
-                  return {
-                    toolCallId: ac.approval.toolCallId,
-                    result,
-                  };
-                }),
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedResults = await executeAutoAllowedTools(
+                autoAllowed,
+                (chunk) => onChunk(buffersRef.current, chunk),
               );
 
               // Create denial results for auto-denied and update UI
@@ -3623,36 +3574,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   .filter(Boolean) as ApprovalContext[],
               );
 
-              // Execute auto-allowed tools and store results
-              const autoAllowedWithResults = await Promise.all(
-                autoAllowed.map(async (ac) => {
-                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                    ac.approval.toolArgs,
-                    {},
-                  );
-                  const result = await executeTool(
-                    ac.approval.toolName,
-                    parsedArgs,
-                    { toolCallId: ac.approval.toolCallId },
-                  );
-
-                  // Update buffers with tool return for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: result.toolReturn,
-                    status: result.status,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  });
-
-                  return {
-                    toolCallId: ac.approval.toolCallId,
-                    result,
-                  };
-                }),
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedWithResults = await executeAutoAllowedTools(
+                autoAllowed,
+                (chunk) => onChunk(buffersRef.current, chunk),
               );
 
               // Create denial reasons for auto-denied and update UI
