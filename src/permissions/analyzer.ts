@@ -398,10 +398,17 @@ function analyzeBashApproval(
 
         if (subcommand === "run" && thirdPart) {
           const fullCommand = `${segmentBase} ${subcommand} ${thirdPart}`;
+          // Include the prefix part (everything before the package manager command)
+          const beforePackageManager = command.substring(
+            0,
+            command.indexOf(segmentBase),
+          );
+          const pattern = `${beforePackageManager}${fullCommand}:*`;
+
           return {
-            recommendedRule: `Bash(${fullCommand}:*)`,
-            ruleDescription: `'${fullCommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
+            recommendedRule: `Bash(${pattern})`,
+            ruleDescription: `'${beforePackageManager}${fullCommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for '${beforePackageManager}${fullCommand}' commands in this project`,
             defaultScope: "project",
             allowPersistence: true,
             safetyLevel: "safe",
@@ -410,10 +417,17 @@ function analyzeBashApproval(
 
         if (subcommand) {
           const fullCommand = `${segmentBase} ${subcommand}`;
+          // Include the prefix part (everything before the package manager command)
+          const beforePackageManager = command.substring(
+            0,
+            command.indexOf(segmentBase),
+          );
+          const pattern = `${beforePackageManager}${fullCommand}:*`;
+
           return {
-            recommendedRule: `Bash(${fullCommand}:*)`,
-            ruleDescription: `'${fullCommand}' commands`,
-            approveAlwaysText: `Yes, and don't ask again for '${fullCommand}' commands in this project`,
+            recommendedRule: `Bash(${pattern})`,
+            ruleDescription: `'${beforePackageManager}${fullCommand}' commands`,
+            approveAlwaysText: `Yes, and don't ask again for '${beforePackageManager}${fullCommand}' commands in this project`,
             defaultScope: "project",
             allowPersistence: true,
             safetyLevel: "safe",
