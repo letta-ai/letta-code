@@ -215,10 +215,12 @@ export async function drainStream(
 
     // Include ALL tool_call_ids - don't filter out incomplete entries
     // Missing name/args will be handled by denial logic in App.tsx
+    // Default empty toolArgs to "{}" - empty string causes JSON.parse("") to fail
+    // This happens for tools with no parameters (e.g., EnterPlanMode, ExitPlanMode)
     approvals = allPending.map((a) => ({
       toolCallId: a.toolCallId,
       toolName: a.toolName || "",
-      toolArgs: a.toolArgs || "",
+      toolArgs: a.toolArgs || "{}",
     }));
 
     if (approvals.length === 0) {

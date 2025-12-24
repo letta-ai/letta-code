@@ -56,6 +56,9 @@ const PARALLEL_SAFE_TOOLS = new Set([
   "BashOutput",
   // Task spawns independent subagents
   "Task",
+  // Plan mode tools (no parameters, no file operations)
+  "EnterPlanMode",
+  "ExitPlanMode",
 ]);
 
 function isParallelSafe(toolName: string): boolean {
@@ -194,10 +197,18 @@ async function executeSingleDecision(
 
     // Execute the approved tool
     try {
-      const parsedArgs =
-        typeof decision.approval.toolArgs === "string"
-          ? JSON.parse(decision.approval.toolArgs)
-          : decision.approval.toolArgs || {};
+      // Safe parse - toolArgs should be "{}" but handle edge cases
+      let parsedArgs: Record<string, unknown> = {};
+      if (typeof decision.approval.toolArgs === "string") {
+        try {
+          parsedArgs = JSON.parse(decision.approval.toolArgs);
+        } catch {
+          // Empty or malformed args - use empty object
+          parsedArgs = {};
+        }
+      } else {
+        parsedArgs = decision.approval.toolArgs || {};
+      }
 
       const toolResult = await executeTool(
         decision.approval.toolName,
@@ -328,10 +339,18 @@ export async function executeApprovalBatch(
       parallelIndices.push(i);
     } else {
       // Get resource key for write tools
-      const args =
-        typeof decision.approval.toolArgs === "string"
-          ? JSON.parse(decision.approval.toolArgs)
-          : decision.approval.toolArgs || {};
+      // Safe parse - handle empty or malformed toolArgs
+      let args: Record<string, unknown> = {};
+      if (typeof decision.approval.toolArgs === "string") {
+        try {
+          args = JSON.parse(decision.approval.toolArgs);
+        } catch {
+          // Empty or malformed args - use empty object (will use global lock)
+          args = {};
+        }
+      } else {
+        args = decision.approval.toolArgs || {};
+      }
       const resourceKey = getResourceKey(toolName, args);
 
       const indices = writeToolsByResource.get(resourceKey) || [];
