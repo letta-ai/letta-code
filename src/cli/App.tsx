@@ -1222,10 +1222,13 @@ export default function App({
 
             // Create denial results for auto-denied tools and update buffers
             const autoDeniedResults = autoDenied.map((ac) => {
-              const reason =
-                "matchedRule" in ac.permission && ac.permission.matchedRule
+              // Prefer the detailed reason over the short matchedRule name
+              // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
+              const reason = ac.permission.reason
+                ? `Permission denied: ${ac.permission.reason}`
+                : "matchedRule" in ac.permission && ac.permission.matchedRule
                   ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`;
+                  : "Permission denied: Unknown reason";
 
               // Update buffers with tool rejection for UI
               onChunk(buffersRef.current, {
@@ -3623,10 +3626,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
               // Create denial results for auto-denied and update UI
               const autoDeniedResults = autoDenied.map((ac) => {
-                const reason =
-                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                // Prefer the detailed reason over the short matchedRule name
+                const reason = ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+                    : "Permission denied: Unknown";
 
                 // Update buffers with denial for UI
                 onChunk(buffersRef.current, {
@@ -3704,10 +3709,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
               // Create denial reasons for auto-denied and update UI
               const autoDeniedWithReasons = autoDenied.map((ac) => {
-                const reason =
-                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                // Prefer the detailed reason over the short matchedRule name
+                const reason = ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+                    : "Permission denied: Unknown";
 
                 // Update buffers with denial for UI
                 onChunk(buffersRef.current, {
