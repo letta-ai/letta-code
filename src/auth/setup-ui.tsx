@@ -55,21 +55,21 @@ export function SetupUI({ onComplete }: SetupUIProps) {
       setUserCode(deviceData.user_code);
       setVerificationUri(deviceData.verification_uri_complete);
 
-      // Auto-open browser
-      try {
-        const { default: open } = await import("open");
-        // Use wait: true to properly catch errors when opener command doesn't exist
-        const subprocess = await open(deviceData.verification_uri_complete, {
-          wait: false,
+      // Auto-open browser (fire-and-forget, never crash)
+      // Uses promise chaining to ensure error handler is attached immediately
+      // after promise resolution, preventing race conditions with error events
+      import("open")
+        .then(({ default: open }) =>
+          open(deviceData.verification_uri_complete, { wait: false }),
+        )
+        .then((subprocess) => {
+          subprocess.on("error", () => {
+            // Silently ignore - user can manually visit the URL shown above
+          });
+        })
+        .catch(() => {
+          // Silently ignore any failures (WSL PowerShell issues, missing xdg-open, etc.)
         });
-        // Handle errors from the spawned process (e.g., xdg-open not found in containers)
-        subprocess.on("error", () => {
-          // Silently ignore - user can still manually visit the URL shown above
-        });
-      } catch (_openErr) {
-        // If auto-open fails, user can still manually visit the URL
-        // This handles cases like missing opener commands in containers
-      }
 
       // Get or generate device ID
       const deviceId = settingsManager.getOrCreateDeviceId();
@@ -139,7 +139,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
             {userCode}
           </Text>
         </Text>
-        <Text dimColor>URL: {verificationUri}</Text>
+        <Text dimColor>If browser didn't open, visit: {verificationUri}</Text>
         <Text> </Text>
         <Text dimColor>Waiting for you to authorize in the browser...</Text>
       </Box>
