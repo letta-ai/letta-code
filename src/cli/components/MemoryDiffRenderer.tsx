@@ -1,5 +1,6 @@
 import * as Diff from "diff";
 import { Box, Text } from "ink";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
 interface MemoryDiffRendererProps {
@@ -15,6 +16,8 @@ export function MemoryDiffRenderer({
   argsText,
   toolName,
 }: MemoryDiffRendererProps) {
+  const columns = useTerminalWidth();
+
   try {
     const args = JSON.parse(argsText);
 
@@ -22,7 +25,9 @@ export function MemoryDiffRenderer({
     if (toolName === "memory_apply_patch") {
       const label = args.label || "unknown";
       const patch = args.patch || "";
-      return <PatchDiffRenderer label={label} patch={patch} />;
+      return (
+        <PatchDiffRenderer label={label} patch={patch} columns={columns} />
+      );
     }
 
     // Handle memory tool (command-based)
@@ -41,6 +46,7 @@ export function MemoryDiffRenderer({
             blockName={blockName}
             oldStr={oldStr}
             newStr={newStr}
+            columns={columns}
           />
         );
       }
@@ -48,6 +54,8 @@ export function MemoryDiffRenderer({
       case "insert": {
         const insertText = args.insert_text || "";
         const insertLine = args.insert_line;
+        const prefixWidth = 4; // "    " indent
+        const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
             <Text>
@@ -57,14 +65,22 @@ export function MemoryDiffRenderer({
               {insertLine !== undefined && ` at line ${insertLine}`}
             </Text>
             {insertText.split("\n").map((line: string, i: number) => (
-              <Box key={`insert-${i}-${line.substring(0, 20)}`}>
-                <Text> </Text>
-                <Text
-                  backgroundColor={colors.diff.addedLineBg}
-                  color={colors.diff.textOnDark}
-                >
-                  {`+ ${line}`}
-                </Text>
+              <Box
+                key={`insert-${i}-${line.substring(0, 20)}`}
+                flexDirection="row"
+              >
+                <Box width={prefixWidth} flexShrink={0}>
+                  <Text>{"    "}</Text>
+                </Box>
+                <Box flexGrow={1} width={contentWidth}>
+                  <Text
+                    backgroundColor={colors.diff.addedLineBg}
+                    color={colors.diff.textOnDark}
+                    wrap="wrap"
+                  >
+                    {`+ ${line}`}
+                  </Text>
+                </Box>
               </Box>
             ))}
           </Box>
@@ -74,6 +90,8 @@ export function MemoryDiffRenderer({
       case "create": {
         const description = args.description || "";
         const fileText = args.file_text || "";
+        const prefixWidth = 4; // "    " indent
+        const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
             <Text>
@@ -88,14 +106,22 @@ export function MemoryDiffRenderer({
               ?.split("\n")
               .slice(0, 3)
               .map((line: string, i: number) => (
-                <Box key={`create-${i}-${line.substring(0, 20)}`}>
-                  <Text> </Text>
-                  <Text
-                    backgroundColor={colors.diff.addedLineBg}
-                    color={colors.diff.textOnDark}
-                  >
-                    {`+ ${truncate(line, 60)}`}
-                  </Text>
+                <Box
+                  key={`create-${i}-${line.substring(0, 20)}`}
+                  flexDirection="row"
+                >
+                  <Box width={prefixWidth} flexShrink={0}>
+                    <Text>{"    "}</Text>
+                  </Box>
+                  <Box flexGrow={1} width={contentWidth}>
+                    <Text
+                      backgroundColor={colors.diff.addedLineBg}
+                      color={colors.diff.textOnDark}
+                      wrap="wrap"
+                    >
+                      {`+ ${truncate(line, 60)}`}
+                    </Text>
+                  </Box>
                 </Box>
               ))}
             {fileText && fileText.split("\n").length > 3 && (
@@ -162,10 +188,12 @@ function MemoryStrReplaceDiff({
   blockName,
   oldStr,
   newStr,
+  columns,
 }: {
   blockName: string;
   oldStr: string;
   newStr: string;
+  columns: number;
 }) {
   const oldLines = oldStr.split("\n");
   const newLines = newStr.split("\n");
@@ -192,6 +220,7 @@ function MemoryStrReplaceDiff({
           type="remove"
           content={line}
           compareContent={singleLine ? newLines[0] : undefined}
+          columns={columns}
         />
       ))}
 
@@ -202,6 +231,7 @@ function MemoryStrReplaceDiff({
           type="add"
           content={line}
           compareContent={singleLine ? oldLines[0] : undefined}
+          columns={columns}
         />
       ))}
 
@@ -217,16 +247,21 @@ function DiffLine({
   type,
   content,
   compareContent,
+  columns,
 }: {
   type: "add" | "remove";
   content: string;
   compareContent?: string;
+  columns: number;
 }) {
   const prefix = type === "add" ? "+" : "-";
   const lineBg =
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
   const wordBg =
     type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
+
+  const prefixWidth = 4; // "    " indent
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   // Word-level diff if we have something to compare
   if (compareContent !== undefined && content.trim() && compareContent.trim()) {
@@ -236,56 +271,70 @@ function DiffLine({
         : Diff.diffWords(content, compareContent);
 
     return (
-      <Box>
-        <Text>{"    "}</Text>
-        <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-          {`${prefix} `}
-        </Text>
-        {wordDiffs.map((part, i) => {
-          if (part.added && type === "add") {
-            return (
-              <Text
-                key={`w-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={wordBg}
-                color={colors.diff.textOnHighlight}
-              >
-                {part.value}
-              </Text>
-            );
-          } else if (part.removed && type === "remove") {
-            return (
-              <Text
-                key={`w-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={wordBg}
-                color={colors.diff.textOnHighlight}
-              >
-                {part.value}
-              </Text>
-            );
-          } else if (!part.added && !part.removed) {
-            return (
-              <Text
-                key={`w-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={lineBg}
-                color={colors.diff.textOnDark}
-              >
-                {part.value}
-              </Text>
-            );
-          }
-          return null;
-        })}
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text>{"    "}</Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
+              {`${prefix} `}
+            </Text>
+            {wordDiffs.map((part, i) => {
+              if (part.added && type === "add") {
+                return (
+                  <Text
+                    key={`w-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={wordBg}
+                    color={colors.diff.textOnHighlight}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              } else if (part.removed && type === "remove") {
+                return (
+                  <Text
+                    key={`w-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={wordBg}
+                    color={colors.diff.textOnHighlight}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              } else if (!part.added && !part.removed) {
+                return (
+                  <Text
+                    key={`w-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={lineBg}
+                    color={colors.diff.textOnDark}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              }
+              return null;
+            })}
+          </Text>
+        </Box>
       </Box>
     );
   }
 
   // Simple line without word diff
   return (
-    <Box>
-      <Text>{"    "}</Text>
-      <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-        {`${prefix} ${content}`}
-      </Text>
+    <Box flexDirection="row">
+      <Box width={prefixWidth} flexShrink={0}>
+        <Text>{"    "}</Text>
+      </Box>
+      <Box flexGrow={1} width={contentWidth}>
+        <Text
+          backgroundColor={lineBg}
+          color={colors.diff.textOnDark}
+          wrap="wrap"
+        >
+          {`${prefix} ${content}`}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -298,11 +347,22 @@ function truncate(str: string, maxLen: number): string {
 /**
  * Renders a unified-diff patch from memory_apply_patch tool
  */
-function PatchDiffRenderer({ label, patch }: { label: string; patch: string }) {
+function PatchDiffRenderer({
+  label,
+  patch,
+  columns,
+}: {
+  label: string;
+  patch: string;
+  columns: number;
+}) {
   const lines = patch.split("\n");
   const maxLines = 8;
   const displayLines = lines.slice(0, maxLines);
   const hasMore = lines.length > maxLines;
+
+  const prefixWidth = 4; // "    " indent
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
     <Box flexDirection="column">
@@ -322,45 +382,74 @@ function PatchDiffRenderer({ label, patch }: { label: string; patch: string }) {
 
         if (firstChar === "+") {
           return (
-            <Box key={`patch-${i}-${line.substring(0, 20)}`}>
-              <Text>{"    "}</Text>
-              <Text
-                backgroundColor={colors.diff.addedLineBg}
-                color={colors.diff.textOnDark}
-              >
-                {`+ ${content}`}
-              </Text>
+            <Box
+              key={`patch-${i}-${line.substring(0, 20)}`}
+              flexDirection="row"
+            >
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{"    "}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text
+                  backgroundColor={colors.diff.addedLineBg}
+                  color={colors.diff.textOnDark}
+                  wrap="wrap"
+                >
+                  {`+ ${content}`}
+                </Text>
+              </Box>
             </Box>
           );
         } else if (firstChar === "-") {
           return (
-            <Box key={`patch-${i}-${line.substring(0, 20)}`}>
-              <Text>{"    "}</Text>
-              <Text
-                backgroundColor={colors.diff.removedLineBg}
-                color={colors.diff.textOnDark}
-              >
-                {`- ${content}`}
-              </Text>
+            <Box
+              key={`patch-${i}-${line.substring(0, 20)}`}
+              flexDirection="row"
+            >
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{"    "}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text
+                  backgroundColor={colors.diff.removedLineBg}
+                  color={colors.diff.textOnDark}
+                  wrap="wrap"
+                >
+                  {`- ${content}`}
+                </Text>
+              </Box>
             </Box>
           );
         } else if (firstChar === " ") {
           // Context line - show dimmed
           return (
-            <Box key={`patch-${i}-${line.substring(0, 20)}`}>
-              <Text dimColor>
-                {"      "}
-                {content}
-              </Text>
+            <Box
+              key={`patch-${i}-${line.substring(0, 20)}`}
+              flexDirection="row"
+            >
+              <Box width={prefixWidth + 2} flexShrink={0}>
+                <Text dimColor>{"      "}</Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, columns - prefixWidth - 2)}>
+                <Text dimColor wrap="wrap">
+                  {content}
+                </Text>
+              </Box>
             </Box>
           );
         }
         // Unknown format, show as-is
         return (
-          <Text key={`patch-${i}-${line.substring(0, 20)}`} dimColor>
-            {"    "}
-            {line}
-          </Text>
+          <Box key={`patch-${i}-${line.substring(0, 20)}`} flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text dimColor>{"    "}</Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text dimColor wrap="wrap">
+                {line}
+              </Text>
+            </Box>
+          </Box>
         );
       })}
       {hasMore && (
