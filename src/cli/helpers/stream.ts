@@ -53,6 +53,26 @@ export async function drainStream(
   let hasCalledFirstMessage = false;
   let fallbackError: string | null = null;
 
+  // Track if we triggered abort via our listener (for eager cancellation)
+  let abortedViaListener = false;
+
+  // Set up abort listener to propagate our signal to SDK's stream controller
+  // This immediately cancels the HTTP request instead of waiting for next chunk
+  const abortHandler = () => {
+    abortedViaListener = true;
+    // Abort the SDK's stream controller to cancel the underlying HTTP request
+    if (stream.controller && !stream.controller.signal.aborted) {
+      stream.controller.abort();
+    }
+  };
+
+  if (abortSignal && !abortSignal.aborted) {
+    abortSignal.addEventListener("abort", abortHandler, { once: true });
+  } else if (abortSignal?.aborted) {
+    // Already aborted before we started
+    abortedViaListener = true;
+  }
+
   try {
     for await (const chunk of stream) {
       // console.log("chunk", chunk);
@@ -182,6 +202,19 @@ export async function drainStream(
 
     // Set error stop reason so drainStreamWithResume can try to reconnect
     stopReason = "error";
+    markIncompleteToolsAsCancelled(buffers);
+    queueMicrotask(refresh);
+  } finally {
+    // Clean up abort listener
+    if (abortSignal) {
+      abortSignal.removeEventListener("abort", abortHandler);
+    }
+  }
+
+  // If we aborted via listener but loop exited without setting stopReason
+  // (SDK returns gracefully on abort), mark as cancelled
+  if (abortedViaListener && !stopReason) {
+    stopReason = "cancelled";
     markIncompleteToolsAsCancelled(buffers);
     queueMicrotask(refresh);
   }
