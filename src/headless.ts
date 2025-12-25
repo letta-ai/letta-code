@@ -956,6 +956,10 @@ export async function handleHeadlessCommand(
 
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Before failing, check run metadata to see if this is a retriable llm_api_error
+      // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
+      // This could happen if there's a backend edge case where LLMError is raised but
+      // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
+      // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
       if (
         stopReason === "error" &&
         lastRunId &&
@@ -965,13 +969,13 @@ export async function handleHeadlessCommand(
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
             | {
-                type?: string;
+                error_type?: string;
                 message?: string;
                 detail?: string;
               }
             | undefined;
 
-          if (metaError?.type === "llm_api_error") {
+          if (metaError?.error_type === "llm_error") {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);

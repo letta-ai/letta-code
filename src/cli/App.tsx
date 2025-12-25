@@ -147,14 +147,21 @@ async function isRetriableError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
 ): Promise<boolean> {
+  // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
   if (stopReason === "llm_api_error") return true;
 
+  // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
+  // This could happen if there's a backend edge case where LLMError is raised but
+  // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
+  // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
   if (stopReason === "error" && lastRunId) {
     try {
       const client = await getClient();
       const run = await client.runs.retrieve(lastRunId);
-      const metaError = run.metadata?.error as { type?: string } | undefined;
-      return metaError?.type === "llm_api_error";
+      const metaError = run.metadata?.error as
+        | { error_type?: string }
+        | undefined;
+      return metaError?.error_type === "llm_error";
     } catch {
       return false;
     }
