@@ -11,6 +11,7 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -133,9 +134,32 @@ const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
 const EAGER_CANCEL = true;
 
+// Maximum retries for transient LLM API errors (matches headless.ts)
+const LLM_API_ERROR_MAX_RETRIES = 3;
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Check if error is retriable based on stop reason and run metadata
+async function isRetriableError(
+  stopReason: StopReasonType,
+  lastRunId: string | null | undefined,
+): Promise<boolean> {
+  if (stopReason === "llm_api_error") return true;
+
+  if (stopReason === "error" && lastRunId) {
+    try {
+      const client = await getClient();
+      const run = await client.runs.retrieve(lastRunId);
+      const metaError = run.metadata?.error as { type?: string } | undefined;
+      return metaError?.type === "llm_api_error";
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 // Save current agent as lastAgent before exiting
@@ -538,6 +562,9 @@ export default function App({
   // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
 
+  // Retry counter for transient LLM API errors (ref for synchronous access in loop)
+  const llmApiErrorRetriesRef = useRef(0);
+
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
@@ -884,6 +911,11 @@ export default function App({
       }
       processingConversationRef.current += 1;
 
+      // Reset retry counter for new conversation turns (fresh budget per user message)
+      if (!allowReentry) {
+        llmApiErrorRetriesRef.current = 0;
+      }
+
       // Track last run ID for error reporting (accessible in catch block)
       let currentRunId: string | undefined;
 
@@ -1007,6 +1039,7 @@ export default function App({
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
             setStreaming(false);
+            llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
 
             // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
@@ -1409,6 +1442,58 @@ export default function App({
           }
 
           // Unexpected stop reason (error, llm_api_error, etc.)
+          // Check if this is a retriable error (transient LLM API error)
+          const retriable = await isRetriableError(stopReason, lastRunId);
+
+          if (
+            retriable &&
+            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+          ) {
+            llmApiErrorRetriesRef.current += 1;
+            const attempt = llmApiErrorRetriesRef.current;
+            const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+
+            // Show subtle grey status message
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: ["Unexpected downstream LLM API error, retrying..."],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            // Wait before retry (check abort signal periodically for ESC cancellation)
+            let cancelled = false;
+            const startTime = Date.now();
+            while (Date.now() - startTime < delayMs) {
+              if (
+                abortControllerRef.current?.signal.aborted ||
+                userCancelledRef.current
+              ) {
+                cancelled = true;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100)); // Check every 100ms
+            }
+
+            // Remove status message
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
+            if (!cancelled) {
+              // Retry by continuing the while loop (same currentInput)
+              continue;
+            }
+            // User pressed ESC - fall through to error handling
+          }
+
+          // Reset retry counter on non-retriable error (or max retries exceeded)
+          llmApiErrorRetriesRef.current = 0;
+
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
