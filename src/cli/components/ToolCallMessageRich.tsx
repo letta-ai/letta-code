@@ -5,6 +5,8 @@ import { clipToolReturn } from "../../tools/manager.js";
 import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
+  isFileEditTool,
+  isFileWriteTool,
   isMemoryTool,
   isPlanTool,
   isTaskTool,
@@ -13,6 +15,11 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
+import {
+  EditRenderer,
+  MultiEditRenderer,
+  WriteRenderer,
+} from "./DiffRenderer.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
@@ -225,6 +232,60 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
         return memoryDiff;
       }
       // If MemoryDiffRenderer returns null, fall through to regular handling
+    }
+
+    // Check if this is a file edit tool - show diff instead of success message
+    if (isFileEditTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        const filePath = parsedArgs.file_path || "";
+
+        // Multi-edit: has edits array
+        if (parsedArgs.edits && Array.isArray(parsedArgs.edits)) {
+          const edits = parsedArgs.edits.map(
+            (e: { old_string?: string; new_string?: string }) => ({
+              old_string: e.old_string || "",
+              new_string: e.new_string || "",
+            }),
+          );
+          return (
+            <MultiEditRenderer
+              filePath={filePath}
+              edits={edits}
+              showLineNumbers={false}
+            />
+          );
+        }
+
+        // Single edit: has old_string/new_string
+        if (parsedArgs.old_string !== undefined) {
+          return (
+            <EditRenderer
+              filePath={filePath}
+              oldString={parsedArgs.old_string || ""}
+              newString={parsedArgs.new_string || ""}
+              showLineNumbers={false}
+            />
+          );
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
+    // Check if this is a file write tool - show written content
+    if (isFileWriteTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        const filePath = parsedArgs.file_path || "";
+        const content = parsedArgs.content || "";
+
+        if (filePath && content) {
+          return <WriteRenderer filePath={filePath} content={content} />;
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
     }
 
     // Regular result handling

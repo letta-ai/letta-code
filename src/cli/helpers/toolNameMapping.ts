@@ -119,3 +119,31 @@ export function isFancyUITool(name: string): boolean {
 export function isMemoryTool(name: string): boolean {
   return name === "memory" || name === "memory_apply_patch";
 }
+
+/**
+ * Checks if a tool is a file edit tool (has old_string/new_string args)
+ */
+export function isFileEditTool(name: string): boolean {
+  return (
+    name === "edit" ||
+    name === "Edit" ||
+    name === "multi_edit" ||
+    name === "MultiEdit" ||
+    name === "Replace" ||
+    name === "replace"
+  );
+}
+
+/**
+ * Checks if a tool is a file write tool (has file_path/content args)
+ */
+export function isFileWriteTool(name: string): boolean {
+  return (
+    name === "write" ||
+    name === "Write" ||
+    name === "WriteFile" ||
+    name === "write_file" ||
+    name === "write_file_gemini" ||
+    name === "WriteFileGemini"
+  );
+}

@@ -30,6 +30,7 @@ interface DiffLineProps {
   content: string;
   compareContent?: string; // The other version to compare against for word diff
   columns: number;
+  showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
 function DiffLine({
@@ -38,6 +39,7 @@ function DiffLine({
   content,
   compareContent,
   columns,
+  showLineNumbers = true,
 }: DiffLineProps) {
   const prefix = type === "add" ? "+" : "-";
   const lineBg =
@@ -45,8 +47,13 @@ function DiffLine({
   const wordBg =
     type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
 
-  const prefixWidth = 1; // Single space prefix
-  const contentWidth = Math.max(0, columns - prefixWidth);
+  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const contentWidth = Math.max(0, columns - gutterWidth);
+
+  // Build the line prefix (with or without line number)
+  const linePrefix = showLineNumbers
+    ? `${lineNumber} ${prefix}  `
+    : `${prefix} `;
 
   // If we have something to compare against, do word-level diff
   if (compareContent !== undefined && content.trim() && compareContent.trim()) {
@@ -57,13 +64,13 @@ function DiffLine({
 
     return (
       <Box flexDirection="row">
-        <Box width={prefixWidth} flexShrink={0}>
-          <Text> </Text>
+        <Box width={gutterWidth} flexShrink={0}>
+          <Text>{"    "}</Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
             <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-              {`${lineNumber} ${prefix}  `}
+              {linePrefix}
             </Text>
             {wordDiffs.map((part, i) => {
               if (part.added && type === "add") {
@@ -112,8 +119,8 @@ function DiffLine({
   // No comparison, just show the whole line with one background
   return (
     <Box flexDirection="row">
-      <Box width={prefixWidth} flexShrink={0}>
-        <Text> </Text>
+      <Box width={gutterWidth} flexShrink={0}>
+        <Text>{"    "}</Text>
       </Box>
       <Box flexGrow={1} width={contentWidth}>
         <Text
@@ -121,7 +128,7 @@ function DiffLine({
           color={colors.diff.textOnDark}
           wrap="wrap"
         >
-          {`${lineNumber} ${prefix}  ${content}`}
+          {`${linePrefix}${content}`}
         </Text>
       </Box>
     </Box>
@@ -139,19 +146,20 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
   const lines = content.split("\n");
   const lineCount = lines.length;
 
-  const prefixWidth = 1; // Single space prefix
-  const contentWidth = Math.max(0, columns - prefixWidth);
+  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
     <Box flexDirection="column">
       <Text>
-        {" "}
-        ⎿ Wrote {lineCount} line{lineCount !== 1 ? "s" : ""} to {relativePath}
+        {"  "}
+        <Text dimColor>⎿</Text> Wrote {lineCount} line
+        {lineCount !== 1 ? "s" : ""} to {relativePath}
       </Text>
       {lines.map((line, i) => (
         <Box key={`line-${i}-${line.substring(0, 20)}`} flexDirection="row">
-          <Box width={prefixWidth} flexShrink={0}>
-            <Text> </Text>
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>{"    "}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
             <Text wrap="wrap">{line}</Text>
@@ -166,12 +174,14 @@ interface EditRendererProps {
   filePath: string;
   oldString: string;
   newString: string;
+  showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
 export function EditRenderer({
   filePath,
   oldString,
   newString,
+  showLineNumbers = true,
 }: EditRendererProps) {
   const columns = useTerminalWidth();
   const relativePath = formatRelativePath(filePath);
@@ -190,8 +200,8 @@ export function EditRenderer({
   return (
     <Box flexDirection="column">
       <Text>
-        {" "}
-        ⎿ Updated {relativePath} with {additions} addition
+        {"  "}
+        <Text dimColor>⎿</Text> Updated {relativePath} with {additions} addition
         {additions !== 1 ? "s" : ""} and {removals} removal
         {removals !== 1 ? "s" : ""}
       </Text>
@@ -205,6 +215,7 @@ export function EditRenderer({
           content={line}
           compareContent={singleLineEdit ? newLines[0] : undefined}
           columns={columns}
+          showLineNumbers={showLineNumbers}
         />
       ))}
 
@@ -217,6 +228,7 @@ export function EditRenderer({
           content={line}
           compareContent={singleLineEdit ? oldLines[0] : undefined}
           columns={columns}
+          showLineNumbers={showLineNumbers}
         />
       ))}
     </Box>
@@ -229,9 +241,14 @@ interface MultiEditRendererProps {
     old_string: string;
     new_string: string;
   }>;
+  showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
-export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
+export function MultiEditRenderer({
+  filePath,
+  edits,
+  showLineNumbers = true,
+}: MultiEditRendererProps) {
   const columns = useTerminalWidth();
   const relativePath = formatRelativePath(filePath);
 
@@ -247,8 +264,9 @@ export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
   return (
     <Box flexDirection="column">
       <Text>
-        {" "}
-        ⎿ Updated {relativePath} with {totalAdditions} addition
+        {"  "}
+        <Text dimColor>⎿</Text> Updated {relativePath} with {totalAdditions}{" "}
+        addition
         {totalAdditions !== 1 ? "s" : ""} and {totalRemovals} removal
         {totalRemovals !== 1 ? "s" : ""}
       </Text>
@@ -267,25 +285,27 @@ export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
             {oldLines.map((line, i) => (
               <DiffLine
                 key={`old-${index}-${i}-${line.substring(0, 20)}`}
-                lineNumber={i + 1} // TODO: This should be actual file line numbers
+                lineNumber={i + 1}
                 type="remove"
                 content={line}
                 compareContent={
                   singleLineEdit && i === 0 ? newLines[0] : undefined
                 }
                 columns={columns}
+                showLineNumbers={showLineNumbers}
               />
             ))}
             {newLines.map((line, i) => (
               <DiffLine
                 key={`new-${index}-${i}-${line.substring(0, 20)}`}
-                lineNumber={i + 1} // TODO: This should be actual file line numbers
+                lineNumber={i + 1}
                 type="add"
                 content={line}
                 compareContent={
                   singleLineEdit && i === 0 ? oldLines[0] : undefined
                 }
                 columns={columns}
+                showLineNumbers={showLineNumbers}
               />
             ))}
           </Box>
