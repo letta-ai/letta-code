@@ -5,14 +5,17 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
 // Helper to format path as relative with ../
-function formatRelativePath(filePath: string): string {
+/**
+ * Formats a file path for display (matches Claude Code style):
+ * - Files within cwd: relative path without ./ prefix
+ * - Files outside cwd: full absolute path
+ */
+function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
-
-  // If file is outside cwd, it will start with ..
-  // If file is in cwd, add ./ prefix
-  if (!relativePath.startsWith("..")) {
-    return `./${relativePath}`;
+  // If path goes outside cwd (starts with ..), show full absolute path
+  if (relativePath.startsWith("..")) {
+    return filePath;
   }
   return relativePath;
 }
@@ -142,7 +145,7 @@ interface WriteRendererProps {
 
 export function WriteRenderer({ filePath, content }: WriteRendererProps) {
   const columns = useTerminalWidth();
-  const relativePath = formatRelativePath(filePath);
+  const relativePath = formatDisplayPath(filePath);
   const lines = content.split("\n");
   const lineCount = lines.length;
 
@@ -184,7 +187,7 @@ export function EditRenderer({
   showLineNumbers = true,
 }: EditRendererProps) {
   const columns = useTerminalWidth();
-  const relativePath = formatRelativePath(filePath);
+  const relativePath = formatDisplayPath(filePath);
   const oldLines = oldString.split("\n");
   const newLines = newString.split("\n");
 
@@ -250,7 +253,7 @@ export function MultiEditRenderer({
   showLineNumbers = true,
 }: MultiEditRendererProps) {
   const columns = useTerminalWidth();
-  const relativePath = formatRelativePath(filePath);
+  const relativePath = formatDisplayPath(filePath);
 
   // Count total additions and removals
   let totalAdditions = 0;

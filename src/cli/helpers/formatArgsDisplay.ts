@@ -15,22 +15,18 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
 
 /**
- * Converts an absolute path to a relative path from cwd.
- * Returns just the filename if in current directory.
+ * Formats a file path for display (matches Claude Code style):
+ * - Files within cwd: relative path without ./ prefix
+ * - Files outside cwd: full absolute path
  */
-function formatRelativePath(filePath: string): string {
+function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
-  // If it's just a filename (no slashes), return as-is
-  // If it starts with .., keep the relative path
-  // Otherwise add ./ prefix
-  if (!relativePath.includes("/") && !relativePath.includes("\\")) {
-    return relativePath;
-  }
+  // If path goes outside cwd (starts with ..), show full absolute path
   if (relativePath.startsWith("..")) {
-    return relativePath;
+    return filePath;
   }
-  return `./${relativePath}`;
+  return relativePath;
 }
 
 /**
@@ -89,7 +85,7 @@ export function formatArgsDisplay(
           if (isPatchTool(toolName) && typeof parsed.input === "string") {
             const patchInfo = parsePatchInput(parsed.input);
             if (patchInfo) {
-              display = formatRelativePath(patchInfo.path);
+              display = formatDisplayPath(patchInfo.path);
               return { display, parsed };
             }
             // Fallback if parsing fails
@@ -100,21 +96,21 @@ export function formatArgsDisplay(
           // Edit tools: show just the file path
           if (isFileEditTool(toolName) && parsed.file_path) {
             const filePath = String(parsed.file_path);
-            display = formatRelativePath(filePath);
+            display = formatDisplayPath(filePath);
             return { display, parsed };
           }
 
           // Write tools: show just the file path
           if (isFileWriteTool(toolName) && parsed.file_path) {
             const filePath = String(parsed.file_path);
-            display = formatRelativePath(filePath);
+            display = formatDisplayPath(filePath);
             return { display, parsed };
           }
 
           // Read tools: show file path + any other useful args (limit, offset)
           if (isFileReadTool(toolName) && parsed.file_path) {
             const filePath = String(parsed.file_path);
-            const relativePath = formatRelativePath(filePath);
+            const relativePath = formatDisplayPath(filePath);
 
             // Collect other non-hidden args
             const otherArgs: string[] = [];
