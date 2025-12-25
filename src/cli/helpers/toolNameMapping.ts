@@ -13,7 +13,7 @@
 export function getDisplayToolName(rawName: string): string {
   // Anthropic toolset
   if (rawName === "write") return "Write";
-  if (rawName === "edit" || rawName === "multi_edit") return "Edit";
+  if (rawName === "edit" || rawName === "multi_edit") return "Update";
   if (rawName === "read") return "Read";
   if (rawName === "bash") return "Bash";
   if (rawName === "grep") return "Grep";
@@ -61,11 +61,11 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "ReadManyFiles") return "Read Multiple";
 
   // Additional tools
-  if (rawName === "Replace" || rawName === "replace") return "Edit";
+  if (rawName === "Replace" || rawName === "replace") return "Update";
   if (rawName === "WriteFile" || rawName === "write_file") return "Write";
   if (rawName === "KillBash") return "Kill Shell";
   if (rawName === "BashOutput") return "Shell Output";
-  if (rawName === "MultiEdit") return "Edit";
+  if (rawName === "MultiEdit") return "Update";
 
   // No mapping found, return as-is
   return rawName;
@@ -145,5 +145,44 @@ export function isFileWriteTool(name: string): boolean {
     name === "write_file" ||
     name === "write_file_gemini" ||
     name === "WriteFileGemini"
+  );
+}
+
+/**
+ * Checks if a tool is a file read tool (has file_path arg)
+ */
+export function isFileReadTool(name: string): boolean {
+  return (
+    name === "read" ||
+    name === "Read" ||
+    name === "ReadFile" ||
+    name === "read_file" ||
+    name === "read_file_gemini" ||
+    name === "ReadFileGemini" ||
+    name === "read_many_files" ||
+    name === "ReadManyFiles"
+  );
+}
+
+/**
+ * Checks if a tool is a patch tool (applies unified diffs)
+ */
+export function isPatchTool(name: string): boolean {
+  return name === "apply_patch" || name === "ApplyPatch";
+}
+
+/**
+ * Checks if a tool is a shell/bash tool
+ */
+export function isShellTool(name: string): boolean {
+  return (
+    name === "bash" ||
+    name === "Bash" ||
+    name === "shell" ||
+    name === "Shell" ||
+    name === "shell_command" ||
+    name === "ShellCommand" ||
+    name === "run_shell_command" ||
+    name === "RunShellCommand"
   );
 }

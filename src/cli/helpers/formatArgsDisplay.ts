@@ -1,16 +1,76 @@
 // Utility to format tool argument JSON strings into a concise display label
 // Copied from old letta-code repo to preserve exact formatting behavior
 
+import { relative } from "node:path";
+import {
+  isFileEditTool,
+  isFileReadTool,
+  isFileWriteTool,
+  isPatchTool,
+  isShellTool,
+} from "./toolNameMapping.js";
+
 // Small helpers
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
 
-export function formatArgsDisplay(argsJson: string): {
+/**
+ * Converts an absolute path to a relative path from cwd.
+ * Returns just the filename if in current directory.
+ */
+function formatRelativePath(filePath: string): string {
+  const cwd = process.cwd();
+  const relativePath = relative(cwd, filePath);
+  // If it's just a filename (no slashes), return as-is
+  // If it starts with .., keep the relative path
+  // Otherwise add ./ prefix
+  if (!relativePath.includes("/") && !relativePath.includes("\\")) {
+    return relativePath;
+  }
+  if (relativePath.startsWith("..")) {
+    return relativePath;
+  }
+  return `./${relativePath}`;
+}
+
+/**
+ * Parses a patch input to extract operation type and file path.
+ * Returns null if parsing fails.
+ */
+export function parsePatchInput(
+  input: string,
+): { kind: "add" | "update" | "delete"; path: string } | null {
+  if (!input) return null;
+
+  // Look for the first operation marker
+  const addMatch = /\*\*\* Add File:\s*(.+)/.exec(input);
+  if (addMatch?.[1]) {
+    return { kind: "add", path: addMatch[1].trim() };
+  }
+
+  const updateMatch = /\*\*\* Update File:\s*(.+)/.exec(input);
+  if (updateMatch?.[1]) {
+    return { kind: "update", path: updateMatch[1].trim() };
+  }
+
+  const deleteMatch = /\*\*\* Delete File:\s*(.+)/.exec(input);
+  if (deleteMatch?.[1]) {
+    return { kind: "delete", path: deleteMatch[1].trim() };
+  }
+
+  return null;
+}
+
+export function formatArgsDisplay(
+  argsJson: string,
+  toolName?: string,
+): {
   display: string;
   parsed: Record<string, unknown>;
 } {
   let parsed: Record<string, unknown> = {};
   let display = "…";
+
   try {
     if (argsJson?.trim()) {
       const p = JSON.parse(argsJson);
@@ -22,6 +82,68 @@ export function formatArgsDisplay(argsJson: string): {
         >;
         if ("request_heartbeat" in clone) delete clone.request_heartbeat;
         parsed = clone;
+
+        // Special handling for file tools - show clean relative path
+        if (toolName) {
+          // Patch tools: parse input and show operation + path
+          if (isPatchTool(toolName) && typeof parsed.input === "string") {
+            const patchInfo = parsePatchInput(parsed.input);
+            if (patchInfo) {
+              display = formatRelativePath(patchInfo.path);
+              return { display, parsed };
+            }
+            // Fallback if parsing fails
+            display = "…";
+            return { display, parsed };
+          }
+
+          // Edit tools: show just the file path
+          if (isFileEditTool(toolName) && parsed.file_path) {
+            const filePath = String(parsed.file_path);
+            display = formatRelativePath(filePath);
+            return { display, parsed };
+          }
+
+          // Write tools: show just the file path
+          if (isFileWriteTool(toolName) && parsed.file_path) {
+            const filePath = String(parsed.file_path);
+            display = formatRelativePath(filePath);
+            return { display, parsed };
+          }
+
+          // Read tools: show file path + any other useful args (limit, offset)
+          if (isFileReadTool(toolName) && parsed.file_path) {
+            const filePath = String(parsed.file_path);
+            const relativePath = formatRelativePath(filePath);
+
+            // Collect other non-hidden args
+            const otherArgs: string[] = [];
+            for (const [k, v] of Object.entries(parsed)) {
+              if (k === "file_path") continue;
+              if (v === undefined || v === null) continue;
+              if (typeof v === "boolean" || typeof v === "number") {
+                otherArgs.push(`${k}=${v}`);
+              } else if (typeof v === "string" && v.length <= 30) {
+                otherArgs.push(`${k}="${v}"`);
+              }
+            }
+
+            if (otherArgs.length > 0) {
+              display = `${relativePath}, ${otherArgs.join(", ")}`;
+            } else {
+              display = relativePath;
+            }
+            return { display, parsed };
+          }
+
+          // Shell/Bash tools: show just the command
+          if (isShellTool(toolName) && parsed.command) {
+            display = String(parsed.command);
+            return { display, parsed };
+          }
+        }
+
+        // Default handling for other tools
         const keys = Object.keys(parsed);
         const firstKey = keys[0];
         if (

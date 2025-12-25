@@ -2,12 +2,16 @@ import { Box, Text } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
-import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
+import {
+  formatArgsDisplay,
+  parsePatchInput,
+} from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
   isFileEditTool,
   isFileWriteTool,
   isMemoryTool,
+  isPatchTool,
   isPlanTool,
   isTaskTool,
   isTodoTool,
@@ -65,10 +69,29 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   }
 
   // Apply tool name remapping
-  const displayName = getDisplayToolName(rawName);
+  let displayName = getDisplayToolName(rawName);
+
+  // For Patch tools, override display name based on patch content
+  // (Add → Write, Update → Update, Delete → Delete)
+  if (isPatchTool(rawName)) {
+    try {
+      const parsedArgs = JSON.parse(argsText);
+      if (parsedArgs.input) {
+        const patchInfo = parsePatchInput(parsedArgs.input);
+        if (patchInfo) {
+          if (patchInfo.kind === "add") displayName = "Write";
+          else if (patchInfo.kind === "update") displayName = "Update";
+          else if (patchInfo.kind === "delete") displayName = "Delete";
+        }
+      }
+    } catch {
+      // Keep default "Patch" name if parsing fails
+    }
+  }
 
   // Format arguments for display using the old formatting logic
-  const formatted = formatArgsDisplay(argsText);
+  // Pass rawName to enable special formatting for file tools
+  const formatted = formatArgsDisplay(argsText, rawName);
   const args = `(${formatted.display})`;
 
   const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
