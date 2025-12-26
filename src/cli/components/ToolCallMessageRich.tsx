@@ -2,10 +2,17 @@ import { Box, Text } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
-import { formatArgsDisplay } from "../helpers/formatArgsDisplay.js";
+import {
+  formatArgsDisplay,
+  parsePatchInput,
+  parsePatchOperations,
+} from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
+  isFileEditTool,
+  isFileWriteTool,
   isMemoryTool,
+  isPatchTool,
   isPlanTool,
   isTaskTool,
   isTodoTool,
@@ -13,6 +20,11 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
+import {
+  EditRenderer,
+  MultiEditRenderer,
+  WriteRenderer,
+} from "./DiffRenderer.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
@@ -58,10 +70,29 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
   }
 
   // Apply tool name remapping
-  const displayName = getDisplayToolName(rawName);
+  let displayName = getDisplayToolName(rawName);
+
+  // For Patch tools, override display name based on patch content
+  // (Add → Write, Update → Update, Delete → Delete)
+  if (isPatchTool(rawName)) {
+    try {
+      const parsedArgs = JSON.parse(argsText);
+      if (parsedArgs.input) {
+        const patchInfo = parsePatchInput(parsedArgs.input);
+        if (patchInfo) {
+          if (patchInfo.kind === "add") displayName = "Write";
+          else if (patchInfo.kind === "update") displayName = "Update";
+          else if (patchInfo.kind === "delete") displayName = "Delete";
+        }
+      }
+    } catch {
+      // Keep default "Patch" name if parsing fails
+    }
+  }
 
   // Format arguments for display using the old formatting logic
-  const formatted = formatArgsDisplay(argsText);
+  // Pass rawName to enable special formatting for file tools
+  const formatted = formatArgsDisplay(argsText, rawName);
   const args = `(${formatted.display})`;
 
   const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
@@ -227,6 +258,120 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
       // If MemoryDiffRenderer returns null, fall through to regular handling
     }
 
+    // Check if this is a file edit tool - show diff instead of success message
+    if (isFileEditTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        const filePath = parsedArgs.file_path || "";
+
+        // Multi-edit: has edits array
+        if (parsedArgs.edits && Array.isArray(parsedArgs.edits)) {
+          const edits = parsedArgs.edits.map(
+            (e: { old_string?: string; new_string?: string }) => ({
+              old_string: e.old_string || "",
+              new_string: e.new_string || "",
+            }),
+          );
+          return (
+            <MultiEditRenderer
+              filePath={filePath}
+              edits={edits}
+              showLineNumbers={false}
+            />
+          );
+        }
+
+        // Single edit: has old_string/new_string
+        if (parsedArgs.old_string !== undefined) {
+          return (
+            <EditRenderer
+              filePath={filePath}
+              oldString={parsedArgs.old_string || ""}
+              newString={parsedArgs.new_string || ""}
+              showLineNumbers={false}
+            />
+          );
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
+    // Check if this is a file write tool - show written content
+    if (isFileWriteTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        const filePath = parsedArgs.file_path || "";
+        const content = parsedArgs.content || "";
+
+        if (filePath && content) {
+          return <WriteRenderer filePath={filePath} content={content} />;
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
+    // Check if this is a patch tool - show diff/content based on operation type
+    if (isPatchTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        if (parsedArgs.input) {
+          const operations = parsePatchOperations(parsedArgs.input);
+
+          if (operations.length > 0) {
+            return (
+              <Box flexDirection="column">
+                {operations.map((op) => {
+                  if (op.kind === "add") {
+                    return (
+                      <WriteRenderer
+                        key={`patch-add-${op.path}`}
+                        filePath={op.path}
+                        content={op.content}
+                      />
+                    );
+                  }
+                  if (op.kind === "update") {
+                    return (
+                      <EditRenderer
+                        key={`patch-update-${op.path}`}
+                        filePath={op.path}
+                        oldString={op.oldString}
+                        newString={op.newString}
+                        showLineNumbers={false}
+                      />
+                    );
+                  }
+                  if (op.kind === "delete") {
+                    const gutterWidth = 4;
+                    return (
+                      <Box key={`patch-delete-${op.path}`} flexDirection="row">
+                        <Box width={gutterWidth} flexShrink={0}>
+                          <Text>
+                            {"  "}
+                            <Text dimColor>⎿</Text>
+                          </Text>
+                        </Box>
+                        <Box flexGrow={1}>
+                          <Text wrap="wrap">
+                            Deleted <Text bold>{op.path}</Text>
+                          </Text>
+                        </Box>
+                      </Box>
+                    );
+                  }
+                  return null;
+                })}
+              </Box>
+            );
+          }
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
     // Regular result handling
     const isError = line.resultOk === false;
 
@@ -278,16 +423,22 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
             <Text wrap="wrap">
               {isMemoryTool(rawName) ? (
                 <>
-                  <Text color={colors.tool.memoryName}>{displayName}</Text>
+                  <Text bold color={colors.tool.memoryName}>
+                    {displayName}
+                  </Text>
                   {args}
                 </>
               ) : (
-                `${displayName}${args}`
+                <>
+                  <Text bold>{displayName}</Text>
+                  {args}
+                </>
               )}
             </Text>
           ) : (
             <Box flexDirection="row">
               <Text
+                bold
                 color={
                   isMemoryTool(rawName) ? colors.tool.memoryName : undefined
                 }

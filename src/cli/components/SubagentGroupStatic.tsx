@@ -16,6 +16,7 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
 
 // ============================================================================
@@ -49,6 +50,9 @@ interface AgentRowProps {
 
 const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
+  const columns = useTerminalWidth();
+  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const contentWidth = Math.max(0, columns - gutterWidth);
 
   const dotColor =
     agent.status === "completed"
@@ -72,24 +76,41 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor>
-            {" ⎿  Subagent: "}
-            {agent.agentURL}
-          </Text>
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+              <Text dimColor>{" ⎿  "}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap" dimColor>
+              Subagent: {agent.agentURL}
+            </Text>
+          </Box>
         </Box>
       )}
 
       {/* Status line */}
       <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor>{" ⎿  Done"}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Done"}</Text>
+          </>
         ) : (
-          <Text color={colors.subagent.error}>
-            {" ⎿  "}
-            {agent.error}
-          </Text>
+          <>
+            <Box width={gutterWidth} flexShrink={0}>
+              <Text>
+                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+                <Text dimColor>{" ⎿  "}</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap" color={colors.subagent.error}>
+                {agent.error}
+              </Text>
+            </Box>
+          </>
         )}
       </Box>
     </Box>

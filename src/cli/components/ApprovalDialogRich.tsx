@@ -4,6 +4,7 @@ import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
+import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import type { ApprovalRequest } from "../helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
@@ -185,16 +186,61 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 
   if (t === "apply_patch" || t === "applypatch") {
     const inputVal = parsedArgs?.input;
-    const patchPreview =
-      typeof inputVal === "string" && inputVal.length > 100
-        ? `${inputVal.slice(0, 100)}...`
-        : typeof inputVal === "string"
-          ? inputVal
-          : "(no patch content)";
+    if (typeof inputVal === "string") {
+      const operations = parsePatchOperations(inputVal);
+      if (operations.length > 0) {
+        return (
+          <Box flexDirection="column" paddingLeft={2}>
+            {operations.map((op) => {
+              if (op.kind === "add") {
+                return (
+                  <AdvancedDiffRenderer
+                    key={`patch-add-${op.path}`}
+                    precomputed={precomputedDiff ?? undefined}
+                    kind="write"
+                    filePath={op.path}
+                    content={op.content}
+                    showHeader={false}
+                  />
+                );
+              }
+              if (op.kind === "update") {
+                return (
+                  <AdvancedDiffRenderer
+                    key={`patch-update-${op.path}`}
+                    precomputed={precomputedDiff ?? undefined}
+                    kind="edit"
+                    filePath={op.path}
+                    oldString={op.oldString}
+                    newString={op.newString}
+                    showHeader={false}
+                  />
+                );
+              }
+              if (op.kind === "delete") {
+                return (
+                  <Text key={`patch-delete-${op.path}`}>
+                    Delete file: {op.path}
+                  </Text>
+                );
+              }
+              return null;
+            })}
+          </Box>
+        );
+      }
+    }
 
+    // Fallback for unparseable patches
     return (
       <Box flexDirection="column" paddingLeft={2}>
-        <Text dimColor>{patchPreview}</Text>
+        <Text dimColor>
+          {typeof inputVal === "string" && inputVal.length > 100
+            ? `${inputVal.slice(0, 100)}...`
+            : typeof inputVal === "string"
+              ? inputVal
+              : "(no patch content)"}
+        </Text>
       </Box>
     );
   }
@@ -623,13 +669,30 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     return null;
   }, [approvalRequest, parsedArgs]);
 
+  // Get the human-readable header label
+  const headerLabel = useMemo(() => {
+    if (!approvalRequest) return "";
+    const t = approvalRequest.toolName.toLowerCase();
+    // For patch tools, determine header from operation type
+    if (t === "apply_patch" || t === "applypatch") {
+      if (parsedArgs?.input && typeof parsedArgs.input === "string") {
+        const operations = parsePatchOperations(parsedArgs.input);
+        const firstOp = operations[0];
+        if (firstOp) {
+          if (firstOp.kind === "add") return "Write File";
+          if (firstOp.kind === "update") return "Edit File";
+          if (firstOp.kind === "delete") return "Delete File";
+        }
+      }
+      return "Apply Patch"; // Fallback
+    }
+    return getHeaderLabel(approvalRequest.toolName);
+  }, [approvalRequest, parsedArgs]);
+
   // Guard: should never happen as parent checks length, but satisfies TypeScript
   if (!approvalRequest) {
     return null;
   }
-
-  // Get the human-readable header label
-  const headerLabel = getHeaderLabel(approvalRequest.toolName);
 
   if (isEnteringReason) {
     return (

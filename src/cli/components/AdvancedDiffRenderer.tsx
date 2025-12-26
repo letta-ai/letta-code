@@ -257,9 +257,20 @@ export function AdvancedDiffRenderer(
   }
 
   if (result.mode === "unpreviewable") {
+    const gutterWidth = 4;
     return (
-      <Box flexDirection="column">
-        <Text dimColor> ⎿ Cannot preview changes: {result.reason}</Text>
+      <Box flexDirection="row">
+        <Box width={gutterWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1}>
+          <Text wrap="wrap" dimColor>
+            Cannot preview changes: {result.reason}
+          </Text>
+        </Box>
       </Box>
     );
   }
