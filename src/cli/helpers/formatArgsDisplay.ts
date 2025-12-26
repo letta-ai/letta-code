@@ -259,7 +259,17 @@ export function formatArgsDisplay(
           if (isShellTool(toolName) && parsed.command) {
             // Handle both string and array command formats
             if (Array.isArray(parsed.command)) {
-              display = parsed.command.join(" ");
+              // For ["bash", "-c", "actual command"], show just the actual command
+              const cmd = parsed.command;
+              if (
+                cmd.length >= 3 &&
+                (cmd[0] === "bash" || cmd[0] === "sh") &&
+                (cmd[1] === "-c" || cmd[1] === "-lc")
+              ) {
+                display = cmd.slice(2).join(" ");
+              } else {
+                display = cmd.join(" ");
+              }
             } else {
               display = String(parsed.command);
             }
