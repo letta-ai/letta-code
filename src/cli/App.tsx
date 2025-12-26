@@ -94,7 +94,13 @@ import {
   toLines,
 } from "./helpers/accumulator";
 import { backfillBuffers } from "./helpers/backfill";
+import {
+  type AdvancedDiffSuccess,
+  computeAdvancedDiff,
+  parsePatchToAdvancedDiff,
+} from "./helpers/diff";
 import { formatErrorDetails } from "./helpers/errorFormatter";
+import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildMemoryReminder,
   parseMemoryPreference,
@@ -117,6 +123,11 @@ import {
   clearSubagentsByIds,
 } from "./helpers/subagentState";
 import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
+import {
+  isFileEditTool,
+  isFileWriteTool,
+  isPatchTool,
+} from "./helpers/toolNameMapping";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -682,6 +693,10 @@ export default function App({
       if ("phase" in ln && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
+        // Note: We intentionally don't cleanup precomputedDiffs here because
+        // the Static area renders AFTER this function returns (on next React tick),
+        // and the diff needs to be available for ToolCallMessage to render.
+        // The diffs will be cleaned up when the session ends or on next session start.
       }
     }
 
@@ -718,6 +733,12 @@ export default function App({
 
   // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
+
+  // Cache precomputed diffs from approval dialogs for tool return rendering
+  // Key: toolCallId or "toolCallId:filePath" for Patch operations
+  const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
+    new Map(),
+  );
 
   // Recompute UI state from buffers after chunks (micro-batched)
   const refreshDerived = useCallback(() => {
@@ -1252,6 +1273,77 @@ export default function App({
               } else {
                 // decision === "allow"
                 autoAllowed.push(ac);
+              }
+            }
+
+            // Precompute diffs for auto-allowed file edit tools before execution
+            for (const ac of autoAllowed) {
+              const toolName = ac.approval.toolName;
+              const toolCallId = ac.approval.toolCallId;
+              try {
+                const args = JSON.parse(ac.approval.toolArgs || "{}");
+
+                if (isFileWriteTool(toolName)) {
+                  const filePath = args.file_path as string | undefined;
+                  if (filePath) {
+                    const result = computeAdvancedDiff({
+                      kind: "write",
+                      filePath,
+                      content: (args.content as string) || "",
+                    });
+                    if (result.mode === "advanced") {
+                      precomputedDiffsRef.current.set(toolCallId, result);
+                    }
+                  }
+                } else if (isFileEditTool(toolName)) {
+                  const filePath = args.file_path as string | undefined;
+                  if (filePath) {
+                    // Check if it's a multi-edit (has edits array) or single edit
+                    if (args.edits && Array.isArray(args.edits)) {
+                      const result = computeAdvancedDiff({
+                        kind: "multi_edit",
+                        filePath,
+                        edits: args.edits as Array<{
+                          old_string: string;
+                          new_string: string;
+                          replace_all?: boolean;
+                        }>,
+                      });
+                      if (result.mode === "advanced") {
+                        precomputedDiffsRef.current.set(toolCallId, result);
+                      }
+                    } else {
+                      const result = computeAdvancedDiff({
+                        kind: "edit",
+                        filePath,
+                        oldString: (args.old_string as string) || "",
+                        newString: (args.new_string as string) || "",
+                        replaceAll: args.replace_all as boolean | undefined,
+                      });
+                      if (result.mode === "advanced") {
+                        precomputedDiffsRef.current.set(toolCallId, result);
+                      }
+                    }
+                  }
+                } else if (isPatchTool(toolName) && args.input) {
+                  // Patch tools - parse hunks directly (patches ARE diffs)
+                  const operations = parsePatchOperations(args.input as string);
+                  for (const op of operations) {
+                    const key = `${toolCallId}:${op.path}`;
+                    if (op.kind === "add" || op.kind === "update") {
+                      const result = parsePatchToAdvancedDiff(
+                        op.patchLines,
+                        op.path,
+                      );
+                      if (result) {
+                        precomputedDiffsRef.current.set(key, result);
+                      }
+                    }
+                    // Delete operations don't need diffs
+                  }
+                }
+              } catch {
+                // Ignore errors in diff computation for auto-allowed tools
               }
             }
 
@@ -3711,6 +3803,79 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
             if (needsUserInput.length === 0) {
+              // Precompute diffs for auto-allowed file edit tools before execution
+              for (const ac of autoAllowed) {
+                const toolName = ac.approval.toolName;
+                const toolCallId = ac.approval.toolCallId;
+                try {
+                  const args = JSON.parse(ac.approval.toolArgs || "{}");
+
+                  if (isFileWriteTool(toolName)) {
+                    const filePath = args.file_path as string | undefined;
+                    if (filePath) {
+                      const result = computeAdvancedDiff({
+                        kind: "write",
+                        filePath,
+                        content: (args.content as string) || "",
+                      });
+                      if (result.mode === "advanced") {
+                        precomputedDiffsRef.current.set(toolCallId, result);
+                      }
+                    }
+                  } else if (isFileEditTool(toolName)) {
+                    const filePath = args.file_path as string | undefined;
+                    if (filePath) {
+                      // Check if it's a multi-edit (has edits array) or single edit
+                      if (args.edits && Array.isArray(args.edits)) {
+                        const result = computeAdvancedDiff({
+                          kind: "multi_edit",
+                          filePath,
+                          edits: args.edits as Array<{
+                            old_string: string;
+                            new_string: string;
+                            replace_all?: boolean;
+                          }>,
+                        });
+                        if (result.mode === "advanced") {
+                          precomputedDiffsRef.current.set(toolCallId, result);
+                        }
+                      } else {
+                        const result = computeAdvancedDiff({
+                          kind: "edit",
+                          filePath,
+                          oldString: (args.old_string as string) || "",
+                          newString: (args.new_string as string) || "",
+                          replaceAll: args.replace_all as boolean | undefined,
+                        });
+                        if (result.mode === "advanced") {
+                          precomputedDiffsRef.current.set(toolCallId, result);
+                        }
+                      }
+                    }
+                  } else if (isPatchTool(toolName) && args.input) {
+                    // Patch tools - parse hunks directly (patches ARE diffs)
+                    const operations = parsePatchOperations(
+                      args.input as string,
+                    );
+                    for (const op of operations) {
+                      const key = `${toolCallId}:${op.path}`;
+                      if (op.kind === "add" || op.kind === "update") {
+                        const result = parsePatchToAdvancedDiff(
+                          op.patchLines,
+                          op.path,
+                        );
+                        if (result) {
+                          precomputedDiffsRef.current.set(key, result);
+                        }
+                      }
+                      // Delete operations don't need diffs
+                    }
+                  }
+                } catch {
+                  // Ignore errors in diff computation for auto-allowed tools
+                }
+              }
+
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
               const autoAllowedResults = await executeAutoAllowedTools(
                 autoAllowed,
@@ -3793,6 +3958,79 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   .map((ac) => ac.context)
                   .filter(Boolean) as ApprovalContext[],
               );
+
+              // Precompute diffs for auto-allowed file edit tools before execution
+              for (const ac of autoAllowed) {
+                const toolName = ac.approval.toolName;
+                const toolCallId = ac.approval.toolCallId;
+                try {
+                  const args = JSON.parse(ac.approval.toolArgs || "{}");
+
+                  if (isFileWriteTool(toolName)) {
+                    const filePath = args.file_path as string | undefined;
+                    if (filePath) {
+                      const result = computeAdvancedDiff({
+                        kind: "write",
+                        filePath,
+                        content: (args.content as string) || "",
+                      });
+                      if (result.mode === "advanced") {
+                        precomputedDiffsRef.current.set(toolCallId, result);
+                      }
+                    }
+                  } else if (isFileEditTool(toolName)) {
+                    const filePath = args.file_path as string | undefined;
+                    if (filePath) {
+                      // Check if it's a multi-edit (has edits array) or single edit
+                      if (args.edits && Array.isArray(args.edits)) {
+                        const result = computeAdvancedDiff({
+                          kind: "multi_edit",
+                          filePath,
+                          edits: args.edits as Array<{
+                            old_string: string;
+                            new_string: string;
+                            replace_all?: boolean;
+                          }>,
+                        });
+                        if (result.mode === "advanced") {
+                          precomputedDiffsRef.current.set(toolCallId, result);
+                        }
+                      } else {
+                        const result = computeAdvancedDiff({
+                          kind: "edit",
+                          filePath,
+                          oldString: (args.old_string as string) || "",
+                          newString: (args.new_string as string) || "",
+                          replaceAll: args.replace_all as boolean | undefined,
+                        });
+                        if (result.mode === "advanced") {
+                          precomputedDiffsRef.current.set(toolCallId, result);
+                        }
+                      }
+                    }
+                  } else if (isPatchTool(toolName) && args.input) {
+                    // Patch tools - parse hunks directly (patches ARE diffs)
+                    const operations = parsePatchOperations(
+                      args.input as string,
+                    );
+                    for (const op of operations) {
+                      const key = `${toolCallId}:${op.path}`;
+                      if (op.kind === "add" || op.kind === "update") {
+                        const result = parsePatchToAdvancedDiff(
+                          op.patchLines,
+                          op.path,
+                        );
+                        if (result) {
+                          precomputedDiffsRef.current.set(key, result);
+                        }
+                      }
+                      // Delete operations don't need diffs
+                    }
+                  }
+                } catch {
+                  // Ignore errors in diff computation for auto-allowed tools
+                }
+              }
 
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
               const autoAllowedWithResults = await executeAutoAllowedTools(
@@ -4083,51 +4321,64 @@ DO NOT respond to these messages or otherwise consider them in your response unl
   );
 
   // Handle approval callbacks - sequential review
-  const handleApproveCurrent = useCallback(async () => {
-    if (isExecutingTool) return;
+  const handleApproveCurrent = useCallback(
+    async (diffs?: Map<string, AdvancedDiffSuccess>) => {
+      if (isExecutingTool) return;
 
-    const currentIndex = approvalResults.length;
-    const currentApproval = pendingApprovals[currentIndex];
+      const currentIndex = approvalResults.length;
+      const currentApproval = pendingApprovals[currentIndex];
 
-    if (!currentApproval) return;
+      if (!currentApproval) return;
 
-    setIsExecutingTool(true);
+      // Store precomputed diffs before execution
+      if (diffs) {
+        for (const [key, diff] of diffs) {
+          precomputedDiffsRef.current.set(key, diff);
+        }
+      }
 
-    try {
-      // Store approval decision (don't execute yet - batch execute after all approvals)
-      const decision = {
-        type: "approve" as const,
-        approval: currentApproval,
-      };
+      setIsExecutingTool(true);
 
-      // Check if we're done with all approvals
-      if (currentIndex + 1 >= pendingApprovals.length) {
-        // All approvals collected, execute and send to backend
-        // sendAllResults owns the lock release via its finally block
-        await sendAllResults(decision);
-      } else {
-        // Not done yet, store decision and show next approval
-        setApprovalResults((prev) => [...prev, decision]);
+      try {
+        // Store approval decision (don't execute yet - batch execute after all approvals)
+        const decision = {
+          type: "approve" as const,
+          approval: currentApproval,
+        };
+
+        // Check if we're done with all approvals
+        if (currentIndex + 1 >= pendingApprovals.length) {
+          // All approvals collected, execute and send to backend
+          // sendAllResults owns the lock release via its finally block
+          await sendAllResults(decision);
+        } else {
+          // Not done yet, store decision and show next approval
+          setApprovalResults((prev) => [...prev, decision]);
+          setIsExecutingTool(false);
+        }
+      } catch (e) {
+        const errorDetails = formatErrorDetails(e, agentId);
+        appendError(errorDetails);
+        setStreaming(false);
         setIsExecutingTool(false);
       }
-    } catch (e) {
-      const errorDetails = formatErrorDetails(e, agentId);
-      appendError(errorDetails);
-      setStreaming(false);
-      setIsExecutingTool(false);
-    }
-  }, [
-    agentId,
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    appendError,
-    isExecutingTool,
-    setStreaming,
-  ]);
+    },
+    [
+      agentId,
+      pendingApprovals,
+      approvalResults,
+      sendAllResults,
+      appendError,
+      isExecutingTool,
+      setStreaming,
+    ],
+  );
 
   const handleApproveAlways = useCallback(
-    async (scope?: "project" | "session") => {
+    async (
+      scope?: "project" | "session",
+      diffs?: Map<string, AdvancedDiffSuccess>,
+    ) => {
       if (isExecutingTool) return;
 
       // For now, just handle the first approval with approve-always
@@ -4159,7 +4410,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       refreshDerived();
 
       // Approve current tool (handleApproveCurrent manages the execution guard)
-      await handleApproveCurrent();
+      // Pass diffs through to store them before execution
+      await handleApproveCurrent(diffs);
     },
     [
       approvalResults,
@@ -5011,7 +5263,10 @@ Plan file path: ${planFilePath}`;
             ) : item.kind === "assistant" ? (
               <AssistantMessage line={item} />
             ) : item.kind === "tool_call" ? (
-              <ToolCallMessage line={item} />
+              <ToolCallMessage
+                line={item}
+                precomputedDiffs={precomputedDiffsRef.current}
+              />
             ) : item.kind === "subagent_group" ? (
               <SubagentGroupStatic agents={item.agents} />
             ) : item.kind === "error" ? (
@@ -5053,7 +5308,10 @@ Plan file path: ${planFilePath}`;
                     ) : ln.kind === "assistant" ? (
                       <AssistantMessage line={ln} />
                     ) : ln.kind === "tool_call" ? (
-                      <ToolCallMessage line={ln} />
+                      <ToolCallMessage
+                        line={ln}
+                        precomputedDiffs={precomputedDiffsRef.current}
+                      />
                     ) : ln.kind === "error" ? (
                       <ErrorMessage line={ln} />
                     ) : ln.kind === "status" ? (

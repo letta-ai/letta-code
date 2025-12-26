@@ -60,7 +60,7 @@ function Line({
   text,
   pairText,
   gutterWidth,
-  contentWidth,
+  columns,
   enableWord,
 }: {
   kind: "context" | "remove" | "add";
@@ -68,7 +68,7 @@ function Line({
   text: string;
   pairText?: string; // when '-' followed by '+' to highlight words
   gutterWidth: number;
-  contentWidth: number;
+  columns: number;
   enableWord: boolean;
 }) {
   const symbol = kind === "add" ? "+" : kind === "remove" ? "-" : " ";
@@ -106,21 +106,22 @@ function Line({
         : Diff.diffChars(text, pairText)
       : null;
 
-  // Compute remaining width for the text area within this row
-  const textWidth = Math.max(0, contentWidth - gutterWidth - 2);
+  // Build prefix: "  1 + " (line number + symbol)
+  const linePrefix = `${padLeft(displayNo, gutterWidth)} ${symbol} `;
+  const prefixWidth = linePrefix.length;
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
-    <Box width={contentWidth}>
-      <Box width={gutterWidth}>
-        <Text dimColor>{padLeft(displayNo, gutterWidth)}</Text>
+    <Box flexDirection="row">
+      <Box width={prefixWidth} flexShrink={0}>
+        <Text dimColor={kind === "context"}>
+          {padLeft(displayNo, gutterWidth)}{" "}
+          <Text color={symbolColor}>{symbol}</Text>{" "}
+        </Text>
       </Box>
-      <Box width={2}>
-        <Text color={symbolColor}>{symbol}</Text>
-        <Text> </Text>
-      </Box>
-      <Box width={textWidth}>
+      <Box flexGrow={1} width={contentWidth}>
         {charParts ? (
-          <Text>
+          <Text wrap="wrap" backgroundColor={bgLine}>
             {charParts.map((p, i) => {
               // For '-' lines: render removed + unchanged; drop added
               if (kind === "remove") {
@@ -138,7 +139,6 @@ function Line({
                   return (
                     <Text
                       key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgLine}
                       color={colors.diff.textOnDark}
                     >
                       {p.value}
@@ -162,7 +162,6 @@ function Line({
                   return (
                     <Text
                       key={`${kind}-${i}-${p.value.substring(0, 10)}`}
-                      backgroundColor={bgLine}
                       color={colors.diff.textOnDark}
                     >
                       {p.value}
@@ -172,10 +171,7 @@ function Line({
               }
               // Context (should not occur with charParts), fall back to full line
               return (
-                <Text
-                  key={`context-${i}-${p.value.substring(0, 10)}`}
-                  backgroundColor={bgLine}
-                >
+                <Text key={`context-${i}-${p.value.substring(0, 10)}`}>
                   {p.value}
                 </Text>
               );
@@ -183,6 +179,7 @@ function Line({
           </Text>
         ) : (
           <Text
+            wrap="wrap"
             backgroundColor={bgLine}
             color={kind === "context" ? undefined : colors.diff.textOnDark}
           >
@@ -370,31 +367,101 @@ export function AdvancedDiffRenderer(
       ? `Wrote changes to ${relative}`
       : `Updated ${relative}`;
 
-  // Best-effort width clamp for rendering inside approval panel (border + padding + indent ~ 8 cols)
-  const panelInnerWidth = Math.max(20, columns - 8); // keep a reasonable minimum
+  // If no changes (empty diff), show a message with filepath
+  if (rows.length === 0) {
+    const noChangesGutter = 4;
+    return (
+      <Box flexDirection="column">
+        {showHeader ? (
+          <Box flexDirection="row">
+            <Box width={noChangesGutter} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text wrap="wrap">{header}</Text>
+            </Box>
+          </Box>
+        ) : null}
+        <Box flexDirection="row">
+          <Box width={noChangesGutter} flexShrink={0}>
+            <Text>{"    "}</Text>
+          </Box>
+          <Box flexGrow={1}>
+            <Text dimColor>
+              No changes to <Text bold>{relative}</Text> (file content
+              identical)
+            </Text>
+          </Box>
+        </Box>
+      </Box>
+    );
+  }
+
+  // Gutter width for "  ⎿" prefix (4 chars: 2 spaces + ⎿ + space)
+  const toolResultGutter = 4;
 
   return (
-    <Box flexDirection="column" width={panelInnerWidth}>
+    <Box flexDirection="column">
       {showHeader ? (
         <>
-          <Text>{header}</Text>
-          <Text
-            dimColor
-          >{`Showing ~${ADV_DIFF_CONTEXT_LINES} context line${ADV_DIFF_CONTEXT_LINES === 1 ? "" : "s"}`}</Text>
+          <Box flexDirection="row">
+            <Box width={toolResultGutter} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text wrap="wrap">{header}</Text>
+            </Box>
+          </Box>
+          <Box flexDirection="row">
+            <Box width={toolResultGutter} flexShrink={0}>
+              <Text>{"    "}</Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text
+                dimColor
+              >{`Showing ~${ADV_DIFF_CONTEXT_LINES} context line${ADV_DIFF_CONTEXT_LINES === 1 ? "" : "s"}`}</Text>
+            </Box>
+          </Box>
         </>
       ) : null}
-      {rows.map((r, idx) => (
-        <Line
-          key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
-          kind={r.kind}
-          displayNo={r.displayNo}
-          text={r.text}
-          pairText={r.pairText}
-          gutterWidth={gutterWidth}
-          contentWidth={panelInnerWidth}
-          enableWord={enableWord}
-        />
-      ))}
+      {rows.map((r, idx) =>
+        showHeader ? (
+          <Box
+            key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
+            flexDirection="row"
+          >
+            <Box width={toolResultGutter} flexShrink={0}>
+              <Text>{"    "}</Text>
+            </Box>
+            <Line
+              kind={r.kind}
+              displayNo={r.displayNo}
+              text={r.text}
+              pairText={r.pairText}
+              gutterWidth={gutterWidth}
+              columns={columns - toolResultGutter}
+              enableWord={enableWord}
+            />
+          </Box>
+        ) : (
+          <Line
+            key={`row-${idx}-${r.kind}-${r.displayNo || idx}`}
+            kind={r.kind}
+            displayNo={r.displayNo}
+            text={r.text}
+            pairText={r.pairText}
+            gutterWidth={gutterWidth}
+            columns={columns}
+            enableWord={enableWord}
+          />
+        ),
+      )}
     </Box>
   );
 }

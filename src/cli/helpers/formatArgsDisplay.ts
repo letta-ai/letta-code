@@ -61,8 +61,14 @@ export function parsePatchInput(
  * Patch operation types for result rendering
  */
 export type PatchOperation =
-  | { kind: "add"; path: string; content: string }
-  | { kind: "update"; path: string; oldString: string; newString: string }
+  | { kind: "add"; path: string; content: string; patchLines: string[] }
+  | {
+      kind: "update";
+      path: string;
+      oldString: string;
+      newString: string;
+      patchLines: string[];
+    }
   | { kind: "delete"; path: string };
 
 /**
@@ -96,15 +102,22 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       const path = line.replace("*** Add File:", "").trim();
       i++;
       const contentLines: string[] = [];
+      const patchLines: string[] = [];
       while (i < stopIdx) {
         const raw = lines[i];
         if (raw === undefined || raw.startsWith("*** ")) break;
+        patchLines.push(raw); // Store raw patch line for direct hunk parsing
         if (raw.startsWith("+")) {
           contentLines.push(raw.slice(1));
         }
         i++;
       }
-      operations.push({ kind: "add", path, content: contentLines.join("\n") });
+      operations.push({
+        kind: "add",
+        path,
+        content: contentLines.join("\n"),
+        patchLines,
+      });
       continue;
     }
 
@@ -121,13 +134,16 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       // Collect all hunk lines
       const oldParts: string[] = [];
       const newParts: string[] = [];
+      const patchLines: string[] = []; // Store raw lines for direct hunk parsing
 
       while (i < stopIdx) {
         const hLine = lines[i];
         if (hLine === undefined || hLine.startsWith("*** ")) break;
 
+        patchLines.push(hLine); // Store raw patch line
+
         if (hLine.startsWith("@@")) {
-          // Skip hunk header
+          // Hunk header - don't parse for oldParts/newParts, just store in patchLines
           i++;
           continue;
         }
@@ -161,6 +177,7 @@ export function parsePatchOperations(input: string): PatchOperation[] {
         path,
         oldString: oldParts.join("\n"),
         newString: newParts.join("\n"),
+        patchLines,
       });
       continue;
     }
