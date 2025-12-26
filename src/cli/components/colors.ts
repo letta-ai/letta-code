@@ -75,12 +75,12 @@ export const colors = {
 
   link: {
     text: "cyan",
-    url: "blue",
+    url: brandColors.primaryAccent,
   },
 
   heading: {
     primary: "cyan",
-    secondary: "blue",
+    secondary: brandColors.primaryAccent,
   },
 
   // Status indicators
@@ -134,7 +134,7 @@ export const colors = {
   // Info/modal views
   info: {
     border: brandColors.primaryAccent,
-    prompt: "blue",
+    prompt: brandColors.primaryAccent,
   },
 
   // Diff rendering
