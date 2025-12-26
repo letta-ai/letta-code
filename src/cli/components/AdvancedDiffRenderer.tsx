@@ -53,6 +53,21 @@ function padLeft(n: number, width: number): string {
   return s.length >= width ? s : " ".repeat(width - s.length) + s;
 }
 
+// Calculate word-level similarity between two strings (0-1)
+// Used to decide whether to show word-level highlighting
+function wordSimilarity(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (wordsA.size === 0 && wordsB.size === 0) return 1;
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
+  const union = new Set([...wordsA, ...wordsB]).size;
+  return intersection / union; // Jaccard similarity
+}
+
+// Threshold: only show word-level highlighting if lines share enough words
+const WORD_SIMILARITY_THRESHOLD = 0.3;
+
 // Render a single line with gutters and optional word-diff highlighting
 function Line({
   kind,
@@ -91,7 +106,10 @@ function Line({
         ? colors.diff.removedWordBg
         : undefined;
 
-  // Char-level diff only for '-' or '+' when pairText is present
+  // Word-level diff only for '-' or '+' when pairText is present AND lines are similar enough
+  // If lines are too different, word-level highlighting becomes noise - show full-line colors instead
+  const similarity =
+    enableWord && pairText ? wordSimilarity(text, pairText) : 0;
   const charParts: Array<{
     value: string;
     added?: boolean;
@@ -100,10 +118,11 @@ function Line({
     enableWord &&
     pairText &&
     (kind === "add" || kind === "remove") &&
-    pairText !== text
+    pairText !== text &&
+    similarity >= WORD_SIMILARITY_THRESHOLD
       ? kind === "add"
-        ? Diff.diffChars(pairText, text)
-        : Diff.diffChars(text, pairText)
+        ? Diff.diffWordsWithSpace(pairText, text)
+        : Diff.diffWordsWithSpace(text, pairText)
       : null;
 
   // Build prefix: "  1 + " (line number + symbol)
