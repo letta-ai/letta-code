@@ -24,6 +24,7 @@ import {
   subscribe,
   toggleExpanded,
 } from "../helpers/subagentState.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 
@@ -62,6 +63,9 @@ interface AgentRowProps {
 
 const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
+  const columns = useTerminalWidth();
+  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const contentWidth = Math.max(0, columns - gutterWidth);
 
   const getDotElement = () => {
     switch (agent.status) {
@@ -101,11 +105,17 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor>
-            {" ⎿  Subagent: "}
-            {agent.agentURL}
-          </Text>
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+              <Text dimColor>{" ⎿  "}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap" dimColor>
+              Subagent: {agent.agentURL}
+            </Text>
+          </Box>
         </Box>
       )}
 
@@ -126,21 +136,38 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 
       {/* Status line */}
       <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor>{" ⎿  Done"}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Done"}</Text>
+          </>
         ) : agent.status === "error" ? (
-          <Text color={colors.subagent.error}>
-            {" ⎿  "}
-            {agent.error}
-          </Text>
+          <>
+            <Box width={gutterWidth} flexShrink={0}>
+              <Text>
+                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+                <Text dimColor>{" ⎿  "}</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap" color={colors.subagent.error}>
+                {agent.error}
+              </Text>
+            </Box>
+          </>
         ) : lastTool ? (
-          <Text dimColor>
-            {" ⎿  "}
-            {lastTool.name}
-          </Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>
+              {" ⎿  "}
+              {lastTool.name}
+            </Text>
+          </>
         ) : (
-          <Text dimColor>{" ⎿  Starting..."}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Starting..."}</Text>
+          </>
         )}
       </Box>
     </Box>
