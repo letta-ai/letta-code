@@ -5071,12 +5071,9 @@ Plan file path: ${planFilePath}`;
             {/* Subagent group display - shows running/completed subagents */}
             <SubagentGroupDisplay />
 
-            {/* Ensure 1 blank line above input when there are no live items */}
-            {liveItems.length === 0 && <Box height={1} />}
-
             {/* Exit stats - shown when exiting via double Ctrl+C */}
             {showExitStats && (
-              <Box flexDirection="column">
+              <Box flexDirection="column" marginTop={1}>
                 <Text dimColor>
                   {formatUsageStats({
                     stats: sessionStatsRef.current.getSnapshot(),
@@ -5088,34 +5085,36 @@ Plan file path: ${planFilePath}`;
             )}
 
             {/* Input row - always mounted to preserve state */}
-            <Input
-              visible={
-                !showExitStats &&
-                pendingApprovals.length === 0 &&
-                !anySelectorOpen
-              }
-              streaming={
-                streaming && !abortControllerRef.current?.signal.aborted
-              }
-              tokenCount={tokenCount}
-              thinkingMessage={thinkingMessage}
-              onSubmit={onSubmit}
-              onBashSubmit={handleBashSubmit}
-              permissionMode={uiPermissionMode}
-              onPermissionModeChange={handlePermissionModeChange}
-              onExit={handleExit}
-              onInterrupt={handleInterrupt}
-              interruptRequested={interruptRequested}
-              agentId={agentId}
-              agentName={agentName}
-              currentModel={currentModelDisplay}
-              currentModelProvider={currentModelProvider}
-              messageQueue={messageQueue}
-              onEnterQueueEditMode={handleEnterQueueEditMode}
-              onEscapeCancel={
-                profileConfirmPending ? handleProfileEscapeCancel : undefined
-              }
-            />
+            <Box marginTop={liveItems.length > 0 ? 0 : 1}>
+              <Input
+                visible={
+                  !showExitStats &&
+                  pendingApprovals.length === 0 &&
+                  !anySelectorOpen
+                }
+                streaming={
+                  streaming && !abortControllerRef.current?.signal.aborted
+                }
+                tokenCount={tokenCount}
+                thinkingMessage={thinkingMessage}
+                onSubmit={onSubmit}
+                onBashSubmit={handleBashSubmit}
+                permissionMode={uiPermissionMode}
+                onPermissionModeChange={handlePermissionModeChange}
+                onExit={handleExit}
+                onInterrupt={handleInterrupt}
+                interruptRequested={interruptRequested}
+                agentId={agentId}
+                agentName={agentName}
+                currentModel={currentModelDisplay}
+                currentModelProvider={currentModelProvider}
+                messageQueue={messageQueue}
+                onEnterQueueEditMode={handleEnterQueueEditMode}
+                onEscapeCancel={
+                  profileConfirmPending ? handleProfileEscapeCancel : undefined
+                }
+              />
+            </Box>
 
             {/* Model Selector - conditionally mounted as overlay */}
             {activeOverlay === "model" && (
@@ -5360,68 +5359,54 @@ Plan file path: ${planFilePath}`;
 
             {/* Plan Mode Dialog - for ExitPlanMode tool */}
             {currentApproval?.toolName === "ExitPlanMode" && (
-              <>
-                <Box height={1} />
-                <PlanModeDialog
-                  plan={readPlanFile()}
-                  onApprove={() => handlePlanApprove(false)}
-                  onApproveAndAcceptEdits={() => handlePlanApprove(true)}
-                  onKeepPlanning={handlePlanKeepPlanning}
-                />
-              </>
+              <PlanModeDialog
+                plan={readPlanFile()}
+                onApprove={() => handlePlanApprove(false)}
+                onApproveAndAcceptEdits={() => handlePlanApprove(true)}
+                onKeepPlanning={handlePlanKeepPlanning}
+              />
             )}
 
             {/* Question Dialog - for AskUserQuestion tool */}
             {currentApproval?.toolName === "AskUserQuestion" && (
-              <>
-                <Box height={1} />
-                <QuestionDialog
-                  questions={getQuestionsFromApproval(currentApproval)}
-                  onSubmit={handleQuestionSubmit}
-                />
-              </>
+              <QuestionDialog
+                questions={getQuestionsFromApproval(currentApproval)}
+                onSubmit={handleQuestionSubmit}
+              />
             )}
 
             {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}
             {currentApproval?.toolName === "EnterPlanMode" && (
-              <>
-                <Box height={1} />
-                <EnterPlanModeDialog
-                  onApprove={handleEnterPlanModeApprove}
-                  onReject={handleEnterPlanModeReject}
-                />
-              </>
+              <EnterPlanModeDialog
+                onApprove={handleEnterPlanModeApprove}
+                onReject={handleEnterPlanModeReject}
+              />
             )}
 
             {/* Approval Dialog - for standard tools (not fancy UI tools) */}
             {currentApproval && !isFancyUITool(currentApproval.toolName) && (
-              <>
-                <Box height={1} />
-                <ApprovalDialog
-                  approvals={[currentApproval]}
-                  approvalContexts={
-                    approvalContexts[approvalResults.length]
-                      ? [
-                          approvalContexts[
-                            approvalResults.length
-                          ] as ApprovalContext,
-                        ]
-                      : []
-                  }
-                  progress={{
-                    current: approvalResults.length + 1,
-                    total: pendingApprovals.length,
-                  }}
-                  totalTools={
-                    autoHandledResults.length + pendingApprovals.length
-                  }
-                  isExecuting={isExecutingTool}
-                  onApproveAll={handleApproveCurrent}
-                  onApproveAlways={handleApproveAlways}
-                  onDenyAll={handleDenyCurrent}
-                  onCancel={handleCancelApprovals}
-                />
-              </>
+              <ApprovalDialog
+                approvals={[currentApproval]}
+                approvalContexts={
+                  approvalContexts[approvalResults.length]
+                    ? [
+                        approvalContexts[
+                          approvalResults.length
+                        ] as ApprovalContext,
+                      ]
+                    : []
+                }
+                progress={{
+                  current: approvalResults.length + 1,
+                  total: pendingApprovals.length,
+                }}
+                totalTools={autoHandledResults.length + pendingApprovals.length}
+                isExecuting={isExecutingTool}
+                onApproveAll={handleApproveCurrent}
+                onApproveAlways={handleApproveAlways}
+                onDenyAll={handleDenyCurrent}
+                onCancel={handleCancelApprovals}
+              />
             )}
           </>
         )}
