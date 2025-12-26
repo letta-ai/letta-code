@@ -68,7 +68,9 @@ export function MemoryDiffRenderer({
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
                   Inserted into memory block{" "}
-                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
                   {insertLine !== undefined && ` at line ${insertLine}`}
                 </Text>
               </Box>
@@ -113,7 +115,9 @@ export function MemoryDiffRenderer({
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
                   Created memory block{" "}
-                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
                   {description && (
                     <Text dimColor> - {truncate(description, 40)}</Text>
                   )}
@@ -165,7 +169,9 @@ export function MemoryDiffRenderer({
             <Box flexGrow={1} width={contentWidth}>
               <Text wrap="wrap">
                 Deleted memory block{" "}
-                <Text color={colors.tool.memoryName}>{blockName}</Text>
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>
               </Text>
             </Box>
           </Box>
@@ -190,7 +196,9 @@ export function MemoryDiffRenderer({
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
                   Updated description of{" "}
-                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
                 </Text>
               </Box>
             </Box>
@@ -206,8 +214,14 @@ export function MemoryDiffRenderer({
             </Box>
             <Box flexGrow={1} width={contentWidth}>
               <Text wrap="wrap">
-                Renamed <Text color={colors.tool.memoryName}>{blockName}</Text>{" "}
-                to <Text color={colors.tool.memoryName}>{newBlockName}</Text>
+                Renamed{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>{" "}
+                to{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {newBlockName}
+                </Text>
               </Text>
             </Box>
           </Box>
@@ -228,7 +242,9 @@ export function MemoryDiffRenderer({
             <Box flexGrow={1} width={defaultContentWidth}>
               <Text wrap="wrap">
                 Memory operation: {command} on{" "}
-                <Text color={colors.tool.memoryName}>{blockName}</Text>
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>
               </Text>
             </Box>
           </Box>
@@ -340,7 +356,9 @@ function MemoryStrReplaceDiff({
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
             Updated memory block{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text>
+            <Text bold color={colors.tool.memoryName}>
+              {blockName}
+            </Text>
           </Text>
         </Box>
       </Box>
@@ -500,7 +518,9 @@ function PatchDiffRenderer({
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
             Patched memory block{" "}
-            <Text color={colors.tool.memoryName}>{label}</Text>
+            <Text bold color={colors.tool.memoryName}>
+              {label}
+            </Text>
           </Text>
         </Box>
       </Box>
