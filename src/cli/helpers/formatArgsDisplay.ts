@@ -31,7 +31,7 @@ function formatDisplayPath(filePath: string): string {
 
 /**
  * Parses a patch input to extract operation type and file path.
- * Returns null if parsing fails.
+ * Returns null if parsing fails. Used for tool call display.
  */
 export function parsePatchInput(
   input: string,
@@ -55,6 +55,129 @@ export function parsePatchInput(
   }
 
   return null;
+}
+
+/**
+ * Patch operation types for result rendering
+ */
+export type PatchOperation =
+  | { kind: "add"; path: string; content: string }
+  | { kind: "update"; path: string; oldString: string; newString: string }
+  | { kind: "delete"; path: string };
+
+/**
+ * Parses a patch input to extract all operations with full content.
+ * Used for rendering patch results (shows diffs/content).
+ * Based on ApplyPatch.ts parsing logic.
+ */
+export function parsePatchOperations(input: string): PatchOperation[] {
+  if (!input) return [];
+
+  const lines = input.split(/\r?\n/);
+  const beginIdx = lines.findIndex((l) => l.trim() === "*** Begin Patch");
+  const endIdx = lines.findIndex((l) => l.trim() === "*** End Patch");
+
+  // If no markers, try to parse anyway (some patches might not have them)
+  const startIdx = beginIdx === -1 ? 0 : beginIdx + 1;
+  const stopIdx = endIdx === -1 ? lines.length : endIdx;
+
+  const operations: PatchOperation[] = [];
+  let i = startIdx;
+
+  while (i < stopIdx) {
+    const line = lines[i]?.trim();
+    if (!line) {
+      i++;
+      continue;
+    }
+
+    // Add File operation
+    if (line.startsWith("*** Add File:")) {
+      const path = line.replace("*** Add File:", "").trim();
+      i++;
+      const contentLines: string[] = [];
+      while (i < stopIdx) {
+        const raw = lines[i];
+        if (raw === undefined || raw.startsWith("*** ")) break;
+        if (raw.startsWith("+")) {
+          contentLines.push(raw.slice(1));
+        }
+        i++;
+      }
+      operations.push({ kind: "add", path, content: contentLines.join("\n") });
+      continue;
+    }
+
+    // Update File operation
+    if (line.startsWith("*** Update File:")) {
+      const path = line.replace("*** Update File:", "").trim();
+      i++;
+
+      // Skip optional "*** Move to:" line
+      if (i < stopIdx && lines[i]?.startsWith("*** Move to:")) {
+        i++;
+      }
+
+      // Collect all hunk lines
+      const oldParts: string[] = [];
+      const newParts: string[] = [];
+
+      while (i < stopIdx) {
+        const hLine = lines[i];
+        if (hLine === undefined || hLine.startsWith("*** ")) break;
+
+        if (hLine.startsWith("@@")) {
+          // Skip hunk header
+          i++;
+          continue;
+        }
+
+        // Parse diff lines
+        if (hLine === "") {
+          // Empty line counts as context
+          oldParts.push("");
+          newParts.push("");
+        } else {
+          const prefix = hLine[0];
+          const text = hLine.slice(1);
+
+          if (prefix === " ") {
+            // Context line - appears in both
+            oldParts.push(text);
+            newParts.push(text);
+          } else if (prefix === "-") {
+            // Removed line
+            oldParts.push(text);
+          } else if (prefix === "+") {
+            // Added line
+            newParts.push(text);
+          }
+        }
+        i++;
+      }
+
+      operations.push({
+        kind: "update",
+        path,
+        oldString: oldParts.join("\n"),
+        newString: newParts.join("\n"),
+      });
+      continue;
+    }
+
+    // Delete File operation
+    if (line.startsWith("*** Delete File:")) {
+      const path = line.replace("*** Delete File:", "").trim();
+      operations.push({ kind: "delete", path });
+      i++;
+      continue;
+    }
+
+    // Unknown line, skip
+    i++;
+  }
+
+  return operations;
 }
 
 export function formatArgsDisplay(

@@ -5,6 +5,7 @@ import { clipToolReturn } from "../../tools/manager.js";
 import {
   formatArgsDisplay,
   parsePatchInput,
+  parsePatchOperations,
 } from "../helpers/formatArgsDisplay.js";
 import {
   getDisplayToolName,
@@ -305,6 +306,56 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
 
         if (filePath && content) {
           return <WriteRenderer filePath={filePath} content={content} />;
+        }
+      } catch {
+        // If parsing fails, fall through to regular handling
+      }
+    }
+
+    // Check if this is a patch tool - show diff/content based on operation type
+    if (isPatchTool(rawName) && line.resultOk !== false && line.argsText) {
+      try {
+        const parsedArgs = JSON.parse(line.argsText);
+        if (parsedArgs.input) {
+          const operations = parsePatchOperations(parsedArgs.input);
+
+          if (operations.length > 0) {
+            return (
+              <Box flexDirection="column">
+                {operations.map((op) => {
+                  if (op.kind === "add") {
+                    return (
+                      <WriteRenderer
+                        key={`patch-add-${op.path}`}
+                        filePath={op.path}
+                        content={op.content}
+                      />
+                    );
+                  }
+                  if (op.kind === "update") {
+                    return (
+                      <EditRenderer
+                        key={`patch-update-${op.path}`}
+                        filePath={op.path}
+                        oldString={op.oldString}
+                        newString={op.newString}
+                        showLineNumbers={false}
+                      />
+                    );
+                  }
+                  if (op.kind === "delete") {
+                    return (
+                      <Text key={`patch-delete-${op.path}`}>
+                        {"  "}
+                        <Text dimColor>⎿</Text> Deleted {op.path}
+                      </Text>
+                    );
+                  }
+                  return null;
+                })}
+              </Box>
+            );
+          }
         }
       } catch {
         // If parsing fails, fall through to regular handling
