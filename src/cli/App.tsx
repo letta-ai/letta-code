@@ -57,6 +57,7 @@ import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
+import { colors } from "./components/colors";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
@@ -5082,7 +5083,7 @@ Plan file path: ${planFilePath}`;
                   })}
                 </Text>
                 <Text dimColor>Resume this agent with:</Text>
-                <Text color="blue">letta --agent {agentId}</Text>
+                <Text color={colors.link.url}>letta --agent {agentId}</Text>
               </Box>
             )}
 
