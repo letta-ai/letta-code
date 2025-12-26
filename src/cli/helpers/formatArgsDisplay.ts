@@ -257,7 +257,12 @@ export function formatArgsDisplay(
 
           // Shell/Bash tools: show just the command
           if (isShellTool(toolName) && parsed.command) {
-            display = String(parsed.command);
+            // Handle both string and array command formats
+            if (Array.isArray(parsed.command)) {
+              display = parsed.command.join(" ");
+            } else {
+              display = String(parsed.command);
+            }
             return { display, parsed };
           }
         }
