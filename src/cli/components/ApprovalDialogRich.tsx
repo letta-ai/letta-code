@@ -4,9 +4,9 @@ import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
 import {
-  type AdvancedDiffResult,
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
+  parsePatchToAdvancedDiff,
 } from "../helpers/diff";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
@@ -35,6 +35,8 @@ type DynamicPreviewProps = {
   toolArgs: string;
   parsedArgs: Record<string, unknown> | null;
   precomputedDiff: AdvancedDiffSuccess | null;
+  allDiffs: Map<string, AdvancedDiffSuccess>;
+  toolCallId: string | undefined;
 };
 
 // Options renderer - memoized to prevent unnecessary re-renders
@@ -77,6 +79,8 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   toolArgs,
   parsedArgs,
   precomputedDiff,
+  allDiffs,
+  toolCallId,
 }) => {
   const t = toolName.toLowerCase();
 
@@ -203,13 +207,18 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
             {operations.map((op, idx) => {
               const relPath = relative(cwd, op.path);
               const displayPath = relPath.startsWith("..") ? op.path : relPath;
+              // Look up precomputed diff from allDiffs using toolCallId:path key
+              const diffKey = toolCallId
+                ? `${toolCallId}:${op.path}`
+                : undefined;
+              const opDiff = diffKey ? allDiffs.get(diffKey) : undefined;
               if (op.kind === "add") {
                 return (
                   <Box key={`patch-add-${op.path}`} flexDirection="column">
                     {idx > 0 && <Box height={1} />}
                     <Text dimColor>{displayPath}</Text>
                     <AdvancedDiffRenderer
-                      precomputed={precomputedDiff ?? undefined}
+                      precomputed={opDiff}
                       kind="write"
                       filePath={op.path}
                       content={op.content}
@@ -224,7 +233,7 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
                     {idx > 0 && <Box height={1} />}
                     <Text dimColor>{displayPath}</Text>
                     <AdvancedDiffRenderer
-                      precomputed={precomputedDiff ?? undefined}
+                      precomputed={opDiff}
                       kind="edit"
                       filePath={op.path}
                       oldString={op.oldString}
@@ -666,33 +675,21 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       return diffs;
     }
 
-    // For Patch tools - compute diff per operation
+    // For Patch tools - parse hunks directly (patches ARE diffs, no need to recompute)
     const t = approvalRequest.toolName.toLowerCase();
     if ((t === "apply_patch" || t === "applypatch") && parsedArgs?.input) {
       const operations = parsePatchOperations(parsedArgs.input as string);
       for (const op of operations) {
         const key = `${toolCallId}:${op.path}`;
-        let result: AdvancedDiffResult | null = null;
 
-        if (op.kind === "add") {
-          result = computeAdvancedDiff({
-            kind: "write",
-            filePath: op.path,
-            content: op.content,
-          });
-        } else if (op.kind === "update") {
-          result = computeAdvancedDiff({
-            kind: "edit",
-            filePath: op.path,
-            oldString: op.oldString,
-            newString: op.newString,
-          });
+        if (op.kind === "add" || op.kind === "update") {
+          // Parse patch hunks directly instead of trying to find oldString in file
+          const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
+          if (result) {
+            diffs.set(key, result);
+          }
         }
         // Delete operations don't need diffs
-
-        if (result?.mode === "advanced") {
-          diffs.set(key, result);
-        }
       }
     }
 
@@ -901,6 +898,8 @@ export const ApprovalDialog = memo(function ApprovalDialog({
           toolArgs={approvalRequest.toolArgs}
           parsedArgs={parsedArgs}
           precomputedDiff={precomputedDiff}
+          allDiffs={allDiffs}
+          toolCallId={approvalRequest.toolCallId}
         />
         <Box height={1} />
 

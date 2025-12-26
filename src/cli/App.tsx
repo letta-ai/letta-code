@@ -94,7 +94,11 @@ import {
   toLines,
 } from "./helpers/accumulator";
 import { backfillBuffers } from "./helpers/backfill";
-import { type AdvancedDiffSuccess, computeAdvancedDiff } from "./helpers/diff";
+import {
+  type AdvancedDiffSuccess,
+  computeAdvancedDiff,
+  parsePatchToAdvancedDiff,
+} from "./helpers/diff";
 import { formatErrorDetails } from "./helpers/errorFormatter";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
@@ -1322,27 +1326,16 @@ export default function App({
                     }
                   }
                 } else if (isPatchTool(toolName) && args.input) {
-                  // Patch tools can have multiple operations per file
+                  // Patch tools - parse hunks directly (patches ARE diffs)
                   const operations = parsePatchOperations(args.input as string);
                   for (const op of operations) {
                     const key = `${toolCallId}:${op.path}`;
-                    if (op.kind === "add") {
-                      const result = computeAdvancedDiff({
-                        kind: "write",
-                        filePath: op.path,
-                        content: op.content,
-                      });
-                      if (result.mode === "advanced") {
-                        precomputedDiffsRef.current.set(key, result);
-                      }
-                    } else if (op.kind === "update") {
-                      const result = computeAdvancedDiff({
-                        kind: "edit",
-                        filePath: op.path,
-                        oldString: op.oldString,
-                        newString: op.newString,
-                      });
-                      if (result.mode === "advanced") {
+                    if (op.kind === "add" || op.kind === "update") {
+                      const result = parsePatchToAdvancedDiff(
+                        op.patchLines,
+                        op.path,
+                      );
+                      if (result) {
                         precomputedDiffsRef.current.set(key, result);
                       }
                     }
@@ -3860,29 +3853,18 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                       }
                     }
                   } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools can have multiple operations per file
+                    // Patch tools - parse hunks directly (patches ARE diffs)
                     const operations = parsePatchOperations(
                       args.input as string,
                     );
                     for (const op of operations) {
                       const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add") {
-                        const result = computeAdvancedDiff({
-                          kind: "write",
-                          filePath: op.path,
-                          content: op.content,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      } else if (op.kind === "update") {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath: op.path,
-                          oldString: op.oldString,
-                          newString: op.newString,
-                        });
-                        if (result.mode === "advanced") {
+                      if (op.kind === "add" || op.kind === "update") {
+                        const result = parsePatchToAdvancedDiff(
+                          op.patchLines,
+                          op.path,
+                        );
+                        if (result) {
                           precomputedDiffsRef.current.set(key, result);
                         }
                       }
@@ -4027,29 +4009,18 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                       }
                     }
                   } else if (isPatchTool(toolName) && args.input) {
-                    // Patch tools can have multiple operations per file
+                    // Patch tools - parse hunks directly (patches ARE diffs)
                     const operations = parsePatchOperations(
                       args.input as string,
                     );
                     for (const op of operations) {
                       const key = `${toolCallId}:${op.path}`;
-                      if (op.kind === "add") {
-                        const result = computeAdvancedDiff({
-                          kind: "write",
-                          filePath: op.path,
-                          content: op.content,
-                        });
-                        if (result.mode === "advanced") {
-                          precomputedDiffsRef.current.set(key, result);
-                        }
-                      } else if (op.kind === "update") {
-                        const result = computeAdvancedDiff({
-                          kind: "edit",
-                          filePath: op.path,
-                          oldString: op.oldString,
-                          newString: op.newString,
-                        });
-                        if (result.mode === "advanced") {
+                      if (op.kind === "add" || op.kind === "update") {
+                        const result = parsePatchToAdvancedDiff(
+                          op.patchLines,
+                          op.path,
+                        );
+                        if (result) {
                           precomputedDiffsRef.current.set(key, result);
                         }
                       }
