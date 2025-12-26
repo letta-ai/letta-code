@@ -56,13 +56,29 @@ export async function getResumeData(
         ? agent.message_ids[agent.message_ids.length - 1]
         : null;
 
-    let messageToCheck = cursorLastMessage;
+    // If there are no in-context messages, there can be no pending approval
+    // (even if cursor has old approval_request_message from before context reset)
+    if (!inContextLastMessageId) {
+      debugWarn(
+        "check-approval",
+        `No in-context messages (message_ids empty/null) - no pending approvals`,
+      );
+      const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
+      let messageHistory = messages.slice(-historyCount);
+      if (messageHistory[0]?.message_type === "tool_return_message") {
+        messageHistory = messageHistory.slice(1);
+      }
+      return { pendingApproval: null, pendingApprovals: [], messageHistory };
+    }
 
-    // If there's a desync, find the in-context message in the cursor fetch
-    if (
-      inContextLastMessageId &&
-      cursorLastMessage.id !== inContextLastMessageId
-    ) {
+    // Find the in-context last message - this is the source of truth for approval state
+    let messageToCheck: Message | null = null;
+
+    if (cursorLastMessage.id === inContextLastMessageId) {
+      // Cursor and in-context are in sync
+      messageToCheck = cursorLastMessage;
+    } else {
+      // Desync: cursor has messages beyond in-context (or different message)
       debugWarn(
         "check-approval",
         `Desync detected:\n` +
@@ -83,26 +99,27 @@ export async function getResumeData(
           (msg) => msg.message_type === "approval_request_message",
         );
         const lastMessage = matchingMessages[matchingMessages.length - 1];
-        const inContextMessage = approvalMessage ?? lastMessage;
+        messageToCheck = approvalMessage ?? lastMessage ?? null;
 
-        if (inContextMessage) {
+        if (messageToCheck) {
           debugWarn(
             "check-approval",
-            `Found in-context message (type: ${inContextMessage.message_type})` +
+            `Found in-context message (type: ${messageToCheck.message_type})` +
               (matchingMessages.length > 1
                 ? ` - had ${matchingMessages.length} duplicates`
                 : ""),
           );
-          messageToCheck = inContextMessage;
         }
       } else {
+        // In-context message not found in cursor - do NOT fall back to cursor
+        // The in-context message is the source of truth, and if we can't find it,
+        // we should not assume there's a pending approval
         debugWarn(
           "check-approval",
           `In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
             `  This likely means the in-context message is older than the cursor window.\n` +
-            `  Falling back to cursor message - approval state may be incorrect.`,
+            `  Not falling back to cursor - returning no pending approvals.`,
         );
-        // Fall back to cursor message if we can't find the in-context one
       }
     }
 
@@ -110,65 +127,73 @@ export async function getResumeData(
     let pendingApproval: ApprovalRequest | null = null;
     let pendingApprovals: ApprovalRequest[] = [];
 
-    // Log the agent's last_stop_reason for debugging
-    const lastStopReason = (agent as { last_stop_reason?: string })
-      .last_stop_reason;
-    if (lastStopReason === "requires_approval") {
-      debugWarn("check-approval", `Agent last_stop_reason: ${lastStopReason}`);
-      debugWarn(
-        "check-approval",
-        `Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
-      );
-    }
+    // Only check for pending approvals if we found the in-context message
+    if (messageToCheck) {
+      // Log the agent's last_stop_reason for debugging
+      const lastStopReason = (agent as { last_stop_reason?: string })
+        .last_stop_reason;
+      if (lastStopReason === "requires_approval") {
+        debugWarn(
+          "check-approval",
+          `Agent last_stop_reason: ${lastStopReason}`,
+        );
+        debugWarn(
+          "check-approval",
+          `Message to check: ${messageToCheck.id} (type: ${messageToCheck.message_type})`,
+        );
+      }
 
-    if (messageToCheck.message_type === "approval_request_message") {
-      // Cast to access tool_calls with proper typing
-      const approvalMsg = messageToCheck as Message & {
-        tool_calls?: Array<{
-          tool_call_id?: string;
-          name?: string;
-          arguments?: string;
-        }>;
-        tool_call?: {
+      if (messageToCheck.message_type === "approval_request_message") {
+        // Cast to access tool_calls with proper typing
+        const approvalMsg = messageToCheck as Message & {
+          tool_calls?: Array<{
+            tool_call_id?: string;
+            name?: string;
+            arguments?: string;
+          }>;
+          tool_call?: {
+            tool_call_id?: string;
+            name?: string;
+            arguments?: string;
+          };
+        };
+
+        // Use tool_calls array (new) or fallback to tool_call (deprecated)
+        const toolCalls = Array.isArray(approvalMsg.tool_calls)
+          ? approvalMsg.tool_calls
+          : approvalMsg.tool_call
+            ? [approvalMsg.tool_call]
+            : [];
+
+        // Extract ALL tool calls for parallel approval support
+        // Include ALL tool_call_ids, even those with incomplete name/arguments
+        // Incomplete entries will be denied at the business logic layer
+        type ToolCallEntry = {
           tool_call_id?: string;
           name?: string;
           arguments?: string;
         };
-      };
+        pendingApprovals = toolCalls
+          .filter(
+            (
+              tc: ToolCallEntry,
+            ): tc is ToolCallEntry & { tool_call_id: string } =>
+              !!tc && !!tc.tool_call_id,
+          )
+          .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
+            toolCallId: tc.tool_call_id,
+            toolName: tc.name || "",
+            toolArgs: tc.arguments || "",
+          }));
 
-      // Use tool_calls array (new) or fallback to tool_call (deprecated)
-      const toolCalls = Array.isArray(approvalMsg.tool_calls)
-        ? approvalMsg.tool_calls
-        : approvalMsg.tool_call
-          ? [approvalMsg.tool_call]
-          : [];
-
-      // Extract ALL tool calls for parallel approval support
-      // Include ALL tool_call_ids, even those with incomplete name/arguments
-      // Incomplete entries will be denied at the business logic layer
-      type ToolCallEntry = {
-        tool_call_id?: string;
-        name?: string;
-        arguments?: string;
-      };
-      pendingApprovals = toolCalls
-        .filter(
-          (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
-            !!tc && !!tc.tool_call_id,
-        )
-        .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
-          toolCallId: tc.tool_call_id,
-          toolName: tc.name || "",
-          toolArgs: tc.arguments || "",
-        }));
-
-      // Set legacy singular field for backward compatibility (first approval only)
-      if (pendingApprovals.length > 0) {
-        pendingApproval = pendingApprovals[0] || null;
-        debugWarn(
-          "check-approval",
-          `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
-        );
+        // Set legacy singular field for backward compatibility (first approval only)
+        if (pendingApprovals.length > 0) {
+          pendingApproval = pendingApprovals[0] || null;
+          debugWarn(
+            "check-approval",
+            `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
+          );
+        }
       }
     }
 

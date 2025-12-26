@@ -11,17 +11,32 @@ export interface Settings {
   tokenStreaming: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
+  memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
   permissions?: PermissionRules;
   env?: Record<string, string>;
-  // OAuth token management
+  // Letta Cloud OAuth token management
   refreshToken?: string;
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
   // Tool upsert cache: maps serverUrl -> hash of upserted tools
   toolUpsertHashes?: Record<string, string>;
+  // Anthropic OAuth
+  anthropicOAuth?: {
+    access_token: string;
+    refresh_token?: string;
+    expires_at: number; // Unix timestamp in milliseconds
+    scope?: string;
+  };
+  // Pending OAuth state (for PKCE flow)
+  oauthState?: {
+    state: string;
+    codeVerifier: string;
+    provider: "anthropic";
+    timestamp: number;
+  };
 }
 
 export interface ProjectSettings {
@@ -33,6 +48,7 @@ export interface LocalProjectSettings {
   permissions?: PermissionRules;
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned locally
+  memoryReminderInterval?: number | null; // null = disabled, number = overrides global
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +56,7 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
+  memoryReminderInterval: 5, // number = prompt memory check every N turns
   globalSharedBlockIds: {},
 };
 
@@ -106,6 +123,19 @@ class SettingsManager {
    */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
+  }
+
+  /**
+   * Get or create device ID (generates UUID if not exists)
+   */
+  getOrCreateDeviceId(): string {
+    const settings = this.getSettings();
+    let deviceId = settings.deviceId;
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      this.updateSettings({ deviceId });
+    }
+    return deviceId;
   }
 
   /**
@@ -595,6 +625,113 @@ class SettingsManager {
   hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
     const dirPath = join(workingDirectory, ".letta");
     return exists(dirPath);
+  }
+
+  // =====================================================================
+  // Anthropic OAuth Management
+  // =====================================================================
+
+  /**
+   * Store Anthropic OAuth tokens
+   */
+  storeAnthropicTokens(tokens: {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+    scope?: string;
+  }): void {
+    this.updateSettings({
+      anthropicOAuth: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_at: Date.now() + tokens.expires_in * 1000,
+        scope: tokens.scope,
+      },
+    });
+  }
+
+  /**
+   * Get Anthropic OAuth tokens (returns null if not set or expired)
+   */
+  getAnthropicTokens(): Settings["anthropicOAuth"] | null {
+    const settings = this.getSettings();
+    if (!settings.anthropicOAuth) return null;
+    return settings.anthropicOAuth;
+  }
+
+  /**
+   * Check if Anthropic OAuth tokens are expired or about to expire
+   * Returns true if token expires within the next 5 minutes
+   */
+  isAnthropicTokenExpired(): boolean {
+    const tokens = this.getAnthropicTokens();
+    if (!tokens) return true;
+
+    const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
+    return tokens.expires_at < fiveMinutesFromNow;
+  }
+
+  /**
+   * Check if Anthropic OAuth is configured
+   */
+  hasAnthropicOAuth(): boolean {
+    return !!this.getAnthropicTokens();
+  }
+
+  /**
+   * Clear Anthropic OAuth tokens and state
+   */
+  clearAnthropicOAuth(): void {
+    const settings = this.getSettings();
+    const { anthropicOAuth: _, oauthState: __, ...rest } = settings;
+    this.settings = { ...DEFAULT_SETTINGS, ...rest };
+    this.persistSettings().catch((error) => {
+      console.error(
+        "Failed to persist settings after clearing Anthropic OAuth:",
+        error,
+      );
+    });
+  }
+
+  /**
+   * Store OAuth state for pending authorization
+   */
+  storeOAuthState(
+    state: string,
+    codeVerifier: string,
+    provider: "anthropic",
+  ): void {
+    this.updateSettings({
+      oauthState: {
+        state,
+        codeVerifier,
+        provider,
+        timestamp: Date.now(),
+      },
+    });
+  }
+
+  /**
+   * Get pending OAuth state
+   */
+  getOAuthState(): Settings["oauthState"] | null {
+    const settings = this.getSettings();
+    return settings.oauthState || null;
+  }
+
+  /**
+   * Clear pending OAuth state
+   */
+  clearOAuthState(): void {
+    const settings = this.getSettings();
+    const { oauthState: _, ...rest } = settings;
+    this.settings = { ...DEFAULT_SETTINGS, ...rest };
+    this.persistSettings().catch((error) => {
+      console.error(
+        "Failed to persist settings after clearing OAuth state:",
+        error,
+      );
+    });
   }
 
   /**

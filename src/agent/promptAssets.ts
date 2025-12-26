@@ -4,11 +4,12 @@ import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
 import humanPrompt from "./prompts/human.mdx";
-import initializePrompt from "./prompts/init_memory.md";
+// init_memory.md is now a bundled skill at src/skills/builtin/init/SKILL.md
 import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
+import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -24,9 +25,9 @@ import systemPrompt from "./prompts/system_prompt.txt";
 export const SYSTEM_PROMPT = systemPrompt;
 export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
-export const INITIALIZE_PROMPT = initializePrompt;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
+export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
@@ -99,26 +100,26 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
 ];
 
 /**
- * Resolve a system prompt string to its content.
+ * Resolve a system prompt ID to its content.
  *
  * Resolution order:
- * 1. If it matches a systemPromptId from SYSTEM_PROMPTS, use its content
+ * 1. If it matches an ID from SYSTEM_PROMPTS, use its content
  * 2. If it matches a subagent name, use that subagent's system prompt
  * 3. Otherwise, use the default system prompt
  *
- * @param systemPromptInput - The system prompt ID or subagent name
+ * @param systemPromptId - The system prompt ID (e.g., "codex") or subagent name (e.g., "explore")
  * @returns The resolved system prompt content
  */
 export async function resolveSystemPrompt(
-  systemPromptInput: string | undefined,
+  systemPromptId: string | undefined,
 ): Promise<string> {
   // No input - use default
-  if (!systemPromptInput) {
+  if (!systemPromptId) {
     return SYSTEM_PROMPT;
   }
 
   // 1. Check if it matches a system prompt ID
-  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptInput);
+  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptId);
   if (matchedPrompt) {
     return matchedPrompt.content;
   }
@@ -126,7 +127,7 @@ export async function resolveSystemPrompt(
   // 2. Check if it matches a subagent name
   const { getAllSubagentConfigs } = await import("./subagents");
   const subagentConfigs = await getAllSubagentConfigs();
-  const matchedSubagent = subagentConfigs[systemPromptInput];
+  const matchedSubagent = subagentConfigs[systemPromptId];
   if (matchedSubagent) {
     return matchedSubagent.systemPrompt;
   }

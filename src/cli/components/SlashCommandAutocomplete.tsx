@@ -6,14 +6,17 @@ import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-// Compute filtered command list (excluding hidden commands)
+const VISIBLE_COMMANDS = 8; // Number of commands visible at once
+
+// Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
-  .map(([cmd, { desc }]) => ({
+  .map(([cmd, { desc, order }]) => ({
     cmd,
     desc,
+    order: order ?? 100, // Default order for commands without explicit order
   }))
-  .sort((a, b) => a.cmd.localeCompare(b.cmd));
+  .sort((a, b) => a.order - b.order);
 
 // Extract the text after the "/" symbol where the cursor is positioned
 function extractSearchQuery(
@@ -48,37 +51,60 @@ export function SlashCommandAutocomplete({
   workingDirectory = process.cwd(),
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
+  const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands
-  const allCommands = useMemo(() => {
-    if (!agentId) return _allCommands;
-
-    try {
-      const globalPinned = settingsManager.getGlobalPinnedAgents();
-      const localPinned =
-        settingsManager.getLocalPinnedAgents(workingDirectory);
-
-      const isPinnedGlobally = globalPinned.includes(agentId);
-      const isPinnedLocally = localPinned.includes(agentId);
-      const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
-      const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
-
-      return _allCommands.filter((cmd) => {
-        // Hide /pin if agent is pinned both locally AND globally
-        if (cmd.cmd === "/pin" && isPinnedBoth) {
-          return false;
-        }
-        // Hide /unpin if agent is not pinned anywhere
-        if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
-          return false;
-        }
-        return true;
+  // Load custom commands once on mount
+  useEffect(() => {
+    import("../commands/custom.js").then(({ getCustomCommands }) => {
+      getCustomCommands().then((customs) => {
+        const matches: CommandMatch[] = customs.map((cmd) => ({
+          cmd: `/${cmd.id}`,
+          // Include source/namespace in description for disambiguation
+          desc: `${cmd.description} (${cmd.source}${cmd.namespace ? `:${cmd.namespace}` : ""})`,
+          order: 200 + (cmd.source === "project" ? 0 : 100),
+        }));
+        setCustomCommands(matches);
       });
-    } catch (_error) {
-      // If settings aren't loaded, just show all commands
-      return _allCommands;
+    });
+  }, []);
+
+  // Check pin status to conditionally show/hide pin/unpin commands, merge with custom commands
+  const allCommands = useMemo(() => {
+    let builtins = _allCommands;
+
+    if (agentId) {
+      try {
+        const globalPinned = settingsManager.getGlobalPinnedAgents();
+        const localPinned =
+          settingsManager.getLocalPinnedAgents(workingDirectory);
+
+        const isPinnedGlobally = globalPinned.includes(agentId);
+        const isPinnedLocally = localPinned.includes(agentId);
+        const isPinnedAnywhere = isPinnedGlobally || isPinnedLocally;
+        const isPinnedBoth = isPinnedGlobally && isPinnedLocally;
+
+        builtins = _allCommands.filter((cmd) => {
+          // Hide /pin if agent is pinned both locally AND globally
+          if (cmd.cmd === "/pin" && isPinnedBoth) {
+            return false;
+          }
+          // Hide /unpin if agent is not pinned anywhere
+          if (cmd.cmd === "/unpin" && !isPinnedAnywhere) {
+            return false;
+          }
+          return true;
+        });
+      } catch (_error) {
+        // If settings aren't loaded, just use all builtins
+        builtins = _allCommands;
+      }
     }
-  }, [agentId, workingDirectory]);
+
+    // Merge with custom commands and sort by order
+    return [...builtins, ...customCommands].sort(
+      (a, b) => (a.order ?? 100) - (b.order ?? 100),
+    );
+  }, [agentId, workingDirectory, customCommands]);
 
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
@@ -134,14 +160,46 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
+  // Calculate visible window based on selected index
+  const totalMatches = matches.length;
+  const needsScrolling = totalMatches > VISIBLE_COMMANDS;
+
+  let startIndex = 0;
+  if (needsScrolling) {
+    // Keep selected item visible, preferring to show it in the middle
+    const halfWindow = Math.floor(VISIBLE_COMMANDS / 2);
+    startIndex = Math.max(0, selectedIndex - halfWindow);
+    startIndex = Math.min(startIndex, totalMatches - VISIBLE_COMMANDS);
+  }
+
+  const visibleMatches = matches.slice(
+    startIndex,
+    startIndex + VISIBLE_COMMANDS,
+  );
+  const showScrollUp = startIndex > 0;
+  const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
+
   return (
     <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
-      {matches.map((item, idx) => (
-        <AutocompleteItem key={item.cmd} selected={idx === selectedIndex}>
-          {item.cmd.padEnd(14)}{" "}
-          <Text dimColor={idx !== selectedIndex}>{item.desc}</Text>
-        </AutocompleteItem>
-      ))}
+      {showScrollUp && <Text dimColor> ↑ {startIndex} more above</Text>}
+      {visibleMatches.map((item, idx) => {
+        const actualIndex = startIndex + idx;
+        return (
+          <AutocompleteItem
+            key={item.cmd}
+            selected={actualIndex === selectedIndex}
+          >
+            {item.cmd.padEnd(14)}{" "}
+            <Text dimColor={actualIndex !== selectedIndex}>{item.desc}</Text>
+          </AutocompleteItem>
+        );
+      })}
+      {showScrollDown && (
+        <Text dimColor>
+          {" "}
+          ↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+        </Text>
+      )}
     </AutocompleteBox>
   );
 }

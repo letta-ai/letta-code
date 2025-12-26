@@ -3,7 +3,10 @@ import { bash } from "../../tools/impl/Bash";
 import { bash_output } from "../../tools/impl/BashOutput";
 import { kill_bash } from "../../tools/impl/KillBash";
 
-describe("Bash background tools", () => {
+const isWindows = process.platform === "win32";
+
+// These tests use bash-specific syntax (echo with quotes, sleep)
+describe.skipIf(isWindows)("Bash background tools", () => {
   test("starts background process and returns ID in text", async () => {
     const result = await bash({
       command: "echo 'test'",

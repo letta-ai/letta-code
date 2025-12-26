@@ -13,11 +13,15 @@ import {
   addToolCall,
   updateSubagent,
 } from "../../cli/helpers/subagentState.js";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
+import { getClient } from "../client";
+import { getCurrentAgentId } from "../context";
+import { resolveModelByLlmConfig } from "../model";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
@@ -32,6 +36,7 @@ export interface SubagentResult {
   report: string;
   success: boolean;
   error?: string;
+  totalTokens?: number;
 }
 
 /**
@@ -49,6 +54,36 @@ interface ExecutionState {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Get the primary agent's model ID
+ * Fetches from API and resolves to a known model ID
+ */
+async function getPrimaryAgentModel(): Promise<string | null> {
+  try {
+    const agentId = getCurrentAgentId();
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    const model = agent.llm_config?.model;
+    if (model) {
+      return resolveModelByLlmConfig(model);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if an error message indicates an unsupported provider
+ */
+function isProviderNotSupportedError(errorOutput: string): boolean {
+  return (
+    errorOutput.includes("Provider") &&
+    errorOutput.includes("is not supported") &&
+    errorOutput.includes("supported providers:")
+  );
+}
 
 /**
  * Record a tool call to the state store
@@ -328,15 +363,44 @@ async function executeSubagent(
   userPrompt: string,
   baseURL: string,
   subagentId: string,
+  isRetry = false,
+  signal?: AbortSignal,
 ): Promise<SubagentResult> {
+  // Check if already aborted before starting
+  if (signal?.aborted) {
+    return {
+      agentId: "",
+      report: "",
+      success: false,
+      error: INTERRUPTED_BY_USER,
+    };
+  }
+
+  // Update the state with the model being used (may differ on retry/fallback)
+  updateSubagent(subagentId, { model });
+
   try {
     const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
 
-    // Spawn letta in headless mode with stream-json output
-    const proc = spawn("letta", cliArgs, {
+    // Spawn Letta Code in headless mode.
+    // Some environments may have a different `letta` binary earlier in PATH.
+    const lettaCmd = process.env.LETTA_CODE_BIN || "letta";
+    const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),
-      env: process.env,
+      env: {
+        ...process.env,
+        // Tag Task-spawned agents for easy filtering.
+        LETTA_CODE_AGENT_ROLE: "subagent",
+      },
     });
+
+    // Set up abort handler to kill the child process
+    let wasAborted = false;
+    const abortHandler = () => {
+      wasAborted = true;
+      proc.kill("SIGTERM");
+    };
+    signal?.addEventListener("abort", abortHandler);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -372,10 +436,41 @@ async function executeSubagent(
       proc.on("error", () => resolve(null));
     });
 
+    // Clean up abort listener
+    signal?.removeEventListener("abort", abortHandler);
+
+    // Check if process was aborted by user
+    if (wasAborted) {
+      return {
+        agentId: state.agentId || "",
+        report: "",
+        success: false,
+        error: INTERRUPTED_BY_USER,
+      };
+    }
+
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
     // Handle non-zero exit code
     if (exitCode !== 0) {
+      // Check if this is a provider-not-supported error and we haven't retried yet
+      if (!isRetry && isProviderNotSupportedError(stderr)) {
+        const primaryModel = await getPrimaryAgentModel();
+        if (primaryModel) {
+          // Retry with the primary agent's model
+          return executeSubagent(
+            type,
+            config,
+            primaryModel,
+            userPrompt,
+            baseURL,
+            subagentId,
+            true, // Mark as retry to prevent infinite loops
+            signal,
+          );
+        }
+      }
+
       return {
         agentId: state.agentId || "",
         report: "",
@@ -391,6 +486,7 @@ async function executeSubagent(
         report: state.finalResult,
         success: !state.finalError,
         error: state.finalError || undefined,
+        totalTokens: state.resultStats?.totalTokens,
       };
     }
 
@@ -401,6 +497,7 @@ async function executeSubagent(
         report: "",
         success: false,
         error: state.finalError,
+        totalTokens: state.resultStats?.totalTokens,
       };
     }
 
@@ -443,12 +540,14 @@ function getBaseURL(): string {
  * @param prompt - The task prompt for the subagent
  * @param userModel - Optional model override from the parent agent
  * @param subagentId - ID for tracking in the state store (registered by Task tool)
+ * @param signal - Optional abort signal for interruption handling
  */
 export async function spawnSubagent(
   type: string,
   prompt: string,
   userModel: string | undefined,
   subagentId: string,
+  signal?: AbortSignal,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -473,6 +572,8 @@ export async function spawnSubagent(
     prompt,
     baseURL,
     subagentId,
+    false,
+    signal,
   );
 
   return result;

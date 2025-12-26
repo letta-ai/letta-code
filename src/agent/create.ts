@@ -53,7 +53,7 @@ export async function createAgent(
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
-  systemPrompt?: string,
+  systemPromptId?: string,
   initBlocks?: string[],
   baseTools?: string[],
 ) {
@@ -202,13 +202,18 @@ export async function createAgent(
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
   const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
 
-  // Resolve system prompt (ID, subagent name, or literal content)
-  const resolvedSystemPrompt = await resolveSystemPrompt(systemPrompt);
+  // Resolve system prompt ID to content
+  const systemPromptContent = await resolveSystemPrompt(systemPromptId);
 
   // Create agent with all block IDs (existing + newly created)
+  const tags = ["origin:letta-code"];
+  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+    tags.push("role:subagent");
+  }
+
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
-    system: resolvedSystemPrompt,
+    system: systemPromptContent,
     name,
     description: `Letta Code agent created in ${process.cwd()}`,
     embedding: embeddingModel,
@@ -216,7 +221,7 @@ export async function createAgent(
     context_window_limit: contextWindow,
     tools: toolNames,
     block_ids: blockIds,
-    tags: ["origin:letta-code"],
+    tags,
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,

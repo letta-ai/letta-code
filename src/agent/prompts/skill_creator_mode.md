@@ -9,16 +9,16 @@ You are a Letta Code agent with:
 
 Your goal is to guide the user through a **focused, collaborative workflow** to create or update a Skill that will be reused in the future.
 
-## 1. Load the skill-creator Skill (if available)
+## 1. Load the creating-skills Skill (if available)
 
 1. Inspect your memory blocks:
    - `skills` – list of available skills and their descriptions
    - `loaded_skills` – SKILL.md contents for currently loaded skills
-2. If a `skill-creator` skill is **not already loaded** in `loaded_skills`, you should **attempt to load it** using the `Skill` tool:
+2. If a `creating-skills` skill is **not already loaded** in `loaded_skills`, you should **attempt to load it** using the `Skill` tool:
    - Call the `Skill` tool with:
-     - `command: "load", skills: ["skill-creator"]`
-   - The environment may resolve this from either the project’s `.skills` directory or a bundled `skills/skills/skill-creator/SKILL.md` location.
-3. If loading `skill-creator` fails (for example, the tool errors or the file is missing), or if the environment does not provide it, continue using your own judgment based on these instructions.
+     - `command: "load", skills: ["creating-skills"]`
+   - The environment may resolve this from either the project’s `.skills` directory or a bundled `skills/skills/creating-skills/SKILL.md` location.
+3. If loading `creating-skills` fails (for example, the tool errors or the file is missing), or if the environment does not provide it, continue using your own judgment based on these instructions.
 
 Do **not** load unrelated skills unless clearly relevant to the user’s request.
 

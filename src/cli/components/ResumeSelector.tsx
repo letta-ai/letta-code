@@ -82,6 +82,7 @@ export function ResumeSelector({
   const [searchInput, setSearchInput] = useState(""); // What user is typing
   const [activeQuery, setActiveQuery] = useState(""); // Submitted search query
   const [hasMore, setHasMore] = useState(true);
+  const [filterLettaCode, setFilterLettaCode] = useState(true); // Filter to only letta-code agents
   const clientRef = useRef<Letta | null>(null);
 
   // Fetch agents from the server
@@ -92,7 +93,7 @@ export function ResumeSelector({
 
       const agentList = await client.agents.list({
         limit: FETCH_PAGE_SIZE,
-        tags: ["origin:letta-code"],
+        ...(filterLettaCode && { tags: ["origin:letta-code"] }),
         include: ["agent.blocks"],
         order: "desc",
         order_by: "last_run_completion",
@@ -111,7 +112,7 @@ export function ResumeSelector({
         nextCursor: cursor,
       };
     },
-    [],
+    [filterLettaCode],
   );
 
   // Fetch agents when activeQuery changes (initial load or search submitted)
@@ -226,6 +227,9 @@ export function ResumeSelector({
       }
     } else if (input === "/") {
       // Ignore "/" - just starts typing search
+    } else if (input === "a" || input === "A") {
+      // Toggle filter between letta-code agents and all agents
+      setFilterLettaCode((prev) => !prev);
     } else if (input && !key.ctrl && !key.meta) {
       // Add regular characters to search input
       setSearchInput((prev) => prev + input);
@@ -235,9 +239,14 @@ export function ResumeSelector({
   // Always show the header, with contextual content below
   return (
     <Box flexDirection="column" gap={1}>
-      <Box>
+      <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
           Browsing Agents (sorting by last run)
+        </Text>
+        <Text dimColor>
+          {filterLettaCode
+            ? "Displaying agents created in Letta Code (press A to show all)"
+            : "Displaying all agents (press A to filter to Letta Code)"}
         </Text>
       </Box>
 
@@ -357,8 +366,7 @@ export function ResumeSelector({
           </Box>
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter to switch agents · J/K page · Type + Enter to
-              search
+              ↑↓ navigate · Enter select · J/K page · Type to search
             </Text>
           </Box>
         </Box>

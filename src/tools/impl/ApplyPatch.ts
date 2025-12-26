@@ -155,7 +155,8 @@ export async function apply_patch(
 
     try {
       const buf = await fs.readFile(abs, "utf8");
-      return buf;
+      // Normalize line endings to LF for consistent matching (Windows uses CRLF)
+      return buf.replace(/\r\n/g, "\n");
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code === "ENOENT") {

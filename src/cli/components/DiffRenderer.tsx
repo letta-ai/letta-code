@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import * as Diff from "diff";
 import { Box, Text } from "ink";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
 // Helper to format path as relative with ../
@@ -28,6 +29,7 @@ interface DiffLineProps {
   type: "add" | "remove";
   content: string;
   compareContent?: string; // The other version to compare against for word diff
+  columns: number;
 }
 
 function DiffLine({
@@ -35,12 +37,16 @@ function DiffLine({
   type,
   content,
   compareContent,
+  columns,
 }: DiffLineProps) {
   const prefix = type === "add" ? "+" : "-";
   const lineBg =
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
   const wordBg =
     type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
+
+  const prefixWidth = 1; // Single space prefix
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   // If we have something to compare against, do word-level diff
   if (compareContent !== undefined && content.trim() && compareContent.trim()) {
@@ -50,60 +56,74 @@ function DiffLine({
         : Diff.diffWords(content, compareContent);
 
     return (
-      <Box>
-        <Text> </Text>
-        <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-          {`${lineNumber} ${prefix}  `}
-        </Text>
-        {wordDiffs.map((part, i) => {
-          if (part.added && type === "add") {
-            // This part was added (show with brighter background, black text)
-            return (
-              <Text
-                key={`word-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={wordBg}
-                color={colors.diff.textOnHighlight}
-              >
-                {part.value}
-              </Text>
-            );
-          } else if (part.removed && type === "remove") {
-            // This part was removed (show with brighter background, black text)
-            return (
-              <Text
-                key={`word-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={wordBg}
-                color={colors.diff.textOnHighlight}
-              >
-                {part.value}
-              </Text>
-            );
-          } else if (!part.added && !part.removed) {
-            // Unchanged part (show with line background, white text)
-            return (
-              <Text
-                key={`word-${i}-${part.value.substring(0, 10)}`}
-                backgroundColor={lineBg}
-                color={colors.diff.textOnDark}
-              >
-                {part.value}
-              </Text>
-            );
-          }
-          // Skip parts that don't belong in this line
-          return null;
-        })}
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text> </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
+              {`${lineNumber} ${prefix}  `}
+            </Text>
+            {wordDiffs.map((part, i) => {
+              if (part.added && type === "add") {
+                // This part was added (show with brighter background, black text)
+                return (
+                  <Text
+                    key={`word-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={wordBg}
+                    color={colors.diff.textOnHighlight}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              } else if (part.removed && type === "remove") {
+                // This part was removed (show with brighter background, black text)
+                return (
+                  <Text
+                    key={`word-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={wordBg}
+                    color={colors.diff.textOnHighlight}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              } else if (!part.added && !part.removed) {
+                // Unchanged part (show with line background, white text)
+                return (
+                  <Text
+                    key={`word-${i}-${part.value.substring(0, 10)}`}
+                    backgroundColor={lineBg}
+                    color={colors.diff.textOnDark}
+                  >
+                    {part.value}
+                  </Text>
+                );
+              }
+              // Skip parts that don't belong in this line
+              return null;
+            })}
+          </Text>
+        </Box>
       </Box>
     );
   }
 
   // No comparison, just show the whole line with one background
   return (
-    <Box>
-      <Text> </Text>
-      <Text backgroundColor={lineBg} color={colors.diff.textOnDark}>
-        {`${lineNumber} ${prefix}  ${content}`}
-      </Text>
+    <Box flexDirection="row">
+      <Box width={prefixWidth} flexShrink={0}>
+        <Text> </Text>
+      </Box>
+      <Box flexGrow={1} width={contentWidth}>
+        <Text
+          backgroundColor={lineBg}
+          color={colors.diff.textOnDark}
+          wrap="wrap"
+        >
+          {`${lineNumber} ${prefix}  ${content}`}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -114,9 +134,13 @@ interface WriteRendererProps {
 }
 
 export function WriteRenderer({ filePath, content }: WriteRendererProps) {
+  const columns = useTerminalWidth();
   const relativePath = formatRelativePath(filePath);
   const lines = content.split("\n");
   const lineCount = lines.length;
+
+  const prefixWidth = 1; // Single space prefix
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
     <Box flexDirection="column">
@@ -125,7 +149,14 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
         ⎿ Wrote {lineCount} line{lineCount !== 1 ? "s" : ""} to {relativePath}
       </Text>
       {lines.map((line, i) => (
-        <Text key={`line-${i}-${line.substring(0, 20)}`}> {line}</Text>
+        <Box key={`line-${i}-${line.substring(0, 20)}`} flexDirection="row">
+          <Box width={prefixWidth} flexShrink={0}>
+            <Text> </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap">{line}</Text>
+          </Box>
+        </Box>
       ))}
     </Box>
   );
@@ -142,6 +173,7 @@ export function EditRenderer({
   oldString,
   newString,
 }: EditRendererProps) {
+  const columns = useTerminalWidth();
   const relativePath = formatRelativePath(filePath);
   const oldLines = oldString.split("\n");
   const newLines = newString.split("\n");
@@ -172,6 +204,7 @@ export function EditRenderer({
           type="remove"
           content={line}
           compareContent={singleLineEdit ? newLines[0] : undefined}
+          columns={columns}
         />
       ))}
 
@@ -183,6 +216,7 @@ export function EditRenderer({
           type="add"
           content={line}
           compareContent={singleLineEdit ? oldLines[0] : undefined}
+          columns={columns}
         />
       ))}
     </Box>
@@ -198,6 +232,7 @@ interface MultiEditRendererProps {
 }
 
 export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
+  const columns = useTerminalWidth();
   const relativePath = formatRelativePath(filePath);
 
   // Count total additions and removals
@@ -238,6 +273,7 @@ export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
                 compareContent={
                   singleLineEdit && i === 0 ? newLines[0] : undefined
                 }
+                columns={columns}
               />
             ))}
             {newLines.map((line, i) => (
@@ -249,6 +285,7 @@ export function MultiEditRenderer({ filePath, edits }: MultiEditRendererProps) {
                 compareContent={
                   singleLineEdit && i === 0 ? oldLines[0] : undefined
                 }
+                columns={columns}
               />
             ))}
           </Box>

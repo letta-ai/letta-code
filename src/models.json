@@ -36,10 +36,21 @@
     }
   },
   {
-    "id": "opus-4.1",
-    "handle": "anthropic/claude-opus-4-1-20250805",
-    "label": "Claude Opus 4.1",
-    "description": "Anthropic's previous version of Opus",
+    "id": "haiku",
+    "handle": "anthropic/claude-haiku-4-5-20251001",
+    "label": "Claude Haiku 4.5",
+    "description": "Anthropic's fastest model",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
+    "id": "sonnet-4.5-pro-max",
+    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
+    "label": "Claude Sonnet 4.5 (Pro/Max)",
+    "description": "Sonnet 4.5 via Claude Pro/Max Plan",
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
@@ -47,11 +58,32 @@
     }
   },
   {
-    "id": "haiku",
-    "handle": "anthropic/claude-haiku-4-5-20251001",
-    "label": "Claude Haiku 4.5",
-    "description": "Anthropic's fastest model",
-    "isFeatured": true,
+    "id": "sonnet-4.5-no-reasoning-pro-max",
+    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
+    "label": "Claude Sonnet 4.5 (Pro/Max, no reasoning)",
+    "description": "Sonnet 4.5 via Claude Pro/Max Plan with reasoning disabled",
+    "updateArgs": {
+      "enable_reasoner": false,
+      "context_window": 180000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
+    "id": "opus-pro-max",
+    "handle": "claude-pro-max/claude-opus-4-5-20251101",
+    "label": "Claude Opus 4.5 (Pro/Max)",
+    "description": "Opus 4.5 via Claude Pro/Max Plan",
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
+  },
+  {
+    "id": "haiku-pro-max",
+    "handle": "claude-pro-max/claude-haiku-4-5-20251001",
+    "label": "Claude Haiku 4.5 (Pro/Max)",
+    "description": "Haiku 4.5 via Claude Pro/Max Plan",
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000
@@ -319,9 +351,19 @@
   },
   {
     "id": "glm-4.6",
-    "handle": "openrouter/z-ai/glm-4.6:exacto",
+    "handle": "zai/glm-4.6",
     "label": "GLM-4.6",
+    "description": "Zai's GLM-4.6 model",
+    "updateArgs": {
+      "context_window": 200000
+    }
+  },
+  {
+    "id": "glm-4.7",
+    "handle": "zai/glm-4.7",
+    "label": "GLM-4.7",
     "description": "The best open weights coding model",
+    "isFeatured": true,
     "updateArgs": {
       "context_window": 200000
     }

@@ -51,6 +51,7 @@ type LoadingState =
   | "importing"
   | "initializing"
   | "checking"
+  | "selecting_global"
   | "ready";
 
 /**

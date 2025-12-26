@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "../../version";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
@@ -12,6 +12,7 @@ const HELP_TABS: HelpTab[] = ["commands", "shortcuts"];
 interface CommandItem {
   name: string;
   description: string;
+  order: number;
 }
 
 interface ShortcutItem {
@@ -27,17 +28,34 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   const [activeTab, setActiveTab] = useState<HelpTab>("commands");
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [customCommands, setCustomCommands] = useState<CommandItem[]>([]);
 
-  // Get all non-hidden commands
+  // Load custom commands once on mount
+  useEffect(() => {
+    import("../commands/custom.js").then(({ getCustomCommands }) => {
+      getCustomCommands().then((customs) => {
+        setCustomCommands(
+          customs.map((cmd) => ({
+            name: `/${cmd.id}`,
+            description: `${cmd.description} (${cmd.source}${cmd.namespace ? `:${cmd.namespace}` : ""})`,
+            order: 200 + (cmd.source === "project" ? 0 : 100),
+          })),
+        );
+      });
+    });
+  }, []);
+
+  // Get all non-hidden commands, sorted by order (includes custom commands)
   const allCommands = useMemo<CommandItem[]>(() => {
-    return Object.entries(commands)
+    const builtins = Object.entries(commands)
       .filter(([_, cmd]) => !cmd.hidden)
       .map(([name, cmd]) => ({
         name,
         description: cmd.desc,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, []);
+        order: cmd.order ?? 100,
+      }));
+    return [...builtins, ...customCommands].sort((a, b) => a.order - b.order);
+  }, [customCommands]);
 
   // Keyboard shortcuts
   const shortcuts = useMemo<ShortcutItem[]>(() => {

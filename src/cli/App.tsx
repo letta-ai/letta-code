@@ -11,20 +11,25 @@ import type {
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ApprovalResult } from "../agent/approval-execution";
+import {
+  type ApprovalResult,
+  executeAutoAllowedTools,
+} from "../agent/approval-execution";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
-import type { AgentProvenance } from "../agent/create";
+import { type AgentProvenance, createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
-import { permissionMode } from "../permissions/mode";
+import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
+import { telemetry } from "../telemetry";
 import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
@@ -50,6 +55,7 @@ import {
 import { AgentSelector } from "./components/AgentSelector";
 import { ApprovalDialog } from "./components/ApprovalDialogRich";
 import { AssistantMessage } from "./components/AssistantMessageRich";
+import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
 import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
 import { ErrorMessage } from "./components/ErrorMessageRich";
@@ -60,6 +66,8 @@ import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
+import { NewAgentDialog } from "./components/NewAgentDialog";
+import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
 import { ProfileSelector } from "./components/ProfileSelector";
@@ -87,8 +95,13 @@ import {
 import { backfillBuffers } from "./helpers/backfill";
 import { formatErrorDetails } from "./helpers/errorFormatter";
 import {
+  buildMemoryReminder,
+  parseMemoryPreference,
+} from "./helpers/memoryReminder";
+import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
+  resolvePlaceholders,
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
@@ -102,7 +115,7 @@ import {
   clearCompletedSubagents,
   clearSubagentsByIds,
 } from "./helpers/subagentState";
-import { getRandomThinkingMessage } from "./helpers/thinkingMessages";
+import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
@@ -121,9 +134,39 @@ const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
 // When false, wait for backend to send "cancelled" stop_reason (useful for testing backend behavior)
 const EAGER_CANCEL = true;
 
+// Maximum retries for transient LLM API errors (matches headless.ts)
+const LLM_API_ERROR_MAX_RETRIES = 3;
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Check if error is retriable based on stop reason and run metadata
+async function isRetriableError(
+  stopReason: StopReasonType,
+  lastRunId: string | null | undefined,
+): Promise<boolean> {
+  // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
+  if (stopReason === "llm_api_error") return true;
+
+  // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
+  // This could happen if there's a backend edge case where LLMError is raised but
+  // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
+  // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
+  if (stopReason === "error" && lastRunId) {
+    try {
+      const client = await getClient();
+      const run = await client.runs.retrieve(lastRunId);
+      const metaError = run.metadata?.error as
+        | { error_type?: string }
+        | undefined;
+      return metaError?.error_type === "llm_error";
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 // Save current agent as lastAgent before exiting
@@ -313,6 +356,7 @@ export default function App({
   const agentIdRef = useRef(agentId);
   useEffect(() => {
     agentIdRef.current = agentId;
+    telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
   const resumeKey = useSuspend();
@@ -348,6 +392,11 @@ export default function App({
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
+
+  // Guard ref for preventing concurrent processConversation calls
+  // Separate from streaming state which may be set early for UI responsiveness
+  // Tracks depth to allow intentional reentry while blocking parallel calls
+  const processingConversationRef = useRef(0);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
@@ -399,6 +448,12 @@ export default function App({
     }>
   >([]);
 
+  // Bash mode: cache bash commands to prefix next user message
+  // Use ref instead of state to avoid stale closure issues in onSubmit
+  const bashCommandCacheRef = useRef<Array<{ input: string; output: string }>>(
+    [],
+  );
+
   // Derive current approval from pending approvals and results
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
@@ -416,11 +471,17 @@ export default function App({
     | "feedback"
     | "memory"
     | "pin"
+    | "new"
     | "mcp"
     | "help"
+    | "oauth"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
-  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
+  const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const closeOverlay = useCallback(() => {
+    setActiveOverlay(null);
+    setFeedbackPrefill("");
+  }, []);
 
   // Pin dialog state
   const [pinDialogLocal, setPinDialogLocal] = useState(false);
@@ -455,6 +516,7 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel?.split("/").pop() ?? null;
+  const currentModelProvider = llmConfig?.provider_name ?? null;
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -465,17 +527,32 @@ export default function App({
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
-    getRandomThinkingMessage(agentName),
+    getRandomThinkingVerb(),
   );
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+
+  // Wire up session stats to telemetry for safety net handlers
+  useEffect(() => {
+    telemetry.setSessionStatsGetter(() =>
+      sessionStatsRef.current.getSnapshot(),
+    );
+
+    // Cleanup on unmount (defensive, prevents potential memory leak)
+    return () => {
+      telemetry.setSessionStatsGetter(undefined);
+    };
+  }, []);
 
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
+
+  // Track conversation turn count for periodic memory reminders
+  const turnCountRef = useRef(0);
 
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -491,6 +568,9 @@ export default function App({
 
   // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
+
+  // Retry counter for transient LLM API errors (ref for synchronous access in loop)
+  const llmApiErrorRetriesRef = useRef(0);
 
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
@@ -584,7 +664,7 @@ export default function App({
         continue;
       }
       // Commands with phase should only commit when finished
-      if (ln.kind === "command") {
+      if (ln.kind === "command" || ln.kind === "bash_command") {
         if (!ln.phase || ln.phase === "finished") {
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
@@ -654,7 +734,11 @@ export default function App({
       buffersRef.current.pendingRefresh = true;
       setTimeout(() => {
         buffersRef.current.pendingRefresh = false;
-        refreshDerived();
+        // Skip refresh if stream was interrupted - prevents stale updates appearing
+        // after user cancels. Normal stream completion still renders (interrupted=false).
+        if (!buffersRef.current.interrupted) {
+          refreshDerived();
+        }
       }, 16); // ~60fps
     }
   }, [refreshDerived]);
@@ -740,7 +824,7 @@ export default function App({
         `Connecting to last used agent in ${shortCwd}`,
         agentState?.name ? `→ Agent: ${agentState.name}` : "",
         agentUrl ? `→ ${agentUrl}` : "",
-        "→ Use /pinned or /resume to switch agents",
+        "→ Use /pinned or /agents to switch agents",
       ].filter(Boolean);
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -794,8 +878,9 @@ export default function App({
   }, [loadingState, agentId]);
 
   // Helper to append an error to the transcript
+  // Also tracks the error in telemetry so we know an error was shown
   const appendError = useCallback(
-    (message: string) => {
+    (message: string, skipTelemetry = false) => {
       const id = uid("err");
       buffersRef.current.byId.set(id, {
         kind: "error",
@@ -804,16 +889,42 @@ export default function App({
       });
       buffersRef.current.order.push(id);
       refreshDerived();
+
+      // Track error in telemetry (unless explicitly skipped for user-initiated actions)
+      if (!skipTelemetry) {
+        telemetry.trackError("ui_error", message, "error_display", {
+          modelId: currentModelId || undefined,
+        });
+      }
     },
-    [refreshDerived],
+    [refreshDerived, currentModelId],
   );
 
   // Core streaming function - iterative loop that processes conversation turns
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
+      options?: { allowReentry?: boolean },
     ): Promise<void> => {
       const currentInput = initialInput;
+      const allowReentry = options?.allowReentry ?? false;
+
+      // Guard against concurrent processConversation calls
+      // This can happen if user submits two messages in quick succession
+      // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
+      if (processingConversationRef.current > 0 && !allowReentry) {
+        return;
+      }
+      processingConversationRef.current += 1;
+
+      // Reset retry counter for new conversation turns (fresh budget per user message)
+      if (!allowReentry) {
+        llmApiErrorRetriesRef.current = 0;
+      }
+
+      // Track last run ID for error reporting (accessible in catch block)
+      let currentRunId: string | undefined;
 
       try {
         // Check if user hit escape before we started
@@ -828,13 +939,19 @@ export default function App({
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
         markIncompleteToolsAsCancelled(buffersRef.current);
+        // Reset interrupted flag since we're starting a fresh stream
+        buffersRef.current.interrupted = false;
 
         // Clear completed subagents from the UI when starting a new turn
         clearCompletedSubagents();
 
         while (true) {
+          // Capture the signal BEFORE any async operations
+          // This prevents a race where handleInterrupt nulls the ref during await
+          const signal = abortControllerRef.current?.signal;
+
           // Check if cancelled before starting new stream
-          if (abortControllerRef.current?.signal.aborted) {
+          if (signal?.aborted) {
             setStreaming(false);
             return;
           }
@@ -844,6 +961,12 @@ export default function App({
             agentIdRef.current,
             currentInput,
           );
+
+          // Check again after network call - user may have pressed Escape during sendMessageStream
+          if (signal?.aborted) {
+            setStreaming(false);
+            return;
+          }
 
           // Define callback to sync agent state on first message chunk
           // This ensures the UI shows the correct model as early as possible
@@ -895,14 +1018,23 @@ export default function App({
             }
           };
 
-          const { stopReason, approval, approvals, apiDurationMs, lastRunId } =
-            await drainStreamWithResume(
-              stream,
-              buffersRef.current,
-              refreshDerivedThrottled,
-              abortControllerRef.current?.signal,
-              syncAgentState,
-            );
+          const {
+            stopReason,
+            approval,
+            approvals,
+            apiDurationMs,
+            lastRunId,
+            fallbackError,
+          } = await drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+            syncAgentState,
+          );
+
+          // Update currentRunId for error reporting in catch block
+          currentRunId = lastRunId ?? undefined;
 
           // Track API duration
           sessionStatsRef.current.endTurn(apiDurationMs);
@@ -914,6 +1046,7 @@ export default function App({
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {
             setStreaming(false);
+            llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
 
             // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
@@ -971,7 +1104,7 @@ export default function App({
             } else {
               // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
-                appendError("Stream interrupted by user");
+                appendError("Stream interrupted by user", true);
               }
             }
 
@@ -1121,44 +1254,21 @@ export default function App({
               }
             }
 
-            // Execute auto-allowed tools
-            const autoAllowedResults = await Promise.all(
-              autoAllowed.map(async (ac) => {
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  ac.approval.toolArgs,
-                  {},
-                );
-                const result = await executeTool(
-                  ac.approval.toolName,
-                  parsedArgs,
-                  { toolCallId: ac.approval.toolCallId },
-                );
-
-                // Update buffers with tool return for UI
-                onChunk(buffersRef.current, {
-                  message_type: "tool_return_message",
-                  id: "dummy",
-                  date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: result.toolReturn,
-                  status: result.status,
-                  stdout: result.stdout,
-                  stderr: result.stderr,
-                });
-
-                return {
-                  toolCallId: ac.approval.toolCallId,
-                  result,
-                };
-              }),
+            // Execute auto-allowed tools (sequential for writes, parallel for reads)
+            const autoAllowedResults = await executeAutoAllowedTools(
+              autoAllowed,
+              (chunk) => onChunk(buffersRef.current, chunk),
             );
 
             // Create denial results for auto-denied tools and update buffers
             const autoDeniedResults = autoDenied.map((ac) => {
-              const reason =
-                "matchedRule" in ac.permission && ac.permission.matchedRule
+              // Prefer the detailed reason over the short matchedRule name
+              // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
+              const reason = ac.permission.reason
+                ? `Permission denied: ${ac.permission.reason}`
+                : "matchedRule" in ac.permission && ac.permission.matchedRule
                   ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                  : `Permission denied: ${ac.permission.reason || "Unknown reason"}`;
+                  : "Permission denied: Unknown reason";
 
               // Update buffers with tool rejection for UI
               onChunk(buffersRef.current, {
@@ -1237,15 +1347,18 @@ export default function App({
               }
 
               // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingMessage(agentName));
+              setThinkingMessage(getRandomThinkingVerb());
               refreshDerived();
 
-              await processConversation([
-                {
-                  type: "approval",
-                  approvals: allResults,
-                },
-              ]);
+              await processConversation(
+                [
+                  {
+                    type: "approval",
+                    approvals: allResults,
+                  },
+                ],
+                { allowReentry: true },
+              );
               return;
             }
 
@@ -1336,10 +1449,87 @@ export default function App({
           }
 
           // Unexpected stop reason (error, llm_api_error, etc.)
+          // Check if this is a retriable error (transient LLM API error)
+          const retriable = await isRetriableError(stopReason, lastRunId);
+
+          if (
+            retriable &&
+            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+          ) {
+            llmApiErrorRetriesRef.current += 1;
+            const attempt = llmApiErrorRetriesRef.current;
+            const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+
+            // Show subtle grey status message
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: ["Unexpected downstream LLM API error, retrying..."],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            // Wait before retry (check abort signal periodically for ESC cancellation)
+            let cancelled = false;
+            const startTime = Date.now();
+            while (Date.now() - startTime < delayMs) {
+              if (
+                abortControllerRef.current?.signal.aborted ||
+                userCancelledRef.current
+              ) {
+                cancelled = true;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100)); // Check every 100ms
+            }
+
+            // Remove status message
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
+            if (!cancelled) {
+              // Retry by continuing the while loop (same currentInput)
+              continue;
+            }
+            // User pressed ESC - fall through to error handling
+          }
+
+          // Reset retry counter on non-retriable error (or max retries exceeded)
+          llmApiErrorRetriesRef.current = 0;
+
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(buffersRef.current);
 
-          // Fetch error details from the run if available
+          // Track the error in telemetry
+          telemetry.trackError(
+            fallbackError
+              ? "FallbackError"
+              : stopReason || "unknown_stop_reason",
+            fallbackError || `Stream stopped with reason: ${stopReason}`,
+            "message_stream",
+            {
+              modelId: currentModelId || undefined,
+              runId: lastRunId ?? undefined,
+            },
+          );
+
+          // If we have a client-side stream error (e.g., JSON parse error), show it directly
+          // Fallback error: no run_id available, show whatever error message we have
+          if (fallbackError) {
+            const errorMsg = lastRunId
+              ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
+              : `Stream error: ${fallbackError}`;
+            appendError(errorMsg, true); // Skip telemetry - already tracked above
+            setStreaming(false);
+            refreshDerived();
+            return;
+          }
+
+          // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
               const client = await getClient();
@@ -1364,17 +1554,19 @@ export default function App({
                   errorObject,
                   agentIdRef.current,
                 );
-                appendError(errorDetails);
+                appendError(errorDetails, true); // Skip telemetry - already tracked above
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
+                  true, // Skip telemetry - already tracked above
                 );
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
+                true, // Skip telemetry - already tracked above
               );
               return;
             }
@@ -1382,6 +1574,7 @@ export default function App({
             // No run_id available - but this is unusual since errors should have run_ids
             appendError(
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
+              true, // Skip telemetry - already tracked above
             );
           }
 
@@ -1401,13 +1594,37 @@ export default function App({
           return;
         }
 
+        // Track error with enhanced context
+        const errorType =
+          e instanceof Error ? e.constructor.name : "UnknownError";
+        const errorMessage = e instanceof Error ? e.message : String(e);
+
+        // Extract HTTP status code if available (API errors often have this)
+        const httpStatus =
+          e &&
+          typeof e === "object" &&
+          "status" in e &&
+          typeof e.status === "number"
+            ? e.status
+            : undefined;
+
+        telemetry.trackError(errorType, errorMessage, "message_stream", {
+          httpStatus,
+          modelId: currentModelId || undefined,
+          runId: currentRunId,
+        });
+
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
-        appendError(errorDetails);
+        appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
         setStreaming(false);
         refreshDerived();
       } finally {
         abortControllerRef.current = null;
+        processingConversationRef.current = Math.max(
+          0,
+          processingConversationRef.current - 1,
+        );
       }
     },
     [
@@ -1415,12 +1632,20 @@ export default function App({
       refreshDerived,
       refreshDerivedThrottled,
       setStreaming,
-      agentName,
+      currentModelId,
     ],
   );
 
-  const handleExit = useCallback(() => {
+  const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
+
+    // Track session end explicitly (before exit) with stats
+    const stats = sessionStatsRef.current.getSnapshot();
+    telemetry.trackSessionEnd(stats, "exit_command");
+
+    // Flush telemetry before exit
+    await telemetry.flush();
+
     setShowExitStats(true);
     // Give React time to render the stats, then exit
     setTimeout(() => {
@@ -1435,11 +1660,11 @@ export default function App({
 
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them locally instead of hitting the backend
+    // Don't show "Stream interrupted" banner - the tool result will show "Interrupted by user"
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
       setStreaming(false);
       setIsExecutingTool(false);
-      appendError("Stream interrupted by user");
       refreshDerived();
       return;
     }
@@ -1454,6 +1679,9 @@ export default function App({
 
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
+      // Prevent multiple handleInterrupt calls while state updates are pending
+      setInterruptRequested(true);
+
       // Abort the stream via abort signal
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -1463,10 +1691,13 @@ export default function App({
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
 
-      // Stop streaming and show error message
+      // Stop streaming and show error message (unless tool calls were cancelled,
+      // since the tool result will show "Interrupted by user")
       setStreaming(false);
-      markIncompleteToolsAsCancelled(buffersRef.current);
-      appendError("Stream interrupted by user");
+      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+      if (!toolsCancelled) {
+        appendError("Stream interrupted by user", true);
+      }
       refreshDerived();
 
       // Clear any pending approvals since we're cancelling
@@ -1484,12 +1715,13 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
-      // Reset cancellation flag after cleanup is complete.
+      // Reset cancellation flags after cleanup is complete.
       // This allows the dequeue effect to process any queued messages.
       // We use setTimeout to ensure React state updates (setStreaming, etc.)
       // have been processed before the dequeue effect runs.
       setTimeout(() => {
         userCancelledRef.current = false;
+        setInterruptRequested(false);
       }, 0);
 
       return;
@@ -1557,6 +1789,18 @@ export default function App({
       setCommandRunning(true);
 
       const inputCmd = "/pinned";
+      const cmdId = uid("cmd");
+
+      // Show loading indicator while switching
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: inputCmd,
+        output: "Switching agent...",
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
 
       try {
         const client = await getClient();
@@ -1577,6 +1821,9 @@ export default function App({
         emittedIdsRef.current.clear();
         setStaticItems([]);
         setStaticRenderEpoch((e) => e + 1);
+
+        // Reset turn counter for memory reminders when switching agents
+        turnCountRef.current = 0;
 
         // Update agent state - also update ref immediately for any code that runs before re-render
         agentIdRef.current = targetAgentId;
@@ -1619,6 +1866,7 @@ export default function App({
           hasBackfilledRef.current = true;
         } else {
           setStaticItems([successItem]);
+          setLines(toLines(buffersRef.current));
         }
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
@@ -1638,6 +1886,170 @@ export default function App({
       }
     },
     [refreshDerived, agentId, agentName, setCommandRunning],
+  );
+
+  // Handle creating a new agent and switching to it
+  const handleCreateNewAgent = useCallback(
+    async (name: string) => {
+      // Close dialog immediately
+      setActiveOverlay(null);
+
+      // Lock input for async operation
+      setCommandRunning(true);
+
+      const inputCmd = "/new";
+      const cmdId = uid("cmd");
+
+      // Show "Creating..." status while we wait
+      buffersRef.current.byId.set(cmdId, {
+        kind: "command",
+        id: cmdId,
+        input: inputCmd,
+        output: `Creating agent "${name}"...`,
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
+
+      try {
+        // Create the new agent
+        const { agent } = await createAgent(name);
+
+        // Update project settings with new agent
+        await updateProjectSettings({ lastAgent: agent.id });
+
+        // Clear current transcript and static items
+        buffersRef.current.byId.clear();
+        buffersRef.current.order = [];
+        buffersRef.current.tokenCount = 0;
+        emittedIdsRef.current.clear();
+        setStaticItems([]);
+        setStaticRenderEpoch((e) => e + 1);
+
+        // Reset turn counter for memory reminders
+        turnCountRef.current = 0;
+
+        // Update agent state
+        agentIdRef.current = agent.id;
+        setAgentId(agent.id);
+        setAgentState(agent);
+        setAgentName(agent.name);
+        setLlmConfig(agent.llm_config);
+
+        // Build success message with hints
+        const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const successOutput = [
+          `Created **${agent.name || agent.id}** (use /pin to save)`,
+          `⎿  ${agentUrl}`,
+          `⎿  Tip: use /init to initialize your agent's memory system!`,
+        ].join("\n");
+
+        const separator = {
+          kind: "separator" as const,
+          id: uid("sep"),
+        };
+        const successItem: StaticItem = {
+          kind: "command",
+          id: uid("cmd"),
+          input: inputCmd,
+          output: successOutput,
+          phase: "finished",
+          success: true,
+        };
+
+        setStaticItems([separator, successItem]);
+        // Sync lines display after clearing buffers
+        setLines(toLines(buffersRef.current));
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: inputCmd,
+          output: `Failed to create agent: ${errorDetails}`,
+          phase: "finished",
+          success: false,
+        });
+        refreshDerived();
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [refreshDerived, agentId, setCommandRunning],
+  );
+
+  // Handle bash mode command submission
+  // Uses the same shell runner as the Bash tool for consistency
+  const handleBashSubmit = useCallback(
+    async (command: string) => {
+      const cmdId = uid("bash");
+
+      // Add running bash_command line
+      buffersRef.current.byId.set(cmdId, {
+        kind: "bash_command",
+        id: cmdId,
+        input: command,
+        output: "",
+        phase: "running",
+      });
+      buffersRef.current.order.push(cmdId);
+      refreshDerived();
+
+      try {
+        // Use the same spawnCommand as the Bash tool for consistent behavior
+        const { spawnCommand } = await import("../tools/impl/Bash.js");
+        const { getShellEnv } = await import("../tools/impl/shellEnv.js");
+
+        const result = await spawnCommand(command, {
+          cwd: process.cwd(),
+          env: getShellEnv(),
+          timeout: 30000, // 30 second timeout
+        });
+
+        // Combine stdout and stderr for output
+        const output = (result.stdout + result.stderr).trim();
+        const success = result.exitCode === 0;
+
+        // Update line with output
+        buffersRef.current.byId.set(cmdId, {
+          kind: "bash_command",
+          id: cmdId,
+          input: command,
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          phase: "finished",
+          success,
+        });
+
+        // Cache for next user message
+        bashCommandCacheRef.current.push({
+          input: command,
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+        });
+      } catch (error: unknown) {
+        // Handle command errors (timeout, abort, etc.)
+        const errOutput =
+          error instanceof Error
+            ? (error as { stderr?: string; stdout?: string }).stderr ||
+              (error as { stdout?: string }).stdout ||
+              error.message
+            : String(error);
+
+        buffersRef.current.byId.set(cmdId, {
+          kind: "bash_command",
+          id: cmdId,
+          input: command,
+          output: errOutput,
+          phase: "finished",
+          success: false,
+        });
+
+        // Still cache for next user message (even failures are visible to agent)
+        bashCommandCacheRef.current.push({ input: command, output: errOutput });
+      }
+
+      refreshDerived();
+    },
+    [refreshDerived],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
@@ -1675,6 +2087,9 @@ export default function App({
       }
 
       if (!msg) return { submitted: false };
+
+      // Track user input (agent_id automatically added from telemetry.currentAgentId)
+      telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
 
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
@@ -1791,6 +2206,45 @@ export default function App({
 
           // Unknown subcommand
           handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /connect command - OAuth connection
+        if (msg.trim().startsWith("/connect")) {
+          const parts = msg.trim().split(/\s+/);
+          const provider = parts[1]?.toLowerCase();
+          const hasCode = parts.length > 2;
+
+          // If no code provided and provider is claude, show the OAuth dialog
+          if (provider === "claude" && !hasCode) {
+            setActiveOverlay("oauth");
+            return { submitted: true };
+          }
+
+          // Otherwise (with code or invalid provider), use existing handler
+          const { handleConnect } = await import("./commands/connect");
+          await handleConnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
+          return { submitted: true };
+        }
+
+        // Special handling for /disconnect command - remove OAuth connection
+        if (msg.trim().startsWith("/disconnect")) {
+          const { handleDisconnect } = await import("./commands/connect");
+          await handleDisconnect(
+            {
+              buffersRef,
+              refreshDerived,
+              setCommandRunning,
+            },
+            msg,
+          );
           return { submitted: true };
         }
 
@@ -1959,6 +2413,13 @@ export default function App({
 
             saveLastAgentBeforeExit();
 
+            // Track session end explicitly (before exit) with stats
+            const stats = sessionStatsRef.current.getSnapshot();
+            telemetry.trackSessionEnd(stats, "logout");
+
+            // Flush telemetry before exit
+            await telemetry.flush();
+
             // Exit after a brief delay to show the message
             setTimeout(() => process.exit(0), 500);
           } catch (error) {
@@ -2067,6 +2528,9 @@ export default function App({
             // buffersRef.current.tokenCount = 0;
             // emittedIdsRef.current.clear();
             // setStaticItems([]);
+
+            // Reset turn counter for memory reminders
+            turnCountRef.current = 0;
 
             // Update command with success
             buffersRef.current.byId.set(cmdId, {
@@ -2327,7 +2791,7 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /resume command - show session resume selector
+        // Special handling for /agents command - show agent selector (/resume is hidden alias)
         if (msg.trim() === "/agents" || msg.trim() === "/resume") {
           setActiveOverlay("resume");
           return { submitted: true };
@@ -2418,6 +2882,12 @@ export default function App({
         // Special handling for /profiles and /pinned commands - open pinned agents selector
         if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
           setActiveOverlay("profile");
+          return { submitted: true };
+        }
+
+        // Special handling for /new command - create new agent dialog
+        if (msg.trim() === "/new") {
+          setActiveOverlay("new");
           return { submitted: true };
         }
 
@@ -2657,7 +3127,7 @@ export default function App({
 
           const initialOutput = description
             ? `Starting skill creation for: ${description}`
-            : "Starting skill creation. I’ll load the skill-creator skill and ask a few questions about the skill you want to build...";
+            : "Starting skill creation. I’ll load the creating-skills skill and ask a few questions about the skill you want to build...";
 
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -2812,11 +3282,6 @@ export default function App({
           setCommandRunning(true);
 
           try {
-            // Import the initialization prompt
-            const { INITIALIZE_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
-
             // Gather git context if available
             let gitContext = "";
             try {
@@ -2887,8 +3352,27 @@ ${recentCommits}
             });
             refreshDerived();
 
-            // Send initialization prompt with git context as a system reminder
-            const initMessage = `<system-reminder>\n${INITIALIZE_PROMPT}\n${gitContext}\n</system-reminder>`;
+            // Send trigger message instructing agent to load the initializing-memory skill
+            const initMessage = `<system-reminder>
+The user has requested memory initialization via /init.
+
+## 1. Load the initializing-memory skill
+
+First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
+1. Use the \`Skill\` tool with \`command: "load", skills: ["initializing-memory"]\`
+2. The skill contains comprehensive instructions for memory initialization
+
+If the skill fails to load, proceed with your best judgment based on these guidelines:
+- Ask upfront questions (research depth, identity, related repos, workflow style)
+- Research the project based on chosen depth
+- Create/update memory blocks incrementally
+- Reflect and verify completeness
+
+## 2. Follow the loaded skill instructions
+
+Once loaded, follow the instructions in the \`initializing-memory\` skill to complete the initialization.
+${gitContext}
+</system-reminder>`;
 
             // Process conversation with the init prompt
             await processConversation([
@@ -2915,11 +3399,85 @@ ${recentCommits}
           return { submitted: true };
         }
 
-        // Special handling for /feedback command - open feedback dialog
-        if (trimmed === "/feedback") {
+        if (trimmed.startsWith("/feedback")) {
+          const maybeMsg = msg.slice("/feedback".length).trim();
+          setFeedbackPrefill(maybeMsg);
           setActiveOverlay("feedback");
           return { submitted: true };
         }
+
+        // === Custom command handling ===
+        // Check BEFORE falling through to executeCommand()
+        const { findCustomCommand, substituteArguments, expandBashCommands } =
+          await import("./commands/custom.js");
+        const commandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
+        const matchedCustom = await findCustomCommand(commandName);
+
+        if (matchedCustom) {
+          const cmdId = uid("cmd");
+
+          // Extract arguments (everything after command name)
+          const args = trimmed.slice(`/${matchedCustom.id}`.length).trim();
+
+          // Build prompt: 1) substitute args, 2) expand bash commands
+          let prompt = substituteArguments(matchedCustom.content, args);
+          prompt = await expandBashCommands(prompt);
+
+          // Show command in transcript (running phase for visual feedback)
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: `Running /${matchedCustom.id}...`,
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            // Mark command as finished BEFORE sending to agent
+            // (matches /remember pattern - command succeeded in triggering agent)
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Running custom command...`,
+              phase: "finished",
+              success: true,
+            });
+            refreshDerived();
+
+            // Send prompt to agent
+            // NOTE: Unlike /remember, we DON'T append args separately because
+            // they're already substituted into the prompt via $ARGUMENTS
+            await processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: `<system-reminder>\n${prompt}\n</system-reminder>`,
+              },
+            ]);
+          } catch (error) {
+            // Only catch errors from processConversation setup, not agent execution
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Failed to run command: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+        // === END custom command handling ===
 
         // Immediately add command to transcript with "running" phase
         const cmdId = uid("cmd");
@@ -2998,9 +3556,36 @@ ${recentCommits}
         hasSentSessionContextRef.current = true;
       }
 
-      // Combine reminders with content (session context first, then plan mode, then skill unload)
+      // Build bash command prefix if there are cached commands
+      let bashCommandPrefix = "";
+      if (bashCommandCacheRef.current.length > 0) {
+        bashCommandPrefix = `<system-reminder>
+The messages below were generated by the user while running local commands using "bash mode" in the Letta Code CLI tool.
+DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.
+</system-reminder>
+`;
+        for (const cmd of bashCommandCacheRef.current) {
+          bashCommandPrefix += `<bash-input>${cmd.input}</bash-input>\n<bash-output>${cmd.output}</bash-output>\n`;
+        }
+        // Clear the cache after building the prefix
+        bashCommandCacheRef.current = [];
+      }
+
+      // Build memory reminder if interval is set and we've reached the Nth turn
+      const memoryReminderContent = await buildMemoryReminder(
+        turnCountRef.current,
+      );
+
+      // Increment turn count for next iteration
+      turnCountRef.current += 1;
+
+      // Combine reminders with content (session context first, then plan mode, then skill unload, then bash commands, then memory reminder)
       const allReminders =
-        sessionContextReminder + planModeReminder + skillUnloadReminder;
+        sessionContextReminder +
+        planModeReminder +
+        skillUnloadReminder +
+        bashCommandPrefix +
+        memoryReminderContent;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -3019,9 +3604,11 @@ ${recentCommits}
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
+      // Clear interrupted flag from previous turn
+      buffersRef.current.interrupted = false;
       // Rotate to a new thinking message for this turn
-      setThinkingMessage(getRandomThinkingMessage(agentName));
-      // Show streaming state immediately for responsiveness
+      setThinkingMessage(getRandomThinkingVerb());
+      // Show streaming state immediately for responsiveness (pending approval check takes ~100ms)
       setStreaming(true);
       refreshDerived();
 
@@ -3123,44 +3710,20 @@ ${recentCommits}
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
             if (needsUserInput.length === 0) {
-              // Execute auto-allowed tools
-              const autoAllowedResults = await Promise.all(
-                autoAllowed.map(async (ac) => {
-                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                    ac.approval.toolArgs,
-                    {},
-                  );
-                  const result = await executeTool(
-                    ac.approval.toolName,
-                    parsedArgs,
-                    { toolCallId: ac.approval.toolCallId },
-                  );
-
-                  // Update buffers with tool return for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: result.toolReturn,
-                    status: result.status,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  });
-
-                  return {
-                    toolCallId: ac.approval.toolCallId,
-                    result,
-                  };
-                }),
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedResults = await executeAutoAllowedTools(
+                autoAllowed,
+                (chunk) => onChunk(buffersRef.current, chunk),
               );
 
               // Create denial results for auto-denied and update UI
               const autoDeniedResults = autoDenied.map((ac) => {
-                const reason =
-                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                // Prefer the detailed reason over the short matchedRule name
+                const reason = ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+                    : "Permission denied: Unknown";
 
                 // Update buffers with denial for UI
                 onChunk(buffersRef.current, {
@@ -3230,44 +3793,20 @@ ${recentCommits}
                   .filter(Boolean) as ApprovalContext[],
               );
 
-              // Execute auto-allowed tools and store results
-              const autoAllowedWithResults = await Promise.all(
-                autoAllowed.map(async (ac) => {
-                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                    ac.approval.toolArgs,
-                    {},
-                  );
-                  const result = await executeTool(
-                    ac.approval.toolName,
-                    parsedArgs,
-                    { toolCallId: ac.approval.toolCallId },
-                  );
-
-                  // Update buffers with tool return for UI
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: result.toolReturn,
-                    status: result.status,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                  });
-
-                  return {
-                    toolCallId: ac.approval.toolCallId,
-                    result,
-                  };
-                }),
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              const autoAllowedWithResults = await executeAutoAllowedTools(
+                autoAllowed,
+                (chunk) => onChunk(buffersRef.current, chunk),
               );
 
               // Create denial reasons for auto-denied and update UI
               const autoDeniedWithReasons = autoDenied.map((ac) => {
-                const reason =
-                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                // Prefer the detailed reason over the short matchedRule name
+                const reason = ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "matchedRule" in ac.permission && ac.permission.matchedRule
                     ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : `Permission denied: ${ac.permission.reason || "Unknown"}`;
+                    : "Permission denied: Unknown";
 
                 // Update buffers with denial for UI
                 onChunk(buffersRef.current, {
@@ -3418,6 +3957,8 @@ ${recentCommits}
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
+        // Ensure interrupted flag is cleared for this execution
+        buffersRef.current.interrupted = false;
 
         const approvalAbortController = new AbortController();
         toolAbortControllerRef.current = approvalAbortController;
@@ -3499,7 +4040,7 @@ ${recentCommits}
         }
 
         // Rotate to a new thinking message
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
@@ -3536,7 +4077,6 @@ ${recentCommits}
       processConversation,
       refreshDerived,
       appendError,
-      agentName,
       setStreaming,
     ],
   );
@@ -3653,7 +4193,7 @@ ${recentCommits}
         if (currentIndex + 1 >= pendingApprovals.length) {
           // All approvals collected, execute and send to backend
           // sendAllResults owns the lock release via its finally block
-          setThinkingMessage(getRandomThinkingMessage(agentName));
+          setThinkingMessage(getRandomThinkingVerb());
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -3674,7 +4214,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       isExecutingTool,
-      agentName,
       setStreaming,
     ],
   );
@@ -3719,11 +4258,20 @@ ${recentCommits}
           // If not found in static list, it might be a BYOK model where id === handle
           if (!selectedModel && modelId.includes("/")) {
             // Treat it as a BYOK model - the modelId is actually the handle
+            // Look up the context window from the API-cached model info
+            const { getModelContextWindow } = await import(
+              "../agent/available-models"
+            );
+            const apiContextWindow = getModelContextWindow(modelId);
+
             selectedModel = {
               id: modelId,
               handle: modelId,
               label: modelId.split("/").pop() ?? modelId,
               description: "Custom model",
+              updateArgs: apiContextWindow
+                ? { context_window: apiContextWindow }
+                : undefined,
             } as unknown as (typeof models)[number];
           }
 
@@ -3873,8 +4421,10 @@ ${recentCommits}
           refreshDerived();
 
           // Update the agent's system prompt
-          const { updateAgentSystemPrompt } = await import("../agent/modify");
-          const result = await updateAgentSystemPrompt(
+          const { updateAgentSystemPromptRaw } = await import(
+            "../agent/modify"
+          );
+          const result = await updateAgentSystemPromptRaw(
             agentId,
             selectedPrompt.content,
           );
@@ -3983,6 +4533,8 @@ ${recentCommits}
         const cmdId = uid("cmd");
 
         try {
+          const resolvedMessage = resolvePlaceholders(message);
+
           // Immediately add command to transcript with "running" phase
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -3995,26 +4547,38 @@ ${recentCommits}
           refreshDerived();
 
           const settings = settingsManager.getSettings();
-          const baseURL =
-            process.env.LETTA_BASE_URL ||
-            settings.env?.LETTA_BASE_URL ||
-            "https://api.letta.com";
           const apiKey =
             process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
-          // Send feedback request manually since it's not in the SDK
-          const response = await fetch(`${baseURL}/v1/metadata/feedback`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-              "X-Letta-Source": "letta-code",
+          // Only send anonymized, safe settings for debugging
+          const {
+            env: _env,
+            refreshToken: _refreshToken,
+            anthropicOAuth: _anthropicOAuth,
+            ...safeSettings
+          } = settings;
+
+          const response = await fetch(
+            "https://api.letta.com/v1/metadata/feedback",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+                "X-Letta-Source": "letta-code",
+                "X-Letta-Code-Device-ID": settingsManager.getOrCreateDeviceId(),
+              },
+              body: JSON.stringify({
+                message: resolvedMessage,
+                feature: "letta-code",
+                agent_id: agentId,
+                session_id: telemetry.getSessionId(),
+                version: process.env.npm_package_version || "unknown",
+                platform: process.platform,
+                settings: JSON.stringify(safeSettings),
+              }),
             },
-            body: JSON.stringify({
-              message: message,
-              feature: "letta-code",
-            }),
-          });
+          );
 
           if (!response.ok) {
             const errorText = await response.text();
@@ -4028,7 +4592,7 @@ ${recentCommits}
             id: cmdId,
             input: "/feedback",
             output:
-              "Thank you for your feedback! Your message has been sent to the Letta team.",
+              "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
             phase: "finished",
             success: true,
           });
@@ -4071,6 +4635,17 @@ ${recentCommits}
     permissionMode.getMode(),
   );
 
+  // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
+  const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
+    // When entering plan mode via tab cycling, generate and set the plan file path
+    if (mode === "plan") {
+      const planPath = generatePlanFilePath();
+      permissionMode.setPlanFilePath(planPath);
+    }
+    // permissionMode.setMode() is called in InputRich.tsx before this callback
+    setUiPermissionMode(mode);
+  }, []);
+
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
       const currentIndex = approvalResults.length;
@@ -4104,7 +4679,7 @@ ${recentCommits}
           stderr: toolResult.stderr,
         });
 
-        setThinkingMessage(getRandomThinkingMessage(agentName));
+        setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const decision = {
@@ -4132,7 +4707,6 @@ ${recentCommits}
       sendAllResults,
       appendError,
       refreshDerived,
-      agentName,
       setStreaming,
     ],
   );
@@ -4191,6 +4765,9 @@ ${recentCommits}
       // Get questions from approval args
       const questions = getQuestionsFromApproval(approval);
 
+      // Check for memory preference question and update setting
+      parseMemoryPreference(questions, answers);
+
       // Format the answer string like Claude Code does
       const answerParts = questions.map((q) => {
         const answer = answers[q.question] || "";
@@ -4215,7 +4792,7 @@ ${recentCommits}
         stderr: null,
       });
 
-      setThinkingMessage(getRandomThinkingMessage(agentName));
+      setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
 
       const decision = {
@@ -4231,13 +4808,7 @@ ${recentCommits}
         setApprovalResults((prev) => [...prev, decision]);
       }
     },
-    [
-      pendingApprovals,
-      approvalResults,
-      sendAllResults,
-      refreshDerived,
-      agentName,
-    ],
+    [pendingApprovals, approvalResults, sendAllResults, refreshDerived],
   );
 
   const handleEnterPlanModeApprove = useCallback(async () => {
@@ -4287,7 +4858,7 @@ Plan file path: ${planFilePath}`;
       stderr: null,
     });
 
-    setThinkingMessage(getRandomThinkingMessage(agentName));
+    setThinkingMessage(getRandomThinkingVerb());
     refreshDerived();
 
     const decision = {
@@ -4302,13 +4873,7 @@ Plan file path: ${planFilePath}`;
     } else {
       setApprovalResults((prev) => [...prev, decision]);
     }
-  }, [
-    pendingApprovals,
-    approvalResults,
-    sendAllResults,
-    refreshDerived,
-    agentName,
-  ]);
+  }, [pendingApprovals, approvalResults, sendAllResults, refreshDerived]);
 
   const handleEnterPlanModeReject = useCallback(async () => {
     const currentIndex = approvalResults.length;
@@ -4338,7 +4903,7 @@ Plan file path: ${planFilePath}`;
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
       if (!("phase" in ln)) return false;
-      if (ln.kind === "command") {
+      if (ln.kind === "command" || ln.kind === "bash_command") {
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
@@ -4456,6 +5021,8 @@ Plan file path: ${planFilePath}`;
               <Text dimColor>{"─".repeat(columns)}</Text>
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
+            ) : item.kind === "bash_command" ? (
+              <BashCommandMessage line={item} />
             ) : null}
           </Box>
         )}
@@ -4492,6 +5059,8 @@ Plan file path: ${planFilePath}`;
                       <StatusMessage line={ln} />
                     ) : ln.kind === "command" ? (
                       <CommandMessage line={ln} />
+                    ) : ln.kind === "bash_command" ? (
+                      <BashCommandMessage line={ln} />
                     ) : null}
                   </Box>
                 ))}
@@ -4530,14 +5099,16 @@ Plan file path: ${planFilePath}`;
               tokenCount={tokenCount}
               thinkingMessage={thinkingMessage}
               onSubmit={onSubmit}
+              onBashSubmit={handleBashSubmit}
               permissionMode={uiPermissionMode}
-              onPermissionModeChange={setUiPermissionMode}
+              onPermissionModeChange={handlePermissionModeChange}
               onExit={handleExit}
               onInterrupt={handleInterrupt}
               interruptRequested={interruptRequested}
               agentId={agentId}
               agentName={agentName}
               currentModel={currentModelDisplay}
+              currentModelProvider={currentModelProvider}
               messageQueue={messageQueue}
               onEnterQueueEditMode={handleEnterQueueEditMode}
               onEscapeCancel={
@@ -4635,6 +5206,7 @@ Plan file path: ${planFilePath}`;
               <FeedbackDialog
                 onSubmit={handleFeedbackSubmit}
                 onCancel={closeOverlay}
+                initialValue={feedbackPrefill}
               />
             )}
 
@@ -4674,6 +5246,48 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* OAuth Code Dialog - for Claude OAuth connection */}
+            {activeOverlay === "oauth" && (
+              <OAuthCodeDialog
+                onComplete={(success, message) => {
+                  closeOverlay();
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/connect claude",
+                    output: message,
+                    phase: "finished",
+                    success,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+                onModelSwitch={async (modelHandle: string) => {
+                  const { updateAgentLLMConfig } = await import(
+                    "../agent/modify"
+                  );
+                  const { getModelUpdateArgs, getModelInfo } = await import(
+                    "../agent/model"
+                  );
+                  const updateArgs = getModelUpdateArgs(modelHandle);
+                  await updateAgentLLMConfig(agentId, modelHandle, updateArgs);
+                  // Update current model display - use model id for correct "(current)" indicator
+                  const modelInfo = getModelInfo(modelHandle);
+                  setCurrentModelId(modelInfo?.id || modelHandle);
+                }}
+              />
+            )}
+
+            {/* New Agent Dialog - for naming new agent before creation */}
+            {activeOverlay === "new" && (
+              <NewAgentDialog
+                onSubmit={handleCreateNewAgent}
+                onCancel={closeOverlay}
+              />
+            )}
 
             {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (
