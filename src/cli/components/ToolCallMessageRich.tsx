@@ -421,16 +421,22 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
             <Text wrap="wrap">
               {isMemoryTool(rawName) ? (
                 <>
-                  <Text color={colors.tool.memoryName}>{displayName}</Text>
+                  <Text bold color={colors.tool.memoryName}>
+                    {displayName}
+                  </Text>
                   {args}
                 </>
               ) : (
-                `${displayName}${args}`
+                <>
+                  <Text bold>{displayName}</Text>
+                  {args}
+                </>
               )}
             </Text>
           ) : (
             <Box flexDirection="row">
               <Text
+                bold
                 color={
                   isMemoryTool(rawName) ? colors.tool.memoryName : undefined
                 }

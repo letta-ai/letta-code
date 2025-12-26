@@ -163,7 +163,8 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
         </Box>
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
-            Wrote {lineCount} line{lineCount !== 1 ? "s" : ""} to {relativePath}
+            Wrote <Text bold>{lineCount}</Text> line
+            {lineCount !== 1 ? "s" : ""} to <Text bold>{relativePath}</Text>
           </Text>
         </Box>
       </Box>
@@ -222,8 +223,10 @@ export function EditRenderer({
         </Box>
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
-            Updated {relativePath} with {additions} addition
-            {additions !== 1 ? "s" : ""} and {removals} removal
+            Updated <Text bold>{relativePath}</Text> with{" "}
+            <Text bold>{additions}</Text> addition
+            {additions !== 1 ? "s" : ""} and <Text bold>{removals}</Text>{" "}
+            removal
             {removals !== 1 ? "s" : ""}
           </Text>
         </Box>
@@ -298,8 +301,10 @@ export function MultiEditRenderer({
         </Box>
         <Box flexGrow={1} width={contentWidth}>
           <Text wrap="wrap">
-            Updated {relativePath} with {totalAdditions} addition
-            {totalAdditions !== 1 ? "s" : ""} and {totalRemovals} removal
+            Updated <Text bold>{relativePath}</Text> with{" "}
+            <Text bold>{totalAdditions}</Text> addition
+            {totalAdditions !== 1 ? "s" : ""} and{" "}
+            <Text bold>{totalRemovals}</Text> removal
             {totalRemovals !== 1 ? "s" : ""}
           </Text>
         </Box>
