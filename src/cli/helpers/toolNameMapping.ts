@@ -26,7 +26,7 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (snake_case)
   if (rawName === "update_plan") return "Planning";
-  if (rawName === "shell_command" || rawName === "shell") return "Shell";
+  if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Grep";
@@ -34,14 +34,14 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (PascalCase)
   if (rawName === "UpdatePlan") return "Planning";
-  if (rawName === "ShellCommand" || rawName === "Shell") return "Shell";
+  if (rawName === "ShellCommand" || rawName === "Shell") return "Bash";
   if (rawName === "ReadFile") return "Read";
   if (rawName === "ListDir") return "LS";
   if (rawName === "GrepFiles") return "Grep";
   if (rawName === "ApplyPatch") return "Patch";
 
   // Gemini toolset (snake_case)
-  if (rawName === "run_shell_command") return "Shell";
+  if (rawName === "run_shell_command") return "Bash";
   if (rawName === "read_file_gemini") return "Read";
   if (rawName === "list_directory") return "LS";
   if (rawName === "glob_gemini") return "Glob";
@@ -51,7 +51,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "read_many_files") return "Read Multiple";
 
   // Gemini toolset (PascalCase)
-  if (rawName === "RunShellCommand") return "Shell";
+  if (rawName === "RunShellCommand") return "Bash";
   if (rawName === "ReadFileGemini") return "Read";
   if (rawName === "ListDirectory") return "LS";
   if (rawName === "GlobGemini") return "Glob";
@@ -63,7 +63,7 @@ export function getDisplayToolName(rawName: string): string {
   // Additional tools
   if (rawName === "Replace" || rawName === "replace") return "Update";
   if (rawName === "WriteFile" || rawName === "write_file") return "Write";
-  if (rawName === "KillBash") return "Kill Shell";
+  if (rawName === "KillBash") return "Kill Bash";
   if (rawName === "BashOutput") return "Shell Output";
   if (rawName === "MultiEdit") return "Update";
 
