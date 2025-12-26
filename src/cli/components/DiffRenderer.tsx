@@ -154,11 +154,19 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
 
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Wrote {lineCount} line
-        {lineCount !== 1 ? "s" : ""} to {relativePath}
-      </Text>
+      <Box flexDirection="row">
+        <Box width={gutterWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Wrote {lineCount} line{lineCount !== 1 ? "s" : ""} to {relativePath}
+          </Text>
+        </Box>
+      </Box>
       {lines.map((line, i) => (
         <Box key={`line-${i}-${line.substring(0, 20)}`} flexDirection="row">
           <Box width={gutterWidth} flexShrink={0}>
@@ -200,14 +208,26 @@ export function EditRenderer({
   // For multi-line, we could do more sophisticated matching
   const singleLineEdit = oldLines.length === 1 && newLines.length === 1;
 
+  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const contentWidth = Math.max(0, columns - gutterWidth);
+
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Updated {relativePath} with {additions} addition
-        {additions !== 1 ? "s" : ""} and {removals} removal
-        {removals !== 1 ? "s" : ""}
-      </Text>
+      <Box flexDirection="row">
+        <Box width={gutterWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Updated {relativePath} with {additions} addition
+            {additions !== 1 ? "s" : ""} and {removals} removal
+            {removals !== 1 ? "s" : ""}
+          </Text>
+        </Box>
+      </Box>
 
       {/* Show removals */}
       {oldLines.map((line, i) => (
@@ -264,15 +284,26 @@ export function MultiEditRenderer({
     totalRemovals += countLines(edit.old_string);
   });
 
+  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const contentWidth = Math.max(0, columns - gutterWidth);
+
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Updated {relativePath} with {totalAdditions}{" "}
-        addition
-        {totalAdditions !== 1 ? "s" : ""} and {totalRemovals} removal
-        {totalRemovals !== 1 ? "s" : ""}
-      </Text>
+      <Box flexDirection="row">
+        <Box width={gutterWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Updated {relativePath} with {totalAdditions} addition
+            {totalAdditions !== 1 ? "s" : ""} and {totalRemovals} removal
+            {totalRemovals !== 1 ? "s" : ""}
+          </Text>
+        </Box>
+      </Box>
 
       {/* For multi-edit, show each edit sequentially */}
       {edits.map((edit, index) => {

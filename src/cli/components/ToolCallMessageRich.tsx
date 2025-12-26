@@ -344,11 +344,19 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
                     );
                   }
                   if (op.kind === "delete") {
+                    const gutterWidth = 4;
                     return (
-                      <Text key={`patch-delete-${op.path}`}>
-                        {"  "}
-                        <Text dimColor>⎿</Text> Deleted {op.path}
-                      </Text>
+                      <Box key={`patch-delete-${op.path}`} flexDirection="row">
+                        <Box width={gutterWidth} flexShrink={0}>
+                          <Text>
+                            {"  "}
+                            <Text dimColor>⎿</Text>
+                          </Text>
+                        </Box>
+                        <Box flexGrow={1}>
+                          <Text wrap="wrap">Deleted {op.path}</Text>
+                        </Box>
+                      </Box>
                     );
                   }
                   return null;

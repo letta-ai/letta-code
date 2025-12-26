@@ -58,12 +58,21 @@ export function MemoryDiffRenderer({
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Inserted into memory block{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-              {insertLine !== undefined && ` at line ${insertLine}`}
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Inserted into memory block{" "}
+                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                  {insertLine !== undefined && ` at line ${insertLine}`}
+                </Text>
+              </Box>
+            </Box>
             {insertText.split("\n").map((line: string, i: number) => (
               <Box
                 key={`insert-${i}-${line.substring(0, 20)}`}
@@ -94,14 +103,23 @@ export function MemoryDiffRenderer({
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Created memory block{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-              {description && (
-                <Text dimColor> - {truncate(description, 40)}</Text>
-              )}
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Created memory block{" "}
+                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                  {description && (
+                    <Text dimColor> - {truncate(description, 40)}</Text>
+                  )}
+                </Text>
+              </Box>
+            </Box>
             {fileText
               ?.split("\n")
               .slice(0, 3)
@@ -134,12 +152,23 @@ export function MemoryDiffRenderer({
       }
 
       case "delete": {
+        const prefixWidth = 4;
+        const contentWidth = Math.max(0, columns - prefixWidth);
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Deleted memory block{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap">
+                Deleted memory block{" "}
+                <Text color={colors.tool.memoryName}>{blockName}</Text>
+              </Text>
+            </Box>
+          </Box>
         );
       }
 
@@ -147,33 +176,64 @@ export function MemoryDiffRenderer({
         const newPath = args.new_path || "";
         const newBlockName = newPath.split("/").pop() || newPath;
         const description = args.description;
+        const prefixWidth = 4;
+        const contentWidth = Math.max(0, columns - prefixWidth);
         if (description) {
           return (
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Updated description of{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Updated description of{" "}
+                  <Text color={colors.tool.memoryName}>{blockName}</Text>
+                </Text>
+              </Box>
+            </Box>
           );
         }
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Renamed{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text> to{" "}
-            <Text color={colors.tool.memoryName}>{newBlockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap">
+                Renamed <Text color={colors.tool.memoryName}>{blockName}</Text>{" "}
+                to <Text color={colors.tool.memoryName}>{newBlockName}</Text>
+              </Text>
+            </Box>
+          </Box>
         );
       }
 
-      default:
+      default: {
+        const defaultPrefixWidth = 4;
+        const defaultContentWidth = Math.max(0, columns - defaultPrefixWidth);
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Memory operation: {command} on{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={defaultPrefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={defaultContentWidth}>
+              <Text wrap="wrap">
+                Memory operation: {command} on{" "}
+                <Text color={colors.tool.memoryName}>{blockName}</Text>
+              </Text>
+            </Box>
+          </Box>
         );
+      }
     }
   } catch {
     // If parsing fails, return null to fall through to regular handling
@@ -265,13 +325,25 @@ function MemoryStrReplaceDiff({
   const displayRows = rows.slice(0, maxRows);
   const hasMore = rows.length > maxRows;
 
+  const prefixWidth = 4;
+  const contentWidth = Math.max(0, columns - prefixWidth);
+
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Updated memory block{" "}
-        <Text color={colors.tool.memoryName}>{blockName}</Text>
-      </Text>
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Updated memory block{" "}
+            <Text color={colors.tool.memoryName}>{blockName}</Text>
+          </Text>
+        </Box>
+      </Box>
 
       {displayRows.map((row, i) => (
         <DiffLine
@@ -418,11 +490,20 @@ function PatchDiffRenderer({
 
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Patched memory block{" "}
-        <Text color={colors.tool.memoryName}>{label}</Text>
-      </Text>
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Patched memory block{" "}
+            <Text color={colors.tool.memoryName}>{label}</Text>
+          </Text>
+        </Box>
+      </Box>
       {displayLines.map((line, i) => {
         // Skip @@ hunk headers
         if (line.startsWith("@@")) {
