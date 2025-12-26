@@ -206,7 +206,7 @@ function getPlanModeReminder(): string {
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
 
 ## Plan File Info:
-${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using the Write tool.` : "No plan file path assigned."}
+${planFilePath ? `No plan file exists yet. You should create your plan at ${planFilePath} using a write tool (e.g. Write, ApplyPatch, etc. depending on your toolset).` : "No plan file path assigned."}
 
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
@@ -5002,7 +5002,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       handlePlanKeepPlanning(
         `You must write your plan to the plan file before exiting plan mode.\n` +
           `Plan file path: ${planFilePath || "not set"}\n` +
-          `Use the Write tool to create your plan, then call ExitPlanMode again.`,
+          `Use a write tool (e.g. Write, ApplyPatch, etc.) to create your plan, then call ExitPlanMode again.`,
       );
     }
   }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
