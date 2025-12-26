@@ -354,7 +354,9 @@ export const ToolCallMessage = memo(({ line }: { line: ToolCallLine }) => {
                           </Text>
                         </Box>
                         <Box flexGrow={1}>
-                          <Text wrap="wrap">Deleted {op.path}</Text>
+                          <Text wrap="wrap">
+                            Deleted <Text bold>{op.path}</Text>
+                          </Text>
                         </Box>
                       </Box>
                     );
