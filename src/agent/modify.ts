@@ -133,12 +133,25 @@ export async function updateAgentLLMConfig(
 ): Promise<LlmConfig> {
   const client = await getClient();
 
-  const modelSettings = buildModelSettings(modelHandle, updateArgs);
+  // Rewrite openai-proxy/ to openai/ to use standard OpenAI backend
+  // This assumes the user has configured their OpenAI base URL to point to the proxy
+  let effectiveModelHandle = modelHandle;
+  if (modelHandle.startsWith("openai-proxy/")) {
+    effectiveModelHandle = modelHandle.replace(
+      "openai-proxy/",
+      "openai/",
+    );
+    console.log(
+      `Redirecting provider: "${modelHandle}" -> "${effectiveModelHandle}" (using standard OpenAI provider)`,
+    );
+  }
+
+  const modelSettings = buildModelSettings(effectiveModelHandle, updateArgs);
   const contextWindow = updateArgs?.context_window as number | undefined;
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
   await client.agents.update(agentId, {
-    model: modelHandle,
+    model: effectiveModelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
   });

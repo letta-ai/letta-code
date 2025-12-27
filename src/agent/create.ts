@@ -205,6 +205,14 @@ export async function createAgent(
   // Resolve system prompt ID to content
   const systemPromptContent = await resolveSystemPrompt(systemPromptId);
 
+  // Rewrite openai-proxy/ handles to openai/ so they use standard OpenAI provider
+  // Users must configure OPENAI_BASE_URL to point to their proxy
+  let finalModelHandle = modelHandle;
+  if (modelHandle.startsWith("openai-proxy/")) {
+    finalModelHandle = `openai/${modelHandle.replace("openai-proxy/", "")}`;
+    console.log(`Rewriting model handle from ${modelHandle} to ${finalModelHandle}`);
+  }
+
   // Create agent with all block IDs (existing + newly created)
   const tags = ["origin:letta-code"];
   if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
@@ -217,7 +225,7 @@ export async function createAgent(
     name,
     description: `Letta Code agent created in ${process.cwd()}`,
     embedding: embeddingModel,
-    model: modelHandle,
+    model: finalModelHandle,
     context_window_limit: contextWindow,
     tools: toolNames,
     block_ids: blockIds,
@@ -236,7 +244,7 @@ export async function createAgent(
   // We intentionally pass context_window through so updateAgentLLMConfig can set
   // context_window_limit using the latest server API, avoiding any fallback.
   if (updateArgs && Object.keys(updateArgs).length > 0) {
-    await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+    await updateAgentLLMConfig(agent.id, finalModelHandle, updateArgs);
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
