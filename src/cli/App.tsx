@@ -24,7 +24,7 @@ import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
-import { getModelDisplayName } from "../agent/model";
+import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
@@ -888,6 +888,18 @@ export default function App({
           const lastRunCompletion = (agent as { last_run_completion?: string })
             .last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
+
+          // Derive model ID from llm_config for ModelSelector
+          const agentModelHandle =
+            agent.llm_config.model_endpoint_type && agent.llm_config.model
+              ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+              : agent.llm_config.model;
+          const modelInfo = getModelInfo(agentModelHandle || "");
+          if (modelInfo) {
+            setCurrentModelId(modelInfo.id);
+          } else {
+            setCurrentModelId(agentModelHandle || null);
+          }
 
           // Detect current toolset from attached tools
           const { detectToolsetFromAgent } = await import("../tools/toolset");

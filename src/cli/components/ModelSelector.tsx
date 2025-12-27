@@ -264,7 +264,7 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
-    if (cat === "supported") return `Supported (${supportedModels.length})`;
+    if (cat === "supported") return `Recommended (${supportedModels.length})`;
     return `All Available Models (${otherModelHandles.length})`;
   };
 
@@ -283,6 +283,7 @@ export function ModelSelector({
                 {i > 0 && <Text dimColor> · </Text>}
                 <Text
                   bold={cat === category}
+                  dimColor={cat !== category}
                   color={
                     cat === category
                       ? colors.selector.itemHighlighted
@@ -355,13 +356,15 @@ export function ModelSelector({
                 <Text
                   bold={isSelected}
                   color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
+                    isSelected
+                      ? colors.selector.itemHighlighted
+                      : isCurrent
+                        ? colors.selector.itemCurrent
+                        : undefined
                   }
                 >
                   {model.label}
-                  {isCurrent && (
-                    <Text color={colors.selector.itemCurrent}> (current)</Text>
-                  )}
+                  {isCurrent && <Text> (current)</Text>}
                 </Text>
                 {model.description && (
                   <Text dimColor> {model.description}</Text>
