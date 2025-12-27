@@ -1,9 +1,11 @@
 import { Text } from "ink";
+import Link from "ink-link";
 import { useEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
+import { colors } from "./colors";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 8; // Number of commands visible at once
@@ -180,7 +182,7 @@ export function SlashCommandAutocomplete({
   const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
 
   return (
-    <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
+    <AutocompleteBox header="↑↓ navigate, Tab to autocomplete, Enter to execute">
       {showScrollUp && <Text dimColor> ↑ {startIndex} more above</Text>}
       {visibleMatches.map((item, idx) => {
         const actualIndex = startIndex + idx;
@@ -200,6 +202,13 @@ export function SlashCommandAutocomplete({
           ↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
         </Text>
       )}
+      <Text> </Text>
+      <Text dimColor>
+        Having issues? Report bugs with /feedback or{" "}
+        <Link url="https://discord.gg/letta">
+          <Text color={colors.link.text}>join our Discord ↗</Text>
+        </Link>
+      </Text>
     </AutocompleteBox>
   );
 }
