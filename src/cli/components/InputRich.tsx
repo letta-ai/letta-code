@@ -15,7 +15,6 @@ import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
 import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
 import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -26,7 +25,6 @@ import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
-const appVersion = getVersion();
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
@@ -708,11 +706,15 @@ export function Input({
               </Text>
             </Text>
           ) : (
-            <Text dimColor>Press / for commands or @ for files</Text>
+            <Text dimColor>Press / for commands</Text>
           )}
-          <Text dimColor>
-            {`Letta Code v${appVersion} `}
-            {`[${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
+          <Text>
+            <Text color={colors.footer.agentName}>
+              {agentName || "Unnamed"}
+            </Text>
+            <Text dimColor>
+              {` [${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
+            </Text>
           </Text>
         </Box>
       </Box>
