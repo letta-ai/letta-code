@@ -53,6 +53,11 @@ function applyFileLimit(files: string[]): GlobResult {
 export async function glob(args: GlobArgs): Promise<GlobResult> {
   validateRequiredParams(args, ["pattern"], "Glob");
   const { pattern, path: searchPath } = args;
+
+  // Explicit check for undefined/empty pattern (validateRequiredParams only checks key existence)
+  if (!pattern) {
+    throw new Error("Glob tool missing required parameter: pattern");
+  }
   const userCwd = process.env.USER_CWD || process.cwd();
 
   const baseDir = searchPath
