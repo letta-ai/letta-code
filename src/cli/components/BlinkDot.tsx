@@ -7,13 +7,19 @@ import { colors } from "./colors.js";
  * Toggles visibility every 400ms to create a blinking effect.
  */
 export const BlinkDot = memo(
-  ({ color = colors.tool.pending }: { color?: string }) => {
+  ({
+    color = colors.tool.pending,
+    symbol = "●",
+  }: {
+    color?: string;
+    symbol?: string;
+  }) => {
     const [on, setOn] = useState(true);
     useEffect(() => {
       const t = setInterval(() => setOn((v) => !v), 400);
       return () => clearInterval(t);
     }, []);
-    return <Text color={color}>{on ? "●" : " "}</Text>;
+    return <Text color={color}>{on ? symbol : " "}</Text>;
   },
 );
 

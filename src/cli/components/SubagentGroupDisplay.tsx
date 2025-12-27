@@ -24,6 +24,7 @@ import {
   subscribe,
   toggleExpanded,
 } from "../helpers/subagentState.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 
@@ -62,6 +63,9 @@ interface AgentRowProps {
 
 const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
+  const columns = useTerminalWidth();
+  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const contentWidth = Math.max(0, columns - gutterWidth);
 
   const getDotElement = () => {
     switch (agent.status) {
@@ -88,23 +92,30 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + description + type + stats */}
+      {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{treeChar} </Text>
         {getDotElement()}
         <Text> {agent.description}</Text>
         <Text dimColor> · {agent.type.toLowerCase()}</Text>
-        <Text color={colors.subagent.stats}> · {stats}</Text>
+        {agent.model && <Text dimColor> · {agent.model}</Text>}
+        <Text dimColor> · {stats}</Text>
       </Box>
 
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor>
-            {" ⎿  Subagent: "}
-            {agent.agentURL}
-          </Text>
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+              <Text dimColor>{" ⎿  "}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap" dimColor>
+              Subagent: {agent.agentURL}
+            </Text>
+          </Box>
         </Box>
       )}
 
@@ -125,21 +136,38 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
 
       {/* Status line */}
       <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor>{" ⎿  Done"}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Done"}</Text>
+          </>
         ) : agent.status === "error" ? (
-          <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
-            {agent.error}
-          </Text>
+          <>
+            <Box width={gutterWidth} flexShrink={0}>
+              <Text>
+                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+                <Text dimColor>{" ⎿  "}</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap" color={colors.subagent.error}>
+                {agent.error}
+              </Text>
+            </Box>
+          </>
         ) : lastTool ? (
-          <Text dimColor>
-            {" ⎿  "}
-            {lastTool.name}
-          </Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>
+              {" ⎿  "}
+              {lastTool.name}
+            </Text>
+          </>
         ) : (
-          <Text dimColor>{" ⎿  Starting..."}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Starting..."}</Text>
+          </>
         )}
       </Box>
     </Box>
@@ -150,21 +178,27 @@ AgentRow.displayName = "AgentRow";
 interface GroupHeaderProps {
   count: number;
   allCompleted: boolean;
+  hasErrors: boolean;
   expanded: boolean;
 }
 
 const GroupHeader = memo(
-  ({ count, allCompleted, expanded }: GroupHeaderProps) => {
+  ({ count, allCompleted, hasErrors, expanded }: GroupHeaderProps) => {
     const statusText = allCompleted
       ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
       : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
 
     const hint = expanded ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
 
+    // Use error color for dot if any subagent errored
+    const dotColor = hasErrors
+      ? colors.subagent.error
+      : colors.subagent.completed;
+
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={colors.subagent.completed}>⏺</Text>
+          <Text color={dotColor}>⏺</Text>
         ) : (
           <BlinkDot color={colors.subagent.header} />
         )}
@@ -199,12 +233,14 @@ export const SubagentGroupDisplay = memo(() => {
   const allCompleted = agents.every(
     (a) => a.status === "completed" || a.status === "error",
   );
+  const hasErrors = agents.some((a) => a.status === "error");
 
   return (
     <Box flexDirection="column" marginTop={1}>
       <GroupHeader
         count={agents.length}
         allCompleted={allCompleted}
+        hasErrors={hasErrors}
         expanded={expanded}
       />
       {agents.map((agent, index) => (

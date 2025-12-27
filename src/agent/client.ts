@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
+import { ensureAnthropicProviderToken } from "../providers/anthropic-provider";
 import { settingsManager } from "../settings-manager";
 
 export async function getClient() {
@@ -22,11 +23,7 @@ export async function getClient() {
     if (expiresAt - now < 5 * 60 * 1000) {
       try {
         // Get or generate device ID (should always exist, but fallback just in case)
-        let deviceId = settings.deviceId;
-        if (!deviceId) {
-          deviceId = crypto.randomUUID();
-          settingsManager.updateSettings({ deviceId });
-        }
+        const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
 
         const tokens = await refreshAccessToken(
@@ -64,6 +61,10 @@ export async function getClient() {
     );
     process.exit(1);
   }
+
+  // Ensure Anthropic OAuth token is valid and provider is updated
+  // This checks if token is expired, refreshes it, and updates the provider
+  await ensureAnthropicProviderToken();
 
   return new Letta({
     apiKey,

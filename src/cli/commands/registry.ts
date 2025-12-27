@@ -7,15 +7,235 @@ interface Command {
   desc: string;
   handler: CommandHandler;
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
+  order?: number; // Lower numbers appear first in autocomplete (default: 100)
 }
 
 export const commands: Record<string, Command> = {
+  // === Page 1: Most commonly used (order 10-19) ===
+  "/pinned": {
+    desc: "Browse pinned agents",
+    order: 10,
+    handler: () => {
+      // Handled specially in App.tsx to open pinned agents selector
+      return "Opening pinned agents...";
+    },
+  },
   "/model": {
     desc: "Switch model",
+    order: 11,
     handler: () => {
       return "Opening model selector...";
     },
   },
+  "/init": {
+    desc: "Initialize (or re-init) your agent's memory",
+    order: 12,
+    handler: () => {
+      // Handled specially in App.tsx to send initialization prompt
+      return "Initializing memory...";
+    },
+  },
+  "/remember": {
+    desc: "Remember something from the conversation (/remember [instructions])",
+    order: 13,
+    handler: () => {
+      // Handled specially in App.tsx to trigger memory update
+      return "Processing memory request...";
+    },
+  },
+  "/skill": {
+    desc: "Enter skill creation mode (/skill [description])",
+    order: 14,
+    handler: () => {
+      // Handled specially in App.tsx to trigger skill-creation workflow
+      return "Starting skill creation...";
+    },
+  },
+  "/memory": {
+    desc: "View your agent's memory blocks",
+    order: 15,
+    handler: () => {
+      // Handled specially in App.tsx to open memory viewer
+      return "Opening memory viewer...";
+    },
+  },
+  "/search": {
+    desc: "Search messages across all agents",
+    order: 16,
+    handler: () => {
+      // Handled specially in App.tsx to show message search
+      return "Opening message search...";
+    },
+  },
+  "/clear": {
+    desc: "Clear conversation history (keep memory)",
+    order: 17,
+    handler: () => {
+      // Handled specially in App.tsx to access client and agent ID
+      return "Clearing messages...";
+    },
+  },
+
+  // === Page 2: Agent management (order 20-29) ===
+  "/new": {
+    desc: "Create a new agent and switch to it",
+    order: 20,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Creating new agent...";
+    },
+  },
+  "/agents": {
+    desc: "Browse all agents",
+    order: 21,
+    handler: () => {
+      // Handled specially in App.tsx to show agent selector
+      return "Opening agent selector...";
+    },
+  },
+  "/pin": {
+    desc: "Pin current agent globally, or use -l for local only",
+    order: 22,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Pinning agent...";
+    },
+  },
+  "/unpin": {
+    desc: "Unpin current agent globally, or use -l for local only",
+    order: 23,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Unpinning agent...";
+    },
+  },
+  "/rename": {
+    desc: "Rename the current agent (/rename <name>)",
+    order: 24,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Renaming agent...";
+    },
+  },
+  "/description": {
+    desc: "Update the current agent's description (/description <text>)",
+    order: 25,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Updating description...";
+    },
+  },
+  "/download": {
+    desc: "Download AgentFile (.af)",
+    order: 26,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Downloading agent file...";
+    },
+  },
+  "/toolset": {
+    desc: "Switch toolset (replaces /link and /unlink)",
+    order: 27,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and client
+      return "Opening toolset selector...";
+    },
+  },
+
+  // === Page 3: Advanced features (order 30-39) ===
+  "/system": {
+    desc: "Switch system prompt",
+    order: 30,
+    handler: () => {
+      // Handled specially in App.tsx to open system prompt selector
+      return "Opening system prompt selector...";
+    },
+  },
+  "/subagents": {
+    desc: "Manage custom subagents",
+    order: 31,
+    handler: () => {
+      // Handled specially in App.tsx to open SubagentManager component
+      return "Opening subagent manager...";
+    },
+  },
+  "/mcp": {
+    desc: "Manage MCP servers",
+    order: 32,
+    handler: () => {
+      // Handled specially in App.tsx to show MCP server selector
+      return "Opening MCP server manager...";
+    },
+  },
+  "/usage": {
+    desc: "Show session usage statistics and balance",
+    order: 33,
+    handler: () => {
+      // Handled specially in App.tsx to display usage stats
+      return "Fetching usage statistics...";
+    },
+  },
+  "/feedback": {
+    desc: "Send feedback to the Letta team",
+    order: 34,
+    handler: () => {
+      // Handled specially in App.tsx to send feedback request
+      return "Sending feedback...";
+    },
+  },
+  "/help": {
+    desc: "Show available commands",
+    order: 35,
+    hidden: true, // Redundant with improved autocomplete, but still works if typed
+    handler: () => {
+      // Handled specially in App.tsx to open help dialog
+      return "Opening help...";
+    },
+  },
+
+  // === Session management (order 40-49) ===
+  "/connect": {
+    desc: "Connect an existing Claude account (/connect claude)",
+    order: 40,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Initiating OAuth connection...";
+    },
+  },
+  "/disconnect": {
+    desc: "Disconnect from Claude OAuth",
+    order: 41,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Disconnecting...";
+    },
+  },
+  "/bg": {
+    desc: "Show background shell processes",
+    order: 42,
+    handler: () => {
+      // Handled specially in App.tsx to show background processes
+      return "Showing background processes...";
+    },
+  },
+  "/exit": {
+    desc: "Exit this session",
+    order: 43,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Exiting...";
+    },
+  },
+  "/logout": {
+    desc: "Clear credentials and exit",
+    order: 44,
+    handler: () => {
+      // Handled specially in App.tsx to access settings manager
+      return "Clearing credentials...";
+    },
+  },
+
+  // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
     desc: "Toggle token streaming on/off",
     hidden: true,
@@ -24,39 +244,12 @@ export const commands: Record<string, Command> = {
       return "Toggling token streaming...";
     },
   },
-  "/exit": {
-    desc: "Exit this session",
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Exiting...";
-    },
-  },
-  "/clear": {
-    desc: "Clear conversation history",
+  "/compact": {
+    desc: "Summarize conversation history (compaction)",
+    hidden: true,
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
-      return "Clearing messages...";
-    },
-  },
-  "/logout": {
-    desc: "Clear credentials and exit",
-    handler: () => {
-      // Handled specially in App.tsx to access settings manager
-      return "Clearing credentials...";
-    },
-  },
-  "/rename": {
-    desc: "Rename the current agent",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Renaming agent...";
-    },
-  },
-  "/description": {
-    desc: "Update the current agent's description",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Updating description...";
+      return "Compacting conversation...";
     },
   },
   "/link": {
@@ -75,116 +268,12 @@ export const commands: Record<string, Command> = {
       return "Unlinking tools...";
     },
   },
-  "/toolset": {
-    desc: "Switch toolset (replaces /link and /unlink)",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Opening toolset selector...";
-    },
-  },
-  "/system": {
-    desc: "Switch system prompt",
-    handler: () => {
-      // Handled specially in App.tsx to open system prompt selector
-      return "Opening system prompt selector...";
-    },
-  },
-  "/download": {
-    desc: "Download AgentFile (.af)",
-    handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
-      return "Downloading agent file...";
-    },
-  },
-  "/bg": {
-    desc: "Show background shell processes",
-    handler: () => {
-      // Handled specially in App.tsx to show background processes
-      return "Showing background processes...";
-    },
-  },
-  "/init": {
-    desc: "Initialize agent memory for this project",
-    handler: () => {
-      // Handled specially in App.tsx to send initialization prompt
-      return "Initializing memory...";
-    },
-  },
-  "/skill": {
-    desc: "Enter skill creation mode (optionally: /skill <description>)",
-    handler: () => {
-      // Handled specially in App.tsx to trigger skill-creation workflow
-      return "Starting skill creation...";
-    },
-  },
-  "/remember": {
-    desc: "Remember something from the conversation",
-    handler: () => {
-      // Handled specially in App.tsx to trigger memory update
-      return "Processing memory request...";
-    },
-  },
   "/resume": {
     desc: "Browse and switch to another agent",
+    hidden: true, // Backwards compatibility alias for /agents
     handler: () => {
       // Handled specially in App.tsx to show agent selector
       return "Opening agent selector...";
-    },
-  },
-  "/search": {
-    desc: "Search messages across all agents",
-    handler: () => {
-      // Handled specially in App.tsx to show message search
-      return "Opening message search...";
-    },
-  },
-  "/pin": {
-    desc: "Pin current agent globally (use -l for local only)",
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Pinning agent...";
-    },
-  },
-  "/unpin": {
-    desc: "Unpin current agent globally (use -l for local only)",
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Unpinning agent...";
-    },
-  },
-  "/pinned": {
-    desc: "Show pinned agents",
-    handler: () => {
-      // Handled specially in App.tsx to open pinned agents selector
-      return "Opening pinned agents...";
-    },
-  },
-  "/subagents": {
-    desc: "Manage custom subagents",
-    handler: () => {
-      // Handled specially in App.tsx to open SubagentManager component
-      return "Opening subagent manager...";
-    },
-  },
-  "/feedback": {
-    desc: "Send feedback to the Letta team",
-    handler: () => {
-      // Handled specially in App.tsx to send feedback request
-      return "Sending feedback...";
-    },
-  },
-  "/memory": {
-    desc: "View agent memory blocks",
-    handler: () => {
-      // Handled specially in App.tsx to open memory viewer
-      return "Opening memory viewer...";
-    },
-  },
-  "/usage": {
-    desc: "Show session usage statistics and balance",
-    handler: () => {
-      // Handled specially in App.tsx to display usage stats
-      return "Fetching usage statistics...";
     },
   },
 };

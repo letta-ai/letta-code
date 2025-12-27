@@ -6,6 +6,8 @@ import {
 } from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
+import { INTERRUPTED_BY_USER } from "../constants";
+import { telemetry } from "../telemetry";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -95,6 +97,13 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 
 // PascalCase toolsets (codex-2 and gemini-2) for consistency with Skill tool naming
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
+  // Additional Letta Code tools
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Task",
+  "Skill",
+  // Standard Codex tools
   "ShellCommand",
   "Shell",
   "ReadFile",
@@ -102,10 +111,16 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "GrepFiles",
   "ApplyPatch",
   "UpdatePlan",
-  "Skill",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
+  // Additional Letta Code tools
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "Skill",
+  "Task",
+  // Standard Gemini tools
   "RunShellCommand",
   "ReadFileGemini",
   "ListDirectory",
@@ -115,7 +130,6 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "WriteFileGemini",
   "WriteTodos",
   "ReadManyFiles",
-  "Skill",
 ];
 
 // Tool permissions configuration
@@ -704,6 +718,40 @@ export async function upsertToolsIfNeeded(
 }
 
 /**
+ * Force upsert tools by clearing the hash cache for the server.
+ * Use this when tools are missing on the server despite the hash matching.
+ *
+ * @param client - Letta client instance
+ * @param serverUrl - The server URL (used as cache key)
+ */
+export async function forceUpsertTools(
+  client: Letta,
+  serverUrl: string,
+): Promise<void> {
+  const { settingsManager } = await import("../settings-manager");
+  const cachedHashes = settingsManager.getSetting("toolUpsertHashes") || {};
+
+  // Clear the hash for this server to force re-upsert
+  delete cachedHashes[serverUrl];
+  settingsManager.updateSettings({ toolUpsertHashes: cachedHashes });
+
+  // Now upsert (will always run since hash was cleared)
+  await upsertToolsIfNeeded(client, serverUrl);
+}
+
+/**
+ * Check if an error indicates tools are missing on the server.
+ * This can happen when the local hash cache is stale (tools were deleted server-side).
+ */
+export function isToolsNotFoundError(error: unknown): boolean {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String((error as { message: string }).message);
+    return message.includes("Tools not found by name");
+  }
+  return false;
+}
+
+/**
  * Helper to clip tool return text to a reasonable display size
  * Used by UI components to truncate long responses for display
  */
@@ -853,6 +901,8 @@ export async function executeTool(
     };
   }
 
+  const startTime = Date.now();
+
   try {
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
@@ -862,12 +912,18 @@ export async function executeTool(
       enhancedArgs = { ...enhancedArgs, signal: options.signal };
     }
 
-    // Inject toolCallId for Task tool (for linking subagents to their parent tool call)
-    if (internalName === "Task" && options?.toolCallId) {
-      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    // Inject toolCallId and abort signal for Task tool
+    if (internalName === "Task") {
+      if (options?.toolCallId) {
+        enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+      }
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
     }
 
     const result = await tool.fn(enhancedArgs);
+    const duration = Date.now() - startTime;
 
     // Extract stdout/stderr if present (for bash tools)
     const recordResult = isRecord(result) ? result : undefined;
@@ -875,35 +931,63 @@ export async function executeTool(
     const stderrValue = recordResult?.stderr;
     const stdout = isStringArray(stdoutValue) ? stdoutValue : undefined;
     const stderr = isStringArray(stderrValue) ? stderrValue : undefined;
+
+    // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
+    const toolStatus = recordResult?.status === "error" ? "error" : "success";
+
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
+
+    // Track tool usage
+    telemetry.trackToolUsage(
+      internalName,
+      toolStatus === "success",
+      duration,
+      flattenedResponse.length,
+      toolStatus === "error" ? "tool_error" : undefined,
+      stderr ? stderr.join("\n") : undefined,
+    );
 
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
-      status: "success",
+      status: toolStatus,
       ...(stdout && { stdout }),
       ...(stderr && { stderr }),
     };
   } catch (error) {
+    const duration = Date.now() - startTime;
     const isAbort =
       error instanceof Error &&
       (error.name === "AbortError" ||
         error.message === "The operation was aborted" ||
         // node:child_process AbortError may include code/message variants
         ("code" in error && error.code === "ABORT_ERR"));
+    const errorType = isAbort
+      ? "abort"
+      : error instanceof Error
+        ? error.name
+        : "unknown";
+    const errorMessage = isAbort
+      ? INTERRUPTED_BY_USER
+      : error instanceof Error
+        ? error.message
+        : String(error);
 
-    if (isAbort) {
-      return {
-        toolReturn: "User interrupted tool execution",
-        status: "error",
-      };
-    }
+    // Track tool usage error
+    telemetry.trackToolUsage(
+      internalName,
+      false,
+      duration,
+      errorMessage.length,
+      errorType,
+      errorMessage,
+    );
 
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
     return {
-      toolReturn: error instanceof Error ? error.message : String(error),
+      toolReturn: errorMessage,
       status: "error",
     };
   }

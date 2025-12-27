@@ -68,3 +68,39 @@ export function getModelUpdateArgs(
   const modelInfo = getModelInfo(modelIdentifier);
   return modelInfo?.updateArgs;
 }
+
+/**
+ * Get a display-friendly name for a model by its handle
+ * @param handle - The full model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
+ * @returns The display name (e.g., "Sonnet 4.5") if found, null otherwise
+ */
+export function getModelDisplayName(handle: string): string | null {
+  const model = models.find((m) => m.handle === handle);
+  return model?.label ?? null;
+}
+
+/**
+ * Resolve a model ID from the llm_config.model value
+ * The llm_config.model is the model portion without the provider prefix
+ * (e.g., "z-ai/glm-4.6:exacto" for handle "openrouter/z-ai/glm-4.6:exacto")
+ *
+ * Note: This may not distinguish between variants like gpt-5.2-medium vs gpt-5.2-high
+ * since they share the same handle. For provider fallback, this is acceptable.
+ *
+ * @param llmConfigModel - The model value from agent.llm_config.model
+ * @returns The model ID if found, null otherwise
+ */
+export function resolveModelByLlmConfig(llmConfigModel: string): string | null {
+  // Try to find a model whose handle ends with the llm_config model value
+  const match = models.find((m) => m.handle.endsWith(`/${llmConfigModel}`));
+  if (match) return match.id;
+
+  // Also try exact match on the model portion (for simple cases like "gpt-5.2")
+  const exactMatch = models.find((m) => {
+    const parts = m.handle.split("/");
+    return parts.slice(1).join("/") === llmConfigModel;
+  });
+  if (exactMatch) return exactMatch.id;
+
+  return null;
+}

@@ -5,6 +5,7 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import { INTERRUPTED_BY_USER } from "../../constants";
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -47,6 +48,14 @@ export type Line =
       dimOutput?: boolean;
     }
   | {
+      kind: "bash_command";
+      id: string;
+      input: string;
+      output: string;
+      phase?: "running" | "finished";
+      success?: boolean;
+    }
+  | {
       kind: "status";
       id: string;
       lines: string[]; // Multi-line status message with arrow formatting
@@ -62,6 +71,7 @@ export type Buffers = {
   toolCallIdToLineId: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
   pendingRefresh?: boolean; // Track throttled refresh state
+  interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -160,21 +170,28 @@ export function markCurrentLineAsFinished(b: Buffers) {
 /**
  * Mark any incomplete tool calls as cancelled when stream is interrupted.
  * This prevents blinking tool calls from staying in progress state.
+ * @returns true if any tool calls were marked as cancelled
  */
-export function markIncompleteToolsAsCancelled(b: Buffers) {
+export function markIncompleteToolsAsCancelled(b: Buffers): boolean {
+  // Mark buffer as interrupted to skip stale throttled refreshes
+  b.interrupted = true;
+
+  let anyToolsCancelled = false;
   for (const [id, line] of b.byId.entries()) {
     if (line.kind === "tool_call" && line.phase !== "finished") {
       const updatedLine = {
         ...line,
         phase: "finished" as const,
         resultOk: false,
-        resultText: "Interrupted by user",
+        resultText: INTERRUPTED_BY_USER,
       };
       b.byId.set(id, updatedLine);
+      anyToolsCancelled = true;
     }
   }
   // Also mark any streaming assistant/reasoning lines as finished
   markCurrentLineAsFinished(b);
+  return anyToolsCancelled;
 }
 
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;

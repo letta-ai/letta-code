@@ -9,6 +9,8 @@ import {
 import {
   discoverSkills,
   formatSkillsForMemory,
+  GLOBAL_SKILLS_DIR,
+  getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
 import { validateRequiredParams } from "./validation.js";
@@ -100,25 +102,43 @@ function extractSkillsDir(skillsBlockValue: string): string | null {
 }
 
 /**
- * Read skill content from file
+ * Read skill content from file or bundled source
  */
 async function readSkillContent(
   skillId: string,
   skillsDir: string,
 ): Promise<string> {
-  // Try primary skills directory
-  const skillPath = join(skillsDir, skillId, "SKILL.md");
+  // 1. Check bundled skills first (they have a path now)
+  const bundledSkills = await getBundledSkills();
+  const bundledSkill = bundledSkills.find((s) => s.id === skillId);
+  if (bundledSkill?.path) {
+    try {
+      return await readFile(bundledSkill.path, "utf-8");
+    } catch {
+      // Bundled skill path not found, continue to other sources
+    }
+  }
 
+  // 2. Try global skills directory
+  const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
+  try {
+    return await readFile(globalSkillPath, "utf-8");
+  } catch {
+    // Not in global, continue
+  }
+
+  // 3. Try project skills directory
+  const skillPath = join(skillsDir, skillId, "SKILL.md");
   try {
     return await readFile(skillPath, "utf-8");
   } catch (primaryError) {
-    // Fallback: check for bundled skills in a repo-level skills directory
+    // Fallback: check for bundled skills in a repo-level skills directory (legacy)
     try {
       const bundledSkillsDir = join(process.cwd(), "skills", "skills");
       const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
       return await readFile(bundledSkillPath, "utf-8");
     } catch {
-      // If bundled fallback also fails, rethrow the original error
+      // If all fallbacks fail, rethrow the original error
       throw primaryError;
     }
   }

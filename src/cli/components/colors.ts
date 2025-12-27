@@ -75,12 +75,12 @@ export const colors = {
 
   link: {
     text: "cyan",
-    url: "blue",
+    url: brandColors.primaryAccent,
   },
 
   heading: {
     primary: "cyan",
-    secondary: "blue",
+    secondary: brandColors.primaryAccent,
   },
 
   // Status indicators
@@ -99,12 +99,20 @@ export const colors = {
     streaming: brandColors.textDisabled, // solid gray dot (streaming/in progress)
     running: brandColors.statusWarning, // blinking yellow dot (executing)
     error: brandColors.statusError, // solid red dot (failed)
+    memoryName: brandColors.primaryAccent, // memory tool name highlight (matches thinking spinner)
   },
 
   // Input box
   input: {
     border: brandColors.textDisabled,
     prompt: brandColors.textMain,
+  },
+
+  // Bash mode
+  bash: {
+    prompt: brandColors.statusError, // Red ! prompt
+    border: brandColors.statusError, // Red horizontal bars
+    dot: brandColors.statusError, // Red dot in output
   },
 
   // Todo list
@@ -120,14 +128,13 @@ export const colors = {
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
     treeChar: brandColors.textDisabled,
-    stats: brandColors.textSecondary,
     hint: brandColors.textDisabled,
   },
 
   // Info/modal views
   info: {
     border: brandColors.primaryAccent,
-    prompt: "blue",
+    prompt: brandColors.primaryAccent,
   },
 
   // Diff rendering
@@ -138,7 +145,7 @@ export const colors = {
     removedWordBg: "#7a2d2d",
     contextLineBg: undefined,
     textOnDark: "white",
-    textOnHighlight: "black",
+    textOnHighlight: "white",
     symbolAdd: "green",
     symbolRemove: "red",
     symbolContext: undefined,
@@ -155,5 +162,10 @@ export const colors = {
     normal: "white",
     dim: "gray",
     bold: "white",
+  },
+
+  // Footer bar
+  footer: {
+    agentName: brandColors.primaryAccent,
   },
 } as const;

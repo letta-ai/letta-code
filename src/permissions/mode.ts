@@ -151,14 +151,18 @@ class PermissionModeManager {
           "ReadManyFiles",
         ];
         const writeTools = [
-          // Anthropic toolset
+          // Anthropic toolset (PascalCase only)
           "Write",
           "Edit",
           "MultiEdit",
-          "NotebookEdit",
-          // Codex toolset
+          // Codex toolset (snake_case and PascalCase)
           "apply_patch",
           "ApplyPatch",
+          // Gemini toolset (snake_case and PascalCase)
+          "write_file_gemini",
+          "WriteFileGemini",
+          "replace",
+          "Replace",
         ];
 
         if (allowedInPlan.includes(toolName)) {
@@ -168,8 +172,23 @@ class PermissionModeManager {
         // Special case: allow writes to the plan file only
         if (writeTools.includes(toolName)) {
           const planFilePath = this.getPlanFilePath();
-          const targetPath =
+          let targetPath =
             (toolArgs?.file_path as string) || (toolArgs?.path as string);
+
+          // ApplyPatch/apply_patch: extract file path from patch input
+          if (
+            (toolName === "ApplyPatch" || toolName === "apply_patch") &&
+            toolArgs?.input
+          ) {
+            const input = toolArgs.input as string;
+            // Extract path from "*** Add File: path", "*** Update File: path", or "*** Delete File: path"
+            const match = input.match(
+              /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/,
+            );
+            if (match?.[1]) {
+              targetPath = match[1].trim();
+            }
+          }
 
           if (planFilePath && targetPath && targetPath === planFilePath) {
             return "allow";

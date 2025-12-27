@@ -16,6 +16,7 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
 
 // ============================================================================
@@ -31,6 +32,7 @@ export interface StaticSubagent {
   totalTokens: number;
   agentURL: string | null;
   error?: string;
+  model?: string;
 }
 
 interface SubagentGroupStaticProps {
@@ -48,6 +50,9 @@ interface AgentRowProps {
 
 const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
+  const columns = useTerminalWidth();
+  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const contentWidth = Math.max(0, columns - gutterWidth);
 
   const dotColor =
     agent.status === "completed"
@@ -58,36 +63,54 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + description + type + stats */}
+      {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
         <Text color={colors.subagent.treeChar}>{treeChar} </Text>
         <Text color={dotColor}>●</Text>
         <Text> {agent.description}</Text>
         <Text dimColor> · {agent.type.toLowerCase()}</Text>
-        <Text color={colors.subagent.stats}> · {stats}</Text>
+        {agent.model && <Text dimColor> · {agent.model}</Text>}
+        <Text dimColor> · {stats}</Text>
       </Box>
 
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-          <Text dimColor>
-            {" ⎿  Subagent: "}
-            {agent.agentURL}
-          </Text>
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+              <Text dimColor>{" ⎿  "}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap" dimColor>
+              Subagent: {agent.agentURL}
+            </Text>
+          </Box>
         </Box>
       )}
 
       {/* Status line */}
       <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{continueChar}</Text>
         {agent.status === "completed" ? (
-          <Text dimColor>{" ⎿  Done"}</Text>
+          <>
+            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+            <Text dimColor>{" ⎿  Done"}</Text>
+          </>
         ) : (
-          <Text color={colors.subagent.error}>
-            {" ⎿  Error: "}
-            {agent.error}
-          </Text>
+          <>
+            <Box width={gutterWidth} flexShrink={0}>
+              <Text>
+                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+                <Text dimColor>{" ⎿  "}</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap" color={colors.subagent.error}>
+                {agent.error}
+              </Text>
+            </Box>
+          </>
         )}
       </Box>
     </Box>
@@ -107,12 +130,18 @@ export const SubagentGroupStatic = memo(
     }
 
     const statusText = `Ran ${agents.length} subagent${agents.length !== 1 ? "s" : ""}`;
+    const hasErrors = agents.some((a) => a.status === "error");
+
+    // Use error color for dot if any subagent errored
+    const dotColor = hasErrors
+      ? colors.subagent.error
+      : colors.subagent.completed;
 
     return (
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
-          <Text color={colors.subagent.completed}>⏺</Text>
+          <Text color={dotColor}>⏺</Text>
           <Text color={colors.subagent.header}> {statusText}</Text>
         </Box>
 

@@ -32,12 +32,31 @@ const THINKING_VERBS = [
   "rendering",
   "executing",
   "initializing",
+  "absolutely right",
+  "thinking about thinking",
+  "metathinking",
+  "learning",
+  "adapting",
+  "evolving",
+  "remembering",
+  "absorbing",
+  "internalizing",
 ] as const;
 
-// Get a random thinking message
-export function getRandomThinkingMessage(agentName?: string | null): string {
+// Get a random thinking verb (e.g., "thinking", "processing")
+function getRandomVerb(): string {
   const index = Math.floor(Math.random() * THINKING_VERBS.length);
-  const verb = THINKING_VERBS[index] ?? "thinking";
+  return THINKING_VERBS[index] ?? "thinking";
+}
+
+// Get a random thinking verb phrase (e.g., "is thinking", "is processing")
+export function getRandomThinkingVerb(): string {
+  return `is ${getRandomVerb()}`;
+}
+
+// Get a random thinking message (full string with agent name)
+export function getRandomThinkingMessage(agentName?: string | null): string {
+  const verb = getRandomVerb();
 
   if (agentName) {
     return `${agentName} is ${verb}`;

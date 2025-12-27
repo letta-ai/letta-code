@@ -1,4 +1,5 @@
 import type { SessionStatsSnapshot } from "../../agent/stats";
+import { formatCompact } from "../helpers/format";
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) {
@@ -45,15 +46,24 @@ export function formatUsageStats({
   const outputLines = [
     `Total duration (API):  ${formatDuration(stats.totalApiMs)}`,
     `Total duration (wall): ${formatDuration(stats.totalWallMs)}`,
-    `Session usage:         ${stats.usage.stepCount} steps, ${formatNumber(stats.usage.promptTokens)} input, ${formatNumber(stats.usage.completionTokens)} output`,
+    `Session usage:         ${stats.usage.stepCount} steps, ${formatCompact(stats.usage.promptTokens)} input, ${formatCompact(stats.usage.completionTokens)} output`,
     "",
   ];
 
   if (balance) {
+    // API returns credits (integers), dollars = credits / 1000
+    const totalCredits = Math.round(balance.total_balance);
+    const monthlyCredits = Math.round(balance.monthly_credit_balance);
+    const purchasedCredits = Math.round(balance.purchased_credit_balance);
+
+    const toDollars = (credits: number) => (credits / 1000).toFixed(2);
+
     outputLines.push(
-      `Available credits:     $${balance.total_balance.toFixed(2)}       Plan: [${balance.billing_tier}]`,
-      `  Monthly credits:     $${balance.monthly_credit_balance.toFixed(2)}`,
-      `  Purchased credits:   $${balance.purchased_credit_balance.toFixed(2)}`,
+      `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})       Plan: [${balance.billing_tier}]`,
+      `  Monthly credits:     ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
+      `  Purchased credits:   ◎${formatNumber(purchasedCredits)} ($${toDollars(purchasedCredits)})`,
+      "",
+      "https://app.letta.com/settings/organization/usage",
     );
   }
 

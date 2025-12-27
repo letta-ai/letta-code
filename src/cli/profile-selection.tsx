@@ -53,21 +53,23 @@ function formatModel(agent: AgentState): string {
   return agent.llm_config?.model || "unknown";
 }
 
-function getLabel(option: ProfileOption): string {
+function getLabel(option: ProfileOption, freshRepoMode?: boolean): string {
   const parts: string[] = [];
   if (option.isLru) parts.push("last used");
   if (option.isLocal) parts.push("pinned");
-  else if (!option.isLru) parts.push("global"); // Pinned globally but not locally
+  else if (!option.isLru && !freshRepoMode) parts.push("global"); // Pinned globally but not locally
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
 function ProfileSelectionUI({
   lruAgentId,
   externalLoading,
+  externalFreshRepoMode,
   onComplete,
 }: {
   lruAgentId: string | null;
   externalLoading?: boolean;
+  externalFreshRepoMode?: boolean;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
   const [options, setOptions] = useState<ProfileOption[]>([]);
@@ -175,9 +177,11 @@ function ProfileSelectionUI({
   });
 
   const hasLocalDir = settingsManager.hasLocalLettaDir();
-  const contextMessage = hasLocalDir
-    ? "Existing `.letta` folder detected."
-    : `${options.length} agent profile${options.length !== 1 ? "s" : ""} detected.`;
+  const contextMessage = externalFreshRepoMode
+    ? `${options.length} pinned agent${options.length !== 1 ? "s" : ""} available.`
+    : hasLocalDir
+      ? "Existing `.letta` folder detected."
+      : `${options.length} agent profile${options.length !== 1 ? "s" : ""} detected.`;
 
   return (
     <Box flexDirection="column">
@@ -202,7 +206,7 @@ function ProfileSelectionUI({
               const isSelected = index === selectedIndex;
               const displayName =
                 option.agent?.name || option.agentId.slice(0, 20);
-              const label = getLabel(option);
+              const label = getLabel(option, externalFreshRepoMode);
 
               return (
                 <Box key={option.agentId} flexDirection="column">
@@ -290,12 +294,14 @@ function ProfileSelectionUI({
 export function ProfileSelectionInline({
   lruAgentId,
   loading: externalLoading,
+  freshRepoMode,
   onSelect,
   onCreateNew,
   onExit,
 }: {
   lruAgentId: string | null;
   loading?: boolean;
+  freshRepoMode?: boolean;
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
   onExit: () => void;
@@ -313,6 +319,7 @@ export function ProfileSelectionInline({
   return React.createElement(ProfileSelectionUI, {
     lruAgentId,
     externalLoading,
+    externalFreshRepoMode: freshRepoMode,
     onComplete: handleComplete,
   });
 }

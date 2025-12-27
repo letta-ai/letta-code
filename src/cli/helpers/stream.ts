@@ -1,3 +1,4 @@
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
@@ -24,6 +25,7 @@ type DrainResult = {
   approval?: ApprovalRequest | null; // DEPRECATED: kept for backward compat
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
+  fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
 };
 
 export async function drainStream(
@@ -31,6 +33,7 @@ export async function drainStream(
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
+  onFirstMessage?: () => void,
 ): Promise<DrainResult> {
   const startTime = performance.now();
 
@@ -47,101 +50,173 @@ export async function drainStream(
   let stopReason: StopReasonType | null = null;
   let lastRunId: string | null = null;
   let lastSeqId: number | null = null;
+  let hasCalledFirstMessage = false;
+  let fallbackError: string | null = null;
 
-  for await (const chunk of stream) {
-    // console.log("chunk", chunk);
+  // Track if we triggered abort via our listener (for eager cancellation)
+  let abortedViaListener = false;
 
-    // Check if stream was aborted
-    if (abortSignal?.aborted) {
-      stopReason = "cancelled";
-      markIncompleteToolsAsCancelled(buffers);
+  // Set up abort listener to propagate our signal to SDK's stream controller
+  // This immediately cancels the HTTP request instead of waiting for next chunk
+  const abortHandler = () => {
+    abortedViaListener = true;
+    // Abort the SDK's stream controller to cancel the underlying HTTP request
+    if (stream.controller && !stream.controller.signal.aborted) {
+      stream.controller.abort();
+    }
+  };
+
+  if (abortSignal && !abortSignal.aborted) {
+    abortSignal.addEventListener("abort", abortHandler, { once: true });
+  } else if (abortSignal?.aborted) {
+    // Already aborted before we started
+    abortedViaListener = true;
+  }
+
+  try {
+    for await (const chunk of stream) {
+      // console.log("chunk", chunk);
+
+      // Check if stream was aborted
+      if (abortSignal?.aborted) {
+        stopReason = "cancelled";
+        markIncompleteToolsAsCancelled(buffers);
+        queueMicrotask(refresh);
+        break;
+      }
+      // Store the run_id (for error reporting) and seq_id (for stream resumption)
+      // Capture run_id even if seq_id is missing - we need it for error details
+      if ("run_id" in chunk && chunk.run_id) {
+        lastRunId = chunk.run_id;
+      }
+      if ("seq_id" in chunk && chunk.seq_id) {
+        lastSeqId = chunk.seq_id;
+      }
+
+      if (chunk.message_type === "ping") continue;
+
+      // Call onFirstMessage callback on the first agent response chunk
+      if (
+        !hasCalledFirstMessage &&
+        onFirstMessage &&
+        (chunk.message_type === "reasoning_message" ||
+          chunk.message_type === "assistant_message")
+      ) {
+        hasCalledFirstMessage = true;
+        // Call async in background - don't block stream processing
+        queueMicrotask(() => onFirstMessage());
+      }
+
+      // Remove tool from pending approvals when it completes (server-side execution finished)
+      // This means the tool was executed server-side and doesn't need approval
+      if (chunk.message_type === "tool_return_message") {
+        if (chunk.tool_call_id) {
+          pendingApprovals.delete(chunk.tool_call_id);
+        }
+        // Continue processing this chunk (for UI display)
+      }
+
+      // Need to store the approval request ID to send an approval in a new run
+      if (chunk.message_type === "approval_request_message") {
+        _approvalRequestId = chunk.id;
+      }
+
+      // Accumulate approval request state across streaming chunks
+      // Support parallel tool calls by tracking each tool_call_id separately
+      // NOTE: Only track approval_request_message, NOT tool_call_message
+      // tool_call_message = auto-executed server-side (e.g., web_search)
+      // approval_request_message = needs user approval (e.g., Bash)
+      if (chunk.message_type === "approval_request_message") {
+        // console.log(
+        // "[drainStream] approval_request_message chunk:",
+        // JSON.stringify(chunk, null, 2),
+        // );
+
+        // Normalize tool calls: support both legacy tool_call and new tool_calls array
+        const toolCalls = Array.isArray(chunk.tool_calls)
+          ? chunk.tool_calls
+          : chunk.tool_call
+            ? [chunk.tool_call]
+            : [];
+
+        for (const toolCall of toolCalls) {
+          if (!toolCall?.tool_call_id) continue; // strict: require id
+
+          // Get or create entry for this tool_call_id
+          const existing = pendingApprovals.get(toolCall.tool_call_id) || {
+            toolCallId: toolCall.tool_call_id,
+            toolName: "",
+            toolArgs: "",
+          };
+
+          // Update name if provided
+          if (toolCall.name) {
+            existing.toolName = toolCall.name;
+          }
+
+          // Accumulate arguments (may arrive across multiple chunks)
+          if (toolCall.arguments) {
+            existing.toolArgs += toolCall.arguments;
+          }
+
+          pendingApprovals.set(toolCall.tool_call_id, existing);
+        }
+      }
+
+      // Check abort signal before processing - don't add data after interrupt
+      if (abortSignal?.aborted) {
+        stopReason = "cancelled";
+        markIncompleteToolsAsCancelled(buffers);
+        queueMicrotask(refresh);
+        break;
+      }
+
+      onChunk(buffers, chunk);
       queueMicrotask(refresh);
-      break;
-    }
-    // Store the run_id and seq_id to re-connect if stream is interrupted
-    if (
-      "run_id" in chunk &&
-      "seq_id" in chunk &&
-      chunk.run_id &&
-      chunk.seq_id
-    ) {
-      lastRunId = chunk.run_id;
-      lastSeqId = chunk.seq_id;
-    }
 
-    if (chunk.message_type === "ping") continue;
-
-    // Remove tool from pending approvals when it completes (server-side execution finished)
-    // This means the tool was executed server-side and doesn't need approval
-    if (chunk.message_type === "tool_return_message") {
-      if (chunk.tool_call_id) {
-        pendingApprovals.delete(chunk.tool_call_id);
+      if (chunk.message_type === "stop_reason") {
+        stopReason = chunk.stop_reason;
+        // Continue reading stream to get usage_statistics that may come after
       }
-      // Continue processing this chunk (for UI display)
     }
+  } catch (e) {
+    // Handle stream errors (e.g., JSON parse errors from SDK, network issues)
+    // This can happen when the stream ends with incomplete data
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    debugWarn("drainStream", "Stream error caught:", errorMessage);
 
-    // Need to store the approval request ID to send an approval in a new run
-    if (chunk.message_type === "approval_request_message") {
-      _approvalRequestId = chunk.id;
-    }
-
-    // Accumulate approval request state across streaming chunks
-    // Support parallel tool calls by tracking each tool_call_id separately
-    // NOTE: Only track approval_request_message, NOT tool_call_message
-    // tool_call_message = auto-executed server-side (e.g., web_search)
-    // approval_request_message = needs user approval (e.g., Bash)
-    if (chunk.message_type === "approval_request_message") {
-      // console.log(
-      // "[drainStream] approval_request_message chunk:",
-      // JSON.stringify(chunk, null, 2),
-      // );
-
-      // Normalize tool calls: support both legacy tool_call and new tool_calls array
-      const toolCalls = Array.isArray(chunk.tool_calls)
-        ? chunk.tool_calls
-        : chunk.tool_call
-          ? [chunk.tool_call]
-          : [];
-
-      for (const toolCall of toolCalls) {
-        if (!toolCall?.tool_call_id) continue; // strict: require id
-
-        // Get or create entry for this tool_call_id
-        const existing = pendingApprovals.get(toolCall.tool_call_id) || {
-          toolCallId: toolCall.tool_call_id,
-          toolName: "",
-          toolArgs: "",
-        };
-
-        // Update name if provided
-        if (toolCall.name) {
-          existing.toolName = toolCall.name;
-        }
-
-        // Accumulate arguments (may arrive across multiple chunks)
-        if (toolCall.arguments) {
-          existing.toolArgs += toolCall.arguments;
-        }
-
-        pendingApprovals.set(toolCall.tool_call_id, existing);
+    // Try to extract run_id from APIError if we don't have one yet
+    if (!lastRunId && e instanceof APIError && e.error) {
+      const errorObj = e.error as Record<string, unknown>;
+      if ("run_id" in errorObj && typeof errorObj.run_id === "string") {
+        lastRunId = errorObj.run_id;
+        debugWarn("drainStream", "Extracted run_id from error:", lastRunId);
       }
     }
 
-    onChunk(buffers, chunk);
+    // Only set fallbackError if we don't have a run_id - if we have a run_id,
+    // App.tsx will fetch detailed error info from the server which is better
+    if (!lastRunId) {
+      fallbackError = errorMessage;
+    }
+
+    // Set error stop reason so drainStreamWithResume can try to reconnect
+    stopReason = "error";
+    markIncompleteToolsAsCancelled(buffers);
     queueMicrotask(refresh);
-
-    // Check abort signal again after processing chunk (for eager cancellation)
-    if (abortSignal?.aborted) {
-      stopReason = "cancelled";
-      markIncompleteToolsAsCancelled(buffers);
-      queueMicrotask(refresh);
-      break;
+  } finally {
+    // Clean up abort listener
+    if (abortSignal) {
+      abortSignal.removeEventListener("abort", abortHandler);
     }
+  }
 
-    if (chunk.message_type === "stop_reason") {
-      stopReason = chunk.stop_reason;
-      // Continue reading stream to get usage_statistics that may come after
-    }
+  // If we aborted via listener but loop exited without setting stopReason
+  // (SDK returns gracefully on abort), mark as cancelled
+  if (abortedViaListener && !stopReason) {
+    stopReason = "cancelled";
+    markIncompleteToolsAsCancelled(buffers);
+    queueMicrotask(refresh);
   }
 
   // Stream has ended, check if we captured a stop reason
@@ -173,10 +248,12 @@ export async function drainStream(
 
     // Include ALL tool_call_ids - don't filter out incomplete entries
     // Missing name/args will be handled by denial logic in App.tsx
+    // Default empty toolArgs to "{}" - empty string causes JSON.parse("") to fail
+    // This happens for tools with no parameters (e.g., EnterPlanMode, ExitPlanMode)
     approvals = allPending.map((a) => ({
       toolCallId: a.toolCallId,
       toolName: a.toolName || "",
-      toolArgs: a.toolArgs || "",
+      toolArgs: a.toolArgs || "{}",
     }));
 
     if (approvals.length === 0) {
@@ -204,6 +281,7 @@ export async function drainStream(
     lastRunId,
     lastSeqId,
     apiDurationMs,
+    fallbackError,
   };
 }
 
@@ -218,6 +296,7 @@ export async function drainStream(
  * @param buffers - Buffer to accumulate chunks
  * @param refresh - Callback to refresh UI
  * @param abortSignal - Optional abort signal for cancellation
+ * @param onFirstMessage - Optional callback to invoke on first message chunk
  * @returns Result with stop_reason, approval info, and timing
  */
 export async function drainStreamWithResume(
@@ -225,11 +304,18 @@ export async function drainStreamWithResume(
   buffers: ReturnType<typeof createBuffers>,
   refresh: () => void,
   abortSignal?: AbortSignal,
+  onFirstMessage?: () => void,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
 
   // Attempt initial drain
-  let result = await drainStream(stream, buffers, refresh, abortSignal);
+  let result = await drainStream(
+    stream,
+    buffers,
+    refresh,
+    abortSignal,
+    onFirstMessage,
+  );
 
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
   if (
@@ -238,6 +324,9 @@ export async function drainStreamWithResume(
     result.lastSeqId !== null &&
     !abortSignal?.aborted
   ) {
+    // Preserve the original error in case resume fails
+    const originalFallbackError = result.fallbackError;
+
     try {
       const client = await getClient();
       // Resume from Redis where we left off
@@ -247,6 +336,7 @@ export async function drainStreamWithResume(
       });
 
       // Continue draining from where we left off
+      // Note: Don't pass onFirstMessage again - already called in initial drain
       const resumeResult = await drainStream(
         resumeStream,
         buffers,
@@ -255,10 +345,12 @@ export async function drainStreamWithResume(
       );
 
       // Use the resume result (should have proper stop_reason now)
+      // Clear the original stream error since we recovered
       result = resumeResult;
     } catch (_e) {
       // Resume failed - stick with the error stop_reason
-      // The original error result will be returned
+      // Restore the original stream error for display
+      result.fallbackError = originalFallbackError;
     }
   }
 

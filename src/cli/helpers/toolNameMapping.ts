@@ -13,7 +13,7 @@
 export function getDisplayToolName(rawName: string): string {
   // Anthropic toolset
   if (rawName === "write") return "Write";
-  if (rawName === "edit" || rawName === "multi_edit") return "Edit";
+  if (rawName === "edit" || rawName === "multi_edit") return "Update";
   if (rawName === "read") return "Read";
   if (rawName === "bash") return "Bash";
   if (rawName === "grep") return "Grep";
@@ -26,7 +26,7 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (snake_case)
   if (rawName === "update_plan") return "Planning";
-  if (rawName === "shell_command" || rawName === "shell") return "Shell";
+  if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Grep";
@@ -34,14 +34,14 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (PascalCase)
   if (rawName === "UpdatePlan") return "Planning";
-  if (rawName === "ShellCommand" || rawName === "Shell") return "Shell";
+  if (rawName === "ShellCommand" || rawName === "Shell") return "Bash";
   if (rawName === "ReadFile") return "Read";
   if (rawName === "ListDir") return "LS";
   if (rawName === "GrepFiles") return "Grep";
   if (rawName === "ApplyPatch") return "Patch";
 
   // Gemini toolset (snake_case)
-  if (rawName === "run_shell_command") return "Shell";
+  if (rawName === "run_shell_command") return "Bash";
   if (rawName === "read_file_gemini") return "Read";
   if (rawName === "list_directory") return "LS";
   if (rawName === "glob_gemini") return "Glob";
@@ -51,7 +51,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "read_many_files") return "Read Multiple";
 
   // Gemini toolset (PascalCase)
-  if (rawName === "RunShellCommand") return "Shell";
+  if (rawName === "RunShellCommand") return "Bash";
   if (rawName === "ReadFileGemini") return "Read";
   if (rawName === "ListDirectory") return "LS";
   if (rawName === "GlobGemini") return "Glob";
@@ -61,11 +61,11 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "ReadManyFiles") return "Read Multiple";
 
   // Additional tools
-  if (rawName === "Replace" || rawName === "replace") return "Edit";
+  if (rawName === "Replace" || rawName === "replace") return "Update";
   if (rawName === "WriteFile" || rawName === "write_file") return "Write";
-  if (rawName === "KillBash") return "Kill Shell";
+  if (rawName === "KillBash") return "Kill Bash";
   if (rawName === "BashOutput") return "Shell Output";
-  if (rawName === "MultiEdit") return "Edit";
+  if (rawName === "MultiEdit") return "Update";
 
   // No mapping found, return as-is
   return rawName;
@@ -110,5 +110,79 @@ export function isFancyUITool(name: string): boolean {
     name === "AskUserQuestion" ||
     name === "EnterPlanMode" ||
     name === "ExitPlanMode"
+  );
+}
+
+/**
+ * Checks if a tool is a memory tool (server-side memory management)
+ */
+export function isMemoryTool(name: string): boolean {
+  return name === "memory" || name === "memory_apply_patch";
+}
+
+/**
+ * Checks if a tool is a file edit tool (has old_string/new_string args)
+ */
+export function isFileEditTool(name: string): boolean {
+  return (
+    name === "edit" ||
+    name === "Edit" ||
+    name === "multi_edit" ||
+    name === "MultiEdit" ||
+    name === "Replace" ||
+    name === "replace"
+  );
+}
+
+/**
+ * Checks if a tool is a file write tool (has file_path/content args)
+ */
+export function isFileWriteTool(name: string): boolean {
+  return (
+    name === "write" ||
+    name === "Write" ||
+    name === "WriteFile" ||
+    name === "write_file" ||
+    name === "write_file_gemini" ||
+    name === "WriteFileGemini"
+  );
+}
+
+/**
+ * Checks if a tool is a file read tool (has file_path arg)
+ */
+export function isFileReadTool(name: string): boolean {
+  return (
+    name === "read" ||
+    name === "Read" ||
+    name === "ReadFile" ||
+    name === "read_file" ||
+    name === "read_file_gemini" ||
+    name === "ReadFileGemini" ||
+    name === "read_many_files" ||
+    name === "ReadManyFiles"
+  );
+}
+
+/**
+ * Checks if a tool is a patch tool (applies unified diffs)
+ */
+export function isPatchTool(name: string): boolean {
+  return name === "apply_patch" || name === "ApplyPatch";
+}
+
+/**
+ * Checks if a tool is a shell/bash tool
+ */
+export function isShellTool(name: string): boolean {
+  return (
+    name === "bash" ||
+    name === "Bash" ||
+    name === "shell" ||
+    name === "Shell" ||
+    name === "shell_command" ||
+    name === "ShellCommand" ||
+    name === "run_shell_command" ||
+    name === "RunShellCommand"
   );
 }

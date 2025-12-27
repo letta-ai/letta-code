@@ -2,11 +2,13 @@
 // Utilities for modifying agent configuration
 
 import type {
+  AgentState,
   AnthropicModelSettings,
   GoogleAIModelSettings,
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
+import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
 import { getAllLettaToolNames, getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 
@@ -25,7 +27,10 @@ function buildModelSettings(
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
   const isOpenAI = modelHandle.startsWith("openai/");
-  const isAnthropic = modelHandle.startsWith("anthropic/");
+  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  const isAnthropic =
+    modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
@@ -97,8 +102,8 @@ function buildModelSettings(
     }
     settings = googleVertexSettings;
   } else {
-    // For unknown providers, return generic settings with parallel_tool_calls
-    settings = { parallel_tool_calls: true };
+    // For BYOK/unknown providers, return generic settings with parallel_tool_calls
+    settings = {};
   }
 
   // Apply max_output_tokens for all providers if specified
@@ -130,14 +135,13 @@ export async function updateAgentLLMConfig(
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
   const contextWindow = updateArgs?.context_window as number | undefined;
+  const hasModelSettings = Object.keys(modelSettings).length > 0;
 
-  if (modelSettings || contextWindow) {
-    await client.agents.update(agentId, {
-      model: modelHandle,
-      ...(modelSettings && { model_settings: modelSettings }),
-      ...(contextWindow && { context_window_limit: contextWindow }),
-    });
-  }
+  await client.agents.update(agentId, {
+    model: modelHandle,
+    ...(hasModelSettings && { model_settings: modelSettings }),
+    ...(contextWindow && { context_window_limit: contextWindow }),
+  });
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
@@ -313,21 +317,21 @@ export interface SystemPromptUpdateResult {
 }
 
 /**
- * Updates an agent's system prompt.
+ * Updates an agent's system prompt with raw content.
  *
  * @param agentId - The agent ID
- * @param systemPrompt - The new system prompt content
+ * @param systemPromptContent - The raw system prompt content to update
  * @returns Result with success status and message
  */
-export async function updateAgentSystemPrompt(
+export async function updateAgentSystemPromptRaw(
   agentId: string,
-  systemPrompt: string,
+  systemPromptContent: string,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const client = await getClient();
 
     await client.agents.update(agentId, {
-      system: systemPrompt,
+      system: systemPromptContent,
     });
 
     return {
@@ -338,6 +342,61 @@ export async function updateAgentSystemPrompt(
     return {
       success: false,
       message: `Failed to update system prompt: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Result from updating a system prompt on an agent
+ */
+export interface UpdateSystemPromptResult {
+  success: boolean;
+  message: string;
+  agent: AgentState | null;
+}
+
+/**
+ * Updates an agent's system prompt by ID or subagent name.
+ * Resolves the ID to content, updates the agent, and returns the refreshed agent state.
+ *
+ * @param agentId - The agent ID to update
+ * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @returns Result with success status, message, and updated agent state
+ */
+export async function updateAgentSystemPrompt(
+  agentId: string,
+  systemPromptId: string,
+): Promise<UpdateSystemPromptResult> {
+  try {
+    const { resolveSystemPrompt } = await import("./promptAssets");
+    const systemPromptContent = await resolveSystemPrompt(systemPromptId);
+
+    const updateResult = await updateAgentSystemPromptRaw(
+      agentId,
+      systemPromptContent,
+    );
+    if (!updateResult.success) {
+      return {
+        success: false,
+        message: updateResult.message,
+        agent: null,
+      };
+    }
+
+    // Re-fetch agent to get updated state
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+
+    return {
+      success: true,
+      message: "System prompt applied successfully",
+      agent,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to apply system prompt: ${error instanceof Error ? error.message : String(error)}`,
+      agent: null,
     };
   }
 }

@@ -22,7 +22,11 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission } from "./tools/manager";
+import {
+  checkToolPermission,
+  forceUpsertTools,
+  isToolsNotFoundError,
+} from "./tools/manager";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -100,12 +104,18 @@ export async function handleHeadlessCommand(
 
   const client = await getClient();
 
+  // Get base URL for tool upsert operations
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    "https://api.letta.com";
+
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
-  const specifiedSystem = values.system as string | undefined;
+  const systemPromptId = values.system as string | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -190,19 +200,41 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      initBlocks,
-      baseTools,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        undefined,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        systemPromptId,
+        initBlocks,
+        baseTools,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (isToolsNotFoundError(err)) {
+        console.warn("Tools missing on server, re-uploading and retrying...");
+        await forceUpsertTools(client, baseURL);
+        const result = await createAgent(
+          undefined,
+          model,
+          undefined,
+          updateArgs,
+          skillsDirectory,
+          true,
+          sleeptimeFlag ?? settings.enableSleeptime,
+          systemPromptId,
+          initBlocks,
+          baseTools,
+        );
+        agent = result.agent;
+      } else {
+        throw err;
+      }
+    }
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -234,19 +266,41 @@ export async function handleHeadlessCommand(
   // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
-    const result = await createAgent(
-      undefined,
-      model,
-      undefined,
-      updateArgs,
-      skillsDirectory,
-      true, // parallelToolCalls always enabled
-      sleeptimeFlag ?? settings.enableSleeptime,
-      specifiedSystem,
-      undefined,
-      undefined,
-    );
-    agent = result.agent;
+    try {
+      const result = await createAgent(
+        undefined,
+        model,
+        undefined,
+        updateArgs,
+        skillsDirectory,
+        true, // parallelToolCalls always enabled
+        sleeptimeFlag ?? settings.enableSleeptime,
+        systemPromptId,
+        undefined,
+        undefined,
+      );
+      agent = result.agent;
+    } catch (err) {
+      if (isToolsNotFoundError(err)) {
+        console.warn("Tools missing on server, re-uploading and retrying...");
+        await forceUpsertTools(client, baseURL);
+        const result = await createAgent(
+          undefined,
+          model,
+          undefined,
+          updateArgs,
+          skillsDirectory,
+          true,
+          sleeptimeFlag ?? settings.enableSleeptime,
+          systemPromptId,
+          undefined,
+          undefined,
+        );
+        agent = result.agent;
+      } else {
+        throw err;
+      }
+    }
   }
 
   // Check if we're resuming an existing agent (not creating a new one)
@@ -257,7 +311,7 @@ export async function handleHeadlessCommand(
   );
 
   // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || specifiedSystem)) {
+  if (isResumingAgent && (model || systemPromptId)) {
     if (model) {
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
@@ -280,19 +334,14 @@ export async function handleHeadlessCommand(
       }
     }
 
-    if (specifiedSystem) {
+    if (systemPromptId) {
       const { updateAgentSystemPrompt } = await import("./agent/modify");
-      const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
-      const systemPromptOption = SYSTEM_PROMPTS.find(
-        (p) => p.id === specifiedSystem,
-      );
-      if (!systemPromptOption) {
-        console.error(`Error: Invalid system prompt "${specifiedSystem}"`);
+      const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
+      if (!result.success || !result.agent) {
+        console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
       }
-      await updateAgentSystemPrompt(agent.id, systemPromptOption.content);
-      // Refresh agent state after system prompt update
-      agent = await client.agents.retrieve(agent.id);
+      agent = result.agent;
     }
   }
 
@@ -907,6 +956,10 @@ export async function handleHeadlessCommand(
 
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Before failing, check run metadata to see if this is a retriable llm_api_error
+      // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
+      // This could happen if there's a backend edge case where LLMError is raised but
+      // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
+      // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
       if (
         stopReason === "error" &&
         lastRunId &&
@@ -916,13 +969,13 @@ export async function handleHeadlessCommand(
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
             | {
-                type?: string;
+                error_type?: string;
                 message?: string;
                 detail?: string;
               }
             | undefined;
 
-          if (metaError?.type === "llm_api_error") {
+          if (metaError?.error_type === "llm_error") {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);

@@ -52,6 +52,7 @@ type LoadingState =
   | "importing"
   | "initializing"
   | "checking"
+  | "selecting_global"
   | "ready";
 
 /**
@@ -61,7 +62,7 @@ type LoadingState =
 export function getAgentStatusHints(
   continueSession: boolean,
   agentState?: Letta.AgentState | null,
-  agentProvenance?: AgentProvenance | null,
+  _agentProvenance?: AgentProvenance | null,
 ): string[] {
   const hints: string[] = [];
 
@@ -82,14 +83,6 @@ export function getAgentStatusHints(
     }
     hints.push("→ To create a new agent, use --new");
     return hints;
-  }
-
-  // For new agents, show initialized memory blocks
-  if (agentProvenance) {
-    const blockLabels = agentProvenance.blocks.map((b) => b.label);
-    if (blockLabels.length > 0) {
-      hints.push(`→ Initialized memory blocks: ${blockLabels.join(", ")}`);
-    }
   }
 
   return hints;

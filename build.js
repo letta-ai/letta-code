@@ -5,7 +5,7 @@
  * Bundles TypeScript source into a single JavaScript file
  */
 
-import { readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,6 +67,19 @@ await Bun.write(outputPath, withShebang);
 
 // Make executable
 await Bun.$`chmod +x letta.js`;
+
+// Copy bundled skills to skills/ directory for shipping
+const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
+const bundledSkillsDst = join(__dirname, "skills");
+
+if (existsSync(bundledSkillsSrc)) {
+  // Clean and copy
+  if (existsSync(bundledSkillsDst)) {
+    rmSync(bundledSkillsDst, { recursive: true });
+  }
+  cpSync(bundledSkillsSrc, bundledSkillsDst, { recursive: true });
+  console.log("📂 Copied bundled skills to skills/");
+}
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);

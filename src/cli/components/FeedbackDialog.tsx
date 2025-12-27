@@ -6,13 +6,18 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 interface FeedbackDialogProps {
   onSubmit: (message: string) => void;
   onCancel: () => void;
+  initialValue?: string;
 }
 
-export function FeedbackDialog({ onSubmit, onCancel }: FeedbackDialogProps) {
-  const [feedbackText, setFeedbackText] = useState("");
+export function FeedbackDialog({
+  onSubmit,
+  onCancel,
+  initialValue = "",
+}: FeedbackDialogProps) {
+  const [feedbackText, setFeedbackText] = useState(initialValue);
   const [error, setError] = useState("");
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (key.escape) {
       onCancel();
     }
@@ -35,7 +40,7 @@ export function FeedbackDialog({ onSubmit, onCancel }: FeedbackDialogProps) {
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text color={colors.approval.header} bold>
-          Send Feedback to Letta Team
+          Send Feedback to the Letta Team
         </Text>
       </Box>
 

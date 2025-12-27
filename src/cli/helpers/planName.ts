@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 const adjectives = [
   "bold",
@@ -113,5 +114,5 @@ export function generatePlanName(): string {
 
 export function generatePlanFilePath(): string {
   const name = generatePlanName();
-  return `${homedir()}/.letta/plans/${name}.md`;
+  return join(homedir(), ".letta", "plans", `${name}.md`);
 }
