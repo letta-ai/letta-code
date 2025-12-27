@@ -163,4 +163,9 @@ export const colors = {
     dim: "gray",
     bold: "white",
   },
+
+  // Footer bar
+  footer: {
+    agentName: brandColors.primaryAccent,
+  },
 } as const;

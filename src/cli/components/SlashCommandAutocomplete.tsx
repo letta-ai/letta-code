@@ -2,6 +2,7 @@ import { Text } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
+import { getVersion } from "../../version";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
@@ -209,6 +210,7 @@ export function SlashCommandAutocomplete({
           <Text color={colors.link.text}>join our Discord ↗</Text>
         </Link>
       </Text>
+      <Text dimColor>Version: Letta Code v{getVersion()}</Text>
     </AutocompleteBox>
   );
 }

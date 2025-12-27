@@ -68,7 +68,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/clear": {
-    desc: "Clear conversation history",
+    desc: "Clear conversation history (keep memory)",
     order: 17,
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
