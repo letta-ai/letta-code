@@ -19,7 +19,6 @@ export function AutocompleteBox({ header, children }: AutocompleteBoxProps) {
       borderStyle="round"
       borderColor={colors.command.border}
       paddingX={1}
-      marginBottom={1}
     >
       <Text dimColor>{header}</Text>
       {children}

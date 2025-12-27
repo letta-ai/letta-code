@@ -42,7 +42,6 @@ export function AgentInfoBar({
       marginBottom={1}
     >
       <Box>
-        <Text color="gray">Current agent: </Text>
         <Text bold>{agentName || "Unnamed"}</Text>
         {isPinned ? (
           <Text color="green"> (pinned ✓)</Text>
