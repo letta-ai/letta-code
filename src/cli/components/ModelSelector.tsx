@@ -104,10 +104,16 @@ export function ModelSelector({
   );
 
   // Supported models: models.json entries that are available
+  // Featured models first, then non-featured, preserving JSON order within each group
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
-    if (availableHandles === null) return typedModels; // fallback
-    return typedModels.filter((m) => availableHandles.has(m.handle));
+    const available =
+      availableHandles === null
+        ? typedModels // fallback
+        : typedModels.filter((m) => availableHandles.has(m.handle));
+    const featured = available.filter((m) => m.isFeatured);
+    const nonFeatured = available.filter((m) => !m.isFeatured);
+    return [...featured, ...nonFeatured];
   }, [typedModels, availableHandles]);
 
   // All other models: API handles not in models.json
