@@ -40,7 +40,6 @@ export function AgentInfoBar({
       borderStyle="round"
       borderColor={colors.command.border}
       paddingX={1}
-      marginBottom={1}
     >
       <Box>
         <Text bold>{agentName || "Unnamed"}</Text>
