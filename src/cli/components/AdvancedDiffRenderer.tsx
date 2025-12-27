@@ -158,6 +158,7 @@ function Line({
                   return (
                     <Text
                       key={`${kind}-${i}-${p.value.substring(0, 10)}`}
+                      backgroundColor={bgLine}
                       color={colors.diff.textOnDark}
                     >
                       {p.value}
@@ -181,6 +182,7 @@ function Line({
                   return (
                     <Text
                       key={`${kind}-${i}-${p.value.substring(0, 10)}`}
+                      backgroundColor={bgLine}
                       color={colors.diff.textOnDark}
                     >
                       {p.value}
