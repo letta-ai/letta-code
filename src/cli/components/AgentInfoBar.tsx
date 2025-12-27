@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import Link from "ink-link";
 import { useMemo } from "react";
+import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { colors } from "./colors";
 
@@ -45,6 +46,8 @@ export function AgentInfoBar({
         <Text bold>{agentName || "Unnamed"}</Text>
         {isPinned ? (
           <Text color="green"> (pinned ✓)</Text>
+        ) : agentName === DEFAULT_AGENT_NAME || !agentName ? (
+          <Text color="gray"> (type /pin to give your agent a real name!)</Text>
         ) : (
           <Text color="gray"> (type /pin to pin agent)</Text>
         )}
