@@ -712,8 +712,15 @@ export function Input({
             <Text color={colors.footer.agentName}>
               {agentName || "Unnamed"}
             </Text>
-            <Text dimColor>
-              {` [${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
+            <Text
+              dimColor={currentModelProvider !== ANTHROPIC_PROVIDER_NAME}
+              color={
+                currentModelProvider === ANTHROPIC_PROVIDER_NAME
+                  ? "#FFC787"
+                  : undefined
+              }
+            >
+              {` [${currentModel ?? "unknown"}]`}
             </Text>
           </Text>
         </Box>
