@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
+import { useEffect, useState } from "react";
 
 import type { AgentProvenance } from "../../agent/create";
 import { settingsManager } from "../../settings-manager";
@@ -23,7 +24,7 @@ function toTildePath(absolutePath: string): string {
 /**
  * Determine the auth method used
  */
-function getAuthMethod(): "url" | "api-key" | "oauth" {
+async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
   // Check if custom URL is being used
   if (process.env.LETTA_BASE_URL) {
     return "url";
@@ -32,12 +33,12 @@ function getAuthMethod(): "url" | "api-key" | "oauth" {
   if (process.env.LETTA_API_KEY) {
     return "api-key";
   }
-  // Check settings for refresh token (OAuth)
-  const settings = settingsManager.getSettings();
+  // Check settings for refresh token (OAuth) from keychain tokens
+  const settings = await settingsManager.getSettingsWithSecureTokens();
   if (settings.refreshToken) {
     return "oauth";
   }
-  // Check if API key stored in settings
+  // Check if API key stored in settings or keychain
   if (settings.env?.LETTA_API_KEY) {
     return "api-key";
   }
@@ -111,7 +112,13 @@ export function WelcomeScreen({
   const model = fullModel?.split("/").pop();
 
   // Get auth method
-  const authMethod = getAuthMethod();
+  const [authMethod, setAuthMethod] = useState<"url" | "api-key" | "oauth">(
+    "oauth",
+  );
+
+  useEffect(() => {
+    getAuthMethod().then(setAuthMethod);
+  }, []);
   const authDisplay =
     authMethod === "url"
       ? process.env.LETTA_BASE_URL || "Custom URL"
