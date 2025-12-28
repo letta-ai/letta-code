@@ -12,6 +12,9 @@ export interface Settings {
   globalSharedBlockIds: Record<string, string>; // label -> blockId mapping (persona, human; style moved to project settings)
   permissions?: PermissionRules;
   env?: Record<string, string>;
+  // Shift+Enter keybinding state (for VS Code/Cursor/Windsurf)
+  // Tracks if we've auto-installed the keybinding (or if user already had it)
+  shiftEnterKeybindingInstalled?: boolean;
 }
 
 export interface ProjectSettings {

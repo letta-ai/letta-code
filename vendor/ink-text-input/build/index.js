@@ -14,6 +14,9 @@ function isControlSequence(input, key) {
     if (key.tab || (key.ctrl && input === 'c')) return true;
     if (key.shift && key.tab) return true;
 
+    // Modifier+Enter - handled by parent for newline insertion
+    if (key.return && (key.shift || key.meta || key.ctrl)) return true;
+
     // Ctrl+W (delete word) - handled by parent component
     if (key.ctrl && (input === 'w' || input === 'W')) return true;
 

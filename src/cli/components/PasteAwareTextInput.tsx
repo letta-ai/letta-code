@@ -175,6 +175,29 @@ export function PasteAwareTextInput({
   // Intercept paste events and macOS fallback for image clipboard imports
   useInput(
     (input, key) => {
+      // Handle Shift/Option/Ctrl + Enter to insert newline
+      if (key.return && (key.shift || key.meta || key.ctrl)) {
+        const at = Math.max(
+          0,
+          Math.min(caretOffsetRef.current, displayValueRef.current.length),
+        );
+
+        // Insert actual \n for visual newline (cursor moves to new line)
+        const newValue =
+          displayValueRef.current.slice(0, at) +
+          "\n" +
+          displayValueRef.current.slice(at);
+
+        setDisplayValue(newValue);
+        setActualValue(newValue); // Display and actual are same (both have \n)
+        onChangeRef.current(newValue);
+
+        const nextCaret = at + 1;
+        setNudgeCursorOffset(nextCaret);
+        caretOffsetRef.current = nextCaret;
+        return;
+      }
+
       // Handle bracketed paste events emitted by vendored Ink
       const isPasted = (key as unknown as { isPasted?: boolean })?.isPasted;
       if (isPasted) {
@@ -317,6 +340,41 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
+    const forwardDeleteAtCursor = () => {
+      const curPos = caretOffsetRef.current;
+      if (curPos >= displayValueRef.current.length) return;
+
+      const newDisplay =
+        displayValueRef.current.slice(0, curPos) +
+        displayValueRef.current.slice(curPos + 1);
+      const resolvedActual = resolvePlaceholders(newDisplay);
+
+      setDisplayValue(newDisplay);
+      setActualValue(resolvedActual);
+      onChangeRef.current(newDisplay);
+      // Cursor stays in place
+    };
+
+    const insertNewlineAtCursor = () => {
+      const at = Math.max(
+        0,
+        Math.min(caretOffsetRef.current, displayValueRef.current.length),
+      );
+
+      const newValue =
+        displayValueRef.current.slice(0, at) +
+        "\n" +
+        displayValueRef.current.slice(at);
+
+      setDisplayValue(newValue);
+      setActualValue(newValue);
+      onChangeRef.current(newValue);
+
+      const nextCaret = at + 1;
+      setNudgeCursorOffset(nextCaret);
+      caretOffsetRef.current = nextCaret;
+    };
+
     const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
@@ -332,6 +390,55 @@ export function PasteAwareTextInput({
         sequence = (payload as { sequence?: string }).sequence ?? null;
       }
       if (!sequence) return;
+
+      // Optional debug logging for raw input bytes
+      if (process.env.LETTA_DEBUG_INPUT === "1") {
+        const debugHex = [...sequence]
+          .map((c) => `0x${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+          .join(" ");
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:raw-input] len=${sequence.length} hex: ${debugHex}`,
+        );
+      }
+
+      // Option+Enter (Alt+Enter): ESC + carriage return
+      // On macOS with "Option as Meta" enabled, this sends \x1b\r
+      // Also check for \x1b\n (ESC + newline) for compatibility
+      if (sequence === "\x1b\r" || sequence === "\x1b\n") {
+        insertNewlineAtCursor();
+        return;
+      }
+
+      // VS Code/Cursor terminal keybinding style:
+      // Often configured to send a literal "\\r" sequence for Shift+Enter.
+      // Treat it as newline.
+      if (sequence === "\\r") {
+        insertNewlineAtCursor();
+        return;
+      }
+
+      // Kitty keyboard protocol: Shift+Enter, Ctrl+Enter, Alt+Enter
+      // Format: CSI keycode ; modifiers u
+      // Enter keycode = 13, modifiers: 2=shift, 3=alt, 5=ctrl, 6=ctrl+shift, 7=alt+ctrl, 8=alt+ctrl+shift
+      // Examples: \x1b[13;2u (Shift+Enter), \x1b[13;5u (Ctrl+Enter), \x1b[13;3u (Alt+Enter)
+      {
+        const prefix = "\u001b[13;";
+        if (sequence.startsWith(prefix) && sequence.endsWith("u")) {
+          const mod = sequence.slice(prefix.length, -1);
+          if (mod.length === 1 && mod >= "2" && mod <= "8") {
+            insertNewlineAtCursor();
+            return;
+          }
+        }
+      }
+
+      // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
+      // This deletes the character AFTER the cursor (unlike regular backspace)
+      if (sequence === "\x1b[3~") {
+        forwardDeleteAtCursor();
+        return;
+      }
 
       // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
