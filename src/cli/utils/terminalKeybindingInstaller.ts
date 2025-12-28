@@ -329,6 +329,7 @@ export function removeKeybindingForCurrentTerminal(): InstallResult {
 // WezTerm keybinding support
 // WezTerm has a bug where Delete key sends 0x08 (backspace) instead of ESC[3~
 // when kitty keyboard protocol is enabled. This keybinding fixes it.
+// WezTerm auto-reloads config, so the fix takes effect immediately.
 // See: https://github.com/wez/wezterm/issues/3758
 // ============================================================================
 
