@@ -939,7 +939,6 @@ export default function App({
   );
 
   // Core streaming function - iterative loop that processes conversation turns
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,

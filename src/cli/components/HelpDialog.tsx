@@ -69,6 +69,8 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
       { keys: "Tab", description: "Autocomplete command or file path" },
       { keys: "↓", description: "Navigate down / next command in history" },
       { keys: "↑", description: "Navigate up / previous command in history" },
+      { keys: "Shift+Enter", description: "Insert newline (multi-line input)" },
+      { keys: "Opt+Enter", description: "Insert newline (alternative)" },
       {
         keys: "Ctrl+C",
         description: "Interrupt operation / exit (double press)",

@@ -584,6 +584,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Enable enhanced key reporting (Shift+Enter, etc.) BEFORE Ink initializes.
+  // In VS Code/xterm.js this typically requires a short handshake (query + enable).
+  try {
+    const { detectAndEnableKittyProtocol } = await import(
+      "./cli/utils/kittyProtocolDetector"
+    );
+    await detectAndEnableKittyProtocol();
+  } catch {
+    // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
+  }
+
   // Interactive: lazy-load React/Ink + App
   const React = await import("react");
   const { render } = await import("ink");
@@ -614,6 +625,9 @@ async function main(): Promise<void> {
     skillsDirectory?: string;
     fromAfFile?: string;
   }) {
+    const [showKeybindingSetup, setShowKeybindingSetup] = useState<
+      boolean | null
+    >(null);
     const [loadingState, setLoadingState] = useState<
       | "selecting"
       | "selecting_global"
@@ -634,6 +648,50 @@ async function main(): Promise<void> {
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
+
+    // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
+    useEffect(() => {
+      async function autoInstallKeybinding() {
+        const {
+          detectTerminalType,
+          getKeybindingsPath,
+          keybindingExists,
+          installKeybinding,
+        } = await import("./cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("./settings");
+
+        const terminal = detectTerminalType();
+        if (!terminal) {
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        const settings = await loadSettings();
+        const keybindingsPath = getKeybindingsPath(terminal);
+
+        // Skip if already installed or no valid path
+        if (!keybindingsPath || settings.shiftEnterKeybindingInstalled) {
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        // Check if keybinding already exists (user might have added it manually)
+        if (keybindingExists(keybindingsPath)) {
+          await updateSettings({ shiftEnterKeybindingInstalled: true });
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        // Silently install keybinding (no prompt, just like Claude Code)
+        const result = installKeybinding(keybindingsPath);
+        if (result.success) {
+          await updateSettings({ shiftEnterKeybindingInstalled: true });
+        }
+
+        setShowKeybindingSetup(false);
+      }
+      autoInstallKeybinding();
+    }, []);
 
     // Initialize on mount - check if we should show global agent selector
     useEffect(() => {
@@ -1094,6 +1152,11 @@ async function main(): Promise<void> {
       loadingState,
       selectedGlobalAgentId,
     ]);
+
+    // Wait for keybinding auto-install to complete before showing UI
+    if (showKeybindingSetup === null) {
+      return null;
+    }
 
     // Don't render anything during initial "selecting" phase - wait for checkAndStart
     if (loadingState === "selecting") {

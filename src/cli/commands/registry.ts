@@ -192,6 +192,58 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/terminal": {
+    desc: "Manage Shift+Enter keybinding [--revert]",
+    order: 36,
+    handler: async (args: string[]) => {
+      const {
+        detectTerminalType,
+        getKeybindingsPath,
+        installKeybinding,
+        removeKeybinding,
+      } = await import("../utils/terminalKeybindingInstaller");
+      const { updateSettings } = await import("../../settings");
+
+      const isRevert = args.includes("--revert") || args.includes("--remove");
+      const terminal = detectTerminalType();
+
+      if (!terminal) {
+        return "Not running in a VS Code-like terminal. Shift+Enter keybinding is not needed.";
+      }
+
+      const terminalName = {
+        vscode: "VS Code",
+        cursor: "Cursor",
+        windsurf: "Windsurf",
+      }[terminal];
+
+      const keybindingsPath = getKeybindingsPath(terminal);
+      if (!keybindingsPath) {
+        return `Could not determine keybindings.json path for ${terminalName}`;
+      }
+
+      if (isRevert) {
+        const result = removeKeybinding(keybindingsPath);
+        if (!result.success) {
+          return `Failed to remove keybinding: ${result.error}`;
+        }
+        await updateSettings({ shiftEnterKeybindingInstalled: false });
+        return `Removed Shift+Enter keybinding from ${terminalName}`;
+      }
+
+      const result = installKeybinding(keybindingsPath);
+      if (!result.success) {
+        return `Failed to install keybinding: ${result.error}`;
+      }
+
+      if (result.alreadyExists) {
+        return `Shift+Enter keybinding already exists in ${terminalName}`;
+      }
+
+      await updateSettings({ shiftEnterKeybindingInstalled: true });
+      return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
+    },
+  },
 
   // === Session management (order 40-49) ===
   "/connect": {
