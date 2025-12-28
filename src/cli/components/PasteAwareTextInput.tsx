@@ -340,19 +340,36 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
-    const forwardDeleteAtCursor = () => {
-      const curPos = caretOffsetRef.current;
-      if (curPos >= displayValueRef.current.length) return;
+    // Forward delete: delete character AFTER cursor
+    const forwardDeleteAtCursor = (cursorPos: number) => {
+      if (cursorPos >= displayValueRef.current.length) return;
 
       const newDisplay =
-        displayValueRef.current.slice(0, curPos) +
-        displayValueRef.current.slice(curPos + 1);
+        displayValueRef.current.slice(0, cursorPos) +
+        displayValueRef.current.slice(cursorPos + 1);
       const resolvedActual = resolvePlaceholders(newDisplay);
 
       setDisplayValue(newDisplay);
       setActualValue(resolvedActual);
       onChangeRef.current(newDisplay);
-      // Cursor stays in place
+      // Cursor stays in place, sync it
+      setNudgeCursorOffset(cursorPos);
+    };
+
+    // Backspace: delete character BEFORE cursor
+    const backspaceAtCursor = (cursorPos: number) => {
+      if (cursorPos <= 0) return;
+
+      const newDisplay =
+        displayValueRef.current.slice(0, cursorPos - 1) +
+        displayValueRef.current.slice(cursorPos);
+      const resolvedActual = resolvePlaceholders(newDisplay);
+
+      setDisplayValue(newDisplay);
+      setActualValue(resolvedActual);
+      onChangeRef.current(newDisplay);
+      // Cursor moves back one
+      setNudgeCursorOffset(cursorPos - 1);
     };
 
     const insertNewlineAtCursor = () => {
@@ -433,10 +450,19 @@ export function PasteAwareTextInput({
         }
       }
 
+      // Backspace (0x7f on macOS) - handle here to avoid stale ref issues
+      if (sequence === "\x7f") {
+        // Set timestamp so ink-text-input skips its delete handling
+        (globalThis as Record<string, unknown>).__deleteTimestamp = Date.now();
+        backspaceAtCursor(caretOffsetRef.current);
+        return;
+      }
+
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
-      // This deletes the character AFTER the cursor (unlike regular backspace)
       if (sequence === "\x1b[3~") {
-        forwardDeleteAtCursor();
+        // Set timestamp so ink-text-input skips its delete handling
+        (globalThis as Record<string, unknown>).__deleteTimestamp = Date.now();
+        forwardDeleteAtCursor(caretOffsetRef.current);
         return;
       }
 

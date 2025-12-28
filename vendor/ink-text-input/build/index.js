@@ -31,6 +31,14 @@ function isControlSequence(input, key) {
     // CSI sequences (ESC[...), Option+Delete (ESC + DEL), and other multi-char escape sequences
     if (input && typeof input === 'string' && input.startsWith('\x1b') && input.length > 1) return true;
 
+    // Delete operations (backspace/forward delete) - handled by parent's raw input handler
+    // Check if delete was just handled (within 100ms) to avoid double-processing
+    // globalThis.__deleteTimestamp is set by PasteAwareTextInput's raw handler
+    if ((key.delete || key.backspace) && globalThis.__deleteTimestamp && 
+        (Date.now() - globalThis.__deleteTimestamp) < 100) {
+        return true;
+    }
+
     return false;
 }
 
