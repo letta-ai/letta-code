@@ -324,3 +324,152 @@ export function removeKeybindingForCurrentTerminal(): InstallResult {
 
   return removeKeybinding(path);
 }
+
+// ============================================================================
+// WezTerm keybinding support
+// WezTerm has a bug where Delete key sends 0x08 (backspace) instead of ESC[3~
+// when kitty keyboard protocol is enabled. This keybinding fixes it.
+// See: https://github.com/wez/wezterm/issues/3758
+// ============================================================================
+
+/**
+ * Check if running in WezTerm
+ */
+export function isWezTerm(): boolean {
+  return process.env.TERM_PROGRAM === "WezTerm";
+}
+
+/**
+ * Get WezTerm config path
+ */
+export function getWezTermConfigPath(): string {
+  // WezTerm looks for config in these locations (in order):
+  // 1. $WEZTERM_CONFIG_FILE
+  // 2. $XDG_CONFIG_HOME/wezterm/wezterm.lua
+  // 3. ~/.config/wezterm/wezterm.lua
+  // 4. ~/.wezterm.lua
+  if (process.env.WEZTERM_CONFIG_FILE) {
+    return process.env.WEZTERM_CONFIG_FILE;
+  }
+
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) {
+    const xdgPath = join(xdgConfig, "wezterm", "wezterm.lua");
+    if (existsSync(xdgPath)) return xdgPath;
+  }
+
+  const configPath = join(homedir(), ".config", "wezterm", "wezterm.lua");
+  if (existsSync(configPath)) return configPath;
+
+  // Default to ~/.wezterm.lua
+  return join(homedir(), ".wezterm.lua");
+}
+
+/**
+ * The Lua code to fix Delete key in WezTerm
+ */
+const WEZTERM_DELETE_FIX = `
+-- Letta Code: Fix Delete key sending wrong sequence with kitty keyboard protocol
+-- See: https://github.com/wez/wezterm/issues/3758
+local wezterm = require 'wezterm'
+local keys = config.keys or {}
+table.insert(keys, {
+  key = 'Delete',
+  mods = 'NONE',
+  action = wezterm.action.SendString '\\x1b[3~',
+})
+config.keys = keys
+`;
+
+/**
+ * Check if WezTerm config already has our Delete key fix
+ */
+export function wezTermDeleteFixExists(configPath: string): boolean {
+  if (!existsSync(configPath)) return false;
+
+  try {
+    const content = readFileSync(configPath, { encoding: "utf-8" });
+    // Check if our fix or equivalent already exists
+    return (
+      content.includes("Letta Code: Fix Delete key") ||
+      (content.includes("key = 'Delete'") &&
+        content.includes("SendString") &&
+        content.includes("\\x1b[3~"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Install WezTerm Delete key fix
+ */
+export function installWezTermDeleteFix(): InstallResult {
+  const configPath = getWezTermConfigPath();
+
+  try {
+    // Check if already installed
+    if (wezTermDeleteFixExists(configPath)) {
+      return { success: true, alreadyExists: true };
+    }
+
+    let content = "";
+    let backupPath: string | null = null;
+
+    if (existsSync(configPath)) {
+      backupPath = `${configPath}.letta-backup`;
+      copyFileSync(configPath, backupPath);
+      content = readFileSync(configPath, { encoding: "utf-8" });
+    }
+
+    // For simple configs that return a table directly, we need to modify them
+    // to use a config variable. Check if it's a simple "return {" style config.
+    if (content.includes("return {") && !content.includes("local config")) {
+      // Convert simple config to use config variable
+      content = content.replace(/return\s*\{/, "local config = {");
+      // Add return config at the end if not present
+      if (!content.includes("return config")) {
+        content = `${content.trimEnd()}\n\nreturn config\n`;
+      }
+    }
+
+    // If config doesn't exist or is empty, create a basic one
+    if (!content.trim()) {
+      content = `-- WezTerm configuration
+local config = {}
+
+return config
+`;
+    }
+
+    // Insert our fix before "return config"
+    if (content.includes("return config")) {
+      content = content.replace(
+        "return config",
+        `${WEZTERM_DELETE_FIX}\nreturn config`,
+      );
+    } else {
+      // Append to end as fallback
+      content = `${content.trimEnd()}\n${WEZTERM_DELETE_FIX}\n`;
+    }
+
+    // Ensure parent directory exists
+    const parentDir = dirname(configPath);
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true });
+    }
+
+    writeFileSync(configPath, content, { encoding: "utf-8" });
+
+    return {
+      success: true,
+      backupPath: backupPath ?? undefined,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: `Failed to install WezTerm Delete key fix: ${message}`,
+    };
+  }
+}
