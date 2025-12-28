@@ -33,9 +33,9 @@ function isControlSequence(input, key) {
 
     // Delete operations (backspace/forward delete) - handled by parent's raw input handler
     // Check if delete was just handled (within 100ms) to avoid double-processing
-    // globalThis.__deleteTimestamp is set by PasteAwareTextInput's raw handler
-    if ((key.delete || key.backspace) && globalThis.__deleteTimestamp && 
-        (Date.now() - globalThis.__deleteTimestamp) < 100) {
+    // globalThis.__lettaDeleteTimestamp is set by PasteAwareTextInput's raw handler
+    if ((key.delete || key.backspace) && globalThis.__lettaDeleteTimestamp && 
+        (Date.now() - globalThis.__lettaDeleteTimestamp) < 100) {
         return true;
     }
 

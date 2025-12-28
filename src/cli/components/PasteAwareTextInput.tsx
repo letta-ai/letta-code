@@ -14,6 +14,13 @@ import {
 } from "../helpers/clipboard";
 import { allocatePaste, resolvePlaceholders } from "../helpers/pasteRegistry";
 
+// Global timestamp for coordinating delete handling between raw handler and ink-text-input
+// Use globalThis to ensure singleton across bundle
+declare global {
+  // eslint-disable-next-line no-var
+  var __lettaDeleteTimestamp: number | undefined;
+}
+
 interface PasteAwareTextInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -467,7 +474,7 @@ export function PasteAwareTextInput({
       // Backspace (0x7f on macOS) - handle here to avoid stale ref issues
       if (sequence === "\x7f") {
         // Set timestamp so ink-text-input skips its delete handling
-        (globalThis as Record<string, unknown>).__deleteTimestamp = Date.now();
+        globalThis.__lettaDeleteTimestamp = Date.now();
         backspaceAtCursor(caretOffsetRef.current);
         return;
       }
@@ -475,7 +482,7 @@ export function PasteAwareTextInput({
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
       if (sequence === "\x1b[3~") {
         // Set timestamp so ink-text-input skips its delete handling
-        (globalThis as Record<string, unknown>).__deleteTimestamp = Date.now();
+        globalThis.__lettaDeleteTimestamp = Date.now();
         forwardDeleteAtCursor(caretOffsetRef.current);
         return;
       }
