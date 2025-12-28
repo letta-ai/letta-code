@@ -450,6 +450,20 @@ export function PasteAwareTextInput({
         }
       }
 
+      // Kitty keyboard protocol: Ctrl+C
+      // Format: ESC[99;5u (key=99='c', modifier=5=ctrl)
+      // Kitty also sends key release events: ESC[99;5:3u (:3 = release)
+      // Only handle key PRESS, not release (to avoid double-triggering)
+      if (sequence === "\x1b[99;5u") {
+        // Emit raw Ctrl+C byte for Ink to handle
+        internal_eventEmitter.emit("input", "\x03");
+        return;
+      }
+      // Ignore Ctrl+C key release/repeat events
+      if (sequence.startsWith("\x1b[99;5:")) {
+        return;
+      }
+
       // Backspace (0x7f on macOS) - handle here to avoid stale ref issues
       if (sequence === "\x7f") {
         // Set timestamp so ink-text-input skips its delete handling
