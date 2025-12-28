@@ -193,7 +193,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/terminal": {
-    desc: "Manage Shift+Enter keybinding [--revert]",
+    desc: "Setup terminal shortcuts [--revert]",
     order: 36,
     handler: async (args: string[]) => {
       const {
