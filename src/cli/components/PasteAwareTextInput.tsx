@@ -14,11 +14,11 @@ import {
 } from "../helpers/clipboard";
 import { allocatePaste, resolvePlaceholders } from "../helpers/pasteRegistry";
 
-// Global timestamp for coordinating delete handling between raw handler and ink-text-input
+// Global timestamp for forward delete coordination
 // Use globalThis to ensure singleton across bundle
 declare global {
   // eslint-disable-next-line no-var
-  var __lettaDeleteTimestamp: number | undefined;
+  var __lettaForwardDeleteTimestamp: number | undefined;
 }
 
 interface PasteAwareTextInputProps {
@@ -356,27 +356,15 @@ export function PasteAwareTextInput({
         displayValueRef.current.slice(cursorPos + 1);
       const resolvedActual = resolvePlaceholders(newDisplay);
 
+      // Update refs synchronously for consecutive operations
+      displayValueRef.current = newDisplay;
+      caretOffsetRef.current = cursorPos;
+
       setDisplayValue(newDisplay);
       setActualValue(resolvedActual);
       onChangeRef.current(newDisplay);
       // Cursor stays in place, sync it
       setNudgeCursorOffset(cursorPos);
-    };
-
-    // Backspace: delete character BEFORE cursor
-    const backspaceAtCursor = (cursorPos: number) => {
-      if (cursorPos <= 0) return;
-
-      const newDisplay =
-        displayValueRef.current.slice(0, cursorPos - 1) +
-        displayValueRef.current.slice(cursorPos);
-      const resolvedActual = resolvePlaceholders(newDisplay);
-
-      setDisplayValue(newDisplay);
-      setActualValue(resolvedActual);
-      onChangeRef.current(newDisplay);
-      // Cursor moves back one
-      setNudgeCursorOffset(cursorPos - 1);
     };
 
     const insertNewlineAtCursor = () => {
@@ -471,19 +459,40 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // Backspace (0x7f on macOS) - handle here to avoid stale ref issues
-      if (sequence === "\x7f") {
-        // Set timestamp so ink-text-input skips its delete handling
-        globalThis.__lettaDeleteTimestamp = Date.now();
-        backspaceAtCursor(caretOffsetRef.current);
-        return;
+      // Kitty keyboard protocol: Arrow keys
+      // Format: ESC[1;modifier:event_typeX where X is A/B/C/D for up/down/right/left
+      // Event types: 1=press, 2=repeat, 3=release
+      // Handle press AND repeat events, ignore release
+      {
+        // Match ESC[1;N:1X or ESC[1;N:2X (press or repeat)
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
+        const arrowMatch = sequence.match(/^\x1b\[1;\d+:[12]([ABCD])$/);
+        if (arrowMatch) {
+          // Emit standard arrow key sequence
+          internal_eventEmitter.emit("input", `\x1b[${arrowMatch[1]}`);
+          return;
+        }
+        // Ignore arrow key release events only
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
+        if (/^\x1b\[1;\d+:3[ABCD]$/.test(sequence)) {
+          return;
+        }
       }
 
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
-      if (sequence === "\x1b[3~") {
+      // Also handle kitty extended format: ESC[3;modifier:event_type~
+      // Event types: 1=press, 2=repeat, 3=release
+      // Use caretOffsetRef which is updated synchronously via onCursorOffsetChange
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
+      if (sequence === "\x1b[3~" || /^\x1b\[3;\d+:[12]~$/.test(sequence)) {
         // Set timestamp so ink-text-input skips its delete handling
-        globalThis.__lettaDeleteTimestamp = Date.now();
+        globalThis.__lettaForwardDeleteTimestamp = Date.now();
         forwardDeleteAtCursor(caretOffsetRef.current);
+        return;
+      }
+      // Ignore forward delete release events
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
+      if (/^\x1b\[3;\d+:3~$/.test(sequence)) {
         return;
       }
 
@@ -623,12 +632,13 @@ export function PasteAwareTextInput({
     }
 
     // Normal typing/edits - update display and compute actual by substituting placeholders
+    // Update displayValueRef synchronously for raw input handlers
+    displayValueRef.current = newValue;
     setDisplayValue(newValue);
     const resolved = resolvePlaceholders(newValue);
     setActualValue(resolved);
     onChange(newValue);
-    // Default: cursor moves to end (most common case)
-    caretOffsetRef.current = newValue.length;
+    // Note: caretOffsetRef is updated by onCursorOffsetChange callback (called before onChange)
   };
 
   const handleSubmit = () => {
