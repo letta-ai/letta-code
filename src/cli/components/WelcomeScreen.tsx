@@ -3,6 +3,7 @@ import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
 
 import type { AgentProvenance } from "../../agent/create";
+import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -106,9 +107,16 @@ export function WelcomeScreen({
   const logoLines = asciiLogo.trim().split("\n");
   const tildePath = toTildePath(cwd);
 
-  // Get model from agent state - just the last part (after last /)
-  const fullModel = agentState?.model || agentState?.llm_config?.model;
-  const model = fullModel?.split("/").pop();
+  // Get model display name (pretty name if available, otherwise last part of handle)
+  // Build full model handle from llm_config (model_endpoint_type/model) like App.tsx does
+  const llmConfig = agentState?.llm_config;
+  const fullModel =
+    llmConfig?.model_endpoint_type && llmConfig?.model
+      ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+      : (llmConfig?.model ?? null);
+  const model = fullModel
+    ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
+    : undefined;
 
   // Get auth method
   const authMethod = getAuthMethod();
