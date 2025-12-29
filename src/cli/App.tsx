@@ -72,7 +72,6 @@ import { NewAgentDialog } from "./components/NewAgentDialog";
 import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { PlanModeDialog } from "./components/PlanModeDialog";
-import { ProfileSelector } from "./components/ProfileSelector";
 import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
@@ -478,7 +477,6 @@ export default function App({
     | "system"
     | "agent"
     | "resume"
-    | "profile"
     | "search"
     | "subagent"
     | "feedback"
@@ -2945,8 +2943,14 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /agents command - show agent selector (/resume is hidden alias)
-        if (msg.trim() === "/agents" || msg.trim() === "/resume") {
+        // Special handling for /agents command - show agent browser
+        // /resume, /pinned, /profiles are hidden aliases
+        if (
+          msg.trim() === "/agents" ||
+          msg.trim() === "/resume" ||
+          msg.trim() === "/pinned" ||
+          msg.trim() === "/profiles"
+        ) {
           setActiveOverlay("resume");
           return { submitted: true };
         }
@@ -2972,9 +2976,9 @@ export default function App({
             setAgentName,
           };
 
-          // /profile - open profile selector
+          // /profile - open agent browser (now points to /agents)
           if (!subcommand) {
-            setActiveOverlay("profile");
+            setActiveOverlay("resume");
             return { submitted: true };
           }
 
@@ -3030,12 +3034,6 @@ export default function App({
 
           // Unknown subcommand
           handleProfileUsage(profileCtx, msg);
-          return { submitted: true };
-        }
-
-        // Special handling for /profiles and /pinned commands - open pinned agents selector
-        if (msg.trim() === "/profiles" || msg.trim() === "/pinned") {
-          setActiveOverlay("profile");
           return { submitted: true };
         }
 
@@ -5503,33 +5501,6 @@ Plan file path: ${planFilePath}`;
                 onSelect={async (id) => {
                   closeOverlay();
                   await handleAgentSelect(id);
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* Profile Selector - conditionally mounted as overlay */}
-            {activeOverlay === "profile" && (
-              <ProfileSelector
-                currentAgentId={agentId}
-                onSelect={async (id) => {
-                  closeOverlay();
-                  await handleAgentSelect(id);
-                }}
-                onUnpin={(unpinAgentId) => {
-                  closeOverlay();
-                  settingsManager.unpinBoth(unpinAgentId);
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/pinned",
-                    output: `Unpinned agent ${unpinAgentId.slice(0, 12)}`,
-                    phase: "finished",
-                    success: true,
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
                 }}
                 onCancel={closeOverlay}
               />

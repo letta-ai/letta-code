@@ -12,12 +12,12 @@ interface Command {
 
 export const commands: Record<string, Command> = {
   // === Page 1: Most commonly used (order 10-19) ===
-  "/pinned": {
-    desc: "Browse pinned agents",
+  "/agents": {
+    desc: "Browse agents (pinned, Letta Code, all)",
     order: 10,
     handler: () => {
-      // Handled specially in App.tsx to open pinned agents selector
-      return "Opening pinned agents...";
+      // Handled specially in App.tsx to open agent browser
+      return "Opening agent browser...";
     },
   },
   "/model": {
@@ -83,14 +83,6 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx
       return "Creating new agent...";
-    },
-  },
-  "/agents": {
-    desc: "Browse all agents",
-    order: 21,
-    handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
     },
   },
   "/pin": {
@@ -334,6 +326,20 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to show agent selector
       return "Opening agent selector...";
+    },
+  },
+  "/pinned": {
+    desc: "Browse pinned agents",
+    hidden: true, // Alias for /agents (opens to Pinned tab)
+    handler: () => {
+      return "Opening agent browser...";
+    },
+  },
+  "/profiles": {
+    desc: "Browse pinned agents",
+    hidden: true, // Alias for /agents (opens to Pinned tab)
+    handler: () => {
+      return "Opening agent browser...";
     },
   },
 };
