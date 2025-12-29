@@ -690,7 +690,36 @@ async function main(): Promise<void> {
 
         setShowKeybindingSetup(false);
       }
+
+      async function autoInstallWezTermFix() {
+        const {
+          isWezTerm,
+          wezTermDeleteFixExists,
+          getWezTermConfigPath,
+          installWezTermDeleteFix,
+        } = await import("./cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("./settings");
+
+        if (!isWezTerm()) return;
+
+        const settings = await loadSettings();
+        if (settings.wezTermDeleteFixInstalled) return;
+
+        const configPath = getWezTermConfigPath();
+        if (wezTermDeleteFixExists(configPath)) {
+          await updateSettings({ wezTermDeleteFixInstalled: true });
+          return;
+        }
+
+        // Silently install the fix
+        const result = installWezTermDeleteFix();
+        if (result.success) {
+          await updateSettings({ wezTermDeleteFixInstalled: true });
+        }
+      }
+
       autoInstallKeybinding();
+      autoInstallWezTermFix();
     }, []);
 
     // Initialize on mount - check if we should show global agent selector

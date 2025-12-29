@@ -15,6 +15,9 @@ export interface Settings {
   // Shift+Enter keybinding state (for VS Code/Cursor/Windsurf)
   // Tracks if we've auto-installed the keybinding (or if user already had it)
   shiftEnterKeybindingInstalled?: boolean;
+  // WezTerm Delete key fix state
+  // Tracks if we've auto-installed the fix for kitty keyboard protocol bug
+  wezTermDeleteFixInstalled?: boolean;
 }
 
 export interface ProjectSettings {
