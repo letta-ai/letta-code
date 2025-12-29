@@ -55,39 +55,6 @@ type LoadingState =
   | "selecting_global"
   | "ready";
 
-/**
- * Generate status hints based on session type and block provenance.
- * Pure function - no React dependencies.
- */
-export function getAgentStatusHints(
-  continueSession: boolean,
-  agentState?: Letta.AgentState | null,
-  _agentProvenance?: AgentProvenance | null,
-): string[] {
-  const hints: string[] = [];
-
-  // For resumed agents, show memory blocks and --new hint
-  if (continueSession) {
-    if (agentState?.memory?.blocks) {
-      const blocks = agentState.memory.blocks;
-      const count = blocks.length;
-      const labels = blocks
-        .map((b) => b.label)
-        .filter(Boolean)
-        .join(", ");
-      if (labels) {
-        hints.push(
-          `→ Attached ${count} memory block${count !== 1 ? "s" : ""}: ${labels}`,
-        );
-      }
-    }
-    hints.push("→ To create a new agent, use --new");
-    return hints;
-  }
-
-  return hints;
-}
-
 export function WelcomeScreen({
   loadingState,
   continueSession,
