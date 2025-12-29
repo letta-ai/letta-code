@@ -42,6 +42,7 @@ OPTIONS
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
   -a, --agent <id>      Use a specific agent ID
+  -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
   -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
@@ -211,6 +212,82 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
+/**
+ * Resolve an agent ID by name from pinned agents.
+ * Case-insensitive exact match. If multiple matches, picks the most recently used.
+ */
+async function resolveAgentByName(
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const client = await getClient();
+
+  // Get all pinned agents (local first, then global, deduplicated)
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const allPinned = [...new Set([...localPinned, ...globalPinned])];
+
+  if (allPinned.length === 0) {
+    return null;
+  }
+
+  // Fetch names for all pinned agents and find matches
+  const matches: { id: string; name: string }[] = [];
+  const normalizedSearchName = name.toLowerCase();
+
+  await Promise.all(
+    allPinned.map(async (id) => {
+      try {
+        const agent = await client.agents.retrieve(id);
+        if (agent.name?.toLowerCase() === normalizedSearchName) {
+          matches.push({ id, name: agent.name });
+        }
+      } catch {
+        // Agent not found or error, skip
+      }
+    }),
+  );
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0] ?? null;
+
+  // Multiple matches - pick most recently used
+  // Check local LRU first
+  const localSettings = settingsManager.getLocalProjectSettings();
+  const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
+  if (localMatch) return localMatch;
+
+  // Then global LRU
+  const settings = settingsManager.getSettings();
+  const globalMatch = matches.find((m) => m.id === settings.lastAgent);
+  if (globalMatch) return globalMatch;
+
+  // Fallback to first match (preserves local pinned order)
+  return matches[0] ?? null;
+}
+
+/**
+ * Get all pinned agent names for error messages
+ */
+async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
+  const client = await getClient();
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const allPinned = [...new Set([...localPinned, ...globalPinned])];
+
+  const agents: { id: string; name: string }[] = [];
+  await Promise.all(
+    allPinned.map(async (id) => {
+      try {
+        const agent = await client.agents.retrieve(id);
+        agents.push({ id, name: agent.name || "(unnamed)" });
+      } catch {
+        // Agent not found, skip
+      }
+    }),
+  );
+  return agents;
+}
+
 async function main(): Promise<void> {
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
@@ -240,6 +317,7 @@ async function main(): Promise<void> {
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
+        name: { type: "string", short: "n" },
         model: { type: "string", short: "m" },
         system: { type: "string", short: "s" },
         toolset: { type: "string" },
@@ -311,7 +389,8 @@ async function main(): Promise<void> {
   const forceNew = (values.new as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
-  const specifiedAgentId = (values.agent as string | undefined) ?? null;
+  let specifiedAgentId = (values.agent as string | undefined) ?? null;
+  const specifiedAgentName = (values.name as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const systemPromptId = (values.system as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
@@ -410,6 +489,10 @@ async function main(): Promise<void> {
       console.error("Error: --from-af cannot be used with --agent");
       process.exit(1);
     }
+    if (specifiedAgentName) {
+      console.error("Error: --from-af cannot be used with --name");
+      process.exit(1);
+    }
     if (shouldContinue) {
       console.error("Error: --from-af cannot be used with --continue");
       process.exit(1);
@@ -424,6 +507,18 @@ async function main(): Promise<void> {
     const resolvedPath = resolve(fromAfFile);
     if (!existsSync(resolvedPath)) {
       console.error(`Error: AgentFile not found: ${resolvedPath}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate --name flag
+  if (specifiedAgentName) {
+    if (specifiedAgentId) {
+      console.error("Error: --name cannot be used with --agent");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --name cannot be used with --new");
       process.exit(1);
     }
   }
@@ -506,6 +601,33 @@ async function main(): Promise<void> {
     await runSetup();
     // After setup, restart main flow
     return main();
+  }
+
+  // Resolve --name to agent ID if provided
+  if (specifiedAgentName) {
+    // Load local settings for LRU priority
+    await settingsManager.loadLocalProjectSettings();
+
+    const resolved = await resolveAgentByName(specifiedAgentName);
+    if (!resolved) {
+      console.error(
+        `Error: No pinned agent found with name "${specifiedAgentName}"`,
+      );
+      console.error("");
+      const pinnedAgents = await getPinnedAgentNames();
+      if (pinnedAgents.length > 0) {
+        console.error("Available pinned agents:");
+        for (const agent of pinnedAgents) {
+          console.error(`  - "${agent.name}" (${agent.id})`);
+        }
+      } else {
+        console.error(
+          "No pinned agents available. Use /pin to pin an agent first.",
+        );
+      }
+      process.exit(1);
+    }
+    specifiedAgentId = resolved.id;
   }
 
   // Set tool filter if provided (controls which tools are loaded)

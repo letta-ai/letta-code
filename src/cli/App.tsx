@@ -5412,7 +5412,14 @@ Plan file path: ${planFilePath}`;
                   })}
                 </Text>
                 <Text dimColor>Resume this agent with:</Text>
-                <Text color={colors.link.url}>letta --agent {agentId}</Text>
+                <Text color={colors.link.url}>
+                  {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
+                  {agentName &&
+                  (settingsManager.getLocalPinnedAgents().includes(agentId) ||
+                    settingsManager.getGlobalPinnedAgents().includes(agentId))
+                    ? `letta -n "${agentName}"`
+                    : `letta --agent ${agentId}`}
+                </Text>
               </Box>
             )}
 
