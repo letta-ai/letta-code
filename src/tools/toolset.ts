@@ -1,5 +1,5 @@
 import type Letta from "@letta-ai/letta-client";
-import { getClient } from "../agent/client";
+import { getClient, getServerUrl } from "../agent/client";
 import { resolveModel } from "../agent/model";
 import { linkToolsToAgent, unlinkToolsFromAgent } from "../agent/modify";
 import { toolFilter } from "./filter";
@@ -14,7 +14,7 @@ import {
   loadTools,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
-  upsertToolsToServer,
+  upsertToolsIfNeeded,
 } from "./manager";
 
 // Use the same toolset definitions from manager.ts (single source of truth)
@@ -146,9 +146,10 @@ export async function forceToolsetSwitch(
     await loadTools("anthropic/claude-sonnet-4");
   }
 
-  // Upsert the new toolset to server
+  // Upsert the new toolset to server (with hash-based caching)
   const client = await getClient();
-  await upsertToolsToServer(client);
+  const serverUrl = getServerUrl();
+  await upsertToolsIfNeeded(client, serverUrl);
 
   // Remove old Letta tools and add new ones (or just remove if none)
   await unlinkToolsFromAgent(agentId);
@@ -158,7 +159,6 @@ export async function forceToolsetSwitch(
 
   // Ensure base memory tool uses memory_apply_patch instead of legacy memory
   try {
-    const client = await getClient();
     const agent = await client.agents.retrieve(agentId, {
       include: ["agent.tools"],
     });
@@ -250,9 +250,10 @@ export async function switchToolsetForModel(
     }
   }
 
-  // Upsert the new toolset (stored in the tool registry) to server
+  // Upsert the new toolset (stored in the tool registry) to server (with hash-based caching)
   const client = await getClient();
-  await upsertToolsToServer(client);
+  const serverUrl = getServerUrl();
+  await upsertToolsIfNeeded(client, serverUrl);
 
   // Remove old Letta tools and add new ones
   await unlinkToolsFromAgent(agentId);
