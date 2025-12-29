@@ -4458,8 +4458,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     ) => {
       if (isExecutingTool) return;
 
-      // For now, just handle the first approval with approve-always
-      // TODO: Support approve-always for multiple approvals
       if (pendingApprovals.length === 0 || approvalContexts.length === 0)
         return;
 
@@ -4486,8 +4484,104 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       buffersRef.current.order.push(cmdId);
       refreshDerived();
 
-      // Approve current tool (handleApproveCurrent manages the execution guard)
-      // Pass diffs through to store them before execution
+      // Re-check remaining approvals against the newly saved permission
+      // This allows subsequent approvals that match the new rule to be auto-allowed
+      const remainingApprovals = pendingApprovals.slice(currentIndex + 1);
+      if (remainingApprovals.length > 0) {
+        const recheckResults = await Promise.all(
+          remainingApprovals.map(async (approval) => {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+              approval.toolArgs,
+              {},
+            );
+            const permission = await checkToolPermission(
+              approval.toolName,
+              parsedArgs,
+            );
+            return { approval, permission };
+          }),
+        );
+
+        const nowAutoAllowed = recheckResults.filter(
+          (r) => r.permission.decision === "allow",
+        );
+        const stillNeedAsking = recheckResults.filter(
+          (r) => r.permission.decision === "ask",
+        );
+
+        // Only auto-handle if ALL remaining are now allowed
+        // (avoids complex state synchronization issues with partial batches)
+        if (stillNeedAsking.length === 0 && nowAutoAllowed.length > 0) {
+          const currentApproval = pendingApprovals[currentIndex];
+          if (!currentApproval) return;
+
+          // Store diffs before execution
+          if (diffs) {
+            for (const [key, diff] of diffs) {
+              precomputedDiffsRef.current.set(key, diff);
+            }
+          }
+
+          setIsExecutingTool(true);
+
+          // Build ALL decisions: current + auto-allowed remaining
+          const allDecisions: Array<{
+            type: "approve";
+            approval: ApprovalRequest;
+          }> = [
+            { type: "approve", approval: currentApproval },
+            ...nowAutoAllowed.map((r) => ({
+              type: "approve" as const,
+              approval: r.approval,
+            })),
+          ];
+
+          // Clear dialog state immediately
+          setPendingApprovals([]);
+          setApprovalContexts([]);
+          setApprovalResults([]);
+          setAutoHandledResults([]);
+          setAutoDeniedApprovals([]);
+
+          if (process.stdout.isTTY) {
+            process.stdout.write(CLEAR_SCREEN_AND_HOME);
+          }
+          setStaticRenderEpoch((e) => e + 1);
+
+          setStreaming(true);
+          buffersRef.current.interrupted = false;
+
+          try {
+            // Execute ALL decisions together
+            const { executeApprovalBatch } = await import(
+              "../agent/approval-execution"
+            );
+            const executedResults = await executeApprovalBatch(
+              allDecisions,
+              (chunk) => {
+                onChunk(buffersRef.current, chunk);
+                refreshDerived();
+              },
+            );
+
+            setThinkingMessage(getRandomThinkingVerb());
+            refreshDerived();
+
+            // Continue conversation with all results
+            await processConversation([
+              {
+                type: "approval",
+                approvals: executedResults as ApprovalResult[],
+              },
+            ]);
+          } finally {
+            setIsExecutingTool(false);
+          }
+          return; // Don't call handleApproveCurrent - we handled everything
+        }
+      }
+
+      // Fallback: proceed with normal flow (will prompt for remaining approvals)
       await handleApproveCurrent(diffs);
     },
     [
@@ -4495,8 +4589,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       approvalContexts,
       pendingApprovals,
       handleApproveCurrent,
+      processConversation,
       refreshDerived,
       isExecutingTool,
+      setStreaming,
     ],
   );
 
