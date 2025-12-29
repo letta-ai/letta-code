@@ -154,6 +154,13 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Send desktop notification via terminal bell
+// Modern terminals (iTerm2, Ghostty, WezTerm, Kitty) convert this to a desktop
+// notification when the terminal is not focused
+function sendDesktopNotification() {
+  process.stdout.write("\x07");
+}
+
 // Check if error is retriable based on stop reason and run metadata
 async function isRetriableError(
   stopReason: StopReasonType,
@@ -1108,6 +1115,12 @@ export default function App({
             setStreaming(false);
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
 
+            // Send desktop notification when turn completes
+            // and we're not about to auto-send another queued message
+            if (!waitingForQueueCancelRef.current) {
+              sendDesktopNotification();
+            }
+
             // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
               if (restoreQueueOnCancelRef.current) {
@@ -1576,6 +1589,8 @@ export default function App({
             setAutoHandledResults(autoAllowedResults);
             setAutoDeniedApprovals(autoDeniedResults);
             setStreaming(false);
+            // Notify user that approval is needed
+            sendDesktopNotification();
             return;
           }
 
@@ -1656,6 +1671,7 @@ export default function App({
               : `Stream error: ${fallbackError}`;
             appendError(errorMsg, true); // Skip telemetry - already tracked above
             setStreaming(false);
+            sendDesktopNotification(); // Notify user of error
             refreshDerived();
             return;
           }
@@ -1710,6 +1726,7 @@ export default function App({
           }
 
           setStreaming(false);
+          sendDesktopNotification(); // Notify user of error
           refreshDerived();
           return;
         }
@@ -1749,6 +1766,7 @@ export default function App({
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
         setStreaming(false);
+        sendDesktopNotification(); // Notify user of error
         refreshDerived();
       } finally {
         abortControllerRef.current = null;
