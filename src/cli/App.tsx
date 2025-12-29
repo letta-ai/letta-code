@@ -1095,8 +1095,13 @@ export default function App({
           sessionStatsRef.current.endTurn(apiDurationMs);
           sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
 
-          // Immediate refresh after stream completes to show final state
-          refreshDerived();
+          const wasInterrupted = !!buffersRef.current.interrupted;
+
+          // Immediate refresh after stream completes to show final state unless
+          // the user already cancelled (handleInterrupt rendered the UI).
+          if (!wasInterrupted) {
+            refreshDerived();
+          }
 
           // Case 1: Turn ended normally
           if (stopReason === "end_turn") {

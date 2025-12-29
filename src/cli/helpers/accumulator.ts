@@ -219,6 +219,13 @@ function extractTextPart(v: unknown): string {
 
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+  // Skip processing if stream was interrupted mid-turn. handleInterrupt already
+  // rendered the cancellation state, so we should ignore any buffered chunks
+  // that arrive before drainStream exits.
+  if (b.interrupted) {
+    return;
+  }
+
   // TODO remove once SDK v1 has proper typing for in-stream errors
   // Check for streaming error objects (not typed in SDK but emitted by backend)
   // Note: Error handling moved to catch blocks in App.tsx and headless.ts
