@@ -205,6 +205,33 @@ export function PasteAwareTextInput({
         return;
       }
 
+      // Handle Ctrl+V to check clipboard for images (works in all terminals)
+      // Native terminals don't send image data via bracketed paste, so we need
+      // to explicitly check the clipboard when Ctrl+V is pressed.
+      if (key.ctrl && input === "v") {
+        const clip = tryImportClipboardImageMac();
+        if (clip) {
+          const at = Math.max(
+            0,
+            Math.min(caretOffsetRef.current, displayValueRef.current.length),
+          );
+          const newDisplay =
+            displayValueRef.current.slice(0, at) +
+            clip +
+            displayValueRef.current.slice(at);
+          displayValueRef.current = newDisplay;
+          setDisplayValue(newDisplay);
+          setActualValue(newDisplay);
+          onChangeRef.current(newDisplay);
+          const nextCaret = at + clip.length;
+          setNudgeCursorOffset(nextCaret);
+          caretOffsetRef.current = nextCaret;
+        }
+        // Don't return - let it fall through to normal paste handling
+        // in case there's also text in the clipboard
+        return;
+      }
+
       // Handle bracketed paste events emitted by vendored Ink
       const isPasted = (key as unknown as { isPasted?: boolean })?.isPasted;
       if (isPasted) {
@@ -456,6 +483,35 @@ export function PasteAwareTextInput({
       }
       // Ignore Ctrl+C key release/repeat events
       if (sequence.startsWith("\x1b[99;5:")) {
+        return;
+      }
+
+      // Kitty keyboard protocol: Ctrl+V (for clipboard image paste)
+      // Format: ESC[118;5u (key=118='v', modifier=5=ctrl)
+      if (sequence === "\x1b[118;5u") {
+        // Check clipboard for images
+        const clip = tryImportClipboardImageMac();
+        if (clip) {
+          const at = Math.max(
+            0,
+            Math.min(caretOffsetRef.current, displayValueRef.current.length),
+          );
+          const newDisplay =
+            displayValueRef.current.slice(0, at) +
+            clip +
+            displayValueRef.current.slice(at);
+          displayValueRef.current = newDisplay;
+          setDisplayValue(newDisplay);
+          setActualValue(newDisplay);
+          onChangeRef.current(newDisplay);
+          const nextCaret = at + clip.length;
+          setNudgeCursorOffset(nextCaret);
+          caretOffsetRef.current = nextCaret;
+        }
+        return;
+      }
+      // Ignore Ctrl+V key release/repeat events
+      if (sequence.startsWith("\x1b[118;5:")) {
         return;
       }
 
