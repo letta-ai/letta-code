@@ -2538,7 +2538,8 @@ export default function App({
 
           try {
             const { settingsManager } = await import("../settings-manager");
-            const currentSettings = settingsManager.getSettings();
+            const currentSettings =
+              await settingsManager.getSettingsWithSecureTokens();
 
             // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
@@ -2546,17 +2547,8 @@ export default function App({
               await revokeToken(currentSettings.refreshToken);
             }
 
-            // Clear local credentials
-            const newEnv = { ...currentSettings.env };
-            delete newEnv.LETTA_API_KEY;
-            // Note: LETTA_BASE_URL is intentionally NOT deleted from settings
-            // because it should not be stored there in the first place
-
-            settingsManager.updateSettings({
-              env: newEnv,
-              refreshToken: undefined,
-              tokenExpiresAt: undefined,
-            });
+            // Clear all credentials including secrets
+            await settingsManager.logout();
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",

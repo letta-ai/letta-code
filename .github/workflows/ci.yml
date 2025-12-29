@@ -66,6 +66,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install
 
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
       - name: Run tests (extended timeout)
         run: bun test --timeout 15000
 
