@@ -33,8 +33,8 @@ interface EligibilityCheckResult {
 /**
  * Get the Letta API base URL and auth token
  */
-function getLettaConfig(): { baseUrl: string; apiKey: string } {
-  const settings = settingsManager.getSettings();
+async function getLettaConfig(): Promise<{ baseUrl: string; apiKey: string }> {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
   const baseUrl =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
@@ -51,7 +51,7 @@ async function providersRequest<T>(
   path: string,
   body?: Record<string, unknown>,
 ): Promise<T> {
-  const { baseUrl, apiKey } = getLettaConfig();
+  const { baseUrl, apiKey } = await getLettaConfig();
   const url = `${baseUrl}${path}`;
 
   const response = await fetch(url, {
