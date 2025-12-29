@@ -1833,6 +1833,12 @@ export default function App({
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
 
+      // Force clean re-render to avoid streaking artifacts
+      if (process.stdout.isTTY) {
+        process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      }
+      setStaticRenderEpoch((e) => e + 1);
+
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
@@ -4237,6 +4243,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           setApprovalResults([]);
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
+          // Force clean re-render to avoid streaking artifacts
+          if (process.stdout.isTTY) {
+            process.stdout.write(CLEAR_SCREEN_AND_HOME);
+          }
+          setStaticRenderEpoch((e) => e + 1);
           return;
         }
 
@@ -4252,6 +4263,13 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         setApprovalResults([]);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
+
+        // Force clean re-render to avoid streaking artifacts
+        // The large approval dialog disappearing causes line count mismatch in Ink
+        if (process.stdout.isTTY) {
+          process.stdout.write(CLEAR_SCREEN_AND_HOME);
+        }
+        setStaticRenderEpoch((e) => e + 1);
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
@@ -4554,6 +4572,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     setApprovalResults([]);
     setAutoHandledResults([]);
     setAutoDeniedApprovals([]);
+
+    // Force clean re-render to avoid streaking artifacts
+    if (process.stdout.isTTY) {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+    }
+    setStaticRenderEpoch((e) => e + 1);
   }, [pendingApprovals, refreshDerived]);
 
   const handleModelSelect = useCallback(
