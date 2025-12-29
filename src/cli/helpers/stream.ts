@@ -71,6 +71,9 @@ export async function drainStream(
   } else if (abortSignal?.aborted) {
     // Already aborted before we started
     abortedViaListener = true;
+    if (stream.controller && !stream.controller.signal.aborted) {
+      stream.controller.abort();
+    }
   }
 
   try {
