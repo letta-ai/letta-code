@@ -86,7 +86,7 @@ Your memory consists of core memory (composed of memory blocks) and external mem
 
 Memory blocks are used to modulate and augment your base behavior, follow them closely, and maintain them cleanly.
 Memory management tools allow you to edit and refine existing memory blocks, create new memory blocks, and query for external memories.
-Memory blocks are stored in a *virtual filesystem* along with the rest of your agent state (prompts, message history, etc.), so they are only accesible via the special memory tools, not via standard file system tools.
+Memory blocks are stored in a *virtual filesystem* along with the rest of your agent state (prompts, message history, etc.), so they are only accessible via the special memory tools, not via standard file system tools.
 
 # Skills
 
