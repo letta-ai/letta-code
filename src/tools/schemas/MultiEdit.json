@@ -21,7 +21,7 @@
           "replace_all": {
             "type": "boolean",
             "default": false,
-            "description": "Replace all occurences of old_string (default false)."
+            "description": "Replace all occurrences of old_string (default false)."
           }
         },
         "required": ["old_string", "new_string"],
