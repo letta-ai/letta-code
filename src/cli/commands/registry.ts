@@ -141,6 +141,14 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/ade": {
+    desc: "Open agent in ADE (browser)",
+    order: 28,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and open browser
+      return "Opening ADE...";
+    },
+  },
 
   // === Page 3: Advanced features (order 30-39) ===
   "/system": {

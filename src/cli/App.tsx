@@ -2268,6 +2268,32 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /ade command - open agent in browser
+        if (trimmed === "/ade") {
+          const adeUrl = `https://app.letta.com/agents/${agentId}`;
+          const cmdId = uid("cmd");
+
+          // Fire-and-forget browser open
+          import("open")
+            .then(({ default: open }) => open(adeUrl, { wait: false }))
+            .catch(() => {
+              // Silently ignore - user can use the URL from the output
+            });
+
+          // Always show the URL in case browser doesn't open
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: "/ade",
+            output: `Opening ADE...\n→ ${adeUrl}`,
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           setActiveOverlay("system");
