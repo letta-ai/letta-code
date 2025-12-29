@@ -85,7 +85,7 @@ import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
 import { UserMessage } from "./components/UserMessageRich";
-import { getAgentStatusHints, WelcomeScreen } from "./components/WelcomeScreen";
+import { WelcomeScreen } from "./components/WelcomeScreen";
 import {
   type Buffers,
   createBuffers,
@@ -843,15 +843,35 @@ export default function App({
       const shortCwd = cwd.startsWith(process.env.HOME || "")
         ? `~${cwd.slice((process.env.HOME || "").length)}`
         : cwd;
-      const agentUrl = agentState?.id
-        ? `https://app.letta.com/agents/${agentState.id}`
-        : null;
-      const statusLines = [
-        `Connecting to last used agent in ${shortCwd}`,
-        agentState?.name ? `→ Agent: ${agentState.name}` : "",
-        agentUrl ? `→ ${agentUrl}` : "",
-        "→ Use /pinned or /agents to switch agents",
-      ].filter(Boolean);
+
+      // Check if agent is pinned (locally or globally)
+      const isPinned = agentState?.id
+        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
+          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        : false;
+
+      // Build status message
+      const agentName = agentState?.name || "Unnamed Agent";
+      const headerMessage = `Connecting to **${agentName}** (last used in ${shortCwd})`;
+
+      // Command hints - for pinned agents show /memory, for unpinned show /pin
+      const commandHints = isPinned
+        ? [
+            "→ **/memory**    view your agent's memory blocks",
+            "→ **/init**      initialize your agent's memory",
+            "→ **/remember**  teach your agent",
+            "→ **/agents**    list agents",
+            "→ **/ade**       open in the browser (web UI)",
+          ]
+        : [
+            "→ **/pin**       save + name your agent",
+            "→ **/init**      initialize your agent's memory",
+            "→ **/remember**  teach your agent",
+            "→ **/agents**    list agents",
+            "→ **/ade**       open in the browser (web UI)",
+          ];
+
+      const statusLines = [headerMessage, ...commandHints];
       buffersRef.current.byId.set(statusId, {
         kind: "status",
         id: statusId,
@@ -5242,31 +5262,44 @@ Plan file path: ${planFilePath}`;
       ]);
 
       // Add status line showing agent info
-      const agentUrl = agentState?.id
-        ? `https://app.letta.com/agents/${agentState.id}`
-        : null;
       const statusId = `status-agent-${Date.now().toString(36)}`;
-      const hints = getAgentStatusHints(
-        !!continueSession,
-        agentState,
-        agentProvenance,
-      );
-      // For resumed agents, show the agent name if it has one (profile name)
-      const resumedMessage = continueSession
-        ? agentState?.name
-          ? `Resumed **${agentState.name}**`
-          : "Resumed agent"
-        : "Creating a new agent (use /pin to save)";
 
-      const statusLines = continueSession
-        ? [resumedMessage, ...hints, agentUrl ? `→ ${agentUrl}` : ""].filter(
-            Boolean,
-          )
+      // Get short path for display
+      const cwd = process.cwd();
+      const shortCwd = cwd.startsWith(process.env.HOME || "")
+        ? `~${cwd.slice((process.env.HOME || "").length)}`
+        : cwd;
+
+      // Check if agent is pinned (locally or globally)
+      const isPinned = agentState?.id
+        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
+          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        : false;
+
+      // Build status message based on session type
+      const agentName = agentState?.name || "Unnamed Agent";
+      const headerMessage = continueSession
+        ? `Connecting to **${agentName}** (last used in ${shortCwd})`
+        : "Creating a new agent";
+
+      // Command hints - for pinned agents show /memory, for unpinned show /pin
+      const commandHints = isPinned
+        ? [
+            "→ **/memory**    view your agent's memory blocks",
+            "→ **/init**      initialize your agent's memory",
+            "→ **/remember**  teach your agent",
+            "→ **/agents**    list agents",
+            "→ **/ade**       open in the browser (web UI)",
+          ]
         : [
-            resumedMessage,
-            agentUrl ? `→ ${agentUrl}` : "",
-            "→ Tip: use /init to initialize your agent's memory system!",
-          ].filter(Boolean);
+            "→ **/pin**       save + name your agent",
+            "→ **/init**      initialize your agent's memory",
+            "→ **/remember**  teach your agent",
+            "→ **/agents**    list agents",
+            "→ **/ade**       open in the browser (web UI)",
+          ];
+
+      const statusLines = [headerMessage, ...commandHints];
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
