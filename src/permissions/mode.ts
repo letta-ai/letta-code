@@ -1,6 +1,8 @@
 // src/permissions/mode.ts
 // Permission mode management (default, acceptEdits, plan, bypassPermissions)
 
+import { isReadOnlyShellCommand } from "./readOnlyShell";
+
 export type PermissionMode =
   | "default"
   | "acceptEdits"
@@ -191,6 +193,23 @@ class PermissionModeManager {
           }
 
           if (planFilePath && targetPath && targetPath === planFilePath) {
+            return "allow";
+          }
+        }
+
+        // Allow read-only shell commands (ls, git status, git log, etc.)
+        const shellTools = [
+          "Bash",
+          "shell",
+          "Shell",
+          "shell_command",
+          "ShellCommand",
+          "run_shell_command",
+          "RunShellCommand",
+        ];
+        if (shellTools.includes(toolName)) {
+          const command = toolArgs?.command as string | string[] | undefined;
+          if (command && isReadOnlyShellCommand(command)) {
             return "allow";
           }
         }
