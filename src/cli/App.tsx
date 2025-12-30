@@ -133,6 +133,7 @@ import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
 
+// Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 
 // Feature flag: Check for pending approvals before sending messages
@@ -1857,9 +1858,8 @@ export default function App({
       setAutoDeniedApprovals([]);
 
       // Force clean re-render to avoid streaking artifacts
-      if (process.stdout.isTTY) {
-        process.stdout.write(CLEAR_SCREEN_AND_HOME);
-      }
+      // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
+      // The epoch increment alone should reset Ink's line tracking
       setStaticRenderEpoch((e) => e + 1);
 
       // Send cancel request to backend asynchronously (fire-and-forget)
@@ -4259,9 +4259,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
           // Force clean re-render to avoid streaking artifacts
-          if (process.stdout.isTTY) {
-            process.stdout.write(CLEAR_SCREEN_AND_HOME);
-          }
+          // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
           setStaticRenderEpoch((e) => e + 1);
           return;
         }
@@ -4281,9 +4279,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
         // Force clean re-render to avoid streaking artifacts
         // The large approval dialog disappearing causes line count mismatch in Ink
-        if (process.stdout.isTTY) {
-          process.stdout.write(CLEAR_SCREEN_AND_HOME);
-        }
+        // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
         setStaticRenderEpoch((e) => e + 1);
 
         // Show "thinking" state and lock input while executing approved tools client-side
@@ -4558,9 +4554,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
 
-          if (process.stdout.isTTY) {
-            process.stdout.write(CLEAR_SCREEN_AND_HOME);
-          }
+          // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
           setStaticRenderEpoch((e) => e + 1);
 
           setStreaming(true);
@@ -4685,9 +4679,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     setAutoDeniedApprovals([]);
 
     // Force clean re-render to avoid streaking artifacts
-    if (process.stdout.isTTY) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
+    // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
     setStaticRenderEpoch((e) => e + 1);
   }, [pendingApprovals, refreshDerived]);
 
