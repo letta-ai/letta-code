@@ -98,7 +98,29 @@ export function formatErrorDetails(e: unknown, agentId?: string): string {
     return e.message;
   }
 
-  // Fallback for any other type
+  // Fallback for any other type (e.g., plain objects thrown by SDK or other code)
+  if (typeof e === "object" && e !== null) {
+    const obj = e as Record<string, unknown>;
+
+    // Check common error-like properties
+    if (typeof obj.message === "string") {
+      return obj.message;
+    }
+    if (typeof obj.error === "string") {
+      return obj.error;
+    }
+    if (typeof obj.detail === "string") {
+      return obj.detail;
+    }
+
+    // Last resort: JSON stringify
+    try {
+      return JSON.stringify(e, null, 2);
+    } catch {
+      return "[Error: Unable to serialize error object]";
+    }
+  }
+
   return String(e);
 }
 
