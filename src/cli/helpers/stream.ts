@@ -332,6 +332,12 @@ export async function drainStreamWithResume(
 
     try {
       const client = await getClient();
+
+      // Reset interrupted flag so resumed chunks can be processed by onChunk.
+      // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
+      // would be silently ignored, showing "Interrupted by user" even on successful resume.
+      buffers.interrupted = false;
+
       // Resume from Redis where we left off
       const resumeStream = await client.runs.messages.stream(result.lastRunId, {
         starting_after: result.lastSeqId,
