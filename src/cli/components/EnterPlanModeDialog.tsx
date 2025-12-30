@@ -16,6 +16,18 @@ export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
   ];
 
   useInput((input, key) => {
+    // CTRL-C: immediately reject (cancel)
+    if (key.ctrl && input === "c") {
+      onReject();
+      return;
+    }
+
+    // ESC: reject (cancel) - was missing!
+    if (key.escape) {
+      onReject();
+      return;
+    }
+
     if (key.upArrow) {
       setSelectedOption((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {

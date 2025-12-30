@@ -194,6 +194,12 @@ export function MessageSearch({ onClose }: MessageSearchProps) {
   const pageResults = results.slice(startIndex, startIndex + DISPLAY_PAGE_SIZE);
 
   useInput((input, key) => {
+    // CTRL-C: immediately close (bypasses search clearing)
+    if (key.ctrl && input === "c") {
+      onClose();
+      return;
+    }
+
     if (key.escape) {
       if (searchInput || activeQuery) {
         clearSearch();

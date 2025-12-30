@@ -185,6 +185,12 @@ export function ModelSelector({
 
   useInput(
     (input, key) => {
+      // CTRL-C: immediately cancel (bypasses search clearing)
+      if (key.ctrl && input === "c") {
+        onCancel();
+        return;
+      }
+
       // Handle ESC: clear search first if active, otherwise cancel
       if (key.escape) {
         if (searchQuery) {

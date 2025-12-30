@@ -18,6 +18,12 @@ export function FeedbackDialog({
   const [error, setError] = useState("");
 
   useInput((_input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && _input === "c") {
+      onCancel();
+      return;
+    }
+
     if (key.escape) {
       onCancel();
     }

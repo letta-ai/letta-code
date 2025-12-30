@@ -14,7 +14,13 @@ export function NewAgentDialog({ onSubmit, onCancel }: NewAgentDialogProps) {
   const [nameInput, setNameInput] = useState("");
   const [error, setError] = useState("");
 
-  useInput((_, key) => {
+  useInput((input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     if (key.escape) {
       onCancel();
     }

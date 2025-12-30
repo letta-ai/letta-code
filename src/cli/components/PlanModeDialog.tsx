@@ -53,6 +53,12 @@ export const PlanModeDialog = memo(
     ];
 
     useInput((_input, key) => {
+      // CTRL-C: immediately exit plan approval (closest to cancel)
+      if (key.ctrl && _input === "c") {
+        onKeepPlanning("User pressed CTRL-C to cancel");
+        return;
+      }
+
       if (isEnteringReason) {
         // When entering reason, only handle enter/escape
         if (key.return) {
