@@ -420,12 +420,19 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       for (const toolReturn of toolReturns) {
         const toolCallId = toolReturn.tool_call_id;
         // Handle both func_response (streaming) and tool_return (SDK) properties
-        const resultText =
+        const rawResult =
           ("func_response" in toolReturn
             ? toolReturn.func_response
             : undefined) ||
-          ("tool_return" in toolReturn ? toolReturn.tool_return : undefined) ||
-          "";
+          ("tool_return" in toolReturn ? toolReturn.tool_return : undefined);
+
+        // Ensure resultText is always a string (guard against SDK returning objects)
+        const resultText =
+          typeof rawResult === "string"
+            ? rawResult
+            : rawResult != null
+              ? JSON.stringify(rawResult)
+              : "";
         const status = toolReturn.status;
 
         // Look up the line by toolCallId

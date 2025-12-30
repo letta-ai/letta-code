@@ -945,18 +945,26 @@ export default function App({
   // Also tracks the error in telemetry so we know an error was shown
   const appendError = useCallback(
     (message: string, skipTelemetry = false) => {
+      // Defensive: ensure message is always a string (guards against [object Object])
+      const text =
+        typeof message === "string"
+          ? message
+          : message != null
+            ? JSON.stringify(message)
+            : "[Unknown error]";
+
       const id = uid("err");
       buffersRef.current.byId.set(id, {
         kind: "error",
         id,
-        text: message,
+        text,
       });
       buffersRef.current.order.push(id);
       refreshDerived();
 
       // Track error in telemetry (unless explicitly skipped for user-initiated actions)
       if (!skipTelemetry) {
-        telemetry.trackError("ui_error", message, "error_display", {
+        telemetry.trackError("ui_error", text, "error_display", {
           modelId: currentModelId || undefined,
         });
       }
