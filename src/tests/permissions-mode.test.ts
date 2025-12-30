@@ -342,6 +342,42 @@ test("plan mode - allows read-only Bash commands", () => {
     "/Users/test/project",
   );
   expect(gitDiffResult.decision).toBe("allow");
+
+  // cd && git should be allowed (common CLI pattern)
+  const cdGitResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && git status" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdGitResult.decision).toBe("allow");
+
+  // cd && git show should be allowed
+  const cdGitShowResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && git show abc123" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdGitShowResult.decision).toBe("allow");
+
+  // chained safe commands with ; should be allowed
+  const chainedResult = checkPermission(
+    "Bash",
+    { command: "ls; pwd; git status" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(chainedResult.decision).toBe("allow");
+
+  // cd && dangerous command should still be denied
+  const cdDangerousResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && npm install" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdDangerousResult.decision).toBe("deny");
 });
 
 test("plan mode - denies WebFetch", () => {
