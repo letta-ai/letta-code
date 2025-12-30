@@ -1911,13 +1911,6 @@ export default function App({
     processConversationRef.current = processConversation;
   }, [processConversation]);
 
-  // Reset interrupt flag when streaming ends
-  useEffect(() => {
-    if (!streaming) {
-      setInterruptRequested(false);
-    }
-  }, [streaming]);
-
   const handleAgentSelect = useCallback(
     async (targetAgentId: string, _opts?: { profileName?: string }) => {
       // Close selector immediately

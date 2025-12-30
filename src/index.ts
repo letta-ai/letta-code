@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
@@ -16,6 +18,12 @@ import {
   loadTools,
   upsertToolsIfNeeded,
 } from "./tools/manager";
+
+// Stable empty array constants to prevent new references on every render
+// These are used as fallbacks when resumeData is null, avoiding the React
+// anti-pattern of creating new [] on every render which triggers useEffect re-runs
+const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
+const EMPTY_MESSAGE_ARRAY: Message[] = [];
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -1342,8 +1350,8 @@ async function main(): Promise<void> {
         loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
-        startupApprovals: resumeData?.pendingApprovals ?? [],
-        messageHistory: resumeData?.messageHistory ?? [],
+        startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
+        messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
       });
@@ -1355,8 +1363,8 @@ async function main(): Promise<void> {
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
-      startupApprovals: resumeData?.pendingApprovals ?? [],
-      messageHistory: resumeData?.messageHistory ?? [],
+      startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
+      messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
     });
