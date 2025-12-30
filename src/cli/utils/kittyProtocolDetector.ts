@@ -10,13 +10,25 @@ let kittySupported = false;
 let kittyEnabled = false;
 
 const DEBUG = process.env.LETTA_DEBUG_KITTY === "1";
+const DISABLED = process.env.LETTA_DISABLE_KITTY === "1";
 
 /**
  * Detects Kitty keyboard protocol support.
  * This function should be called once at app startup, before rendering.
+ * Set LETTA_DISABLE_KITTY=1 to skip enabling the protocol (useful for debugging).
  */
 export async function detectAndEnableKittyProtocol(): Promise<void> {
   if (detectionComplete) {
+    return;
+  }
+
+  // Allow disabling Kitty protocol for debugging terminal issues
+  if (DISABLED) {
+    if (DEBUG) {
+      // eslint-disable-next-line no-console
+      console.error("[kitty] protocol disabled via LETTA_DISABLE_KITTY=1");
+    }
+    detectionComplete = true;
     return;
   }
 
