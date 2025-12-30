@@ -139,7 +139,13 @@ export function ToolsetSelector({
 
   const totalItems = visibleToolsets.length + (hasShowAllOption ? 1 : 0);
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
