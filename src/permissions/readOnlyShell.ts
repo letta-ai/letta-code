@@ -48,6 +48,7 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "strings",
   "xxd",
   "hexdump",
+  "cd",
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -60,7 +61,9 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "remote",
 ]);
 
-const DANGEROUS_OPERATOR_PATTERN = /(>>|>|&&|\|\||;|\$\(|`)/;
+// Operators that are always dangerous (file redirects, command substitution)
+// Note: &&, ||, ; are handled by splitting and checking each segment
+const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
 
 export function isReadOnlyShellCommand(
   command: string | string[] | undefined | null,
@@ -94,8 +97,10 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
+  // Split on command separators: |, &&, ||, ;
+  // Each segment must be safe for the whole command to be safe
   const segments = trimmed
-    .split("|")
+    .split(/\||&&|\|\||;/)
     .map((segment) => segment.trim())
     .filter(Boolean);
 
