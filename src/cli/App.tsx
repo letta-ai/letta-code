@@ -5802,6 +5802,7 @@ Plan file path: ${planFilePath}`;
               <QuestionDialog
                 questions={getQuestionsFromApproval(currentApproval)}
                 onSubmit={handleQuestionSubmit}
+                onCancel={handleCancelApprovals}
               />
             )}
 
