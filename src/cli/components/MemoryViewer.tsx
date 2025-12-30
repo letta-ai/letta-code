@@ -82,6 +82,12 @@ export function MemoryViewer({
   );
 
   useInput((input, key) => {
+    // CTRL-C: immediately close the entire viewer
+    if (key.ctrl && input === "c") {
+      onClose();
+      return;
+    }
+
     // ESC: exit detail view or close entirely
     if (key.escape) {
       if (detailBlockIndex !== null) {

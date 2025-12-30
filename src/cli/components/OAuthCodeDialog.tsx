@@ -114,7 +114,16 @@ export const OAuthCodeDialog = memo(
     }, [onComplete]);
 
     // Handle keyboard input
-    useInput((_input, key) => {
+    useInput((input, key) => {
+      // CTRL-C: cancel at any cancelable state
+      if (key.ctrl && input === "c") {
+        if (flowState === "waiting_for_code" || flowState === "select_model") {
+          settingsManager.clearOAuthState();
+          onCancel();
+        }
+        return;
+      }
+
       if (key.escape && flowState === "waiting_for_code") {
         settingsManager.clearOAuthState();
         onCancel();

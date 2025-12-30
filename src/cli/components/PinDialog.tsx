@@ -63,6 +63,12 @@ export function PinDialog({
   const scopeText = local ? "to this project" : "globally";
 
   useInput((input, key) => {
+    // CTRL-C: immediately cancel (bypasses mode transitions)
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     if (key.escape) {
       if (mode === "input" && !isDefault) {
         // Go back to choose mode

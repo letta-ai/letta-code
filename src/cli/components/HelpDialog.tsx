@@ -100,6 +100,12 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   useInput(
     useCallback(
       (input, key) => {
+        // CTRL-C: immediately close
+        if (key.ctrl && input === "c") {
+          onClose();
+          return;
+        }
+
         if (key.escape) {
           onClose();
         } else if (key.tab) {

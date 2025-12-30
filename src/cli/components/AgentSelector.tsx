@@ -63,6 +63,12 @@ export function AgentSelector({
   }, []);
 
   useInput((input, key) => {
+    // CTRL-C: immediately cancel (works even during loading/error)
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     if (loading || error) return;
 
     if (key.upArrow) {

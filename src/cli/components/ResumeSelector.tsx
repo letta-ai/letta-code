@@ -415,6 +415,12 @@ export function ResumeSelector({
   }, [activeQuery]);
 
   useInput((input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     // Tab key cycles through tabs
     if (key.tab) {
       const currentIndex = TABS.findIndex((t) => t.id === activeTab);

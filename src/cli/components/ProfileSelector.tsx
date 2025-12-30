@@ -147,6 +147,12 @@ export const ProfileSelector = memo(function ProfileSelector({
   const selectedProfile = pageProfiles[selectedIndex];
 
   useInput((input, key) => {
+    // CTRL-C: immediately cancel (works even during loading)
+    if (key.ctrl && input === "c") {
+      onCancel();
+      return;
+    }
+
     if (loading) return;
 
     // Handle delete confirmation mode
