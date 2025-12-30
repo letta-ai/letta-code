@@ -173,6 +173,13 @@ export function Input({
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
+    // Debug logging for escape key detection
+    if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:InputRich:escape] escape=${key.escape} visible=${visible} onEscapeCancel=${!!onEscapeCancel} streaming=${streaming}`,
+      );
+    }
     // Skip if onEscapeCancel is provided - handled by the confirmation handler above
     if (onEscapeCancel) return;
 
@@ -232,6 +239,13 @@ export function Input({
   // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
     if (!visible) return;
+    // Debug logging for shift+tab detection
+    if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:InputRich] shift=${key.shift} tab=${key.tab} visible=${visible}`,
+      );
+    }
     if (key.shift && key.tab) {
       // Cycle through permission modes
       const modes: PermissionMode[] = [
