@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
+import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
   deleteSecureTokens,
@@ -131,15 +132,14 @@ class SettingsManager {
     try {
       const available = await this.isKeychainAvailable();
       if (!available) {
-        console.warn(
-          "⚠️  System secrets are not available - using fallback storage",
-        );
-        console.warn(
-          "   This may occur when running in Node.js or restricted environments",
+        // Only show warning in debug mode - fallback storage is expected for npm users
+        debugWarn(
+          "secrets",
+          "System secrets not available - using fallback storage",
         );
       }
     } catch (error) {
-      console.warn("⚠️  Could not check secrets availability:", error);
+      debugWarn("secrets", `Could not check secrets availability: ${error}`);
     }
   }
 
