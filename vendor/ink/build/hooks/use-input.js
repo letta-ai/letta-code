@@ -80,7 +80,15 @@ const useInput = (inputHandler, options = {}) => {
                         127: 'backspace',
                     };
                     
-                    const name = csiUKeyMap[keycode] || '';
+                    let name = csiUKeyMap[keycode] || '';
+                    
+                    // Handle letter keycodes (a-z: 97-122, A-Z: 65-90)
+                    if (!name && keycode >= 97 && keycode <= 122) {
+                        name = String.fromCharCode(keycode); // lowercase letter
+                    } else if (!name && keycode >= 65 && keycode <= 90) {
+                        name = String.fromCharCode(keycode + 32); // convert to lowercase
+                    }
+                    
                     if (name) {
                         keypress = {
                             name,

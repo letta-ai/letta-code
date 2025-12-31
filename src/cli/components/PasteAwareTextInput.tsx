@@ -457,63 +457,9 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // Kitty keyboard protocol: Shift+Enter, Ctrl+Enter, Alt+Enter
-      // Format: CSI keycode ; modifiers u
-      // Enter keycode = 13, modifiers: 2=shift, 3=alt, 5=ctrl, 6=ctrl+shift, 7=alt+ctrl, 8=alt+ctrl+shift
-      // Examples: \x1b[13;2u (Shift+Enter), \x1b[13;5u (Ctrl+Enter), \x1b[13;3u (Alt+Enter)
-      {
-        const prefix = "\u001b[13;";
-        if (sequence.startsWith(prefix) && sequence.endsWith("u")) {
-          const mod = sequence.slice(prefix.length, -1);
-          if (mod.length === 1 && mod >= "2" && mod <= "8") {
-            insertNewlineAtCursor();
-            return;
-          }
-        }
-      }
-
-      // Kitty keyboard protocol: Ctrl+C
-      // Format: ESC[99;5u (key=99='c', modifier=5=ctrl)
-      // Kitty also sends key release events: ESC[99;5:3u (:3 = release)
-      // Only handle key PRESS, not release (to avoid double-triggering)
-      if (sequence === "\x1b[99;5u") {
-        // Emit raw Ctrl+C byte for Ink to handle
-        internal_eventEmitter.emit("input", "\x03");
-        return;
-      }
-      // Ignore Ctrl+C key release/repeat events
-      if (sequence.startsWith("\x1b[99;5:")) {
-        return;
-      }
-
-      // Kitty keyboard protocol: Ctrl+V (for clipboard image paste)
-      // Format: ESC[118;5u (key=118='v', modifier=5=ctrl)
-      if (sequence === "\x1b[118;5u") {
-        // Check clipboard for images
-        const clip = tryImportClipboardImageMac();
-        if (clip) {
-          const at = Math.max(
-            0,
-            Math.min(caretOffsetRef.current, displayValueRef.current.length),
-          );
-          const newDisplay =
-            displayValueRef.current.slice(0, at) +
-            clip +
-            displayValueRef.current.slice(at);
-          displayValueRef.current = newDisplay;
-          setDisplayValue(newDisplay);
-          setActualValue(newDisplay);
-          onChangeRef.current(newDisplay);
-          const nextCaret = at + clip.length;
-          setNudgeCursorOffset(nextCaret);
-          caretOffsetRef.current = nextCaret;
-        }
-        return;
-      }
-      // Ignore Ctrl+V key release/repeat events
-      if (sequence.startsWith("\x1b[118;5:")) {
-        return;
-      }
+      // CSI u modifier+Enter (ESC[13;Nu) is now handled by the CSI u fallback
+      // in use-input.js, which parses it as return + shift/ctrl/meta flags.
+      // The useInput handler at line 186 then handles the newline insertion.
 
       // Kitty keyboard protocol: Arrow keys
       // Format: ESC[1;modifier:event_typeX where X is A/B/C/D for up/down/right/left
