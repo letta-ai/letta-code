@@ -179,9 +179,37 @@ async function isRetriableError(
       const client = await getClient();
       const run = await client.runs.retrieve(lastRunId);
       const metaError = run.metadata?.error as
-        | { error_type?: string }
+        | {
+            error_type?: string;
+            detail?: string;
+            // Handle nested error structure (error.error) that can occur in some edge cases
+            error?: { error_type?: string; detail?: string };
+          }
         | undefined;
-      return metaError?.error_type === "llm_error";
+
+      // Check for llm_error at top level or nested (handles error.error nesting)
+      const errorType = metaError?.error_type ?? metaError?.error?.error_type;
+      if (errorType === "llm_error") return true;
+
+      // Fallback: detect LLM provider errors from detail even if misclassified as internal_error
+      // This handles edge cases where streaming errors weren't properly converted to LLMError
+      // Patterns are derived from handle_llm_error() message formats in the backend
+      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+      const llmProviderPatterns = [
+        "Anthropic API error", // anthropic_client.py:759
+        "OpenAI API error", // openai_client.py:1034
+        "Google Vertex API error", // google_vertex_client.py:848
+        "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
+        "api_error", // Anthropic SDK error type field
+      ];
+      if (
+        errorType === "internal_error" &&
+        llmProviderPatterns.some((pattern) => detail.includes(pattern))
+      ) {
+        return true;
+      }
+
+      return false;
     } catch {
       return false;
     }
