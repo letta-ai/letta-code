@@ -349,14 +349,19 @@ function analyzeBashApproval(
   }
 
   // Handle complex piped/chained commands (cd /path && git diff | head)
-  // Strip out cd commands and extract the actual command
+  // For pipes (|), the FIRST command is the main one
+  // For && and ;, we skip cd prefixes and use the actual command
   if (
     command.includes("&&") ||
     command.includes("|") ||
     command.includes(";")
   ) {
-    // Split on these delimiters and analyze each part
-    const segments = command.split(/\s*(?:&&|\||;)\s*/);
+    // First, strip everything after the first pipe - the piped-to command is secondary
+    // e.g., "curl --version | head -1" -> analyze "curl --version"
+    const beforePipe = (command.split("|")[0] ?? command).trim();
+
+    // Now split on && and ; to handle cd prefixes
+    const segments = beforePipe.split(/\s*(?:&&|;)\s*/);
 
     for (const segment of segments) {
       const segmentParts = segment.trim().split(/\s+/);
