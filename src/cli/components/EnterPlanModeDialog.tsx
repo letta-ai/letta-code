@@ -51,11 +51,11 @@ export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
 
       <Box marginBottom={1} flexDirection="column">
         <Text>
-          Letta wants to enter plan mode to explore and design an implementation
-          approach.
+          Letta Code wants to enter plan mode to explore and design an
+          implementation approach.
         </Text>
         <Text> </Text>
-        <Text>In plan mode, Letta will:</Text>
+        <Text>In plan mode, Letta Code will:</Text>
         <Text> • Explore the codebase thoroughly</Text>
         <Text> • Identify existing patterns</Text>
         <Text> • Design an implementation strategy</Text>

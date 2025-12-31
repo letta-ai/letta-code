@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { Box, Text } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
@@ -18,6 +19,14 @@ import {
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
+
+/**
+ * Check if tool is AskUserQuestion
+ */
+function isQuestionTool(name: string): boolean {
+  return name === "AskUserQuestion";
+}
+
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
@@ -57,9 +66,11 @@ export const ToolCallMessage = memo(
   ({
     line,
     precomputedDiffs,
+    lastPlanFilePath,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
+    lastPlanFilePath?: string | null;
   }) => {
     const columns = useTerminalWidth();
 
@@ -99,10 +110,20 @@ export const ToolCallMessage = memo(
       }
     }
 
+    // For AskUserQuestion, show friendly header only after completion
+    if (isQuestionTool(rawName)) {
+      if (line.phase === "finished" && line.resultOk !== false) {
+        displayName = "User answered Letta Code's questions:";
+      } else {
+        displayName = "Asking user questions...";
+      }
+    }
+
     // Format arguments for display using the old formatting logic
     // Pass rawName to enable special formatting for file tools
     const formatted = formatArgsDisplay(argsText, rawName);
-    const args = `(${formatted.display})`;
+    // Hide args for question tool (shown in result instead)
+    const args = isQuestionTool(rawName) ? "" : `(${formatted.display})`;
 
     const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
 
@@ -265,6 +286,78 @@ export const ToolCallMessage = memo(
           return memoryDiff;
         }
         // If MemoryDiffRenderer returns null, fall through to regular handling
+      }
+
+      // Check if this is AskUserQuestion - show pretty Q&A format
+      if (isQuestionTool(rawName) && line.resultOk !== false) {
+        // Parse the result to extract questions and answers
+        // Format: "Question"="Answer", "Question2"="Answer2"
+        const qaPairs: Array<{ question: string; answer: string }> = [];
+        const qaRegex = /"([^"]+)"="([^"]*)"/g;
+        const resultText = line.resultText || "";
+        const matches = resultText.matchAll(qaRegex);
+        for (const match of matches) {
+          if (match[1] && match[2] !== undefined) {
+            qaPairs.push({ question: match[1], answer: match[2] });
+          }
+        }
+
+        if (qaPairs.length > 0) {
+          return (
+            <Box flexDirection="column">
+              {qaPairs.map((qa) => (
+                <Box key={qa.question} flexDirection="row">
+                  <Box width={prefixWidth} flexShrink={0}>
+                    <Text>{prefix}</Text>
+                  </Box>
+                  <Box flexGrow={1} width={contentWidth}>
+                    <Text wrap="wrap">
+                      <Text dimColor>·</Text> {qa.question}{" "}
+                      <Text dimColor>→</Text> {qa.answer}
+                    </Text>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          );
+        }
+        // Fall through to regular handling if parsing fails
+      }
+
+      // Check if this is ExitPlanMode - show plan content (faded) instead of simple message
+      if (rawName === "ExitPlanMode" && line.resultOk !== false) {
+        // Read plan file path from ref (captured before plan mode was exited)
+        const planFilePath = lastPlanFilePath;
+        let planContent = "";
+
+        if (planFilePath && existsSync(planFilePath)) {
+          try {
+            planContent = readFileSync(planFilePath, "utf-8");
+          } catch {
+            // Fall through to default
+          }
+        }
+
+        if (planContent) {
+          return (
+            <Box flexDirection="column">
+              {/* Plan file path */}
+              <Box flexDirection="row">
+                <Box width={prefixWidth} flexShrink={0}>
+                  <Text>{prefix}</Text>
+                </Box>
+                <Box flexGrow={1} width={contentWidth}>
+                  <Text dimColor>Plan saved to: {planFilePath}</Text>
+                </Box>
+              </Box>
+              {/* Plan content (faded) - indent to align with content column */}
+              <Box paddingLeft={prefixWidth}>
+                <MarkdownDisplay text={planContent} dimColor={true} />
+              </Box>
+            </Box>
+          );
+        }
+        // Fall through to default if no plan content
       }
 
       // Check if this is a file edit tool - show diff instead of success message

@@ -411,7 +411,6 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "Grep",
     "TodoWrite",
     "BashOutput",
-    "ExitPlanMode",
     "LS",
     // Codex toolset (snake_case) - tools that don't require approval
     "read_file",
