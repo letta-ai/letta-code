@@ -55,13 +55,7 @@ content = content.replace(
   `globalThis.Bun.secrets`,
 );
 
-/**
- * Polyglot shebang
- * Prefer bun, fallback to node
- * ref: https://sambal.org/2014/02/passing-options-node-shebang-line/
- */
-const withShebang = `#!/bin/sh
-":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"
+const withShebang = `#!/usr/bin/env node
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
