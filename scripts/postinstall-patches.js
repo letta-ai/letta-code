@@ -1,7 +1,14 @@
 // Postinstall patcher for vendoring our Ink modifications without patch-package.
 // Copies patched runtime files from ./src/vendor into node_modules.
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,3 +108,27 @@ await copyToResolved(
 );
 
 console.log("[patch] Ink runtime patched");
+
+// On Unix with Bun available, use polyglot shebang to prefer Bun runtime.
+// This enables Bun.secrets for secure keychain storage instead of fallback.
+// Windows always uses #!/usr/bin/env node (polyglot shebang breaks npm wrappers).
+if (process.platform !== "win32") {
+  try {
+    execSync("bun --version", { stdio: "ignore" });
+    const lettaPath = join(pkgRoot, "letta.js");
+    if (existsSync(lettaPath)) {
+      let content = readFileSync(lettaPath, "utf-8");
+      if (content.startsWith("#!/usr/bin/env node")) {
+        content = content.replace(
+          "#!/usr/bin/env node",
+          `#!/bin/sh
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
+        );
+        writeFileSync(lettaPath, content);
+        console.log("[patch] Configured letta to prefer Bun runtime");
+      }
+    }
+  } catch {
+    // Bun not available, keep node shebang
+  }
+}
