@@ -38,6 +38,7 @@ export function useAutocompleteNavigation<T>({
 }: UseAutocompleteNavigationOptions<T>): UseAutocompleteNavigationResult {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const prevMatchCountRef = useRef(0);
+  const prevIsActiveRef = useRef(false);
 
   // Reset selected index when matches change significantly
   useEffect(() => {
@@ -48,9 +49,14 @@ export function useAutocompleteNavigation<T>({
   }, [matches.length]);
 
   // Notify parent about active state changes (only if manageActiveState is true)
+  // Only fire callback when the boolean active state actually changes (not on every match count change)
   useEffect(() => {
     if (manageActiveState) {
-      onActiveChange?.(matches.length > 0);
+      const isActive = matches.length > 0;
+      if (isActive !== prevIsActiveRef.current) {
+        prevIsActiveRef.current = isActive;
+        onActiveChange?.(isActive);
+      }
     }
   }, [matches.length, onActiveChange, manageActiveState]);
 
