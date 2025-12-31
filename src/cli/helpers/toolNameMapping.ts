@@ -104,8 +104,33 @@ export function isPlanTool(rawName: string, displayName?: string): boolean {
 
 /**
  * Checks if a tool requires a specialized UI dialog instead of standard approval
+ * Note: ExitPlanMode, file edit/write/patch tools, and shell tools now render inline
+ * (not overlay), but still need this flag to bypass the standard ApprovalDialog rendering
  */
 export function isFancyUITool(name: string): boolean {
+  return (
+    name === "AskUserQuestion" ||
+    name === "EnterPlanMode" ||
+    name === "ExitPlanMode" ||
+    // File edit/write/patch tools now render inline
+    isFileEditTool(name) ||
+    isFileWriteTool(name) ||
+    isPatchTool(name) ||
+    // Shell/bash tools now render inline
+    isShellTool(name)
+  );
+}
+
+/**
+ * Checks if a tool always requires user interaction, even in yolo mode.
+ * These are tools that fundamentally need user input to proceed:
+ * - AskUserQuestion: needs user to answer questions
+ * - EnterPlanMode: needs user to approve entering plan mode
+ * - ExitPlanMode: needs user to approve the plan
+ *
+ * Other tools (bash, file edits) should respect yolo mode and auto-approve.
+ */
+export function alwaysRequiresUserInput(name: string): boolean {
   return (
     name === "AskUserQuestion" ||
     name === "EnterPlanMode" ||
@@ -175,14 +200,13 @@ export function isPatchTool(name: string): boolean {
  * Checks if a tool is a shell/bash tool
  */
 export function isShellTool(name: string): boolean {
+  const n = name.toLowerCase();
   return (
-    name === "bash" ||
-    name === "Bash" ||
-    name === "shell" ||
-    name === "Shell" ||
-    name === "shell_command" ||
-    name === "ShellCommand" ||
-    name === "run_shell_command" ||
-    name === "RunShellCommand"
+    n === "bash" ||
+    n === "shell" ||
+    n === "shell_command" ||
+    n === "shellcommand" ||
+    n === "run_shell_command" ||
+    n === "runshellcommand"
   );
 }

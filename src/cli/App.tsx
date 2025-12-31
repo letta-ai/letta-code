@@ -54,15 +54,21 @@ import {
   validateProfileLoad,
 } from "./commands/profile";
 import { AgentSelector } from "./components/AgentSelector";
-import { ApprovalDialog } from "./components/ApprovalDialogRich";
+// ApprovalDialog removed - all approvals now render inline
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
 import { colors } from "./components/colors";
-import { EnterPlanModeDialog } from "./components/EnterPlanModeDialog";
+// EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
+import { InlineBashApproval } from "./components/InlineBashApproval";
+import { InlineEnterPlanModeApproval } from "./components/InlineEnterPlanModeApproval";
+import { InlineFileEditApproval } from "./components/InlineFileEditApproval";
+import { InlineGenericApproval } from "./components/InlineGenericApproval";
+import { InlinePlanApproval } from "./components/InlinePlanApproval";
+import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input } from "./components/InputRich";
 import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
@@ -71,8 +77,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
-import { PlanModeDialog } from "./components/PlanModeDialog";
-import { QuestionDialog } from "./components/QuestionDialog";
+// QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { formatUsageStats } from "./components/SessionStats";
@@ -127,8 +132,13 @@ import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
+  isShellTool,
 } from "./helpers/toolNameMapping";
-import { isFancyUITool, isTaskTool } from "./helpers/toolNameMapping.js";
+import {
+  alwaysRequiresUserInput,
+  isFancyUITool,
+  isTaskTool,
+} from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalWidth } from "./hooks/useTerminalWidth";
@@ -505,6 +515,7 @@ export default function App({
   // Derive current approval from pending approvals and results
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
+  const currentApprovalContext = approvalContexts[approvalResults.length];
 
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
@@ -778,7 +789,11 @@ export default function App({
     new Map(),
   );
 
-  // Recompute UI state from buffers after chunks (micro-batched)
+  // Store the last plan file path for post-approval rendering
+  // (needed because plan mode is exited before rendering the result)
+  const lastPlanFilePathRef = useRef<string | null>(null);
+
+  // Recompute UI state from buffers after each streaming chunk
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
@@ -1348,9 +1363,11 @@ export default function App({
               const { approval, permission } = ac;
               let decision = permission.decision;
 
-              // Fancy tools should always go through a UI dialog in interactive mode,
-              // even if a rule says "allow". Deny rules are still respected.
-              if (isFancyUITool(approval.toolName) && decision === "allow") {
+              // Some tools always need user input regardless of yolo mode
+              if (
+                alwaysRequiresUserInput(approval.toolName) &&
+                decision === "allow"
+              ) {
                 decision = "ask";
               }
 
@@ -1364,8 +1381,9 @@ export default function App({
               }
             }
 
-            // Precompute diffs for auto-allowed file edit tools before execution
-            for (const ac of autoAllowed) {
+            // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
+            // This is needed for inline approval UI to show diffs, and for post-approval rendering
+            for (const ac of [...autoAllowed, ...needsUserInput]) {
               const toolName = ac.approval.toolName;
               const toolCallId = ac.approval.toolCallId;
               try {
@@ -1892,11 +1910,6 @@ export default function App({
       setApprovalResults([]);
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
-
-      // Force clean re-render to avoid streaking artifacts
-      // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
-      // The epoch increment alone should reset Ink's line tracking
-      setStaticRenderEpoch((e) => e + 1);
 
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
@@ -3896,8 +3909,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               const { approval, permission } = ac;
               let decision = permission.decision;
 
-              // Fancy tools always need user input (except if denied)
-              if (isFancyUITool(approval.toolName) && decision === "allow") {
+              // Some tools always need user input regardless of yolo mode
+              if (
+                alwaysRequiresUserInput(approval.toolName) &&
+                decision === "allow"
+              ) {
                 decision = "ask";
               }
 
@@ -3912,8 +3928,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
             if (needsUserInput.length === 0) {
-              // Precompute diffs for auto-allowed file edit tools before execution
-              for (const ac of autoAllowed) {
+              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
+              for (const ac of [...autoAllowed, ...needsUserInput]) {
                 const toolName = ac.approval.toolName;
                 const toolCallId = ac.approval.toolCallId;
                 try {
@@ -4068,8 +4084,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   .filter(Boolean) as ApprovalContext[],
               );
 
-              // Precompute diffs for auto-allowed file edit tools before execution
-              for (const ac of autoAllowed) {
+              // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
+              for (const ac of [...autoAllowed, ...needsUserInput]) {
                 const toolName = ac.approval.toolName;
                 const toolCallId = ac.approval.toolCallId;
                 try {
@@ -4287,9 +4303,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           setApprovalResults([]);
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
-          // Force clean re-render to avoid streaking artifacts
-          // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
-          setStaticRenderEpoch((e) => e + 1);
           return;
         }
 
@@ -4305,11 +4318,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         setApprovalResults([]);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
-
-        // Force clean re-render to avoid streaking artifacts
-        // The large approval dialog disappearing causes line count mismatch in Ink
-        // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
-        setStaticRenderEpoch((e) => e + 1);
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
@@ -4583,9 +4591,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
 
-          // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
-          setStaticRenderEpoch((e) => e + 1);
-
           setStreaming(true);
           buffersRef.current.interrupted = false;
 
@@ -4706,10 +4711,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     setApprovalResults([]);
     setAutoHandledResults([]);
     setAutoDeniedApprovals([]);
-
-    // Force clean re-render to avoid streaking artifacts
-    // Note: Removed CLEAR_SCREEN_AND_HOME to avoid 100ms+ flash on long transcripts
-    setStaticRenderEpoch((e) => e + 1);
   }, [pendingApprovals, refreshDerived]);
 
   const handleModelSelect = useCallback(
@@ -5122,6 +5123,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
       const isLast = currentIndex + 1 >= pendingApprovals.length;
 
+      // Capture plan file path BEFORE exiting plan mode (for post-approval rendering)
+      const planFilePath = permissionMode.getPlanFilePath();
+      lastPlanFilePathRef.current = planFilePath;
+
       // Exit plan mode
       const newMode = acceptEdits ? "acceptEdits" : "default";
       permissionMode.setMode(newMode);
@@ -5494,6 +5499,7 @@ Plan file path: ${planFilePath}`;
               <ToolCallMessage
                 line={item}
                 precomputedDiffs={precomputedDiffsRef.current}
+                lastPlanFilePath={lastPlanFilePathRef.current}
               />
             ) : item.kind === "subagent_group" ? (
               <SubagentGroupStatic agents={item.agents} />
@@ -5525,32 +5531,242 @@ Plan file path: ${planFilePath}`;
         {loadingState === "ready" && (
           <>
             {/* Transcript */}
-            {liveItems.length > 0 && pendingApprovals.length === 0 && (
+            {/* Show liveItems always - all approvals now render inline */}
+            {liveItems.length > 0 && (
               <Box flexDirection="column">
-                {liveItems.map((ln) => (
-                  <Box key={ln.id} marginTop={1}>
-                    {ln.kind === "user" ? (
-                      <UserMessage line={ln} />
-                    ) : ln.kind === "reasoning" ? (
-                      <ReasoningMessage line={ln} />
-                    ) : ln.kind === "assistant" ? (
-                      <AssistantMessage line={ln} />
-                    ) : ln.kind === "tool_call" ? (
-                      <ToolCallMessage
-                        line={ln}
-                        precomputedDiffs={precomputedDiffsRef.current}
-                      />
-                    ) : ln.kind === "error" ? (
-                      <ErrorMessage line={ln} />
-                    ) : ln.kind === "status" ? (
-                      <StatusMessage line={ln} />
-                    ) : ln.kind === "command" ? (
-                      <CommandMessage line={ln} />
-                    ) : ln.kind === "bash_command" ? (
-                      <BashCommandMessage line={ln} />
-                    ) : null}
-                  </Box>
-                ))}
+                {liveItems.map((ln) => {
+                  // Check if this tool call matches the current ExitPlanMode approval
+                  const isExitPlanModeApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval?.toolName === "ExitPlanMode" &&
+                    ln.toolCallId === currentApproval?.toolCallId;
+
+                  // Check if this tool call matches a file edit/write/patch approval
+                  const isFileEditApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval &&
+                    (isFileEditTool(currentApproval.toolName) ||
+                      isFileWriteTool(currentApproval.toolName) ||
+                      isPatchTool(currentApproval.toolName)) &&
+                    ln.toolCallId === currentApproval.toolCallId;
+
+                  // Check if this tool call matches a bash/shell approval
+                  const isBashApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval &&
+                    isShellTool(currentApproval.toolName) &&
+                    ln.toolCallId === currentApproval.toolCallId;
+
+                  // Check if this tool call matches an EnterPlanMode approval
+                  const isEnterPlanModeApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval?.toolName === "EnterPlanMode" &&
+                    ln.toolCallId === currentApproval?.toolCallId;
+
+                  // Check if this tool call matches an AskUserQuestion approval
+                  const isAskUserQuestionApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval?.toolName === "AskUserQuestion" &&
+                    ln.toolCallId === currentApproval?.toolCallId;
+
+                  // Parse file edit info from approval args
+                  const getFileEditInfo = () => {
+                    if (!isFileEditApproval || !currentApproval) return null;
+                    try {
+                      const args = JSON.parse(currentApproval.toolArgs || "{}");
+
+                      // For patch tools, use the input field
+                      if (isPatchTool(currentApproval.toolName)) {
+                        return {
+                          toolName: currentApproval.toolName,
+                          filePath: "", // Patch can have multiple files
+                          patchInput: args.input as string | undefined,
+                          toolCallId: ln.toolCallId,
+                        };
+                      }
+
+                      // For regular file edit/write tools
+                      return {
+                        toolName: currentApproval.toolName,
+                        filePath: String(args.file_path || ""),
+                        content: args.content as string | undefined,
+                        oldString: args.old_string as string | undefined,
+                        newString: args.new_string as string | undefined,
+                        replaceAll: args.replace_all as boolean | undefined,
+                        edits: args.edits as
+                          | Array<{
+                              old_string: string;
+                              new_string: string;
+                              replace_all?: boolean;
+                            }>
+                          | undefined,
+                        toolCallId: ln.toolCallId,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  };
+
+                  const fileEditInfo = getFileEditInfo();
+
+                  // Parse bash info from approval args
+                  const getBashInfo = () => {
+                    if (!isBashApproval || !currentApproval) return null;
+                    try {
+                      const args = JSON.parse(currentApproval.toolArgs || "{}");
+                      const t = currentApproval.toolName.toLowerCase();
+
+                      // Handle different bash tool arg formats
+                      let command = "";
+                      let description = "";
+
+                      if (t === "shell") {
+                        // Shell tool uses command array and justification
+                        const cmdVal = args.command;
+                        command = Array.isArray(cmdVal)
+                          ? cmdVal.join(" ")
+                          : typeof cmdVal === "string"
+                            ? cmdVal
+                            : "(no command)";
+                        description =
+                          typeof args.justification === "string"
+                            ? args.justification
+                            : "";
+                      } else {
+                        // Bash/shell_command uses command string and description
+                        command =
+                          typeof args.command === "string"
+                            ? args.command
+                            : "(no command)";
+                        description =
+                          typeof args.description === "string"
+                            ? args.description
+                            : "";
+                      }
+
+                      return {
+                        toolName: currentApproval.toolName,
+                        command,
+                        description,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  };
+
+                  const bashInfo = getBashInfo();
+
+                  return (
+                    <Box key={ln.id} flexDirection="column" marginTop={1}>
+                      {/* For ExitPlanMode awaiting approval: render InlinePlanApproval */}
+                      {isExitPlanModeApproval ? (
+                        <InlinePlanApproval
+                          plan={readPlanFile()}
+                          onApprove={() => handlePlanApprove(false)}
+                          onApproveAndAcceptEdits={() =>
+                            handlePlanApprove(true)
+                          }
+                          onKeepPlanning={handlePlanKeepPlanning}
+                          isFocused={true}
+                        />
+                      ) : isFileEditApproval && fileEditInfo ? (
+                        <InlineFileEditApproval
+                          fileEdit={fileEditInfo}
+                          precomputedDiff={
+                            ln.toolCallId
+                              ? precomputedDiffsRef.current.get(ln.toolCallId)
+                              : undefined
+                          }
+                          allDiffs={precomputedDiffsRef.current}
+                          onApprove={(diffs) => handleApproveCurrent(diffs)}
+                          onApproveAlways={(scope, diffs) =>
+                            handleApproveAlways(scope, diffs)
+                          }
+                          onDeny={(reason) => handleDenyCurrent(reason)}
+                          onCancel={handleCancelApprovals}
+                          isFocused={true}
+                          approveAlwaysText={
+                            currentApprovalContext?.approveAlwaysText
+                          }
+                          allowPersistence={
+                            currentApprovalContext?.allowPersistence ?? true
+                          }
+                        />
+                      ) : isBashApproval && bashInfo ? (
+                        <InlineBashApproval
+                          bashInfo={bashInfo}
+                          onApprove={() => handleApproveCurrent()}
+                          onApproveAlways={(scope) =>
+                            handleApproveAlways(scope)
+                          }
+                          onDeny={(reason) => handleDenyCurrent(reason)}
+                          onCancel={handleCancelApprovals}
+                          isFocused={true}
+                          approveAlwaysText={
+                            currentApprovalContext?.approveAlwaysText
+                          }
+                          allowPersistence={
+                            currentApprovalContext?.allowPersistence ?? true
+                          }
+                        />
+                      ) : isEnterPlanModeApproval ? (
+                        <InlineEnterPlanModeApproval
+                          onApprove={handleEnterPlanModeApprove}
+                          onReject={handleEnterPlanModeReject}
+                          isFocused={true}
+                        />
+                      ) : isAskUserQuestionApproval ? (
+                        <InlineQuestionApproval
+                          questions={getQuestionsFromApproval(currentApproval)}
+                          onSubmit={handleQuestionSubmit}
+                          onCancel={handleCancelApprovals}
+                          isFocused={true}
+                        />
+                      ) : ln.kind === "tool_call" &&
+                        currentApproval &&
+                        ln.toolCallId === currentApproval.toolCallId ? (
+                        // Generic fallback for any other tool needing approval
+                        <InlineGenericApproval
+                          toolName={currentApproval.toolName}
+                          toolArgs={currentApproval.toolArgs}
+                          onApprove={() => handleApproveCurrent()}
+                          onApproveAlways={(scope) =>
+                            handleApproveAlways(scope)
+                          }
+                          onDeny={(reason) => handleDenyCurrent(reason)}
+                          onCancel={handleCancelApprovals}
+                          isFocused={true}
+                          approveAlwaysText={
+                            currentApprovalContext?.approveAlwaysText
+                          }
+                          allowPersistence={
+                            currentApprovalContext?.allowPersistence ?? true
+                          }
+                        />
+                      ) : ln.kind === "user" ? (
+                        <UserMessage line={ln} />
+                      ) : ln.kind === "reasoning" ? (
+                        <ReasoningMessage line={ln} />
+                      ) : ln.kind === "assistant" ? (
+                        <AssistantMessage line={ln} />
+                      ) : ln.kind === "tool_call" ? (
+                        <ToolCallMessage
+                          line={ln}
+                          precomputedDiffs={precomputedDiffsRef.current}
+                          lastPlanFilePath={lastPlanFilePathRef.current}
+                        />
+                      ) : ln.kind === "error" ? (
+                        <ErrorMessage line={ln} />
+                      ) : ln.kind === "status" ? (
+                        <StatusMessage line={ln} />
+                      ) : ln.kind === "command" ? (
+                        <CommandMessage line={ln} />
+                      ) : ln.kind === "bash_command" ? (
+                        <BashCommandMessage line={ln} />
+                      ) : null}
+                    </Box>
+                  );
+                })}
               </Box>
             )}
 
@@ -5823,58 +6039,12 @@ Plan file path: ${planFilePath}`;
               />
             )}
 
-            {/* Plan Mode Dialog - for ExitPlanMode tool */}
-            {currentApproval?.toolName === "ExitPlanMode" && (
-              <PlanModeDialog
-                plan={readPlanFile()}
-                onApprove={() => handlePlanApprove(false)}
-                onApproveAndAcceptEdits={() => handlePlanApprove(true)}
-                onKeepPlanning={handlePlanKeepPlanning}
-              />
-            )}
+            {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
+            {/* ExitPlanMode approval is handled by InlinePlanApproval component */}
 
-            {/* Question Dialog - for AskUserQuestion tool */}
-            {currentApproval?.toolName === "AskUserQuestion" && (
-              <QuestionDialog
-                questions={getQuestionsFromApproval(currentApproval)}
-                onSubmit={handleQuestionSubmit}
-                onCancel={handleCancelApprovals}
-              />
-            )}
-
-            {/* Enter Plan Mode Dialog - for EnterPlanMode tool */}
-            {currentApproval?.toolName === "EnterPlanMode" && (
-              <EnterPlanModeDialog
-                onApprove={handleEnterPlanModeApprove}
-                onReject={handleEnterPlanModeReject}
-              />
-            )}
-
-            {/* Approval Dialog - for standard tools (not fancy UI tools) */}
-            {currentApproval && !isFancyUITool(currentApproval.toolName) && (
-              <ApprovalDialog
-                approvals={[currentApproval]}
-                approvalContexts={
-                  approvalContexts[approvalResults.length]
-                    ? [
-                        approvalContexts[
-                          approvalResults.length
-                        ] as ApprovalContext,
-                      ]
-                    : []
-                }
-                progress={{
-                  current: approvalResults.length + 1,
-                  total: pendingApprovals.length,
-                }}
-                totalTools={autoHandledResults.length + pendingApprovals.length}
-                isExecuting={isExecutingTool}
-                onApproveAll={handleApproveCurrent}
-                onApproveAlways={handleApproveAlways}
-                onDenyAll={handleDenyCurrent}
-                onCancel={handleCancelApprovals}
-              />
-            )}
+            {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
+            {/* EnterPlanMode now rendered inline in liveItems above */}
+            {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
           </>
         )}
       </Box>
