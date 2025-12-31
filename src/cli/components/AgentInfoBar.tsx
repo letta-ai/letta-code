@@ -53,23 +53,23 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         <Text dimColor> · {agentId}</Text>
       </Box>
       <Box>
+      {isCloudUser && (
+          <>
+            <Link url={`https://app.letta.com/agents/${agentId}`}>
+              <Text>Open in ADE ↗ </Text>
+            </Link>
+          </>
+        )}
+      </Box>
+      <Box>
         {isCloudUser && (
           <>
             <Link url="https://app.letta.com/settings/organization/usage">
-              View usage ↗
+              <Text>View usage ↗ </Text>
             </Link>
           </>
         )}
         {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
-      </Box>
-      <Box>
-      {isCloudUser && (
-          <>
-            <Link url={`https://app.letta.com/agents/${agentId}`}>
-              Open in ADE ↗
-            </Link>
-          </>
-        )}
       </Box>
     </Box>
   );
