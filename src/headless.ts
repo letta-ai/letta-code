@@ -518,6 +518,8 @@ export async function handleHeadlessCommand(
                 tool_name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
                 tool_args: decision.approval.toolArgs,
+                session_id: sessionId,
+                uuid: `auto-approval-${decision.approval.toolCallId}`,
               }),
             );
           }
@@ -633,6 +635,8 @@ export async function handleHeadlessCommand(
                 type: "error",
                 message: fullErrorText,
                 detail: errorDetail,
+                session_id: sessionId,
+                uuid: crypto.randomUUID(),
               }),
             );
 
@@ -767,6 +771,8 @@ export async function handleHeadlessCommand(
                         tool_args: incomingArgs,
                         reason: permission.reason,
                         matched_rule: permission.matchedRule,
+                        session_id: sessionId,
+                        uuid: `auto-approval-${id}`,
                       }),
                     );
                     autoApprovalEmitted.add(id);
@@ -970,6 +976,8 @@ export async function handleHeadlessCommand(
                 max_attempts: LLM_API_ERROR_MAX_RETRIES,
                 delay_ms: delayMs,
                 run_id: lastRunId,
+                session_id: sessionId,
+                uuid: `retry-${lastRunId || crypto.randomUUID()}`,
               }),
             );
           } else {
@@ -1042,6 +1050,8 @@ export async function handleHeadlessCommand(
                   max_attempts: LLM_API_ERROR_MAX_RETRIES,
                   delay_ms: delayMs,
                   run_id: lastRunId,
+                  session_id: sessionId,
+                  uuid: `retry-${lastRunId || crypto.randomUUID()}`,
                 }),
               );
             } else {
@@ -1108,6 +1118,8 @@ export async function handleHeadlessCommand(
             message: errorMessage,
             stop_reason: stopReason,
             run_id: lastRunId,
+            session_id: sessionId,
+            uuid: `error-${lastRunId || crypto.randomUUID()}`,
           }),
         );
       } else {
@@ -1128,6 +1140,8 @@ export async function handleHeadlessCommand(
           type: "error",
           message: errorDetails,
           run_id: lastKnownRunId,
+          session_id: sessionId,
+          uuid: `error-${lastKnownRunId || crypto.randomUUID()}`,
         }),
       );
     } else {
