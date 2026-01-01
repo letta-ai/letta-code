@@ -395,6 +395,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           argsText: (line.argsText || "") + argsText,
         };
         b.byId.set(id, updatedLine);
+        // Count tool call arguments as LLM output tokens
+        b.tokenCount += argsText.length;
       }
       break;
     }
