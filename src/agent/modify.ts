@@ -202,17 +202,16 @@ export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
       };
     }
 
-    // Look up tool IDs from global tool list
-    // Use server names when querying, since that's how tools are registered on the server
-    const toolsToAddIds: string[] = [];
-    for (const toolName of toolsToAdd) {
-      const serverName = getServerToolName(toolName);
-      const toolsResponse = await client.tools.list({ name: serverName });
-      const tool = toolsResponse.items[0];
-      if (tool?.id) {
-        toolsToAddIds.push(tool.id);
-      }
-    }
+    // Look up tool IDs in parallel (instead of sequential calls)
+    const toolsToAddIds = (
+      await Promise.all(
+        toolsToAdd.map(async (toolName) => {
+          const serverName = getServerToolName(toolName);
+          const toolsResponse = await client.tools.list({ name: serverName });
+          return toolsResponse.items[0]?.id;
+        }),
+      )
+    ).filter((id): id is string => !!id);
 
     // Combine current tools with new tools
     const newToolIds = [...currentToolIds, ...toolsToAddIds];
