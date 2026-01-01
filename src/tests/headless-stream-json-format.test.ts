@@ -22,6 +22,8 @@ async function runHeadlessCommand(
         "--output-format",
         "stream-json",
         "--yolo",
+        "-m",
+        "haiku",
         ...extraArgs,
       ],
       {
