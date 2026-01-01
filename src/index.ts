@@ -57,6 +57,8 @@ OPTIONS
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
+  --input-format <fmt>  Input format for headless mode (stream-json)
+                        When set, reads JSON messages from stdin for bidirectional communication
   --include-partial-messages
                         Emit stream_event wrappers for each chunk (stream-json only)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
@@ -339,6 +341,7 @@ async function main(): Promise<void> {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        "input-format": { type: "string" },
         "include-partial-messages": { type: "boolean" },
         skills: { type: "string" },
         link: { type: "boolean" },
