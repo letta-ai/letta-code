@@ -336,6 +336,9 @@ export async function drainStreamWithResume(
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
       // would be silently ignored, showing "Interrupted by user" even on successful resume.
+      // Increment commitGeneration to invalidate any pending setTimeout refreshes that would
+      // commit the stale "Interrupted by user" state before the resume stream completes.
+      buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
       buffers.interrupted = false;
 
       // Resume from Redis where we left off

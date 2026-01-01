@@ -72,6 +72,7 @@ export type Buffers = {
   lastOtid: string | null; // Track the last otid to detect transitions
   pendingRefresh?: boolean; // Track throttled refresh state
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
+  commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -90,6 +91,7 @@ export function createBuffers(): Buffers {
     pendingToolByRun: new Map(),
     toolCallIdToLineId: new Map(),
     lastOtid: null,
+    commitGeneration: 0,
     usage: {
       promptTokens: 0,
       completionTokens: 0,

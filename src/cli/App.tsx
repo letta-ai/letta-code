@@ -807,11 +807,18 @@ export default function App({
     // Use a ref to track pending refresh
     if (!buffersRef.current.pendingRefresh) {
       buffersRef.current.pendingRefresh = true;
+      // Capture the current generation to detect if resume invalidates this refresh
+      const capturedGeneration = buffersRef.current.commitGeneration || 0;
       setTimeout(() => {
         buffersRef.current.pendingRefresh = false;
         // Skip refresh if stream was interrupted - prevents stale updates appearing
         // after user cancels. Normal stream completion still renders (interrupted=false).
-        if (!buffersRef.current.interrupted) {
+        // Also skip if commitGeneration changed - this means a resume is in progress and
+        // committing now would lock in the stale "Interrupted by user" state.
+        if (
+          !buffersRef.current.interrupted &&
+          (buffersRef.current.commitGeneration || 0) === capturedGeneration
+        ) {
           refreshDerived();
         }
       }, 16); // ~60fps
