@@ -55,6 +55,7 @@ export async function handleHeadlessCommand(
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
+      "include-partial-messages": { type: "boolean" },
       // Additional flags from index.ts that need to be filtered out
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -391,6 +392,7 @@ export async function handleHeadlessCommand(
   // Validate output format
   const outputFormat =
     (values["output-format"] as string | undefined) || "text";
+  const includePartialMessages = Boolean(values["include-partial-messages"]);
   if (!["text", "json", "stream-json"].includes(outputFormat)) {
     console.error(
       `Error: Invalid output format "${outputFormat}". Valid formats: text, json, stream-json`,
@@ -404,13 +406,20 @@ export async function handleHeadlessCommand(
   // Initialize session stats
   const sessionStats = new SessionStats();
 
+  // Use agent.id as session_id for all stream-json messages
+  const sessionId = agent.id;
+
   // Output init event for stream-json format
   if (outputFormat === "stream-json") {
     const initEvent = {
-      type: "init",
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
       agent_id: agent.id,
       model: agent.llm_config?.model,
       tools: agent.tools?.map((t) => t.name) || [],
+      cwd: process.cwd(),
+      uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
   }
@@ -769,12 +778,34 @@ export async function handleHeadlessCommand(
 
           // Output chunk as message event (unless filtered)
           if (shouldOutputChunk) {
-            console.log(
-              JSON.stringify({
-                type: "message",
-                ...chunk,
-              }),
-            );
+            // Use existing otid or id from the Letta SDK chunk
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
+            };
+            const uuid = chunkWithIds.otid || chunkWithIds.id;
+
+            if (includePartialMessages) {
+              // Emit as stream_event wrapper (like Claude Code with --include-partial-messages)
+              console.log(
+                JSON.stringify({
+                  type: "stream_event",
+                  event: chunk,
+                  session_id: sessionId,
+                  uuid,
+                }),
+              );
+            } else {
+              // Emit as regular message (default)
+              console.log(
+                JSON.stringify({
+                  type: "message",
+                  ...chunk,
+                  session_id: sessionId,
+                  uuid,
+                }),
+              );
+            }
           }
 
           // Still accumulate for approval tracking
@@ -1177,10 +1208,16 @@ export async function handleHeadlessCommand(
       }
     }
 
+    // Use the last run_id as the result uuid if available, otherwise derive from agent_id
+    const resultUuid =
+      allRunIds.size > 0
+        ? `result-${Array.from(allRunIds).pop()}`
+        : `result-${agent.id}`;
     const resultEvent = {
       type: "result",
       subtype: "success",
       is_error: false,
+      session_id: sessionId,
       duration_ms: Math.round(stats.totalWallMs),
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
@@ -1192,6 +1229,7 @@ export async function handleHeadlessCommand(
         completion_tokens: stats.usage.completionTokens,
         total_tokens: stats.usage.totalTokens,
       },
+      uuid: resultUuid,
     };
     console.log(JSON.stringify(resultEvent));
   } else {

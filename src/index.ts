@@ -57,6 +57,8 @@ OPTIONS
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
+  --include-partial-messages
+                        Emit stream_event wrappers for each chunk (stream-json only)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
@@ -337,6 +339,7 @@ async function main(): Promise<void> {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        "include-partial-messages": { type: "boolean" },
         skills: { type: "string" },
         link: { type: "boolean" },
         unlink: { type: "boolean" },
