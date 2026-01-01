@@ -65,11 +65,15 @@ async function runHeadlessCommand(
   });
 }
 
+// Prescriptive prompt to ensure single-step response without tool use
+const FAST_PROMPT =
+  "Respond with exactly one word: OK. Do not use any tools or reasoning.";
+
 describe("stream-json format", () => {
   test(
     "init message has type 'system' with subtype 'init'",
     async () => {
-      const lines = await runHeadlessCommand("Say test");
+      const lines = await runHeadlessCommand(FAST_PROMPT);
       const initLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "system" && obj.subtype === "init";
@@ -93,7 +97,7 @@ describe("stream-json format", () => {
   test(
     "messages have session_id and uuid",
     async () => {
-      const lines = await runHeadlessCommand("Say hello");
+      const lines = await runHeadlessCommand(FAST_PROMPT);
 
       // Find a message line
       const messageLine = lines.find((line) => {
@@ -115,7 +119,7 @@ describe("stream-json format", () => {
   test(
     "result message has correct format",
     async () => {
-      const lines = await runHeadlessCommand("Say test");
+      const lines = await runHeadlessCommand(FAST_PROMPT);
       const resultLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "result";
@@ -139,7 +143,7 @@ describe("stream-json format", () => {
   test(
     "--include-partial-messages wraps chunks in stream_event",
     async () => {
-      const lines = await runHeadlessCommand("Say hi", [
+      const lines = await runHeadlessCommand(FAST_PROMPT, [
         "--include-partial-messages",
       ]);
 
@@ -165,7 +169,7 @@ describe("stream-json format", () => {
   test(
     "without --include-partial-messages, messages are type 'message'",
     async () => {
-      const lines = await runHeadlessCommand("Say hi");
+      const lines = await runHeadlessCommand(FAST_PROMPT);
 
       // Should have message lines, not stream_event
       const messageLine = lines.find((line) => {
