@@ -67,7 +67,7 @@ async function runHeadlessCommand(
 
 // Prescriptive prompt to ensure single-step response without tool use
 const FAST_PROMPT =
-  "Respond with exactly one word: OK. Do not use any tools or reasoning.";
+  "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
 describe("stream-json format", () => {
   test(
