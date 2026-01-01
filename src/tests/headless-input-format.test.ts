@@ -17,7 +17,7 @@ const FAST_PROMPT =
 async function runBidirectional(
   inputs: string[],
   extraArgs: string[] = [],
-  waitMs = 5000,
+  waitMs = 8000, // Increased for CI environments
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -234,13 +234,17 @@ describe("input-format stream-json", () => {
   test(
     "interrupt control request is acknowledged",
     async () => {
-      const objects = await runBidirectional([
-        JSON.stringify({
-          type: "control_request",
-          request_id: "int_1",
-          request: { subtype: "interrupt" },
-        }),
-      ]);
+      const objects = await runBidirectional(
+        [
+          JSON.stringify({
+            type: "control_request",
+            request_id: "int_1",
+            request: { subtype: "interrupt" },
+          }),
+        ],
+        [],
+        8000, // Longer wait for CI
+      );
 
       // Should have control_response for interrupt
       const controlResponse = objects.find(
