@@ -15,7 +15,7 @@ async function runHeadlessCommand(
       "bun",
       [
         "run",
-        "src/index.ts",
+        "dev",
         "--new",
         "-p",
         prompt,
