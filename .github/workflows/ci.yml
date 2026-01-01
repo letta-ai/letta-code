@@ -71,6 +71,8 @@ jobs:
         uses: t1m0thyj/unlock-keyring@v1
 
       - name: Run tests (extended timeout)
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: bun test --timeout 15000
 
       - name: Build bundle
