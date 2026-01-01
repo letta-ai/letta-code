@@ -59,7 +59,7 @@ async function runBidirectional(
       if (inputIndex < inputs.length) {
         proc.stdin?.write(inputs[inputIndex] + "\n");
         inputIndex++;
-        setTimeout(writeNextInput, 500);
+        setTimeout(writeNextInput, 1000); // 1s between inputs
       } else {
         // All inputs sent, wait for processing then close
         setTimeout(() => {
@@ -68,8 +68,9 @@ async function runBidirectional(
       }
     };
 
-    // Start writing inputs after a small delay for process to initialize
-    setTimeout(writeNextInput, 1000);
+    // Start writing inputs after delay for process to initialize
+    // CI environments are slower, need more time for bun to start
+    setTimeout(writeNextInput, 5000);
 
     proc.on("close", (code) => {
       // Parse line-delimited JSON
@@ -93,20 +94,18 @@ async function runBidirectional(
       }
     });
 
-    // Safety timeout
+    // Safety timeout - generous for CI environments
     setTimeout(
       () => {
         proc.kill();
       },
-      waitMs + 5000 + inputs.length * 1000,
+      waitMs + 15000 + inputs.length * 2000,
     );
   });
 }
 
 describe("input-format stream-json", () => {
-  // Skip flaky tests in CI - these work locally but have timing issues in CI
-  // The core functionality is tested by other tests
-  test.skip(
+  test(
     "initialize control request returns session info",
     async () => {
       const objects = await runBidirectional([
@@ -190,7 +189,7 @@ describe("input-format stream-json", () => {
     { timeout: 60000 },
   );
 
-  test.skip(
+  test(
     "multi-turn conversation maintains context",
     async () => {
       const objects = await runBidirectional(
@@ -233,7 +232,7 @@ describe("input-format stream-json", () => {
     { timeout: 120000 },
   );
 
-  test.skip(
+  test(
     "interrupt control request is acknowledged",
     async () => {
       const objects = await runBidirectional(
