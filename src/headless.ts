@@ -1474,49 +1474,208 @@ async function runBidirectionalMode(
       currentAbortController = new AbortController();
 
       try {
-        // Send message to agent
-        const stream = await sendMessageStream(agent.id, [
-          { role: "user", content: userContent },
-        ]);
-
         const buffers = createBuffers();
         const startTime = performance.now();
+        let numTurns = 0;
 
-        // Process stream
-        for await (const chunk of stream) {
+        // Initial input is the user message
+        let currentInput: MessageCreate[] = [
+          { role: "user", content: userContent },
+        ];
+
+        // Approval handling loop - continue until end_turn or error
+        while (true) {
+          numTurns++;
+
           // Check if aborted
           if (currentAbortController?.signal.aborted) {
             break;
           }
 
-          // Output chunk
-          const chunkWithIds = chunk as typeof chunk & {
-            otid?: string;
-            id?: string;
-          };
-          const uuid = chunkWithIds.otid || chunkWithIds.id;
+          // Send message to agent
+          const stream = await sendMessageStream(agent.id, currentInput);
 
-          if (includePartialMessages) {
-            const streamEvent: StreamEvent = {
-              type: "stream_event",
-              event: chunk,
-              session_id: sessionId,
-              uuid: uuid || crypto.randomUUID(),
+          // Track stop reason and approvals during this stream
+          let stopReason: StopReasonType = "error";
+          const approvalRequests = new Map<
+            string,
+            { toolName: string; args: string }
+          >();
+
+          // Process stream
+          for await (const chunk of stream) {
+            // Check if aborted
+            if (currentAbortController?.signal.aborted) {
+              break;
+            }
+
+            // Track stop reason
+            if (chunk.message_type === "stop_reason") {
+              stopReason = chunk.stop_reason;
+            }
+
+            // Track approval requests
+            if (chunk.message_type === "approval_request_message") {
+              const chunkWithTools = chunk as typeof chunk & {
+                tool_call?: {
+                  tool_call_id?: string;
+                  name?: string;
+                  arguments?: string;
+                };
+              };
+              const toolCall = chunkWithTools.tool_call;
+              if (toolCall?.tool_call_id && toolCall?.name) {
+                const existing = approvalRequests.get(toolCall.tool_call_id);
+                approvalRequests.set(toolCall.tool_call_id, {
+                  toolName: toolCall.name,
+                  args: (existing?.args || "") + (toolCall.arguments || ""),
+                });
+              }
+            }
+
+            // Output chunk
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
             };
-            console.log(JSON.stringify(streamEvent));
-          } else {
-            const msg: MessageWire = {
-              type: "message",
-              ...chunk,
-              session_id: sessionId,
-              uuid: uuid || crypto.randomUUID(),
-            };
-            console.log(JSON.stringify(msg));
+            const uuid = chunkWithIds.otid || chunkWithIds.id;
+
+            if (includePartialMessages) {
+              const streamEvent: StreamEvent = {
+                type: "stream_event",
+                event: chunk,
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
+              };
+              console.log(JSON.stringify(streamEvent));
+            } else {
+              const msg: MessageWire = {
+                type: "message",
+                ...chunk,
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
+              };
+              console.log(JSON.stringify(msg));
+            }
+
+            // Accumulate for result
+            const { onChunk } = await import("./cli/helpers/accumulator");
+            onChunk(buffers, chunk);
           }
 
-          // Accumulate for result
-          const { onChunk } = await import("./cli/helpers/accumulator");
-          onChunk(buffers, chunk);
+          // Case 1: Turn ended normally - break out of loop
+          if (stopReason === "end_turn") {
+            break;
+          }
+
+          // Case 2: Aborted - break out of loop
+          if (currentAbortController?.signal.aborted) {
+            break;
+          }
+
+          // Case 3: Requires approval - process approvals and continue
+          if (stopReason === "requires_approval") {
+            const approvals = Array.from(approvalRequests.entries()).map(
+              ([toolCallId, { toolName, args }]) => ({
+                toolCallId,
+                toolName,
+                toolArgs: args,
+              }),
+            );
+
+            if (approvals.length === 0) {
+              // No approvals to process - break
+              break;
+            }
+
+            // Check permissions and collect decisions
+            type Decision =
+              | {
+                  type: "approve";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  matchedRule: string;
+                }
+              | {
+                  type: "deny";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  reason: string;
+                };
+
+            const decisions: Decision[] = [];
+
+            for (const approval of approvals) {
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                approval.toolArgs,
+                {},
+              );
+              const permission = await checkToolPermission(
+                approval.toolName,
+                parsedArgs,
+              );
+
+              if (permission.decision === "allow") {
+                decisions.push({
+                  type: "approve",
+                  approval,
+                  matchedRule: permission.matchedRule || "auto-approved",
+                });
+
+                // Emit auto_approval event
+                const autoApprovalMsg: AutoApprovalMessage = {
+                  type: "auto_approval",
+                  tool_call: {
+                    name: approval.toolName,
+                    tool_call_id: approval.toolCallId,
+                    arguments: approval.toolArgs,
+                  },
+                  reason: "bypassPermissions mode",
+                  matched_rule: permission.matchedRule || "auto-approved",
+                  session_id: sessionId,
+                  uuid: `auto-approval-${approval.toolCallId}`,
+                };
+                console.log(JSON.stringify(autoApprovalMsg));
+              } else {
+                // Deny the tool
+                const reason =
+                  permission.decision === "deny"
+                    ? `Permission denied: ${permission.matchedRule || permission.reason}`
+                    : "Tool requires approval (headless mode)";
+                decisions.push({
+                  type: "deny",
+                  approval,
+                  reason,
+                });
+              }
+            }
+
+            // Execute approved tools
+            const { executeApprovalBatch } = await import(
+              "./agent/approval-execution"
+            );
+            const executedResults = await executeApprovalBatch(decisions);
+
+            // Send approval results back to continue
+            currentInput = [
+              {
+                type: "approval",
+                approvals: executedResults,
+              } as unknown as MessageCreate,
+            ];
+
+            // Continue the loop to process the next stream
+            continue;
+          }
+
+          // Other stop reasons - break
+          break;
         }
 
         // Emit result
@@ -1530,7 +1689,28 @@ async function runBidirectionalMode(
             typeof line.text === "string" &&
             line.text.trim().length > 0,
         ) as Extract<Line, { kind: "assistant" }> | undefined;
-        const resultText = lastAssistant?.text || "";
+        const lastReasoning = reversed.find(
+          (line) =>
+            line.kind === "reasoning" &&
+            "text" in line &&
+            typeof line.text === "string" &&
+            line.text.trim().length > 0,
+        ) as Extract<Line, { kind: "reasoning" }> | undefined;
+        const lastToolResult = reversed.find(
+          (line) =>
+            line.kind === "tool_call" &&
+            "resultText" in line &&
+            typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
+              "string" &&
+            (
+              (line as Extract<Line, { kind: "tool_call" }>).resultText ?? ""
+            ).trim().length > 0,
+        ) as Extract<Line, { kind: "tool_call" }> | undefined;
+        const resultText =
+          lastAssistant?.text ||
+          lastReasoning?.text ||
+          lastToolResult?.resultText ||
+          "";
 
         const resultMsg: ResultMessage = {
           type: "result",
@@ -1540,7 +1720,7 @@ async function runBidirectionalMode(
           session_id: sessionId,
           duration_ms: Math.round(durationMs),
           duration_api_ms: 0, // Not tracked in bidirectional mode
-          num_turns: 1,
+          num_turns: numTurns,
           result: resultText,
           agent_id: agent.id,
           run_ids: [],
