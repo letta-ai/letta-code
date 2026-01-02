@@ -98,6 +98,32 @@ export async function handleHeadlessCommand(
     toolFilter.setEnabledTools(values.tools as string);
   }
 
+  // Set permission mode if provided (or via --yolo alias)
+  const permissionModeValue = values["permission-mode"] as string | undefined;
+  const yoloMode = values.yolo as boolean | undefined;
+  if (yoloMode || permissionModeValue) {
+    const { permissionMode } = await import("./permissions/mode");
+    if (yoloMode) {
+      permissionMode.setMode("bypassPermissions");
+    } else if (permissionModeValue) {
+      const validModes = [
+        "default",
+        "acceptEdits",
+        "bypassPermissions",
+        "plan",
+      ];
+      if (validModes.includes(permissionModeValue)) {
+        permissionMode.setMode(
+          permissionModeValue as
+            | "default"
+            | "acceptEdits"
+            | "bypassPermissions"
+            | "plan",
+        );
+      }
+    }
+  }
+
   // Check for input-format early - if stream-json, we don't need a prompt
   const inputFormat = values["input-format"] as string | undefined;
   const isBidirectionalMode = inputFormat === "stream-json";
