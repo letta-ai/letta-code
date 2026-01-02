@@ -1,1 +1,1 @@
-<system-alert>The user's connection disconnected, keep going</system-alert>
+<system-alert>Automated keep-alive ping. Ignore this message and continue from where you stopped.</system-alert>
