@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import type {
+  ResultMessage,
+  StreamEvent,
+  SystemInitMessage,
+} from "../types/wire";
 
 /**
  * Tests for stream-json output format.
- * These verify the message structure matches the SDK-compatible format.
+ * These verify the message structure matches the wire format types.
  */
 
 async function runHeadlessCommand(
@@ -80,8 +85,9 @@ describe("stream-json format", () => {
       });
 
       expect(initLine).toBeDefined();
+      if (!initLine) throw new Error("initLine not found");
 
-      const init = JSON.parse(initLine!);
+      const init = JSON.parse(initLine) as SystemInitMessage;
       expect(init.type).toBe("system");
       expect(init.subtype).toBe("init");
       expect(init.agent_id).toBeDefined();
@@ -106,8 +112,12 @@ describe("stream-json format", () => {
       });
 
       expect(messageLine).toBeDefined();
+      if (!messageLine) throw new Error("messageLine not found");
 
-      const msg = JSON.parse(messageLine!);
+      const msg = JSON.parse(messageLine) as {
+        session_id: string;
+        uuid: string;
+      };
       expect(msg.session_id).toBeDefined();
       expect(msg.uuid).toBeDefined();
       // uuid should be otid or id from the Letta SDK chunk
@@ -126,8 +136,9 @@ describe("stream-json format", () => {
       });
 
       expect(resultLine).toBeDefined();
+      if (!resultLine) throw new Error("resultLine not found");
 
-      const result = JSON.parse(resultLine!);
+      const result = JSON.parse(resultLine) as ResultMessage & { uuid: string };
       expect(result.type).toBe("result");
       expect(result.subtype).toBe("success");
       expect(result.session_id).toBeDefined();
@@ -154,14 +165,15 @@ describe("stream-json format", () => {
       });
 
       expect(streamEventLine).toBeDefined();
+      if (!streamEventLine) throw new Error("streamEventLine not found");
 
-      const event = JSON.parse(streamEventLine!);
+      const event = JSON.parse(streamEventLine) as StreamEvent;
       expect(event.type).toBe("stream_event");
       expect(event.event).toBeDefined();
       expect(event.session_id).toBeDefined();
       expect(event.uuid).toBeDefined();
       // The event should contain the original Letta SDK chunk
-      expect(event.event.message_type).toBeDefined();
+      expect("message_type" in event.event).toBe(true);
     },
     { timeout: 60000 },
   );
