@@ -52,6 +52,35 @@ interface ExecutionState {
 }
 
 // ============================================================================
+// BYOK Model Mapping
+// ============================================================================
+
+/**
+ * Mapping from standard Claude model IDs to their BYOK (claude-pro-max) equivalents.
+ * Used to automatically use BYOK for subagents when parent agent uses BYOK.
+ */
+const BYOK_MODEL_MAPPINGS: Record<string, string> = {
+  haiku: "haiku-pro-max",
+  "sonnet-4.5": "sonnet-4.5-pro-max",
+  "sonnet-4.5-no-reasoning": "sonnet-4.5-no-reasoning-pro-max",
+  opus: "opus-pro-max",
+};
+
+/**
+ * Check if a model ID is a BYOK variant (claude-pro-max provider)
+ */
+function isByokModelId(modelId: string | null): boolean {
+  return modelId?.endsWith("-pro-max") ?? false;
+}
+
+/**
+ * Map a standard Claude model ID to its BYOK equivalent if available
+ */
+function mapToByokModel(modelId: string): string {
+  return BYOK_MODEL_MAPPINGS[modelId] ?? modelId;
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -561,7 +590,18 @@ export async function spawnSubagent(
     };
   }
 
-  const model = userModel || config.recommendedModel;
+  // Determine the model to use for the subagent
+  let model = userModel || config.recommendedModel;
+
+  // If user didn't explicitly specify a model and parent is using BYOK,
+  // map the subagent model to its BYOK equivalent for cost consistency
+  if (!userModel) {
+    const parentModelId = await getPrimaryAgentModel();
+    if (isByokModelId(parentModelId) && BYOK_MODEL_MAPPINGS[model]) {
+      model = mapToByokModel(model);
+    }
+  }
+
   const baseURL = getBaseURL();
 
   // Execute subagent - state updates are handled via the state store
