@@ -17,8 +17,8 @@
   ],
   "exports": {
     ".": "./letta.js",
-    "./wire-types": {
-      "types": "./dist/types/wire.d.ts"
+    "./protocol": {
+      "types": "./dist/types/protocol.d.ts"
     }
   },
   "repository": {

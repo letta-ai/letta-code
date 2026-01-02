@@ -7,5 +7,5 @@
     "declarationMap": true,
     "outDir": "./dist/types"
   },
-  "include": ["src/types/wire.ts"]
+  "include": ["src/types/protocol.ts"]
 }
