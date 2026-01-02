@@ -130,7 +130,7 @@ export const InlineQuestionApproval = memo(
               });
             }
             // Always insert the space character
-            setCustomText((prev) => prev + " ");
+            setCustomText((prev) => `${prev} `);
             return;
           }
           if (key.escape) {

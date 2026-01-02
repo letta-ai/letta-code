@@ -136,7 +136,6 @@ import {
 } from "./helpers/toolNameMapping";
 import {
   alwaysRequiresUserInput,
-  isFancyUITool,
   isTaskTool,
 } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
@@ -1162,6 +1161,8 @@ export default function App({
           sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
 
           const wasInterrupted = !!buffersRef.current.interrupted;
+          const wasAborted = !!signal?.aborted;
+          let stopReasonToHandle = wasAborted ? "cancelled" : stopReason;
 
           // Immediate refresh after stream completes to show final state unless
           // the user already cancelled (handleInterrupt rendered the UI).
@@ -1169,8 +1170,15 @@ export default function App({
             refreshDerived();
           }
 
+          // If the turn was interrupted client-side but the backend had already emitted
+          // requires_approval, treat it as a cancel. This avoids re-entering approval flow
+          // and keeps queue-cancel flags consistent with the normal cancel branch below.
+          if (wasInterrupted && stopReasonToHandle === "requires_approval") {
+            stopReasonToHandle = "cancelled";
+          }
+
           // Case 1: Turn ended normally
-          if (stopReason === "end_turn") {
+          if (stopReasonToHandle === "end_turn") {
             setStreaming(false);
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
 
@@ -1208,7 +1216,7 @@ export default function App({
           }
 
           // Case 1.5: Stream was cancelled by user
-          if (stopReason === "cancelled") {
+          if (stopReasonToHandle === "cancelled") {
             setStreaming(false);
 
             // Check if this cancel was triggered by queue threshold
@@ -1244,7 +1252,7 @@ export default function App({
           }
 
           // Case 2: Requires approval
-          if (stopReason === "requires_approval") {
+          if (stopReasonToHandle === "requires_approval") {
             // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
@@ -1658,7 +1666,10 @@ export default function App({
 
           // Unexpected stop reason (error, llm_api_error, etc.)
           // Check if this is a retriable error (transient LLM API error)
-          const retriable = await isRetriableError(stopReason, lastRunId);
+          const retriable = await isRetriableError(
+            stopReasonToHandle,
+            lastRunId,
+          );
 
           if (
             retriable &&
@@ -1716,8 +1727,9 @@ export default function App({
           telemetry.trackError(
             fallbackError
               ? "FallbackError"
-              : stopReason || "unknown_stop_reason",
-            fallbackError || `Stream stopped with reason: ${stopReason}`,
+              : stopReasonToHandle || "unknown_stop_reason",
+            fallbackError ||
+              `Stream stopped with reason: ${stopReasonToHandle}`,
             "message_stream",
             {
               modelId: currentModelId || undefined,
