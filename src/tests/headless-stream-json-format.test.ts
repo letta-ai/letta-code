@@ -14,6 +14,7 @@ import type {
 async function runHeadlessCommand(
   prompt: string,
   extraArgs: string[] = [],
+  timeoutMs = 90000, // 90s timeout for slow CI environments
 ): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -48,7 +49,14 @@ async function runHeadlessCommand(
       stderr += data.toString();
     });
 
+    // Safety timeout for CI
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Process timeout after ${timeoutMs}ms: ${stderr}`));
+    }, timeoutMs);
+
     proc.on("close", (code) => {
+      clearTimeout(timeout);
       if (code !== 0 && !stdout.includes('"type":"result"')) {
         reject(new Error(`Process exited with code ${code}: ${stderr}`));
       } else {

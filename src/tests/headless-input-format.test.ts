@@ -25,7 +25,7 @@ const FAST_PROMPT =
 async function runBidirectional(
   inputs: string[],
   extraArgs: string[] = [],
-  waitMs = 8000, // Increased for CI environments
+  waitMs = 12000, // Increased for slower CI environments (Linux ARM, Windows)
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -78,7 +78,8 @@ async function runBidirectional(
 
     // Start writing inputs after delay for process to initialize
     // CI environments are slower, need more time for bun to start
-    setTimeout(writeNextInput, 5000);
+    // 8s delay accounts for slow ARM/Windows CI runners
+    setTimeout(writeNextInput, 8000);
 
     proc.on("close", (code) => {
       // Parse line-delimited JSON
@@ -270,7 +271,7 @@ describe("input-format stream-json", () => {
           }),
         ],
         [],
-        8000, // Longer wait for CI
+        12000, // Longer wait for slow CI (ARM, Windows)
       )) as WireMessage[];
 
       // Should have control_response for interrupt
@@ -281,7 +282,7 @@ describe("input-format stream-json", () => {
       expect(controlResponse).toBeDefined();
       expect(controlResponse?.response.subtype).toBe("success");
     },
-    { timeout: 30000 },
+    { timeout: 45000 }, // Increased from 30s for slow CI
   );
 
   test(
