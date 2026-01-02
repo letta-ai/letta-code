@@ -18,6 +18,11 @@ import {
   type ApprovalResult,
   executeAutoAllowedTools,
 } from "../agent/approval-execution";
+import {
+  buildApprovalRecoveryMessage,
+  fetchRunErrorDetail,
+  isApprovalStateDesyncError,
+} from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
@@ -1027,7 +1032,8 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean },
     ): Promise<void> => {
-      const currentInput = initialInput;
+      // Copy so we can safely mutate for retry recovery flows
+      const currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
 
       // Guard against concurrent processConversation calls
@@ -1679,12 +1685,29 @@ export default function App({
             const attempt = llmApiErrorRetriesRef.current;
             const delayMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
 
+            // Special-case recovery: backend occasionally reports llm_api_error while
+            // also saying there is no pending approval. In that case, retry by sending
+            // a keep-going system alert instead of resending stale approvals.
+            const shouldUseApprovalRecovery =
+              stopReasonToHandle === "llm_api_error" &&
+              currentInput.length === 1 &&
+              currentInput[0]?.type === "approval" &&
+              isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId));
+
             // Show subtle grey status message
             const statusId = uid("status");
+            const statusLines = [
+              "Unexpected downstream LLM API error, retrying...",
+            ];
+            if (shouldUseApprovalRecovery) {
+              statusLines.push(
+                "Approvals desynced; resending keep-going recovery prompt...",
+              );
+            }
             buffersRef.current.byId.set(statusId, {
               kind: "status",
               id: statusId,
-              lines: ["Unexpected downstream LLM API error, retrying..."],
+              lines: statusLines,
             });
             buffersRef.current.order.push(statusId);
             refreshDerived();
@@ -1711,6 +1734,13 @@ export default function App({
             refreshDerived();
 
             if (!cancelled) {
+              if (shouldUseApprovalRecovery) {
+                currentInput.splice(
+                  0,
+                  currentInput.length,
+                  buildApprovalRecoveryMessage(),
+                );
+              }
               // Retry by continuing the while loop (same currentInput)
               continue;
             }
