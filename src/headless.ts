@@ -33,10 +33,12 @@ import {
 } from "./tools/manager";
 import type {
   AutoApprovalMessage,
+  CanUseToolControlRequest,
+  CanUseToolResponse,
+  ControlRequest,
   ControlResponse,
   ErrorMessage,
   MessageWire,
-  PermissionRequest,
   ResultMessage,
   RetryMessage,
   StreamEvent,
@@ -1421,24 +1423,33 @@ async function runBidirectionalMode(
   }
 
   // Helper to send permission request and wait for response
+  // Uses Claude SDK's control_request/control_response format for compatibility
   async function requestPermission(
     toolCallId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
   ): Promise<{ decision: "allow" | "deny"; reason?: string }> {
     const requestId = `perm-${toolCallId}`;
-    const permissionRequest: PermissionRequest = {
-      type: "permission_request",
-      request_id: requestId,
-      tool_call_id: toolCallId,
-      tool_name: toolName,
-      tool_input: toolInput,
-      session_id: sessionId,
-      uuid: `perm-req-${toolCallId}`,
-    };
-    console.log(JSON.stringify(permissionRequest));
 
-    // Wait for permission_response
+    // Build can_use_tool control request (Claude SDK format)
+    const canUseToolRequest: CanUseToolControlRequest = {
+      subtype: "can_use_tool",
+      tool_name: toolName,
+      input: toolInput,
+      tool_call_id: toolCallId, // Letta-specific
+      permission_suggestions: [], // TODO: not implemented
+      blocked_path: null, // TODO: not implemented
+    };
+
+    const controlRequest: ControlRequest = {
+      type: "control_request",
+      request_id: requestId,
+      request: canUseToolRequest,
+    };
+
+    console.log(JSON.stringify(controlRequest));
+
+    // Wait for control_response
     while (true) {
       const line = await getNextLine();
       if (line === null) {
@@ -1449,13 +1460,26 @@ async function runBidirectionalMode(
       try {
         const msg = JSON.parse(line);
         if (
-          msg.type === "permission_response" &&
-          msg.request_id === requestId
+          msg.type === "control_response" &&
+          msg.response?.request_id === requestId
         ) {
-          return {
-            decision: msg.decision as "allow" | "deny",
-            reason: msg.reason,
-          };
+          // Parse the can_use_tool response
+          const response = msg.response?.response as
+            | CanUseToolResponse
+            | undefined;
+          if (!response) {
+            return { decision: "deny", reason: "Invalid response format" };
+          }
+
+          if (response.behavior === "allow") {
+            return { decision: "allow" };
+          } else {
+            return {
+              decision: "deny",
+              reason: response.message,
+              // TODO: handle interrupt flag
+            };
+          }
         }
         // Put other messages back in queue for main loop
         lineQueue.unshift(line);

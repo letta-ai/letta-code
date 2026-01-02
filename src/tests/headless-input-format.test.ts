@@ -143,7 +143,10 @@ describe("input-format stream-json", () => {
       expect(controlResponse?.response.subtype).toBe("success");
       expect(controlResponse?.response.request_id).toBe("init_1");
       if (controlResponse?.response.subtype === "success") {
-        expect(controlResponse.response.response?.agent_id).toBeDefined();
+        const initResponse = controlResponse.response.response as
+          | { agent_id?: string }
+          | undefined;
+        expect(initResponse?.agent_id).toBeDefined();
       }
     },
     { timeout: 30000 },

@@ -197,20 +197,41 @@ export interface ResultMessage extends MessageEnvelope {
 
 // ═══════════════════════════════════════════════════════════════
 // CONTROL PROTOCOL
+// Bidirectional: SDK → CLI and CLI → SDK both use control_request/response
 // ═══════════════════════════════════════════════════════════════
 
-// Requests (external → CLI)
+// --- Control Request (bidirectional) ---
 export interface ControlRequest {
   type: "control_request";
   request_id: string;
   request: ControlRequestBody;
 }
 
-export type ControlRequestBody =
+// SDK → CLI request subtypes
+export type SdkToCliControlRequest =
   | { subtype: "initialize" }
   | { subtype: "interrupt" };
 
-// Responses (CLI → external)
+// CLI → SDK request subtypes
+export interface CanUseToolControlRequest {
+  subtype: "can_use_tool";
+  tool_name: string;
+  input: Record<string, unknown>;
+  tool_call_id: string; // Letta-specific: needed to track the tool call
+  /** TODO: Not implemented - suggestions for permission updates */
+  permission_suggestions: unknown[];
+  /** TODO: Not implemented - path that triggered the permission check */
+  blocked_path: string | null;
+}
+
+export type CliToSdkControlRequest = CanUseToolControlRequest;
+
+// Combined for parsing
+export type ControlRequestBody =
+  | SdkToCliControlRequest
+  | CliToSdkControlRequest;
+
+// --- Control Response (bidirectional) ---
 export interface ControlResponse extends MessageEnvelope {
   type: "control_response";
   response: ControlResponseBody;
@@ -220,35 +241,29 @@ export type ControlResponseBody =
   | {
       subtype: "success";
       request_id: string;
-      response?: Record<string, unknown>;
+      response?: CanUseToolResponse | Record<string, unknown>;
     }
   | { subtype: "error"; request_id: string; error: string };
 
-// ═══════════════════════════════════════════════════════════════
-// PERMISSION CALLBACKS (CLI → SDK → CLI)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Permission request sent from CLI to SDK when a tool needs approval.
- * SDK should respond with PermissionResponse via stdin.
- */
-export interface PermissionRequest extends MessageEnvelope {
-  type: "permission_request";
-  request_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  tool_input: Record<string, unknown>;
+// --- can_use_tool response payloads ---
+export interface CanUseToolResponseAllow {
+  behavior: "allow";
+  /** TODO: Not supported - Letta stores tool calls server-side */
+  updatedInput?: Record<string, unknown> | null;
+  /** TODO: Not implemented - dynamic permission rule updates */
+  updatedPermissions?: unknown[];
 }
 
-/**
- * Permission response sent from SDK to CLI with the decision.
- */
-export interface PermissionResponse {
-  type: "permission_response";
-  request_id: string;
-  decision: "allow" | "deny";
-  reason?: string;
+export interface CanUseToolResponseDeny {
+  behavior: "deny";
+  message: string;
+  /** TODO: Not wired up yet - infrastructure exists in TUI */
+  interrupt?: boolean;
 }
+
+export type CanUseToolResponse =
+  | CanUseToolResponseAllow
+  | CanUseToolResponseDeny;
 
 // ═══════════════════════════════════════════════════════════════
 // USER INPUT
@@ -279,4 +294,4 @@ export type WireMessage =
   | RetryMessage
   | ResultMessage
   | ControlResponse
-  | PermissionRequest;
+  | ControlRequest; // CLI → SDK control requests (e.g., can_use_tool)
