@@ -1155,6 +1155,9 @@ export async function handleHeadlessCommand(
           );
         }
 
+        // Small pause to avoid rapid-fire retries
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
         currentInput = [buildApprovalRecoveryMessage()];
         continue;
       }
