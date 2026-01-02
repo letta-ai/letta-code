@@ -1110,6 +1110,55 @@ export async function handleHeadlessCommand(
         }
       }
 
+      // Fallback: if we were sending only approvals and hit an internal error that
+      // says there is no pending approval, resend using the keep-alive recovery prompt.
+      const isApprovalPayload =
+        currentInput.length === 1 && currentInput[0]?.type === "approval";
+      const approvalDesynced =
+        isApprovalPayload &&
+        (isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId)) ||
+          (() => {
+            const lines = toLines(buffers);
+            for (let i = lines.length - 1; i >= 0; i -= 1) {
+              const line = lines[i];
+              if (!line) continue;
+              if (
+                line.kind === "error" &&
+                "text" in line &&
+                typeof line.text === "string"
+              ) {
+                return isApprovalStateDesyncError(line.text ?? null);
+              }
+            }
+            return false;
+          })());
+
+      if (approvalDesynced && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+        llmApiErrorRetries += 1;
+
+        const retryReason = stopReason ?? "error";
+        if (outputFormat === "stream-json") {
+          const retryMsg: RetryMessage = {
+            type: "retry",
+            reason: retryReason,
+            attempt: llmApiErrorRetries,
+            max_attempts: LLM_API_ERROR_MAX_RETRIES,
+            delay_ms: 0,
+            run_id: lastRunId ?? undefined,
+            session_id: sessionId,
+            uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+          };
+          console.log(JSON.stringify(retryMsg));
+        } else {
+          console.error(
+            "Approval state desynced; resending keep-alive recovery prompt...",
+          );
+        }
+
+        currentInput = [buildApprovalRecoveryMessage()];
+        continue;
+      }
+
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Before failing, check run metadata to see if this is a retriable llm_api_error
       // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
