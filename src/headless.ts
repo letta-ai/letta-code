@@ -248,8 +248,14 @@ export async function handleHeadlessCommand(
   }
 
   // Parse memory blocks JSON if provided
+  // Supports two formats:
+  // - CreateBlock: { label: string, value: string, description?: string }
+  // - BlockReference: { blockId: string }
   let memoryBlocks:
-    | Array<{ label: string; value: string; description?: string }>
+    | Array<
+        | { label: string; value: string; description?: string }
+        | { blockId: string }
+      >
     | undefined;
   if (memoryBlocksJson !== undefined) {
     if (!forceNew) {
@@ -265,12 +271,17 @@ export async function handleHeadlessCommand(
       }
       // Validate each block has required fields
       for (const block of memoryBlocks) {
-        if (
-          typeof block.label !== "string" ||
-          typeof block.value !== "string"
-        ) {
+        const hasBlockId =
+          "blockId" in block && typeof block.blockId === "string";
+        const hasLabelValue =
+          "label" in block &&
+          "value" in block &&
+          typeof block.label === "string" &&
+          typeof block.value === "string";
+
+        if (!hasBlockId && !hasLabelValue) {
           throw new Error(
-            "Each memory block must have 'label' and 'value' string fields",
+            "Each memory block must have either 'blockId' (string) or 'label' and 'value' (strings)",
           );
         }
       }

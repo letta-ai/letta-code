@@ -26,7 +26,7 @@ import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
  */
 export interface BlockProvenance {
   label: string;
-  source: "global" | "project" | "new";
+  source: "global" | "project" | "new" | "shared";
 }
 
 /**
@@ -64,7 +64,9 @@ export interface CreateAgentOptions {
   /** Base tools to include */
   baseTools?: string[];
   /** Custom memory blocks (overrides default blocks) */
-  memoryBlocks?: Array<{ label: string; value: string; description?: string }>;
+  memoryBlocks?: Array<
+    { label: string; value: string; description?: string } | { blockId: string }
+  >;
   /** Override values for preset blocks (label → value) */
   blockValues?: Record<string, string>;
 }
@@ -170,8 +172,11 @@ export async function createAgent(
   }
 
   // Determine which memory blocks to use:
-  // 1. If options.memoryBlocks is provided, use those (custom blocks from SDK)
+  // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
   // 2. Otherwise, use default blocks filtered by options.initBlocks
+
+  // Separate block references from blocks to create
+  const referencedBlockIds: string[] = [];
   let filteredMemoryBlocks: Array<{
     label: string;
     value: string;
@@ -180,8 +185,16 @@ export async function createAgent(
   }>;
 
   if (options.memoryBlocks !== undefined) {
-    // Use custom memory blocks provided via options
-    filteredMemoryBlocks = options.memoryBlocks as typeof filteredMemoryBlocks;
+    // Separate blockId references from CreateBlock items
+    const createBlocks: typeof filteredMemoryBlocks = [];
+    for (const item of options.memoryBlocks) {
+      if ("blockId" in item) {
+        referencedBlockIds.push(item.blockId);
+      } else {
+        createBlocks.push(item as (typeof filteredMemoryBlocks)[0]);
+      }
+    }
+    filteredMemoryBlocks = createBlocks;
   } else {
     // Load memory blocks from .mdx files
     const defaultMemoryBlocks =
@@ -274,6 +287,12 @@ export async function createAgent(
       console.error(`Failed to create block ${block.label}:`, error);
       throw error;
     }
+  }
+
+  // Add any referenced block IDs (existing blocks to attach)
+  for (const blockId of referencedBlockIds) {
+    blockIds.push(blockId);
+    blockProvenance.push({ label: blockId, source: "shared" });
   }
 
   // Get the model's context window from its configuration
