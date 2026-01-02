@@ -335,6 +335,7 @@ async function main(): Promise<void> {
         "system-custom": { type: "string" },
         "system-append": { type: "string" },
         "memory-blocks": { type: "string" },
+        "block-value": { type: "string", multiple: true },
         toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
@@ -409,7 +410,7 @@ async function main(): Promise<void> {
   let specifiedAgentId = (values.agent as string | undefined) ?? null;
   const specifiedAgentName = (values.name as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
-  const systemPromptId = (values.system as string | undefined) ?? undefined;
+  const systemPromptPreset = (values.system as string | undefined) ?? undefined;
   const systemCustom =
     (values["system-custom"] as string | undefined) ?? undefined;
   // Note: systemAppend is also parsed but only used in headless mode (headless.ts handles it)
@@ -485,7 +486,7 @@ async function main(): Promise<void> {
   }
 
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
-  if (systemPromptId && systemCustom) {
+  if (systemPromptPreset && systemCustom) {
     console.error(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
     );
@@ -493,7 +494,7 @@ async function main(): Promise<void> {
   }
 
   // Validate system prompt preset if provided (can be a system prompt ID or subagent name)
-  if (systemPromptId) {
+  if (systemPromptPreset) {
     const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
     const { getAllSubagentConfigs } = await import("./agent/subagents");
 
@@ -501,13 +502,13 @@ async function main(): Promise<void> {
     const subagentConfigs = await getAllSubagentConfigs();
     const validSubagentNames = Object.keys(subagentConfigs);
 
-    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptId);
-    const isValidSubagent = validSubagentNames.includes(systemPromptId);
+    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptPreset);
+    const isValidSubagent = validSubagentNames.includes(systemPromptPreset);
 
     if (!isValidSystemPrompt && !isValidSubagent) {
       const allValid = [...validSystemPrompts, ...validSubagentNames];
       console.error(
-        `Error: Invalid system prompt "${systemPromptId}". Must be one of: ${allValid.join(", ")}.`,
+        `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${allValid.join(", ")}.`,
       );
       process.exit(1);
     }
@@ -790,7 +791,7 @@ async function main(): Promise<void> {
     baseTools,
     agentIdArg,
     model,
-    systemPromptId,
+    systemPromptPreset,
     toolset,
     skillsDirectory,
     fromAfFile,
@@ -801,7 +802,7 @@ async function main(): Promise<void> {
     baseTools?: string[];
     agentIdArg: string | null;
     model?: string;
-    systemPromptId?: string;
+    systemPromptPreset?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
@@ -1072,13 +1073,13 @@ async function main(): Promise<void> {
             agent = await client.agents.retrieve(agentIdArg);
 
             // Apply --system flag to existing agent if provided
-            if (systemPromptId) {
+            if (systemPromptPreset) {
               const { updateAgentSystemPrompt } = await import(
                 "./agent/modify"
               );
               const result = await updateAgentSystemPrompt(
                 agent.id,
-                systemPromptId,
+                systemPromptPreset,
               );
               if (!result.success || !result.agent) {
                 console.error(
@@ -1112,7 +1113,7 @@ async function main(): Promise<void> {
               skillsDirectory,
               true, // parallelToolCalls always enabled
               sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptId,
+              systemPromptPreset,
               initBlocks,
               baseTools,
             );
@@ -1134,7 +1135,7 @@ async function main(): Promise<void> {
                 skillsDirectory,
                 true,
                 sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptId,
+                systemPromptPreset,
                 initBlocks,
                 baseTools,
               );
@@ -1189,7 +1190,7 @@ async function main(): Promise<void> {
               skillsDirectory,
               true, // parallelToolCalls always enabled
               sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptId,
+              systemPromptPreset,
               undefined,
               undefined,
             );
@@ -1211,7 +1212,7 @@ async function main(): Promise<void> {
                 skillsDirectory,
                 true,
                 sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptId,
+                systemPromptPreset,
                 undefined,
                 undefined,
               );
@@ -1292,7 +1293,7 @@ async function main(): Promise<void> {
         setIsResumingSession(resuming);
 
         // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || systemPromptId)) {
+        if (resuming && (model || systemPromptPreset)) {
           if (model) {
             const { resolveModel } = await import("./agent/model");
             const modelHandle = resolveModel(model);
@@ -1316,11 +1317,11 @@ async function main(): Promise<void> {
             }
           }
 
-          if (systemPromptId) {
+          if (systemPromptPreset) {
             const { updateAgentSystemPrompt } = await import("./agent/modify");
             const result = await updateAgentSystemPrompt(
               agent.id,
-              systemPromptId,
+              systemPromptPreset,
             );
             if (!result.success || !result.agent) {
               console.error(`Error: ${result.message}`);
@@ -1357,7 +1358,7 @@ async function main(): Promise<void> {
       forceNew,
       agentIdArg,
       model,
-      systemPromptId,
+      systemPromptPreset,
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
@@ -1429,7 +1430,7 @@ async function main(): Promise<void> {
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
-      systemPromptId: systemPromptId,
+      systemPromptPreset: systemPromptPreset,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,

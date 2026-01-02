@@ -40,13 +40,13 @@ export type {
  * Use this to select a built-in system prompt with optional appended text.
  *
  * Available presets (validated at runtime by CLI):
- * - 'default' - Standard Letta Code system prompt (Claude-optimized)
- * - 'legacy' - Original system prompt
- * - 'letta-codex' - For Codex models
- * - 'letta-gemini' - For Gemini models
- * - 'anthropic' - Claude basic (no skills/memory instructions)
- * - 'codex' - Codex basic (no skills/memory instructions)
- * - 'gemini' - Gemini basic (no skills/memory instructions)
+ * - 'default' - Alias for letta-claude
+ * - 'letta-claude' - Full Letta Code prompt (Claude-optimized)
+ * - 'letta-codex' - Full Letta Code prompt (Codex-optimized)
+ * - 'letta-gemini' - Full Letta Code prompt (Gemini-optimized)
+ * - 'claude' - Basic Claude (no skills/memory instructions)
+ * - 'codex' - Basic Codex (no skills/memory instructions)
+ * - 'gemini' - Basic Gemini (no skills/memory instructions)
  */
 export interface SystemPromptPresetConfig {
   type: "preset";

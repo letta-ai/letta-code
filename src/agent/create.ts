@@ -53,9 +53,9 @@ export interface CreateAgentOptions {
   skillsDirectory?: string;
   parallelToolCalls?: boolean;
   enableSleeptime?: boolean;
-  /** System prompt preset ID (e.g., 'default', 'letta-codex') */
-  systemPromptId?: string;
-  /** Raw system prompt string (mutually exclusive with systemPromptId) */
+  /** System prompt preset (e.g., 'default', 'letta-claude', 'letta-codex') */
+  systemPromptPreset?: string;
+  /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;
   /** Additional text to append to the resolved system prompt */
   systemPromptAppend?: string;
@@ -65,6 +65,8 @@ export interface CreateAgentOptions {
   baseTools?: string[];
   /** Custom memory blocks (overrides default blocks) */
   memoryBlocks?: Array<{ label: string; value: string; description?: string }>;
+  /** Override values for preset blocks (label → value) */
+  blockValues?: Record<string, string>;
 }
 
 export async function createAgent(
@@ -75,7 +77,7 @@ export async function createAgent(
   skillsDirectory?: string,
   parallelToolCalls = true,
   enableSleeptime = false,
-  systemPromptId?: string,
+  systemPromptPreset?: string,
   initBlocks?: string[],
   baseTools?: string[],
 ) {
@@ -92,7 +94,7 @@ export async function createAgent(
       skillsDirectory,
       parallelToolCalls,
       enableSleeptime,
-      systemPromptId,
+      systemPromptPreset,
       initBlocks,
       baseTools,
     };
@@ -212,6 +214,20 @@ export async function createAgent(
         : defaultMemoryBlocks;
   }
 
+  // Apply blockValues overrides to preset blocks
+  if (options.blockValues) {
+    for (const [label, value] of Object.entries(options.blockValues)) {
+      const block = filteredMemoryBlocks.find((b) => b.label === label);
+      if (block) {
+        block.value = value;
+      } else {
+        console.warn(
+          `Ignoring --block-value for "${label}" - block not included in memory config`,
+        );
+      }
+    }
+  }
+
   // Resolve absolute path for skills directory
   const resolvedSkillsDirectory =
     options.skillsDirectory || join(process.cwd(), SKILLS_DIR);
@@ -266,13 +282,13 @@ export async function createAgent(
 
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
-  // 2. Otherwise, resolve systemPromptId to content
+  // 2. Otherwise, resolve systemPromptPreset to content
   // 3. If systemPromptAppend is provided, append it to the result
   let systemPromptContent: string;
   if (options.systemPromptCustom) {
     systemPromptContent = options.systemPromptCustom;
   } else {
-    systemPromptContent = await resolveSystemPrompt(options.systemPromptId);
+    systemPromptContent = await resolveSystemPrompt(options.systemPromptPreset);
   }
 
   // Append additional instructions if provided

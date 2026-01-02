@@ -72,6 +72,7 @@ export async function handleHeadlessCommand(
       "system-custom": { type: "string" },
       "system-append": { type: "string" },
       "memory-blocks": { type: "string" },
+      "block-value": { type: "string", multiple: true },
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
@@ -167,10 +168,11 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
-  const systemPromptId = values.system as string | undefined;
+  const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
   const memoryBlocksJson = values["memory-blocks"] as string | undefined;
+  const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -233,7 +235,7 @@ export async function handleHeadlessCommand(
   }
 
   // Validate system prompt options (--system and --system-custom are mutually exclusive)
-  if (systemPromptId && systemCustom) {
+  if (systemPromptPreset && systemCustom) {
     console.error(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
     );
@@ -275,6 +277,30 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Parse --block-value args (format: label=value)
+  let blockValues: Record<string, string> | undefined;
+  if (blockValueArgs && blockValueArgs.length > 0) {
+    if (!forceNew) {
+      console.error(
+        "Error: --block-value can only be used together with --new to set block values.",
+      );
+      process.exit(1);
+    }
+    blockValues = {};
+    for (const arg of blockValueArgs) {
+      const eqIndex = arg.indexOf("=");
+      if (eqIndex === -1) {
+        console.error(
+          `Error: Invalid --block-value format "${arg}". Expected format: label=value`,
+        );
+        process.exit(1);
+      }
+      const label = arg.slice(0, eqIndex);
+      const value = arg.slice(eqIndex + 1);
+      blockValues[label] = value;
+    }
+  }
+
   // Priority 1: Import from AgentFile template
   if (fromAfFile) {
     const { importAgentFromFile } = await import("./agent/import");
@@ -304,12 +330,13 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       parallelToolCalls: true,
       enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
-      systemPromptId,
+      systemPromptPreset,
       systemPromptCustom: systemCustom,
       systemPromptAppend: systemAppend,
       initBlocks,
       baseTools,
       memoryBlocks,
+      blockValues,
     };
     try {
       const result = await createAgent(createOptions);
@@ -361,7 +388,7 @@ export async function handleHeadlessCommand(
       skillsDirectory,
       parallelToolCalls: true,
       enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
-      systemPromptId,
+      systemPromptPreset,
       // Note: systemCustom, systemAppend, and memoryBlocks only apply with --new flag
     };
     try {
@@ -387,7 +414,7 @@ export async function handleHeadlessCommand(
   );
 
   // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || systemPromptId)) {
+  if (isResumingAgent && (model || systemPromptPreset)) {
     if (model) {
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
@@ -410,9 +437,12 @@ export async function handleHeadlessCommand(
       }
     }
 
-    if (systemPromptId) {
+    if (systemPromptPreset) {
       const { updateAgentSystemPrompt } = await import("./agent/modify");
-      const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
+      const result = await updateAgentSystemPrompt(
+        agent.id,
+        systemPromptPreset,
+      );
       if (!result.success || !result.agent) {
         console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
