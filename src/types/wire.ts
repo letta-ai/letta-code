@@ -225,6 +225,32 @@ export type ControlResponseBody =
   | { subtype: "error"; request_id: string; error: string };
 
 // ═══════════════════════════════════════════════════════════════
+// PERMISSION CALLBACKS (CLI → SDK → CLI)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Permission request sent from CLI to SDK when a tool needs approval.
+ * SDK should respond with PermissionResponse via stdin.
+ */
+export interface PermissionRequest extends MessageEnvelope {
+  type: "permission_request";
+  request_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+}
+
+/**
+ * Permission response sent from SDK to CLI with the decision.
+ */
+export interface PermissionResponse {
+  type: "permission_response";
+  request_id: string;
+  decision: "allow" | "deny";
+  reason?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // USER INPUT
 // ═══════════════════════════════════════════════════════════════
 
@@ -252,4 +278,5 @@ export type WireMessage =
   | ErrorMessage
   | RetryMessage
   | ResultMessage
-  | ControlResponse;
+  | ControlResponse
+  | PermissionRequest;

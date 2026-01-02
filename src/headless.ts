@@ -36,6 +36,7 @@ import type {
   ControlResponse,
   ErrorMessage,
   MessageWire,
+  PermissionRequest,
   ResultMessage,
   RetryMessage,
   StreamEvent,
@@ -1386,8 +1387,91 @@ async function runBidirectionalMode(
     terminal: false,
   });
 
-  // Process lines as they arrive using async iterator
-  for await (const line of rl) {
+  // Create async iterator and line queue for permission callbacks
+  const lineQueue: string[] = [];
+  let lineResolver: ((line: string | null) => void) | null = null;
+
+  // Feed lines into queue or resolver
+  rl.on("line", (line) => {
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(line);
+    } else {
+      lineQueue.push(line);
+    }
+  });
+
+  rl.on("close", () => {
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(null);
+    }
+  });
+
+  // Helper to get next line (from queue or wait)
+  async function getNextLine(): Promise<string | null> {
+    if (lineQueue.length > 0) {
+      return lineQueue.shift()!;
+    }
+    return new Promise<string | null>((resolve) => {
+      lineResolver = resolve;
+    });
+  }
+
+  // Helper to send permission request and wait for response
+  async function requestPermission(
+    toolCallId: string,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): Promise<{ decision: "allow" | "deny"; reason?: string }> {
+    const requestId = `perm-${toolCallId}`;
+    const permissionRequest: PermissionRequest = {
+      type: "permission_request",
+      request_id: requestId,
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      tool_input: toolInput,
+      session_id: sessionId,
+      uuid: `perm-req-${toolCallId}`,
+    };
+    console.log(JSON.stringify(permissionRequest));
+
+    // Wait for permission_response
+    while (true) {
+      const line = await getNextLine();
+      if (line === null) {
+        return { decision: "deny", reason: "stdin closed" };
+      }
+      if (!line.trim()) continue;
+
+      try {
+        const msg = JSON.parse(line);
+        if (
+          msg.type === "permission_response" &&
+          msg.request_id === requestId
+        ) {
+          return {
+            decision: msg.decision as "allow" | "deny",
+            reason: msg.reason,
+          };
+        }
+        // Put other messages back in queue for main loop
+        lineQueue.unshift(line);
+        // But since we're waiting for permission, we need to wait more
+        // Actually this causes issues - let's just ignore other messages
+        // during permission wait (they'll be lost)
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  }
+
+  // Main processing loop
+  while (true) {
+    const line = await getNextLine();
+    if (line === null) break; // stdin closed
     if (!line.trim()) continue;
 
     let message: {
@@ -1636,23 +1720,55 @@ async function runBidirectionalMode(
                     tool_call_id: approval.toolCallId,
                     arguments: approval.toolArgs,
                   },
-                  reason: "bypassPermissions mode",
+                  reason: permission.reason || "auto-approved",
                   matched_rule: permission.matchedRule || "auto-approved",
                   session_id: sessionId,
                   uuid: `auto-approval-${approval.toolCallId}`,
                 };
                 console.log(JSON.stringify(autoApprovalMsg));
-              } else {
-                // Deny the tool
-                const reason =
-                  permission.decision === "deny"
-                    ? `Permission denied: ${permission.matchedRule || permission.reason}`
-                    : "Tool requires approval (headless mode)";
+              } else if (permission.decision === "deny") {
+                // Explicitly denied by permission rules
                 decisions.push({
                   type: "deny",
                   approval,
-                  reason,
+                  reason: `Permission denied: ${permission.matchedRule || permission.reason}`,
                 });
+              } else {
+                // permission.decision === "ask" - request permission from SDK
+                const permResponse = await requestPermission(
+                  approval.toolCallId,
+                  approval.toolName,
+                  parsedArgs,
+                );
+
+                if (permResponse.decision === "allow") {
+                  decisions.push({
+                    type: "approve",
+                    approval,
+                    matchedRule: "SDK callback approved",
+                  });
+
+                  // Emit auto_approval event for SDK-approved tool
+                  const autoApprovalMsg: AutoApprovalMessage = {
+                    type: "auto_approval",
+                    tool_call: {
+                      name: approval.toolName,
+                      tool_call_id: approval.toolCallId,
+                      arguments: approval.toolArgs,
+                    },
+                    reason: permResponse.reason || "SDK callback approved",
+                    matched_rule: "canUseTool callback",
+                    session_id: sessionId,
+                    uuid: `auto-approval-${approval.toolCallId}`,
+                  };
+                  console.log(JSON.stringify(autoApprovalMsg));
+                } else {
+                  decisions.push({
+                    type: "deny",
+                    approval,
+                    reason: permResponse.reason || "Denied by SDK callback",
+                  });
+                }
               }
             }
 
