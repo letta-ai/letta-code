@@ -1,5 +1,6 @@
 // Additional system prompts for /system command
 
+import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
@@ -28,6 +29,7 @@ export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
+export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,

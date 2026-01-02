@@ -18,6 +18,11 @@ import {
   type ApprovalResult,
   executeAutoAllowedTools,
 } from "../agent/approval-execution";
+import {
+  buildApprovalRecoveryMessage,
+  fetchRunErrorDetail,
+  isApprovalStateDesyncError,
+} from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
@@ -1027,7 +1032,8 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean },
     ): Promise<void> => {
-      const currentInput = initialInput;
+      // Copy so we can safely mutate for retry recovery flows
+      const currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
 
       // Guard against concurrent processConversation calls
@@ -1665,6 +1671,58 @@ export default function App({
           }
 
           // Unexpected stop reason (error, llm_api_error, etc.)
+          // Check for approval desync errors even if stop_reason isn't llm_api_error.
+          const isApprovalPayload =
+            currentInput.length === 1 && currentInput[0]?.type === "approval";
+
+          const approvalDesyncDetected = async () => {
+            // 1) Check run metadata
+            const detailFromRun = await fetchRunErrorDetail(lastRunId);
+            if (isApprovalStateDesyncError(detailFromRun)) return true;
+
+            // 2) Check the most recent streamed error line in this turn
+            for (let i = buffersRef.current.order.length - 1; i >= 0; i -= 1) {
+              const id = buffersRef.current.order[i];
+              if (!id) continue;
+              const entry = buffersRef.current.byId.get(id);
+              if (entry?.kind === "error") {
+                return isApprovalStateDesyncError(entry.text);
+              }
+            }
+            return false;
+          };
+
+          if (isApprovalPayload && (await approvalDesyncDetected())) {
+            // Limit how many times we try this recovery to avoid loops
+            if (llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES) {
+              llmApiErrorRetriesRef.current += 1;
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [
+                  "Approval state desynced; resending keep-alive recovery prompt...",
+                ],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              currentInput.splice(
+                0,
+                currentInput.length,
+                buildApprovalRecoveryMessage(),
+              );
+
+              // Remove the transient status before retrying
+              buffersRef.current.byId.delete(statusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== statusId,
+              );
+              refreshDerived();
+              continue;
+            }
+          }
+
           // Check if this is a retriable error (transient LLM API error)
           const retriable = await isRetriableError(
             stopReasonToHandle,
@@ -1681,10 +1739,13 @@ export default function App({
 
             // Show subtle grey status message
             const statusId = uid("status");
+            const statusLines = [
+              "Unexpected downstream LLM API error, retrying...",
+            ];
             buffersRef.current.byId.set(statusId, {
               kind: "status",
               id: statusId,
-              lines: ["Unexpected downstream LLM API error, retrying..."],
+              lines: statusLines,
             });
             buffersRef.current.order.push(statusId);
             refreshDerived();
