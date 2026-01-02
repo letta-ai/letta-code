@@ -10,6 +10,11 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
+import {
+  buildApprovalRecoveryMessage,
+  fetchRunErrorDetail,
+  isApprovalStateDesyncError,
+} from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
@@ -1061,6 +1066,11 @@ export async function handleHeadlessCommand(
 
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
+        const shouldUseApprovalRecovery =
+          currentInput.length === 1 &&
+          currentInput[0]?.type === "approval" &&
+          isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId));
+
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
           const baseDelayMs = 1000;
@@ -1082,15 +1092,74 @@ export async function handleHeadlessCommand(
             console.log(JSON.stringify(retryMsg));
           } else {
             const delaySeconds = Math.round(delayMs / 1000);
+            const recoveryNote = shouldUseApprovalRecovery
+              ? " (approval state desynced - sending keep-going prompt)"
+              : "";
             console.error(
-              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...${recoveryNote}`,
             );
           }
 
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+          if (shouldUseApprovalRecovery) {
+            currentInput = [buildApprovalRecoveryMessage()];
+          }
           continue;
         }
+      }
+
+      // Fallback: if we were sending only approvals and hit an internal error that
+      // says there is no pending approval, resend using the keep-alive recovery prompt.
+      const isApprovalPayload =
+        currentInput.length === 1 && currentInput[0]?.type === "approval";
+      const approvalDesynced =
+        isApprovalPayload &&
+        (isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId)) ||
+          (() => {
+            const lines = toLines(buffers);
+            for (let i = lines.length - 1; i >= 0; i -= 1) {
+              const line = lines[i];
+              if (!line) continue;
+              if (
+                line.kind === "error" &&
+                "text" in line &&
+                typeof line.text === "string"
+              ) {
+                return isApprovalStateDesyncError(line.text ?? null);
+              }
+            }
+            return false;
+          })());
+
+      if (approvalDesynced && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+        llmApiErrorRetries += 1;
+
+        const retryReason = stopReason ?? "error";
+        if (outputFormat === "stream-json") {
+          const retryMsg: RetryMessage = {
+            type: "retry",
+            reason: retryReason,
+            attempt: llmApiErrorRetries,
+            max_attempts: LLM_API_ERROR_MAX_RETRIES,
+            delay_ms: 0,
+            run_id: lastRunId ?? undefined,
+            session_id: sessionId,
+            uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+          };
+          console.log(JSON.stringify(retryMsg));
+        } else {
+          console.error(
+            "Approval state desynced; resending keep-alive recovery prompt...",
+          );
+        }
+
+        // Small pause to avoid rapid-fire retries
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        currentInput = [buildApprovalRecoveryMessage()];
+        continue;
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
@@ -1415,7 +1484,7 @@ async function runBidirectionalMode(
   // Helper to get next line (from queue or wait)
   async function getNextLine(): Promise<string | null> {
     if (lineQueue.length > 0) {
-      return lineQueue.shift()!;
+      return lineQueue.shift() ?? null;
     }
     return new Promise<string | null>((resolve) => {
       lineResolver = resolve;
