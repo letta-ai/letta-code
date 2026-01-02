@@ -105,7 +105,7 @@ describe("stream-json format", () => {
       expect(init.cwd).toBeDefined();
       expect(init.uuid).toBe(`init-${init.agent_id}`);
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
 
   test(
@@ -131,7 +131,7 @@ describe("stream-json format", () => {
       // uuid should be otid or id from the Letta SDK chunk
       expect(msg.uuid).toBeTruthy();
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
 
   test(
@@ -156,7 +156,7 @@ describe("stream-json format", () => {
       expect(result.uuid).toContain("result-");
       expect(result.result).toBeDefined();
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
 
   test(
@@ -183,7 +183,7 @@ describe("stream-json format", () => {
       // The event should contain the original Letta SDK chunk
       expect("message_type" in event.event).toBe(true);
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
 
   test(
@@ -217,6 +217,6 @@ describe("stream-json format", () => {
       });
       expect(resultLine).toBeDefined();
     },
-    { timeout: 60000 },
+    { timeout: 120000 },
   );
 });
