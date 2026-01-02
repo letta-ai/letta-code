@@ -1,9 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import type {
+  ControlResponse,
+  ErrorMessage,
+  ResultMessage,
+  StreamEvent,
+  SystemInitMessage,
+  WireMessage,
+} from "../types/wire";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.
- * These verify the SDK can communicate with the CLI via stdin/stdout.
+ * These verify the CLI's wire format for bidirectional communication.
  */
 
 // Prescriptive prompt to ensure single-step response without tool use
@@ -57,7 +65,7 @@ async function runBidirectional(
     let inputIndex = 0;
     const writeNextInput = () => {
       if (inputIndex < inputs.length) {
-        proc.stdin?.write(inputs[inputIndex] + "\n");
+        proc.stdin?.write(`${inputs[inputIndex]}\n`);
         inputIndex++;
         setTimeout(writeNextInput, 1000); // 1s between inputs
       } else {
@@ -108,32 +116,35 @@ describe("input-format stream-json", () => {
   test(
     "initialize control request returns session info",
     async () => {
-      const objects = await runBidirectional([
+      const objects = (await runBidirectional([
         JSON.stringify({
           type: "control_request",
           request_id: "init_1",
           request: { subtype: "initialize" },
         }),
-      ]);
+      ])) as WireMessage[];
 
       // Should have init event
       const initEvent = objects.find(
-        (o: any) => o.type === "system" && o.subtype === "init",
+        (o): o is SystemInitMessage =>
+          o.type === "system" && "subtype" in o && o.subtype === "init",
       );
       expect(initEvent).toBeDefined();
-      expect((initEvent as any).agent_id).toBeDefined();
-      expect((initEvent as any).session_id).toBeDefined();
-      expect((initEvent as any).model).toBeDefined();
-      expect((initEvent as any).tools).toBeInstanceOf(Array);
+      expect(initEvent?.agent_id).toBeDefined();
+      expect(initEvent?.session_id).toBeDefined();
+      expect(initEvent?.model).toBeDefined();
+      expect(initEvent?.tools).toBeInstanceOf(Array);
 
       // Should have control_response
       const controlResponse = objects.find(
-        (o: any) => o.type === "control_response",
+        (o): o is ControlResponse => o.type === "control_response",
       );
       expect(controlResponse).toBeDefined();
-      expect((controlResponse as any).response.subtype).toBe("success");
-      expect((controlResponse as any).response.request_id).toBe("init_1");
-      expect((controlResponse as any).response.response.agent_id).toBeDefined();
+      expect(controlResponse?.response.subtype).toBe("success");
+      expect(controlResponse?.response.request_id).toBe("init_1");
+      if (controlResponse?.response.subtype === "success") {
+        expect(controlResponse.response.response?.agent_id).toBeDefined();
+      }
     },
     { timeout: 30000 },
   );
@@ -141,7 +152,7 @@ describe("input-format stream-json", () => {
   test(
     "user message returns assistant response and result",
     async () => {
-      const objects = await runBidirectional(
+      const objects = (await runBidirectional(
         [
           JSON.stringify({
             type: "user",
@@ -150,41 +161,47 @@ describe("input-format stream-json", () => {
         ],
         [],
         10000,
-      );
+      )) as WireMessage[];
 
       // Should have init event
       const initEvent = objects.find(
-        (o: any) => o.type === "system" && o.subtype === "init",
+        (o): o is SystemInitMessage =>
+          o.type === "system" && "subtype" in o && o.subtype === "init",
       );
       expect(initEvent).toBeDefined();
 
       // Should have message events
-      const messageEvents = objects.filter((o: any) => o.type === "message");
+      const messageEvents = objects.filter(
+        (o): o is WireMessage & { type: "message" } => o.type === "message",
+      );
       expect(messageEvents.length).toBeGreaterThan(0);
 
       // All messages should have session_id
       // uuid is present on content messages (reasoning, assistant) but not meta messages (stop_reason, usage_statistics)
       for (const msg of messageEvents) {
-        expect((msg as any).session_id).toBeDefined();
+        expect(msg.session_id).toBeDefined();
       }
 
       // Content messages should have uuid
       const contentMessages = messageEvents.filter(
-        (m: any) =>
-          m.message_type === "reasoning_message" ||
-          m.message_type === "assistant_message",
+        (m) =>
+          "message_type" in m &&
+          (m.message_type === "reasoning_message" ||
+            m.message_type === "assistant_message"),
       );
       for (const msg of contentMessages) {
-        expect((msg as any).uuid).toBeDefined();
+        expect(msg.uuid).toBeDefined();
       }
 
       // Should have result
-      const result = objects.find((o: any) => o.type === "result");
+      const result = objects.find(
+        (o): o is ResultMessage => o.type === "result",
+      );
       expect(result).toBeDefined();
-      expect((result as any).subtype).toBe("success");
-      expect((result as any).session_id).toBeDefined();
-      expect((result as any).agent_id).toBeDefined();
-      expect((result as any).duration_ms).toBeGreaterThan(0);
+      expect(result?.subtype).toBe("success");
+      expect(result?.session_id).toBeDefined();
+      expect(result?.agent_id).toBeDefined();
+      expect(result?.duration_ms).toBeGreaterThan(0);
     },
     { timeout: 60000 },
   );
@@ -192,7 +209,7 @@ describe("input-format stream-json", () => {
   test(
     "multi-turn conversation maintains context",
     async () => {
-      const objects = await runBidirectional(
+      const objects = (await runBidirectional(
         [
           JSON.stringify({
             type: "user",
@@ -211,23 +228,29 @@ describe("input-format stream-json", () => {
         ],
         [],
         20000,
-      );
+      )) as WireMessage[];
 
       // Should have at least two results (one per turn)
-      const results = objects.filter((o: any) => o.type === "result");
+      const results = objects.filter(
+        (o): o is ResultMessage => o.type === "result",
+      );
       expect(results.length).toBeGreaterThanOrEqual(2);
 
       // Both results should be successful
       for (const result of results) {
-        expect((result as any).subtype).toBe("success");
-        expect((result as any).session_id).toBeDefined();
-        expect((result as any).agent_id).toBeDefined();
+        expect(result.subtype).toBe("success");
+        expect(result.session_id).toBeDefined();
+        expect(result.agent_id).toBeDefined();
       }
 
       // The session_id should be consistent across turns (same agent)
-      const firstSessionId = (results[0] as any).session_id;
-      const lastSessionId = (results[results.length - 1] as any).session_id;
-      expect(firstSessionId).toBe(lastSessionId);
+      const firstResult = results[0];
+      const lastResult = results[results.length - 1];
+      expect(firstResult).toBeDefined();
+      expect(lastResult).toBeDefined();
+      if (firstResult && lastResult) {
+        expect(firstResult.session_id).toBe(lastResult.session_id);
+      }
     },
     { timeout: 120000 },
   );
@@ -235,7 +258,7 @@ describe("input-format stream-json", () => {
   test(
     "interrupt control request is acknowledged",
     async () => {
-      const objects = await runBidirectional(
+      const objects = (await runBidirectional(
         [
           JSON.stringify({
             type: "control_request",
@@ -245,15 +268,15 @@ describe("input-format stream-json", () => {
         ],
         [],
         8000, // Longer wait for CI
-      );
+      )) as WireMessage[];
 
       // Should have control_response for interrupt
       const controlResponse = objects.find(
-        (o: any) =>
+        (o): o is ControlResponse =>
           o.type === "control_response" && o.response?.request_id === "int_1",
       );
       expect(controlResponse).toBeDefined();
-      expect((controlResponse as any).response.subtype).toBe("success");
+      expect(controlResponse?.response.subtype).toBe("success");
     },
     { timeout: 30000 },
   );
@@ -261,7 +284,7 @@ describe("input-format stream-json", () => {
   test(
     "--include-partial-messages emits stream_event in bidirectional mode",
     async () => {
-      const objects = await runBidirectional(
+      const objects = (await runBidirectional(
         [
           JSON.stringify({
             type: "user",
@@ -270,35 +293,38 @@ describe("input-format stream-json", () => {
         ],
         ["--include-partial-messages"],
         10000,
-      );
+      )) as WireMessage[];
 
       // Should have stream_event messages (not just "message" type)
       const streamEvents = objects.filter(
-        (o: any) => o.type === "stream_event",
+        (o): o is StreamEvent => o.type === "stream_event",
       );
       expect(streamEvents.length).toBeGreaterThan(0);
 
       // Each stream_event should have the event payload and session_id
       // uuid is present on content events but not meta events (stop_reason, usage_statistics)
       for (const event of streamEvents) {
-        expect((event as any).event).toBeDefined();
-        expect((event as any).session_id).toBeDefined();
+        expect(event.event).toBeDefined();
+        expect(event.session_id).toBeDefined();
       }
 
       // Content events should have uuid
       const contentEvents = streamEvents.filter(
-        (e: any) =>
-          e.event?.message_type === "reasoning_message" ||
-          e.event?.message_type === "assistant_message",
+        (e) =>
+          "message_type" in e.event &&
+          (e.event.message_type === "reasoning_message" ||
+            e.event.message_type === "assistant_message"),
       );
       for (const event of contentEvents) {
-        expect((event as any).uuid).toBeDefined();
+        expect(event.uuid).toBeDefined();
       }
 
       // Should still have result
-      const result = objects.find((o: any) => o.type === "result");
+      const result = objects.find(
+        (o): o is ResultMessage => o.type === "result",
+      );
       expect(result).toBeDefined();
-      expect((result as any).subtype).toBe("success");
+      expect(result?.subtype).toBe("success");
     },
     { timeout: 60000 },
   );
@@ -306,22 +332,22 @@ describe("input-format stream-json", () => {
   test(
     "unknown control request returns error",
     async () => {
-      const objects = await runBidirectional([
+      const objects = (await runBidirectional([
         JSON.stringify({
           type: "control_request",
           request_id: "unknown_1",
           request: { subtype: "unknown_subtype" },
         }),
-      ]);
+      ])) as WireMessage[];
 
       // Should have control_response with error
       const controlResponse = objects.find(
-        (o: any) =>
+        (o): o is ControlResponse =>
           o.type === "control_response" &&
           o.response?.request_id === "unknown_1",
       );
       expect(controlResponse).toBeDefined();
-      expect((controlResponse as any).response.subtype).toBe("error");
+      expect(controlResponse?.response.subtype).toBe("error");
     },
     { timeout: 30000 },
   );
@@ -330,12 +356,16 @@ describe("input-format stream-json", () => {
     "invalid JSON input returns error message",
     async () => {
       // Use raw string instead of JSON
-      const objects = await runBidirectional(["not valid json"]);
+      const objects = (await runBidirectional([
+        "not valid json",
+      ])) as WireMessage[];
 
       // Should have error message
-      const errorMsg = objects.find((o: any) => o.type === "error");
+      const errorMsg = objects.find(
+        (o): o is ErrorMessage => o.type === "error",
+      );
       expect(errorMsg).toBeDefined();
-      expect((errorMsg as any).message).toContain("Invalid JSON");
+      expect(errorMsg?.message).toContain("Invalid JSON");
     },
     { timeout: 30000 },
   );

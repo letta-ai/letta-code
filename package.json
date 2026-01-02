@@ -12,8 +12,15 @@
     "letta.js",
     "scripts",
     "skills",
-    "vendor"
+    "vendor",
+    "dist/types"
   ],
+  "exports": {
+    ".": "./letta.js",
+    "./wire-types": {
+      "types": "./dist/types/wire.d.ts"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/letta-ai/letta-code.git"
