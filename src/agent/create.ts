@@ -45,8 +45,30 @@ export interface CreateAgentResult {
   provenance: AgentProvenance;
 }
 
+export interface CreateAgentOptions {
+  name?: string;
+  model?: string;
+  embeddingModel?: string;
+  updateArgs?: Record<string, unknown>;
+  skillsDirectory?: string;
+  parallelToolCalls?: boolean;
+  enableSleeptime?: boolean;
+  /** System prompt preset ID (e.g., 'default', 'letta-codex') */
+  systemPromptId?: string;
+  /** Raw system prompt string (mutually exclusive with systemPromptId) */
+  systemPromptCustom?: string;
+  /** Additional text to append to the resolved system prompt */
+  systemPromptAppend?: string;
+  /** Block labels to initialize (from default blocks) */
+  initBlocks?: string[];
+  /** Base tools to include */
+  baseTools?: string[];
+  /** Custom memory blocks (overrides default blocks) */
+  memoryBlocks?: Array<{ label: string; value: string; description?: string }>;
+}
+
 export async function createAgent(
-  name = DEFAULT_AGENT_NAME,
+  nameOrOptions: string | CreateAgentOptions = DEFAULT_AGENT_NAME,
   model?: string,
   embeddingModel = "openai/text-embedding-3-small",
   updateArgs?: Record<string, unknown>,
@@ -57,12 +79,37 @@ export async function createAgent(
   initBlocks?: string[],
   baseTools?: string[],
 ) {
+  // Support both old positional args and new options object
+  let options: CreateAgentOptions;
+  if (typeof nameOrOptions === "object") {
+    options = nameOrOptions;
+  } else {
+    options = {
+      name: nameOrOptions,
+      model,
+      embeddingModel,
+      updateArgs,
+      skillsDirectory,
+      parallelToolCalls,
+      enableSleeptime,
+      systemPromptId,
+      initBlocks,
+      baseTools,
+    };
+  }
+
+  const name = options.name ?? DEFAULT_AGENT_NAME;
+  const embeddingModelVal =
+    options.embeddingModel ?? "openai/text-embedding-3-small";
+  const parallelToolCallsVal = options.parallelToolCalls ?? true;
+  const enableSleeptimeVal = options.enableSleeptime ?? false;
+
   // Resolve model identifier to handle
   let modelHandle: string;
-  if (model) {
-    const resolved = resolveModel(model);
+  if (options.model) {
+    const resolved = resolveModel(options.model);
     if (!resolved) {
-      console.error(`Error: Unknown model "${model}"`);
+      console.error(`Error: Unknown model "${options.model}"`);
       console.error("Available models:");
       console.error(formatAvailableModels());
       process.exit(1);
@@ -79,14 +126,12 @@ export async function createAgent(
   // Map internal names to server names so the agent sees the correct tool names
   const { getServerToolName } = await import("../tools/manager");
   const internalToolNames = getToolNames();
-  const serverToolNames = internalToolNames.map((name) =>
-    getServerToolName(name),
-  );
+  const serverToolNames = internalToolNames.map((n) => getServerToolName(n));
 
   const baseMemoryTool = modelHandle.startsWith("openai/gpt-5")
     ? "memory_apply_patch"
     : "memory";
-  const defaultBaseTools = baseTools ?? [
+  const defaultBaseTools = options.baseTools ?? [
     baseMemoryTool,
     "web_search",
     "conversation_search",
@@ -122,37 +167,54 @@ export async function createAgent(
     }
   }
 
-  // Load memory blocks from .mdx files
-  const defaultMemoryBlocks =
-    initBlocks && initBlocks.length === 0 ? [] : await getDefaultMemoryBlocks();
+  // Determine which memory blocks to use:
+  // 1. If options.memoryBlocks is provided, use those (custom blocks from SDK)
+  // 2. Otherwise, use default blocks filtered by options.initBlocks
+  let filteredMemoryBlocks: Array<{
+    label: string;
+    value: string;
+    description?: string | null;
+    limit?: number;
+  }>;
 
-  // Optional filter: only initialize a subset of memory blocks on creation
-  const allowedBlockLabels = initBlocks
-    ? new Set(
-        initBlocks.map((name) => name.trim()).filter((name) => name.length > 0),
-      )
-    : undefined;
+  if (options.memoryBlocks !== undefined) {
+    // Use custom memory blocks provided via options
+    filteredMemoryBlocks = options.memoryBlocks as typeof filteredMemoryBlocks;
+  } else {
+    // Load memory blocks from .mdx files
+    const defaultMemoryBlocks =
+      options.initBlocks && options.initBlocks.length === 0
+        ? []
+        : await getDefaultMemoryBlocks();
 
-  if (allowedBlockLabels && allowedBlockLabels.size > 0) {
-    const knownLabels = new Set(defaultMemoryBlocks.map((b) => b.label));
-    for (const label of Array.from(allowedBlockLabels)) {
-      if (!knownLabels.has(label)) {
-        console.warn(
-          `Ignoring unknown init block "${label}". Valid blocks: ${Array.from(knownLabels).join(", ")}`,
-        );
-        allowedBlockLabels.delete(label);
+    // Optional filter: only initialize a subset of memory blocks on creation
+    const allowedBlockLabels = options.initBlocks
+      ? new Set(
+          options.initBlocks.map((n) => n.trim()).filter((n) => n.length > 0),
+        )
+      : undefined;
+
+    if (allowedBlockLabels && allowedBlockLabels.size > 0) {
+      const knownLabels = new Set(defaultMemoryBlocks.map((b) => b.label));
+      for (const label of Array.from(allowedBlockLabels)) {
+        if (!knownLabels.has(label)) {
+          console.warn(
+            `Ignoring unknown init block "${label}". Valid blocks: ${Array.from(knownLabels).join(", ")}`,
+          );
+          allowedBlockLabels.delete(label);
+        }
       }
     }
-  }
 
-  const filteredMemoryBlocks =
-    allowedBlockLabels && allowedBlockLabels.size > 0
-      ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
-      : defaultMemoryBlocks;
+    filteredMemoryBlocks =
+      allowedBlockLabels && allowedBlockLabels.size > 0
+        ? defaultMemoryBlocks.filter((b) => allowedBlockLabels.has(b.label))
+        : defaultMemoryBlocks;
+  }
 
   // Resolve absolute path for skills directory
   const resolvedSkillsDirectory =
-    skillsDirectory || join(process.cwd(), SKILLS_DIR);
+    options.skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
   // Discover skills from .skills directory and populate skills memory block
   try {
@@ -202,8 +264,21 @@ export async function createAgent(
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
   const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
 
-  // Resolve system prompt ID to content
-  const systemPromptContent = await resolveSystemPrompt(systemPromptId);
+  // Resolve system prompt content:
+  // 1. If systemPromptCustom is provided, use it as-is
+  // 2. Otherwise, resolve systemPromptId to content
+  // 3. If systemPromptAppend is provided, append it to the result
+  let systemPromptContent: string;
+  if (options.systemPromptCustom) {
+    systemPromptContent = options.systemPromptCustom;
+  } else {
+    systemPromptContent = await resolveSystemPrompt(options.systemPromptId);
+  }
+
+  // Append additional instructions if provided
+  if (options.systemPromptAppend) {
+    systemPromptContent = `${systemPromptContent}\n\n${options.systemPromptAppend}`;
+  }
 
   // Create agent with all block IDs (existing + newly created)
   const tags = ["origin:letta-code"];
@@ -216,7 +291,7 @@ export async function createAgent(
     system: systemPromptContent,
     name,
     description: `Letta Code agent created in ${process.cwd()}`,
-    embedding: embeddingModel,
+    embedding: embeddingModelVal,
     model: modelHandle,
     context_window_limit: contextWindow,
     tools: toolNames,
@@ -226,8 +301,8 @@ export async function createAgent(
     include_base_tools: false,
     include_base_tool_rules: false,
     initial_message_sequence: [],
-    parallel_tool_calls: parallelToolCalls,
-    enable_sleeptime: enableSleeptime,
+    parallel_tool_calls: parallelToolCallsVal,
+    enable_sleeptime: enableSleeptimeVal,
   });
 
   // Note: Preflight check above falls back to 'memory' when 'memory_apply_patch' is unavailable.
@@ -235,8 +310,8 @@ export async function createAgent(
   // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.)
   // We intentionally pass context_window through so updateAgentLLMConfig can set
   // context_window_limit using the latest server API, avoiding any fallback.
-  if (updateArgs && Object.keys(updateArgs).length > 0) {
-    await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+  if (options.updateArgs && Object.keys(options.updateArgs).length > 0) {
+    await updateAgentLLMConfig(agent.id, modelHandle, options.updateArgs);
   }
 
   // Always retrieve the agent to ensure we get the full state with populated memory blocks
@@ -245,7 +320,7 @@ export async function createAgent(
   });
 
   // Update persona block for sleeptime agent
-  if (enableSleeptime && fullAgent.managed_group) {
+  if (enableSleeptimeVal && fullAgent.managed_group) {
     // Find the sleeptime agent in the managed group by checking agent_type
     for (const groupAgentId of fullAgent.managed_group.agent_ids) {
       try {

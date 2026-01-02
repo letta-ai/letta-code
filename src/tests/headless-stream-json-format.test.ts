@@ -4,7 +4,7 @@ import type {
   ResultMessage,
   StreamEvent,
   SystemInitMessage,
-} from "../types/wire";
+} from "../types/protocol";
 
 /**
  * Tests for stream-json output format.

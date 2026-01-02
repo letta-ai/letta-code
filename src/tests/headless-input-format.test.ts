@@ -7,7 +7,7 @@ import type {
   StreamEvent,
   SystemInitMessage,
   WireMessage,
-} from "../types/wire";
+} from "../types/protocol";
 
 /**
  * Tests for --input-format stream-json bidirectional communication.

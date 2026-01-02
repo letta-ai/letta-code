@@ -78,7 +78,7 @@ if (existsSync(bundledSkillsSrc)) {
 // Generate type declarations for wire types export
 console.log("📝 Generating type declarations...");
 await Bun.$`bunx tsc -p tsconfig.types.json`;
-console.log("   Output: dist/types/wire.d.ts");
+console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);

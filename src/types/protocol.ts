@@ -1,9 +1,9 @@
 /**
- * Wire Format Types
+ * Protocol Types for Letta Code
  *
- * These types define the JSON structure emitted by headless.ts when running
- * in stream-json mode. They enable typed consumption of the bidirectional
- * JSON protocol.
+ * These types define:
+ * 1. The JSON structure emitted by headless.ts in stream-json mode (wire protocol)
+ * 2. Configuration types for session options (used internally and by SDK)
  *
  * Design principle: Compose from @letta-ai/letta-client types where possible.
  */
@@ -16,6 +16,7 @@ import type {
   ToolCallMessage as LettaToolCallMessage,
   ToolCall,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ToolReturnMessage as LettaToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 
@@ -26,7 +27,41 @@ export type {
   StopReasonType,
   MessageCreate,
   LettaToolReturnMessage,
+  CreateBlock,
 };
+
+// ═══════════════════════════════════════════════════════════════
+// CONFIGURATION TYPES (session options)
+// Used internally by headless.ts/App.tsx, also exported for SDK
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * System prompt preset configuration.
+ * Use this to select a built-in system prompt with optional appended text.
+ *
+ * Available presets (validated at runtime by CLI):
+ * - 'default' - Standard Letta Code system prompt (Claude-optimized)
+ * - 'legacy' - Original system prompt
+ * - 'letta-codex' - For Codex models
+ * - 'letta-gemini' - For Gemini models
+ * - 'anthropic' - Claude basic (no skills/memory instructions)
+ * - 'codex' - Codex basic (no skills/memory instructions)
+ * - 'gemini' - Gemini basic (no skills/memory instructions)
+ */
+export interface SystemPromptPresetConfig {
+  type: "preset";
+  /** Preset ID (e.g., 'default', 'letta-codex'). Validated at runtime. */
+  preset: string;
+  /** Additional instructions to append to the preset */
+  append?: string;
+}
+
+/**
+ * System prompt configuration - either a raw string or preset config.
+ * - string: Use as the complete system prompt
+ * - SystemPromptPresetConfig: Use a preset, optionally with appended text
+ */
+export type SystemPromptConfig = string | SystemPromptPresetConfig;
 
 // ═══════════════════════════════════════════════════════════════
 // BASE ENVELOPE

@@ -43,7 +43,7 @@ import type {
   RetryMessage,
   StreamEvent,
   SystemInitMessage,
-} from "./types/wire";
+} from "./types/protocol";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -69,6 +69,9 @@ export async function handleHeadlessCommand(
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       system: { type: "string", short: "s" },
+      "system-custom": { type: "string" },
+      "system-append": { type: "string" },
+      "memory-blocks": { type: "string" },
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
@@ -165,6 +168,9 @@ export async function handleHeadlessCommand(
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
   const systemPromptId = values.system as string | undefined;
+  const systemCustom = values["system-custom"] as string | undefined;
+  const systemAppend = values["system-append"] as string | undefined;
+  const memoryBlocksJson = values["memory-blocks"] as string | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -226,6 +232,49 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Validate system prompt options (--system and --system-custom are mutually exclusive)
+  if (systemPromptId && systemCustom) {
+    console.error(
+      "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
+    );
+    process.exit(1);
+  }
+
+  // Parse memory blocks JSON if provided
+  let memoryBlocks:
+    | Array<{ label: string; value: string; description?: string }>
+    | undefined;
+  if (memoryBlocksJson !== undefined) {
+    if (!forceNew) {
+      console.error(
+        "Error: --memory-blocks can only be used together with --new to provide initial memory blocks.",
+      );
+      process.exit(1);
+    }
+    try {
+      memoryBlocks = JSON.parse(memoryBlocksJson);
+      if (!Array.isArray(memoryBlocks)) {
+        throw new Error("memory-blocks must be a JSON array");
+      }
+      // Validate each block has required fields
+      for (const block of memoryBlocks) {
+        if (
+          typeof block.label !== "string" ||
+          typeof block.value !== "string"
+        ) {
+          throw new Error(
+            "Each memory block must have 'label' and 'value' string fields",
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        `Error: Invalid --memory-blocks JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Priority 1: Import from AgentFile template
   if (fromAfFile) {
     const { importAgentFromFile } = await import("./agent/import");
@@ -249,36 +298,27 @@ export async function handleHeadlessCommand(
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
+    const createOptions = {
+      model,
+      updateArgs,
+      skillsDirectory,
+      parallelToolCalls: true,
+      enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
+      systemPromptId,
+      systemPromptCustom: systemCustom,
+      systemPromptAppend: systemAppend,
+      initBlocks,
+      baseTools,
+      memoryBlocks,
+    };
     try {
-      const result = await createAgent(
-        undefined,
-        model,
-        undefined,
-        updateArgs,
-        skillsDirectory,
-        true, // parallelToolCalls always enabled
-        sleeptimeFlag ?? settings.enableSleeptime,
-        systemPromptId,
-        initBlocks,
-        baseTools,
-      );
+      const result = await createAgent(createOptions);
       agent = result.agent;
     } catch (err) {
       if (isToolsNotFoundError(err)) {
         console.warn("Tools missing on server, re-uploading and retrying...");
         await forceUpsertTools(client, baseURL);
-        const result = await createAgent(
-          undefined,
-          model,
-          undefined,
-          updateArgs,
-          skillsDirectory,
-          true,
-          sleeptimeFlag ?? settings.enableSleeptime,
-          systemPromptId,
-          initBlocks,
-          baseTools,
-        );
+        const result = await createAgent(createOptions);
         agent = result.agent;
       } else {
         throw err;
@@ -315,36 +355,23 @@ export async function handleHeadlessCommand(
   // Priority 6: Create a new agent
   if (!agent) {
     const updateArgs = getModelUpdateArgs(model);
+    const createOptions = {
+      model,
+      updateArgs,
+      skillsDirectory,
+      parallelToolCalls: true,
+      enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
+      systemPromptId,
+      // Note: systemCustom, systemAppend, and memoryBlocks only apply with --new flag
+    };
     try {
-      const result = await createAgent(
-        undefined,
-        model,
-        undefined,
-        updateArgs,
-        skillsDirectory,
-        true, // parallelToolCalls always enabled
-        sleeptimeFlag ?? settings.enableSleeptime,
-        systemPromptId,
-        undefined,
-        undefined,
-      );
+      const result = await createAgent(createOptions);
       agent = result.agent;
     } catch (err) {
       if (isToolsNotFoundError(err)) {
         console.warn("Tools missing on server, re-uploading and retrying...");
         await forceUpsertTools(client, baseURL);
-        const result = await createAgent(
-          undefined,
-          model,
-          undefined,
-          updateArgs,
-          skillsDirectory,
-          true,
-          sleeptimeFlag ?? settings.enableSleeptime,
-          systemPromptId,
-          undefined,
-          undefined,
-        );
+        const result = await createAgent(createOptions);
         agent = result.agent;
       } else {
         throw err;
