@@ -81,6 +81,7 @@ import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
+import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
@@ -520,6 +521,99 @@ export default function App({
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
   const currentApprovalContext = approvalContexts[approvalResults.length];
+  const activeApprovalId = currentApproval?.toolCallId ?? null;
+
+  // Build Sets/Maps for three approval states (excluding the active one):
+  // - pendingIds: undecided approvals (index > approvalResults.length)
+  // - queuedIds: decided but not yet executed (index < approvalResults.length)
+  // Used to render appropriate stubs while one approval is active
+  const {
+    pendingIds,
+    queuedIds,
+    approvalMap,
+    stubDescriptions,
+    queuedDecisions,
+  } = useMemo(() => {
+    const pending = new Set<string>();
+    const queued = new Set<string>();
+    const map = new Map<string, ApprovalRequest>();
+    const descriptions = new Map<string, string>();
+    const decisions = new Map<
+      string,
+      { type: "approve" | "deny"; reason?: string }
+    >();
+
+    // Helper to compute stub description - called once per approval during memo
+    const computeStubDescription = (
+      approval: ApprovalRequest,
+    ): string | undefined => {
+      try {
+        const args = JSON.parse(approval.toolArgs || "{}");
+
+        if (
+          isFileEditTool(approval.toolName) ||
+          isFileWriteTool(approval.toolName)
+        ) {
+          return args.file_path || undefined;
+        }
+        if (isShellTool(approval.toolName)) {
+          const cmd =
+            typeof args.command === "string"
+              ? args.command
+              : Array.isArray(args.command)
+                ? args.command.join(" ")
+                : "";
+          return cmd.length > 50 ? `${cmd.slice(0, 50)}...` : cmd || undefined;
+        }
+        if (isPatchTool(approval.toolName)) {
+          return "patch operation";
+        }
+        return undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const activeIndex = approvalResults.length;
+
+    for (let i = 0; i < pendingApprovals.length; i++) {
+      const approval = pendingApprovals[i];
+      if (!approval?.toolCallId || approval.toolCallId === activeApprovalId) {
+        continue;
+      }
+
+      const id = approval.toolCallId;
+      map.set(id, approval);
+
+      const desc = computeStubDescription(approval);
+      if (desc) {
+        descriptions.set(id, desc);
+      }
+
+      if (i < activeIndex) {
+        // Decided but not yet executed
+        queued.add(id);
+        const result = approvalResults[i];
+        if (result) {
+          decisions.set(id, {
+            type: result.type,
+            reason: result.type === "deny" ? result.reason : undefined,
+          });
+        }
+      } else {
+        // Undecided (waiting in queue)
+        pending.add(id);
+      }
+    }
+
+    return {
+      pendingIds: pending,
+      queuedIds: queued,
+      approvalMap: map,
+      stubDescriptions: descriptions,
+      queuedDecisions: decisions,
+    };
+  }, [pendingApprovals, approvalResults, activeApprovalId]);
 
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
@@ -5843,6 +5937,31 @@ Plan file path: ${planFilePath}`;
                         <ReasoningMessage line={ln} />
                       ) : ln.kind === "assistant" ? (
                         <AssistantMessage line={ln} />
+                      ) : ln.kind === "tool_call" &&
+                        ln.toolCallId &&
+                        queuedIds.has(ln.toolCallId) ? (
+                        // Render stub for queued (decided but not executed) approval
+                        <PendingApprovalStub
+                          toolName={
+                            approvalMap.get(ln.toolCallId)?.toolName ||
+                            ln.name ||
+                            "Unknown"
+                          }
+                          description={stubDescriptions.get(ln.toolCallId)}
+                          decision={queuedDecisions.get(ln.toolCallId)}
+                        />
+                      ) : ln.kind === "tool_call" &&
+                        ln.toolCallId &&
+                        pendingIds.has(ln.toolCallId) ? (
+                        // Render stub for pending (undecided) approval
+                        <PendingApprovalStub
+                          toolName={
+                            approvalMap.get(ln.toolCallId)?.toolName ||
+                            ln.name ||
+                            "Unknown"
+                          }
+                          description={stubDescriptions.get(ln.toolCallId)}
+                        />
                       ) : ln.kind === "tool_call" ? (
                         <ToolCallMessage
                           line={ln}
