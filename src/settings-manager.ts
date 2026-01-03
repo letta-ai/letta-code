@@ -29,8 +29,6 @@ export interface Settings {
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
-  // Tool upsert cache: maps serverUrl -> hash of upserted tools
-  toolUpsertHashes?: Record<string, string>;
   // Anthropic OAuth
   anthropicOAuth?: {
     access_token: string;

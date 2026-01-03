@@ -8,7 +8,6 @@ import type {
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
-import { getToolNames } from "../tools/manager";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
@@ -126,13 +125,11 @@ export async function createAgent(
 
   const client = await getClient();
 
-  // Get loaded tool names (tools are already registered with Letta)
-  // Map internal names to server names so the agent sees the correct tool names
-  const { getServerToolName } = await import("../tools/manager");
-  const internalToolNames = getToolNames();
-  const serverToolNames = internalToolNames.map((n) => getServerToolName(n));
-
-  const baseMemoryTool = modelHandle.startsWith("openai/gpt-5")
+  // Only attach server-side tools to the agent.
+  // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
+  // NOT attached to the agent. This is the new pattern - no more stub tool registration.
+  const { isOpenAIModel } = await import("../tools/manager");
+  const baseMemoryTool = isOpenAIModel(modelHandle)
     ? "memory_apply_patch"
     : "memory";
   const defaultBaseTools = options.baseTools ?? [
@@ -142,7 +139,7 @@ export async function createAgent(
     "fetch_webpage",
   ];
 
-  let toolNames = [...serverToolNames, ...defaultBaseTools];
+  let toolNames = [...defaultBaseTools];
 
   // Fallback: if server doesn't have memory_apply_patch, use legacy memory tool
   if (toolNames.includes("memory_apply_patch")) {

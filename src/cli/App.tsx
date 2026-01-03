@@ -36,12 +36,14 @@ import { type PermissionMode, permissionMode } from "../permissions/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
-import type { ToolExecutionResult } from "../tools/manager";
 import {
   analyzeToolApproval,
   checkToolPermission,
   executeTool,
+  isGeminiModel,
+  isOpenAIModel,
   savePermissionRule,
+  type ToolExecutionResult,
 } from "../tools/manager";
 import {
   handleMcpAdd,
@@ -393,8 +395,6 @@ export default function App({
   agentState?: AgentState | null;
   loadingState?:
     | "assembling"
-    | "upserting"
-    | "updating_tools"
     | "importing"
     | "initializing"
     | "checking"
@@ -1075,11 +1075,14 @@ export default function App({
             setCurrentModelId(agentModelHandle || null);
           }
 
-          // Detect current toolset from attached tools
-          const { detectToolsetFromAgent } = await import("../tools/toolset");
-          const detected = await detectToolsetFromAgent(client, agentId);
-          if (detected) {
-            setCurrentToolset(detected);
+          // Derive toolset from agent's model (not persisted, computed on resume)
+          if (agentModelHandle) {
+            const derivedToolset = isOpenAIModel(agentModelHandle)
+              ? "codex"
+              : isGeminiModel(agentModelHandle)
+                ? "gemini"
+                : "default";
+            setCurrentToolset(derivedToolset);
           }
         } catch (error) {
           console.error("Error fetching agent config:", error);
@@ -3343,96 +3346,6 @@ export default function App({
           };
           const argsStr = msg.trim().slice(6).trim();
           handleUnpin(profileCtx, msg, argsStr);
-          return { submitted: true };
-        }
-
-        // Special handling for /link command - attach all Letta Code tools (deprecated)
-        if (msg.trim() === "/link" || msg.trim().startsWith("/link ")) {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Attaching Letta Code tools...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const { linkToolsToAgent } = await import("../agent/modify");
-            const result = await linkToolsToAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed to link tools: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /unlink command - remove all Letta Code tools (deprecated)
-        if (msg.trim() === "/unlink" || msg.trim().startsWith("/unlink ")) {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Removing Letta Code tools...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            const { unlinkToolsFromAgent } = await import("../agent/modify");
-            const result = await unlinkToolsFromAgent(agentId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: result.message,
-              phase: "finished",
-              success: result.success,
-            });
-            refreshDerived();
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed to unlink tools: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            setCommandRunning(false);
-          }
           return { submitted: true };
         }
 

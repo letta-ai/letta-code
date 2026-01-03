@@ -1,9 +1,3 @@
-import { createHash } from "node:crypto";
-import type Letta from "@letta-ai/letta-client";
-import {
-  AuthenticationError,
-  PermissionDeniedError,
-} from "@letta-ai/letta-client";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
@@ -255,33 +249,28 @@ function resolveInternalToolName(name: string): string | undefined {
 }
 
 /**
- * Generates a Python stub for a tool that will be executed client-side.
- * This is registered with Letta so the agent knows about the tool.
+ * ClientTool interface matching the Letta SDK's expected format.
+ * Used when passing client-side tools via the client_tools field.
  */
-function generatePythonStub(
-  name: string,
-  _description: string,
-  schema: JsonSchema,
-): string {
-  const params = (schema.properties ?? {}) as Record<string, JsonSchema>;
-  const required = schema.required ?? [];
+export interface ClientTool {
+  name: string;
+  description?: string | null;
+  parameters?: { [key: string]: unknown } | null;
+}
 
-  // Split parameters into required and optional
-  const allKeys = Object.keys(params);
-  const requiredParams = allKeys.filter((key) => required.includes(key));
-  const optionalParams = allKeys.filter((key) => !required.includes(key));
-
-  // Generate function parameters: required first, then optional with defaults
-  const paramList = [
-    ...requiredParams,
-    ...optionalParams.map((key) => `${key}=None`),
-  ].join(", ");
-
-  return `def ${name}(${paramList}):
-    """Stub method. This tool is executed client-side via the approval flow.
-    """
-    raise Exception("This is a stub tool. Execution should happen on client.")  
-`;
+/**
+ * Get all loaded tools in the format expected by the Letta API's client_tools field.
+ * Maps internal tool names to server-facing names for proper tool invocation.
+ */
+export function getClientToolsFromRegistry(): ClientTool[] {
+  return Array.from(toolRegistry.entries()).map(([name, tool]) => {
+    const serverName = getServerToolName(name);
+    return {
+      name: serverName,
+      description: tool.schema.description,
+      parameters: tool.schema.input_schema,
+    };
+  });
 }
 
 /**
@@ -552,203 +541,6 @@ function injectSubagentsIntoTaskDescription(
   const after = baseDescription.slice(usageIndex);
 
   return `${before}## Available Agents\n\n${agentsSection}\n\n${after}`;
-}
-
-/**
- * Upserts all loaded tools to the Letta server with retry logic.
- * This registers Python stubs so the agent knows about the tools,
- * while actual execution happens client-side via the approval flow.
- *
- * Implements resilient retry logic:
- * - Retries if a single upsert attempt exceeds the per-attempt timeout
- * - Keeps retrying up to 30 seconds total
- * - Uses exponential backoff between retries
- *
- * @param client - Letta client instance
- * @returns Promise that resolves when all tools are registered
- */
-export async function upsertToolsToServer(client: Letta): Promise<void> {
-  const OPERATION_TIMEOUT = 20000; // 20 seconds
-  const MAX_TOTAL_TIME = 30000; // 30 seconds
-  const startTime = Date.now();
-
-  async function attemptUpsert(retryCount: number = 0): Promise<void> {
-    const attemptStartTime = Date.now();
-
-    // Check if we've exceeded total time budget
-    if (Date.now() - startTime > MAX_TOTAL_TIME) {
-      throw new Error(
-        "Tool upserting exceeded maximum time limit (30s). Please check your network connection and try again.",
-      );
-    }
-
-    try {
-      // Create a timeout promise
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(
-            new Error(
-              `Tool upsert operation timed out (${OPERATION_TIMEOUT / 1000}s)`,
-            ),
-          );
-        }, OPERATION_TIMEOUT);
-      });
-
-      // Race the upsert against the timeout
-      const upsertPromise = Promise.all(
-        Array.from(toolRegistry.entries()).map(async ([name, tool]) => {
-          // Get the server-facing tool name (may differ from internal name)
-          const serverName = TOOL_NAME_MAPPINGS[name as ToolName] || name;
-
-          const pythonStub = generatePythonStub(
-            serverName,
-            tool.schema.description,
-            tool.schema.input_schema,
-          );
-
-          // Construct the full JSON schema in Letta's expected format
-          const fullJsonSchema = {
-            name: serverName,
-            description: tool.schema.description,
-            parameters: tool.schema.input_schema,
-          };
-
-          await client.tools.upsert({
-            default_requires_approval: true,
-            source_code: pythonStub,
-            json_schema: fullJsonSchema,
-          });
-        }),
-      );
-
-      await Promise.race([upsertPromise, timeoutPromise]);
-
-      // Success! Operation completed within timeout
-      return;
-    } catch (error) {
-      const elapsed = Date.now() - attemptStartTime;
-      const totalElapsed = Date.now() - startTime;
-
-      // Check if this is an auth error - fail immediately without retrying
-      if (
-        error instanceof AuthenticationError ||
-        error instanceof PermissionDeniedError
-      ) {
-        throw new Error(
-          `Authentication failed. Please check your LETTA_API_KEY.\n` +
-            `Run 'rm ~/.letta/settings.json' and restart to re-authenticate.\n` +
-            `Original error: ${error.message}`,
-        );
-      }
-
-      // If we still have time, retry with exponential backoff
-      if (totalElapsed < MAX_TOTAL_TIME) {
-        const backoffDelay = Math.min(1000 * 2 ** retryCount, 5000); // Max 5s backoff
-        const remainingTime = MAX_TOTAL_TIME - totalElapsed;
-
-        console.error(
-          `Tool upsert attempt ${retryCount + 1} failed after ${elapsed}ms. Retrying in ${backoffDelay}ms... (${Math.round(remainingTime / 1000)}s remaining)`,
-        );
-        console.error(
-          `Error: ${error instanceof Error ? error.message : String(error)}`,
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, backoffDelay));
-        return attemptUpsert(retryCount + 1);
-      }
-
-      // Out of time, throw the error
-      throw error;
-    }
-  }
-
-  await attemptUpsert();
-}
-
-/**
- * Compute a hash of all currently loaded tools for cache invalidation.
- * Includes tool names and schemas to detect any changes.
- */
-export function computeToolsHash(): string {
-  const toolData = Array.from(toolRegistry.entries())
-    .sort(([a], [b]) => a.localeCompare(b)) // deterministic order
-    .map(([name, tool]) => ({
-      name,
-      serverName: getServerToolName(name),
-      schema: tool.schema,
-    }));
-
-  return createHash("sha256")
-    .update(JSON.stringify(toolData))
-    .digest("hex")
-    .slice(0, 16); // short hash is sufficient
-}
-
-/**
- * Upserts tools only if the tool definitions have changed since last upsert.
- * Uses a hash of loaded tools cached in settings to skip redundant upserts.
- *
- * @param client - Letta client instance
- * @param serverUrl - The server URL (used as cache key)
- * @returns true if upsert was performed, false if skipped
- */
-export async function upsertToolsIfNeeded(
-  client: Letta,
-  serverUrl: string,
-): Promise<boolean> {
-  const currentHash = computeToolsHash();
-
-  const { settingsManager } = await import("../settings-manager");
-  const cachedHashes = settingsManager.getSetting("toolUpsertHashes") || {};
-
-  if (cachedHashes[serverUrl] === currentHash) {
-    // Tools unchanged, skip upsert
-    return false;
-  }
-
-  // Perform upsert
-  await upsertToolsToServer(client);
-
-  // Save new hash
-  settingsManager.updateSettings({
-    toolUpsertHashes: { ...cachedHashes, [serverUrl]: currentHash },
-  });
-
-  return true;
-}
-
-/**
- * Force upsert tools by clearing the hash cache for the server.
- * Use this when tools are missing on the server despite the hash matching.
- *
- * @param client - Letta client instance
- * @param serverUrl - The server URL (used as cache key)
- */
-export async function forceUpsertTools(
-  client: Letta,
-  serverUrl: string,
-): Promise<void> {
-  const { settingsManager } = await import("../settings-manager");
-  const cachedHashes = settingsManager.getSetting("toolUpsertHashes") || {};
-
-  // Clear the hash for this server to force re-upsert
-  delete cachedHashes[serverUrl];
-  settingsManager.updateSettings({ toolUpsertHashes: cachedHashes });
-
-  // Now upsert (will always run since hash was cleared)
-  await upsertToolsIfNeeded(client, serverUrl);
-}
-
-/**
- * Check if an error indicates tools are missing on the server.
- * This can happen when the local hash cache is stale (tools were deleted server-side).
- */
-export function isToolsNotFoundError(error: unknown): boolean {
-  if (error && typeof error === "object" && "message" in error) {
-    const message = String((error as { message: string }).message);
-    return message.includes("Tools not found by name");
-  }
-  return false;
 }
 
 /**

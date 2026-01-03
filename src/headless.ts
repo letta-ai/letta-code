@@ -31,11 +31,7 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { settingsManager } from "./settings-manager";
-import {
-  checkToolPermission,
-  forceUpsertTools,
-  isToolsNotFoundError,
-} from "./tools/manager";
+import { checkToolPermission } from "./tools/manager";
 import type {
   AutoApprovalMessage,
   CanUseToolControlRequest,
@@ -93,8 +89,6 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
-      link: { type: "boolean" },
-      unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
@@ -161,12 +155,6 @@ export async function handleHeadlessCommand(
   }
 
   const client = await getClient();
-
-  // Get base URL for tool upsert operations
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -354,19 +342,8 @@ export async function handleHeadlessCommand(
       memoryBlocks,
       blockValues,
     };
-    try {
-      const result = await createAgent(createOptions);
-      agent = result.agent;
-    } catch (err) {
-      if (isToolsNotFoundError(err)) {
-        console.warn("Tools missing on server, re-uploading and retrying...");
-        await forceUpsertTools(client, baseURL);
-        const result = await createAgent(createOptions);
-        agent = result.agent;
-      } else {
-        throw err;
-      }
-    }
+    const result = await createAgent(createOptions);
+    agent = result.agent;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -407,19 +384,8 @@ export async function handleHeadlessCommand(
       systemPromptPreset,
       // Note: systemCustom, systemAppend, and memoryBlocks only apply with --new flag
     };
-    try {
-      const result = await createAgent(createOptions);
-      agent = result.agent;
-    } catch (err) {
-      if (isToolsNotFoundError(err)) {
-        console.warn("Tools missing on server, re-uploading and retrying...");
-        await forceUpsertTools(client, baseURL);
-        const result = await createAgent(createOptions);
-        agent = result.agent;
-      } else {
-        throw err;
-      }
-    }
+    const result = await createAgent(createOptions);
+    agent = result.agent;
   }
 
   // Check if we're resuming an existing agent (not creating a new one)

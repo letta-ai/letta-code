@@ -48,8 +48,6 @@ async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
 
 type LoadingState =
   | "assembling"
-  | "upserting"
-  | "updating_tools"
   | "importing"
   | "initializing"
   | "checking"
@@ -144,10 +142,6 @@ function getLoadingMessage(
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
       return "Assembling tools...";
-    case "upserting":
-      return "Upserting tools...";
-    case "updating_tools":
-      return "Updating tools...";
     case "importing":
       return "Importing agent...";
     case "checking":
