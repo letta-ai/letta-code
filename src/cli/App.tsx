@@ -81,6 +81,7 @@ import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
+import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
@@ -520,6 +521,67 @@ export default function App({
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
   const currentApprovalContext = approvalContexts[approvalResults.length];
+  const activeApprovalId = currentApproval?.toolCallId ?? null;
+
+  // Build a Set/Map of all pending approvals (excluding the active one) for O(1) lookup
+  // Used to render stubs for non-active pending approvals while one is active
+  const { pendingApprovalIds, pendingApprovalMap, stubDescriptions } =
+    useMemo(() => {
+      const ids = new Set<string>();
+      const map = new Map<string, ApprovalRequest>();
+      const descriptions = new Map<string, string>();
+
+      // Helper to compute stub description - called once per approval during memo
+      const computeStubDescription = (
+        approval: ApprovalRequest,
+      ): string | undefined => {
+        try {
+          const args = JSON.parse(approval.toolArgs || "{}");
+
+          if (
+            isFileEditTool(approval.toolName) ||
+            isFileWriteTool(approval.toolName)
+          ) {
+            return args.file_path || undefined;
+          }
+          if (isShellTool(approval.toolName)) {
+            const cmd =
+              typeof args.command === "string"
+                ? args.command
+                : Array.isArray(args.command)
+                  ? args.command.join(" ")
+                  : "";
+            return cmd.length > 50
+              ? `${cmd.slice(0, 50)}...`
+              : cmd || undefined;
+          }
+          if (isPatchTool(approval.toolName)) {
+            return "patch operation";
+          }
+          return undefined;
+        } catch {
+          return undefined;
+        }
+      };
+
+      for (const approval of pendingApprovals) {
+        if (approval.toolCallId && approval.toolCallId !== activeApprovalId) {
+          ids.add(approval.toolCallId);
+          map.set(approval.toolCallId, approval);
+
+          const desc = computeStubDescription(approval);
+          if (desc) {
+            descriptions.set(approval.toolCallId, desc);
+          }
+        }
+      }
+
+      return {
+        pendingApprovalIds: ids,
+        pendingApprovalMap: map,
+        stubDescriptions: descriptions,
+      };
+    }, [pendingApprovals, activeApprovalId]);
 
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
@@ -5843,6 +5905,18 @@ Plan file path: ${planFilePath}`;
                         <ReasoningMessage line={ln} />
                       ) : ln.kind === "assistant" ? (
                         <AssistantMessage line={ln} />
+                      ) : ln.kind === "tool_call" &&
+                        ln.toolCallId &&
+                        pendingApprovalIds.has(ln.toolCallId) ? (
+                        // Render stub for pending (non-active) approval
+                        <PendingApprovalStub
+                          toolName={
+                            pendingApprovalMap.get(ln.toolCallId)?.toolName ||
+                            ln.name ||
+                            "Unknown"
+                          }
+                          description={stubDescriptions.get(ln.toolCallId)}
+                        />
                       ) : ln.kind === "tool_call" ? (
                         <ToolCallMessage
                           line={ln}
