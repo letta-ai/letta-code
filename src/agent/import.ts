@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "./client";
 import { getModelUpdateArgs } from "./model";
-import { linkToolsToAgent, updateAgentLLMConfig } from "./modify";
+import { updateAgentLLMConfig } from "./modify";
 
 export interface ImportAgentOptions {
   filePath: string;
@@ -45,11 +45,11 @@ export async function importAgentFromFile(
   if (options.modelOverride) {
     const updateArgs = getModelUpdateArgs(options.modelOverride);
     await updateAgentLLMConfig(agentId, options.modelOverride, updateArgs);
+    // Ensure the correct memory tool is attached for the new model
+    const { ensureCorrectMemoryTool } = await import("../tools/toolset");
+    await ensureCorrectMemoryTool(agentId, options.modelOverride);
     agent = await client.agents.retrieve(agentId);
   }
-
-  // Link Letta Code tools to the imported agent
-  await linkToolsToAgent(agentId);
 
   return { agent };
 }

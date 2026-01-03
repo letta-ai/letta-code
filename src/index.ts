@@ -12,12 +12,7 @@ import { ProfileSelectionInline } from "./cli/profile-selection";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
-import {
-  forceUpsertTools,
-  isToolsNotFoundError,
-  loadTools,
-  upsertToolsIfNeeded,
-} from "./tools/manager";
+import { loadTools } from "./tools/manager";
 
 // Stable empty array constants to prevent new references on every render
 // These are used as fallbacks when resumeData is null, avoiding the React
@@ -348,8 +343,6 @@ async function main(): Promise<void> {
         "input-format": { type: "string" },
         "include-partial-messages": { type: "boolean" },
         skills: { type: "string" },
-        link: { type: "boolean" },
-        unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
       },
@@ -735,22 +728,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Handle --link and --unlink flags (modify tools before starting session)
-  const shouldLink = values.link as boolean | undefined;
-  const shouldUnlink = values.unlink as boolean | undefined;
-
-  // Validate --link/--unlink flags require --agent
-  // Validate --link/--unlink flags require --agent
-  if (shouldLink || shouldUnlink) {
-    if (!specifiedAgentId) {
-      console.error(
-        `Error: --${shouldLink ? "link" : "unlink"} requires --agent <id>`,
-      );
-      process.exit(1);
-    }
-    // Implementation is in InteractiveSession init()
-  }
-
   if (isHeadless) {
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
     const modelForTools = getModelForToolLoading(
@@ -758,8 +735,6 @@ async function main(): Promise<void> {
       specifiedToolset as "codex" | "default" | undefined,
     );
     await loadTools(modelForTools);
-    const client = await getClient();
-    await upsertToolsIfNeeded(client, baseURL);
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
@@ -814,8 +789,6 @@ async function main(): Promise<void> {
       | "selecting"
       | "selecting_global"
       | "assembling"
-      | "upserting"
-      | "updating_tools"
       | "importing"
       | "initializing"
       | "checking"
@@ -991,59 +964,14 @@ async function main(): Promise<void> {
         // Set resuming state early so loading messages are accurate
         setIsResumingSession(!!resumingAgentId);
 
-        // If resuming an existing agent, load the exact tools attached to it
-        // Otherwise, load a full toolset based on model/toolset preference
-        if (resumingAgentId && !toolset) {
-          try {
-            const { getAttachedLettaTools } = await import("./tools/toolset");
-            const { loadSpecificTools } = await import("./tools/manager");
-            const attachedTools = await getAttachedLettaTools(
-              client,
-              resumingAgentId,
-            );
-            if (attachedTools.length > 0) {
-              // Load only the specific tools attached to this agent
-              await loadSpecificTools(attachedTools);
-            } else {
-              // No Letta Code tools attached, load default based on model
-              const modelForTools = getModelForToolLoading(model, undefined);
-              await loadTools(modelForTools);
-            }
-          } catch {
-            // Detection failed, use model-based default
-            const modelForTools = getModelForToolLoading(model, undefined);
-            await loadTools(modelForTools);
-          }
-        } else {
-          // Creating new agent or explicit toolset specified - load full toolset
-          const modelForTools = getModelForToolLoading(model, toolset);
-          await loadTools(modelForTools);
-        }
-
-        setLoadingState("upserting");
-        await upsertToolsIfNeeded(client, baseURL);
-
-        // Handle --link/--unlink after upserting tools
-        if (shouldLink || shouldUnlink) {
-          if (!agentIdArg) {
-            console.error("Error: --link/--unlink requires --agent <id>");
-            process.exit(1);
-          }
-
-          setLoadingState("updating_tools");
-          const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
-            "./agent/modify"
-          );
-
-          const result = shouldLink
-            ? await linkToolsToAgent(agentIdArg)
-            : await unlinkToolsFromAgent(agentIdArg);
-
-          if (!result.success) {
-            console.error(`✗ ${result.message}`);
-            process.exit(1);
-          }
-        }
+        // Load toolset: use explicit --toolset flag if provided, otherwise derive from model
+        // NOTE: We don't persist toolset per-agent. On resume, toolset is re-derived from model.
+        // If explicit toolset overrides need to persist, see comment in tools/toolset.ts
+        const modelForTools = getModelForToolLoading(
+          model,
+          toolset as "codex" | "default" | undefined,
+        );
+        await loadTools(modelForTools);
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
@@ -1104,47 +1032,20 @@ async function main(): Promise<void> {
         // Priority 3: Check if --new flag was passed - create new agent
         if (!agent && forceNew) {
           const updateArgs = getModelUpdateArgs(model);
-          try {
-            const result = await createAgent(
-              undefined,
-              model,
-              undefined,
-              updateArgs,
-              skillsDirectory,
-              true, // parallelToolCalls always enabled
-              sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptPreset,
-              initBlocks,
-              baseTools,
-            );
-            agent = result.agent;
-            setAgentProvenance(result.provenance);
-          } catch (err) {
-            // Check if tools are missing on server (stale hash cache)
-            if (isToolsNotFoundError(err)) {
-              console.warn(
-                "Tools missing on server, re-uploading and retrying...",
-              );
-              await forceUpsertTools(client, baseURL);
-              // Retry agent creation
-              const result = await createAgent(
-                undefined,
-                model,
-                undefined,
-                updateArgs,
-                skillsDirectory,
-                true,
-                sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptPreset,
-                initBlocks,
-                baseTools,
-              );
-              agent = result.agent;
-              setAgentProvenance(result.provenance);
-            } else {
-              throw err;
-            }
-          }
+          const result = await createAgent(
+            undefined,
+            model,
+            undefined,
+            updateArgs,
+            skillsDirectory,
+            true, // parallelToolCalls always enabled
+            sleeptimeFlag ?? settings.enableSleeptime,
+            systemPromptPreset,
+            initBlocks,
+            baseTools,
+          );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
@@ -1181,47 +1082,20 @@ async function main(): Promise<void> {
         // Priority 7: Create a new agent
         if (!agent) {
           const updateArgs = getModelUpdateArgs(model);
-          try {
-            const result = await createAgent(
-              undefined,
-              model,
-              undefined,
-              updateArgs,
-              skillsDirectory,
-              true, // parallelToolCalls always enabled
-              sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptPreset,
-              undefined,
-              undefined,
-            );
-            agent = result.agent;
-            setAgentProvenance(result.provenance);
-          } catch (err) {
-            // Check if tools are missing on server (stale hash cache)
-            if (isToolsNotFoundError(err)) {
-              console.warn(
-                "Tools missing on server, re-uploading and retrying...",
-              );
-              await forceUpsertTools(client, baseURL);
-              // Retry agent creation
-              const result = await createAgent(
-                undefined,
-                model,
-                undefined,
-                updateArgs,
-                skillsDirectory,
-                true,
-                sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptPreset,
-                undefined,
-                undefined,
-              );
-              agent = result.agent;
-              setAgentProvenance(result.provenance);
-            } else {
-              throw err;
-            }
-          }
+          const result = await createAgent(
+            undefined,
+            model,
+            undefined,
+            updateArgs,
+            skillsDirectory,
+            true, // parallelToolCalls always enabled
+            sleeptimeFlag ?? settings.enableSleeptime,
+            systemPromptPreset,
+            undefined,
+            undefined,
+          );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Ensure local project settings are loaded before updating

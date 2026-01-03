@@ -8,6 +8,7 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { getClientToolsFromRegistry } from "../tools/manager";
 import { getClient } from "./client";
 
 export async function sendMessageStream(
@@ -25,5 +26,6 @@ export async function sendMessageStream(
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
     background: opts.background ?? true,
+    client_tools: getClientToolsFromRegistry(),
   });
 }
