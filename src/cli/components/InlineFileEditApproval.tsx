@@ -398,8 +398,16 @@ export const InlineFileEditApproval = memo(
           <Text dimColor>{dottedLine}</Text>
         </>
       ),
+      // Use primitive values where possible to reduce unnecessary re-renders
       [
-        fileEdit,
+        fileEdit.filePath,
+        fileEdit.content,
+        fileEdit.oldString,
+        fileEdit.newString,
+        fileEdit.replaceAll,
+        fileEdit.patchInput,
+        fileEdit.toolCallId,
+        fileEdit.edits,
         precomputedDiff,
         allDiffs,
         solidLine,
