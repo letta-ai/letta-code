@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { Fragment, memo, useState } from "react";
+import { Fragment, memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
@@ -251,6 +251,43 @@ export const InlineQuestionApproval = memo(
     // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
 
+    // Memoize the static header content so it doesn't re-render on keystroke
+    // This prevents flicker when typing in the custom input field
+    const memoizedHeaderContent = useMemo(
+      () => (
+        <>
+          {/* Top solid line */}
+          <Text dimColor>{solidLine}</Text>
+
+          {/* Header label */}
+          <Text>{currentQuestion?.header}</Text>
+
+          <Box height={1} />
+
+          {/* Question */}
+          <Text bold>{currentQuestion?.question}</Text>
+
+          <Box height={1} />
+
+          {/* Progress indicator for multiple questions */}
+          {questions.length > 1 && (
+            <Box marginBottom={1}>
+              <Text dimColor>
+                Question {currentQuestionIndex + 1} of {questions.length}
+              </Text>
+            </Box>
+          )}
+        </>
+      ),
+      [
+        currentQuestion?.header,
+        currentQuestion?.question,
+        currentQuestionIndex,
+        questions.length,
+        solidLine,
+      ],
+    );
+
     // Hint text based on state - keep consistent to avoid jarring changes
     const hintText = currentQuestion?.multiSelect
       ? "Enter to toggle · Arrow to navigate · Esc to cancel"
@@ -260,27 +297,8 @@ export const InlineQuestionApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Top solid line */}
-        <Text dimColor>{solidLine}</Text>
-
-        {/* Header label */}
-        <Text>{currentQuestion.header}</Text>
-
-        <Box height={1} />
-
-        {/* Question */}
-        <Text bold>{currentQuestion.question}</Text>
-
-        <Box height={1} />
-
-        {/* Progress indicator for multiple questions */}
-        {questions.length > 1 && (
-          <Box marginBottom={1}>
-            <Text dimColor>
-              Question {currentQuestionIndex + 1} of {questions.length}
-            </Text>
-          </Box>
-        )}
+        {/* Static header content - memoized to prevent re-render on keystroke */}
+        {memoizedHeaderContent}
 
         {/* Options - Format: ❯ N. [ ] Label (selector, number, checkbox, label) */}
         <Box flexDirection="column">

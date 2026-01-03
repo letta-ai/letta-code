@@ -282,6 +282,133 @@ export const InlineFileEditApproval = memo(
     const headerText = getHeaderText(fileEdit);
     const diffKind = getDiffKind(fileEdit.toolName);
 
+    // Memoize the static diff content so it doesn't re-render on keystroke
+    // This prevents flicker when typing feedback in the custom input field
+    const memoizedDiffContent = useMemo(
+      () => (
+        <>
+          {/* Top solid line */}
+          <Text dimColor>{solidLine}</Text>
+
+          {/* Header */}
+          <Text bold color={colors.approval.header}>
+            {headerText}
+          </Text>
+
+          {/* Dotted separator before diff content */}
+          <Text dimColor>{dottedLine}</Text>
+
+          {/* Diff preview */}
+          <Box paddingLeft={0}>
+            {fileEdit.patchInput ? (
+              // Render patch operations (can be multiple files)
+              <Box flexDirection="column">
+                {parsePatchOperations(fileEdit.patchInput).map((op, idx) => {
+                  const { relative } = require("node:path");
+                  const cwd = process.cwd();
+                  const relPath = relative(cwd, op.path);
+                  const displayPath = relPath.startsWith("..")
+                    ? op.path
+                    : relPath;
+
+                  // Look up precomputed diff using toolCallId:path key
+                  const diffKey = fileEdit.toolCallId
+                    ? `${fileEdit.toolCallId}:${op.path}`
+                    : undefined;
+                  const opDiff =
+                    diffKey && allDiffs ? allDiffs.get(diffKey) : undefined;
+
+                  if (op.kind === "add") {
+                    return (
+                      <Box key={`patch-add-${op.path}`} flexDirection="column">
+                        {idx > 0 && <Box height={1} />}
+                        <Text dimColor>{displayPath}</Text>
+                        <AdvancedDiffRenderer
+                          precomputed={opDiff}
+                          kind="write"
+                          filePath={op.path}
+                          content={op.content}
+                          showHeader={false}
+                        />
+                      </Box>
+                    );
+                  } else if (op.kind === "update") {
+                    return (
+                      <Box
+                        key={`patch-update-${op.path}`}
+                        flexDirection="column"
+                      >
+                        {idx > 0 && <Box height={1} />}
+                        <Text dimColor>{displayPath}</Text>
+                        <AdvancedDiffRenderer
+                          precomputed={opDiff}
+                          kind="edit"
+                          filePath={op.path}
+                          oldString={op.oldString}
+                          newString={op.newString}
+                          showHeader={false}
+                        />
+                      </Box>
+                    );
+                  } else if (op.kind === "delete") {
+                    return (
+                      <Box
+                        key={`patch-delete-${op.path}`}
+                        flexDirection="column"
+                      >
+                        {idx > 0 && <Box height={1} />}
+                        <Text dimColor>{displayPath}</Text>
+                        <Text color="red">File will be deleted</Text>
+                      </Box>
+                    );
+                  }
+                  return null;
+                })}
+              </Box>
+            ) : diffKind === "write" ? (
+              <AdvancedDiffRenderer
+                precomputed={precomputedDiff}
+                kind="write"
+                filePath={fileEdit.filePath}
+                content={fileEdit.content || ""}
+                showHeader={false}
+              />
+            ) : diffKind === "multi_edit" ? (
+              <AdvancedDiffRenderer
+                precomputed={precomputedDiff}
+                kind="multi_edit"
+                filePath={fileEdit.filePath}
+                edits={fileEdit.edits || []}
+                showHeader={false}
+              />
+            ) : (
+              <AdvancedDiffRenderer
+                precomputed={precomputedDiff}
+                kind="edit"
+                filePath={fileEdit.filePath}
+                oldString={fileEdit.oldString || ""}
+                newString={fileEdit.newString || ""}
+                replaceAll={fileEdit.replaceAll}
+                showHeader={false}
+              />
+            )}
+          </Box>
+
+          {/* Dotted separator after diff content */}
+          <Text dimColor>{dottedLine}</Text>
+        </>
+      ),
+      [
+        fileEdit,
+        precomputedDiff,
+        allDiffs,
+        solidLine,
+        dottedLine,
+        headerText,
+        diffKind,
+      ],
+    );
+
     // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
@@ -291,109 +418,8 @@ export const InlineFileEditApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Top solid line */}
-        <Text dimColor>{solidLine}</Text>
-
-        {/* Header */}
-        <Text bold color={colors.approval.header}>
-          {headerText}
-        </Text>
-
-        {/* Dotted separator before diff content */}
-        <Text dimColor>{dottedLine}</Text>
-
-        {/* Diff preview */}
-        <Box paddingLeft={0}>
-          {fileEdit.patchInput ? (
-            // Render patch operations (can be multiple files)
-            <Box flexDirection="column">
-              {parsePatchOperations(fileEdit.patchInput).map((op, idx) => {
-                const { relative } = require("node:path");
-                const cwd = process.cwd();
-                const relPath = relative(cwd, op.path);
-                const displayPath = relPath.startsWith("..")
-                  ? op.path
-                  : relPath;
-
-                // Look up precomputed diff using toolCallId:path key
-                const diffKey = fileEdit.toolCallId
-                  ? `${fileEdit.toolCallId}:${op.path}`
-                  : undefined;
-                const opDiff =
-                  diffKey && allDiffs ? allDiffs.get(diffKey) : undefined;
-
-                if (op.kind === "add") {
-                  return (
-                    <Box key={`patch-add-${op.path}`} flexDirection="column">
-                      {idx > 0 && <Box height={1} />}
-                      <Text dimColor>{displayPath}</Text>
-                      <AdvancedDiffRenderer
-                        precomputed={opDiff}
-                        kind="write"
-                        filePath={op.path}
-                        content={op.content}
-                        showHeader={false}
-                      />
-                    </Box>
-                  );
-                } else if (op.kind === "update") {
-                  return (
-                    <Box key={`patch-update-${op.path}`} flexDirection="column">
-                      {idx > 0 && <Box height={1} />}
-                      <Text dimColor>{displayPath}</Text>
-                      <AdvancedDiffRenderer
-                        precomputed={opDiff}
-                        kind="edit"
-                        filePath={op.path}
-                        oldString={op.oldString}
-                        newString={op.newString}
-                        showHeader={false}
-                      />
-                    </Box>
-                  );
-                } else if (op.kind === "delete") {
-                  return (
-                    <Box key={`patch-delete-${op.path}`} flexDirection="column">
-                      {idx > 0 && <Box height={1} />}
-                      <Text dimColor>{displayPath}</Text>
-                      <Text color="red">File will be deleted</Text>
-                    </Box>
-                  );
-                }
-                return null;
-              })}
-            </Box>
-          ) : diffKind === "write" ? (
-            <AdvancedDiffRenderer
-              precomputed={precomputedDiff}
-              kind="write"
-              filePath={fileEdit.filePath}
-              content={fileEdit.content || ""}
-              showHeader={false}
-            />
-          ) : diffKind === "multi_edit" ? (
-            <AdvancedDiffRenderer
-              precomputed={precomputedDiff}
-              kind="multi_edit"
-              filePath={fileEdit.filePath}
-              edits={fileEdit.edits || []}
-              showHeader={false}
-            />
-          ) : (
-            <AdvancedDiffRenderer
-              precomputed={precomputedDiff}
-              kind="edit"
-              filePath={fileEdit.filePath}
-              oldString={fileEdit.oldString || ""}
-              newString={fileEdit.newString || ""}
-              replaceAll={fileEdit.replaceAll}
-              showHeader={false}
-            />
-          )}
-        </Box>
-
-        {/* Dotted separator after diff content */}
-        <Text dimColor>{dottedLine}</Text>
+        {/* Static diff content - memoized to prevent re-render on keystroke */}
+        {memoizedDiffContent}
 
         {/* Options */}
         <Box marginTop={1} flexDirection="column">

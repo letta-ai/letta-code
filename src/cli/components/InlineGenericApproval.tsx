@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
@@ -131,6 +131,30 @@ export const InlineGenericApproval = memo(
     const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
     const formattedArgs = formatArgs(toolArgs);
 
+    // Memoize the static tool content so it doesn't re-render on keystroke
+    // This prevents flicker when typing feedback in the custom input field
+    const memoizedToolContent = useMemo(
+      () => (
+        <>
+          {/* Top solid line */}
+          <Text dimColor>{solidLine}</Text>
+
+          {/* Header */}
+          <Text bold color={colors.approval.header}>
+            Run {toolName}?
+          </Text>
+
+          <Box height={1} />
+
+          {/* Arguments preview */}
+          <Box paddingLeft={2} flexDirection="column">
+            <Text dimColor>{formattedArgs}</Text>
+          </Box>
+        </>
+      ),
+      [toolName, formattedArgs, solidLine],
+    );
+
     // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
@@ -140,20 +164,8 @@ export const InlineGenericApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Top solid line */}
-        <Text dimColor>{solidLine}</Text>
-
-        {/* Header */}
-        <Text bold color={colors.approval.header}>
-          Run {toolName}?
-        </Text>
-
-        <Box height={1} />
-
-        {/* Arguments preview */}
-        <Box paddingLeft={2} flexDirection="column">
-          <Text dimColor>{formattedArgs}</Text>
-        </Box>
+        {/* Static tool content - memoized to prevent re-render on keystroke */}
+        {memoizedToolContent}
 
         {/* Options */}
         <Box marginTop={1} flexDirection="column">
