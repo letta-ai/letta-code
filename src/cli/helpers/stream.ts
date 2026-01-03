@@ -56,12 +56,22 @@ export async function drainStream(
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
 
+  // Capture the abort generation at stream start to detect if handleInterrupt ran
+  const startAbortGen = buffers.abortGeneration || 0;
+
   // Set up abort listener to propagate our signal to SDK's stream controller
   // This immediately cancels the HTTP request instead of waiting for next chunk
   const abortHandler = () => {
     abortedViaListener = true;
     // Abort the SDK's stream controller to cancel the underlying HTTP request
-    if (stream.controller && !stream.controller.signal.aborted) {
+    if (!stream.controller) {
+      debugWarn(
+        "drainStream",
+        "stream.controller is undefined - cannot abort HTTP request",
+      );
+      return;
+    }
+    if (!stream.controller.signal.aborted) {
       stream.controller.abort();
     }
   };
@@ -79,6 +89,15 @@ export async function drainStream(
   try {
     for await (const chunk of stream) {
       // console.log("chunk", chunk);
+
+      // Check if abort generation changed (handleInterrupt ran while we were waiting)
+      // This catches cases where the abort signal might not propagate correctly
+      if ((buffers.abortGeneration || 0) !== startAbortGen) {
+        stopReason = "cancelled";
+        // Don't call markIncompleteToolsAsCancelled - handleInterrupt already did
+        queueMicrotask(refresh);
+        break;
+      }
 
       // Check if stream was aborted
       if (abortSignal?.aborted) {
@@ -321,11 +340,14 @@ export async function drainStreamWithResume(
   );
 
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
+  // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
+  // undefined abortSignal from accidentally allowing resume after user cancellation)
   if (
     result.stopReason === "error" &&
     result.lastRunId &&
     result.lastSeqId !== null &&
-    !abortSignal?.aborted
+    abortSignal &&
+    !abortSignal.aborted
   ) {
     // Preserve the original error in case resume fails
     const originalFallbackError = result.fallbackError;
