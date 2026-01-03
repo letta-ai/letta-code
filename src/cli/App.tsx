@@ -1671,29 +1671,33 @@ export default function App({
           }
 
           // Unexpected stop reason (error, llm_api_error, etc.)
-          // Check for approval desync errors even if stop_reason isn't llm_api_error.
+          // Cache desync detection and last failure for consistent handling
           const isApprovalPayload =
             currentInput.length === 1 && currentInput[0]?.type === "approval";
 
-          const approvalDesyncDetected = async () => {
-            // 1) Check run metadata
-            const detailFromRun = await fetchRunErrorDetail(lastRunId);
-            if (isApprovalStateDesyncError(detailFromRun)) return true;
-
-            // 2) Check the most recent streamed error line in this turn
-            for (let i = buffersRef.current.order.length - 1; i >= 0; i -= 1) {
-              const id = buffersRef.current.order[i];
-              if (!id) continue;
-              const entry = buffersRef.current.byId.get(id);
-              if (entry?.kind === "error") {
-                return isApprovalStateDesyncError(entry.text);
-              }
+          // Capture the most recent error text in this turn (if any)
+          let latestErrorText: string | null = null;
+          for (let i = buffersRef.current.order.length - 1; i >= 0; i -= 1) {
+            const id = buffersRef.current.order[i];
+            if (!id) continue;
+            const entry = buffersRef.current.byId.get(id);
+            if (entry?.kind === "error" && typeof entry.text === "string") {
+              latestErrorText = entry.text;
+              break;
             }
-            return false;
-          };
+          }
 
-          if (isApprovalPayload && (await approvalDesyncDetected())) {
-            // Limit how many times we try this recovery to avoid loops
+          // Detect approval desync once per turn
+          const detailFromRun = await fetchRunErrorDetail(lastRunId);
+          const desyncDetected =
+            isApprovalStateDesyncError(detailFromRun) ||
+            isApprovalStateDesyncError(latestErrorText);
+
+          // Track last failure info so we can emit it if retries stop
+          const lastFailureMessage = latestErrorText || detailFromRun || null;
+
+          // Check for approval desync errors even if stop_reason isn't llm_api_error.
+          if (isApprovalPayload && desyncDetected) {
             if (llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES) {
               llmApiErrorRetriesRef.current += 1;
               const statusId = uid("status");
@@ -1721,6 +1725,16 @@ export default function App({
               refreshDerived();
               continue;
             }
+
+            // No retries left: emit the failure and exit
+            const errorToShow =
+              lastFailureMessage ||
+              `An error occurred during agent execution\n(run_id: ${lastRunId ?? "unknown"}, stop_reason: ${stopReasonToHandle})`;
+            appendError(errorToShow, true);
+            setStreaming(false);
+            sendDesktopNotification();
+            refreshDerived();
+            return;
           }
 
           // Check if this is a retriable error (transient LLM API error)

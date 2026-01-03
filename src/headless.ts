@@ -1132,12 +1132,40 @@ export async function handleHeadlessCommand(
         continue;
       }
 
+      // Cache latest error text for this turn
+      let latestErrorText: string | null = null;
+      const linesForTurn = toLines(buffers);
+      for (let i = linesForTurn.length - 1; i >= 0; i -= 1) {
+        const line = linesForTurn[i];
+        if (
+          line?.kind === "error" &&
+          "text" in line &&
+          typeof line.text === "string"
+        ) {
+          latestErrorText = line.text;
+          break;
+        }
+      }
+
+      // Detect approval desync once per turn
+      const detailFromRun = await fetchRunErrorDetail(lastRunId);
+      const approvalDesynced =
+        currentInput.length === 1 &&
+        currentInput[0]?.type === "approval" &&
+        (isApprovalStateDesyncError(detailFromRun) ||
+          isApprovalStateDesyncError(latestErrorText));
+
+      // Track last failure text for emitting on exit
+      const lastFailureText =
+        latestErrorText ||
+        detailFromRun ||
+        (lastRunId
+          ? `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
+          : `An error occurred during agent execution\n(stop_reason: ${stopReason})`);
+
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
-        const shouldUseApprovalRecovery =
-          currentInput.length === 1 &&
-          currentInput[0]?.type === "approval" &&
-          isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId));
+        const shouldUseApprovalRecovery = approvalDesynced;
 
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
@@ -1180,54 +1208,51 @@ export async function handleHeadlessCommand(
 
       // Fallback: if we were sending only approvals and hit an internal error that
       // says there is no pending approval, resend using the keep-alive recovery prompt.
-      const isApprovalPayload =
-        currentInput.length === 1 && currentInput[0]?.type === "approval";
-      const approvalDesynced =
-        isApprovalPayload &&
-        (isApprovalStateDesyncError(await fetchRunErrorDetail(lastRunId)) ||
-          (() => {
-            const lines = toLines(buffers);
-            for (let i = lines.length - 1; i >= 0; i -= 1) {
-              const line = lines[i];
-              if (!line) continue;
-              if (
-                line.kind === "error" &&
-                "text" in line &&
-                typeof line.text === "string"
-              ) {
-                return isApprovalStateDesyncError(line.text ?? null);
-              }
-            }
-            return false;
-          })());
+      if (approvalDesynced) {
+        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          llmApiErrorRetries += 1;
 
-      if (approvalDesynced && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-        llmApiErrorRetries += 1;
+          const retryReason = stopReason ?? "error";
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: retryReason,
+              attempt: llmApiErrorRetries,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: 0,
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            console.error(
+              "Approval state desynced; resending keep-alive recovery prompt...",
+            );
+          }
 
-        const retryReason = stopReason ?? "error";
-        if (outputFormat === "stream-json") {
-          const retryMsg: RetryMessage = {
-            type: "retry",
-            reason: retryReason,
-            attempt: llmApiErrorRetries,
-            max_attempts: LLM_API_ERROR_MAX_RETRIES,
-            delay_ms: 0,
-            run_id: lastRunId ?? undefined,
-            session_id: sessionId,
-            uuid: `retry-${lastRunId || crypto.randomUUID()}`,
-          };
-          console.log(JSON.stringify(retryMsg));
-        } else {
-          console.error(
-            "Approval state desynced; resending keep-alive recovery prompt...",
-          );
+          // Small pause to avoid rapid-fire retries
+          await new Promise((resolve) => setTimeout(resolve, 250));
+
+          currentInput = [buildApprovalRecoveryMessage()];
+          continue;
         }
 
-        // Small pause to avoid rapid-fire retries
-        await new Promise((resolve) => setTimeout(resolve, 250));
-
-        currentInput = [buildApprovalRecoveryMessage()];
-        continue;
+        // No retries left or non-retriable: emit error and exit
+        if (outputFormat === "stream-json") {
+          const errorMsg: ErrorMessage = {
+            type: "error",
+            message: lastFailureText,
+            stop_reason: stopReason,
+            run_id: lastRunId ?? undefined,
+            session_id: sessionId,
+            uuid: `error-${lastRunId || crypto.randomUUID()}`,
+          };
+          console.log(JSON.stringify(errorMsg));
+        } else {
+          console.error(lastFailureText);
+        }
+        process.exit(1);
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
