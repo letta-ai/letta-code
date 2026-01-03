@@ -116,10 +116,12 @@ async function runBidirectional(
         // Check for result message
         if (obj.type === "result") {
           userResultsReceived++;
-          // If more inputs to send, send next
+          // If more inputs to send, send next after a brief delay
+          // This gives the CLI time to be ready for the next input
           if (inputIndex < inputs.length) {
-            sendNextInput();
+            setTimeout(sendNextInput, 200);
           }
+          // Always check if we should close (might have received all expected results)
           maybeClose();
         }
 
@@ -149,8 +151,9 @@ async function runBidirectional(
       }
     });
 
-    proc.stderr?.on("data", (_data) => {
-      // Ignore stderr for now
+    let stderr = "";
+    proc.stderr?.on("data", (data) => {
+      stderr += data.toString();
     });
 
     proc.on("close", (code) => {
@@ -159,9 +162,25 @@ async function runBidirectional(
         processLine(buffer);
       }
 
+      // Check if we got enough results
+      const gotExpectedResults =
+        userResultsReceived >= expectedUserResults &&
+        controlResponsesReceived >= expectedControlResponses;
+
       if (objects.length === 0 && code !== 0) {
         reject(
-          new Error(`Process exited with code ${code}, no output received`),
+          new Error(
+            `Process exited with code ${code}, no output received. stderr: ${stderr}`,
+          ),
+        );
+      } else if (!gotExpectedResults && code !== 0) {
+        reject(
+          new Error(
+            `Process exited with code ${code} before all results received. ` +
+              `Got ${userResultsReceived}/${expectedUserResults} user results, ` +
+              `${controlResponsesReceived}/${expectedControlResponses} control responses. ` +
+              `inputIndex: ${inputIndex}, initReceived: ${initReceived}. stderr: ${stderr}`,
+          ),
         );
       } else {
         resolve(objects);
