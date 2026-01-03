@@ -20,8 +20,9 @@ export async function sendMessageStream(
   } = { streamTokens: true, background: true },
 ): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
-  return client.agents.messages.stream(agentId, {
+  return client.agents.messages.create(agentId, {
     messages: messages,
+    streaming: true,
     stream_tokens: opts.streamTokens ?? true,
     background: opts.background ?? true,
   });
