@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -109,6 +109,32 @@ export const InlinePlanApproval = memo(
     const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns - 2, 10));
 
+    // Memoize the static plan content so it doesn't re-render on keystroke
+    // This prevents flicker when typing feedback in the custom input field
+    const memoizedPlanContent = useMemo(
+      () => (
+        <>
+          {/* Top solid line */}
+          <Text dimColor>{solidLine}</Text>
+
+          {/* Header */}
+          <Text bold color={colors.approval.header}>
+            Ready to code? Here is your plan:
+          </Text>
+
+          {/* Dotted separator before plan content */}
+          <Text dimColor>{dottedLine}</Text>
+
+          {/* Plan content - no indentation, just like Claude Code */}
+          <MarkdownDisplay text={plan} />
+
+          {/* Dotted separator after plan content */}
+          <Text dimColor>{dottedLine}</Text>
+        </>
+      ),
+      [plan, solidLine, dottedLine],
+    );
+
     // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
@@ -118,22 +144,8 @@ export const InlinePlanApproval = memo(
 
     return (
       <Box flexDirection="column" marginTop={1}>
-        {/* Top solid line */}
-        <Text dimColor>{solidLine}</Text>
-
-        {/* Header */}
-        <Text bold color={colors.approval.header}>
-          Ready to code? Here is your plan:
-        </Text>
-
-        {/* Dotted separator before plan content */}
-        <Text dimColor>{dottedLine}</Text>
-
-        {/* Plan content - no indentation, just like Claude Code */}
-        <MarkdownDisplay text={plan} />
-
-        {/* Dotted separator after plan content */}
-        <Text dimColor>{dottedLine}</Text>
+        {/* Static plan content - memoized to prevent re-render on keystroke */}
+        {memoizedPlanContent}
 
         {/* Question */}
         <Box marginTop={1}>

@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
@@ -121,6 +121,33 @@ export const InlineBashApproval = memo(
 
     const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
 
+    // Memoize the static command content so it doesn't re-render on keystroke
+    // This prevents flicker when typing feedback in the custom input field
+    const memoizedCommandContent = useMemo(
+      () => (
+        <>
+          {/* Top solid line */}
+          <Text dimColor>{solidLine}</Text>
+
+          {/* Header */}
+          <Text bold color={colors.approval.header}>
+            Run this command?
+          </Text>
+
+          <Box height={1} />
+
+          {/* Command preview */}
+          <Box paddingLeft={2} flexDirection="column">
+            <Text>{bashInfo.command}</Text>
+            {bashInfo.description && (
+              <Text dimColor>{bashInfo.description}</Text>
+            )}
+          </Box>
+        </>
+      ),
+      [bashInfo.command, bashInfo.description, solidLine],
+    );
+
     // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
@@ -130,21 +157,8 @@ export const InlineBashApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Top solid line */}
-        <Text dimColor>{solidLine}</Text>
-
-        {/* Header */}
-        <Text bold color={colors.approval.header}>
-          Run this command?
-        </Text>
-
-        <Box height={1} />
-
-        {/* Command preview */}
-        <Box paddingLeft={2} flexDirection="column">
-          <Text>{bashInfo.command}</Text>
-          {bashInfo.description && <Text dimColor>{bashInfo.description}</Text>}
-        </Box>
+        {/* Static command content - memoized to prevent re-render on keystroke */}
+        {memoizedCommandContent}
 
         {/* Options */}
         <Box marginTop={1} flexDirection="column">
