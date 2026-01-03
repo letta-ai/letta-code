@@ -73,6 +73,7 @@ export type Buffers = {
   pendingRefresh?: boolean; // Track throttled refresh state
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
+  abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -92,6 +93,7 @@ export function createBuffers(): Buffers {
     toolCallIdToLineId: new Map(),
     lastOtid: null,
     commitGeneration: 0,
+    abortGeneration: 0,
     usage: {
       promptTokens: 0,
       completionTokens: 0,

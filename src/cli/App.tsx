@@ -2051,13 +2051,37 @@ export default function App({
   }, []);
 
   const handleInterrupt = useCallback(async () => {
-    // If we're executing client-side tools, abort them locally instead of hitting the backend
-    // Don't show "Stream interrupted" banner - the tool result will show "Interrupted by user"
+    // If we're executing client-side tools, abort them AND the main stream
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
+
+      // ALSO abort the main stream - don't leave it running
+      buffersRef.current.abortGeneration =
+        (buffersRef.current.abortGeneration || 0) + 1;
+      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+
+      // Show interrupt feedback (yellow message if no tools were cancelled)
+      if (!toolsCancelled) {
+        appendError("Stream interrupted by user", true);
+      }
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+
+      userCancelledRef.current = true; // Prevent dequeue
       setStreaming(false);
       setIsExecutingTool(false);
       refreshDerived();
+
+      // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
+      // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
+      // batched state updates have been fully processed before we allow the dequeue effect.
+      setTimeout(() => {
+        userCancelledRef.current = false;
+      }, 50);
+
       return;
     }
 
@@ -2074,7 +2098,13 @@ export default function App({
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 
-      // Abort the stream via abort signal
+      // Set interrupted flag FIRST, before abort() triggers any async work.
+      // This ensures onChunk and other guards see interrupted=true immediately.
+      buffersRef.current.abortGeneration =
+        (buffersRef.current.abortGeneration || 0) + 1;
+      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+
+      // NOW abort the stream - interrupted flag is already set
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
@@ -2086,7 +2116,6 @@ export default function App({
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
-      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
       if (!toolsCancelled) {
         appendError("Stream interrupted by user", true);
       }
@@ -2108,13 +2137,13 @@ export default function App({
         });
 
       // Reset cancellation flags after cleanup is complete.
-      // This allows the dequeue effect to process any queued messages.
-      // We use setTimeout to ensure React state updates (setStreaming, etc.)
-      // have been processed before the dequeue effect runs.
+      // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
+      // the streaming=false state before we allow the dequeue effect to start a new conversation.
+      // This prevents the "Maximum update depth exceeded" infinite render loop.
       setTimeout(() => {
         userCancelledRef.current = false;
         setInterruptRequested(false);
-      }, 0);
+      }, 50);
 
       return;
     } else {
