@@ -284,6 +284,7 @@ export const InlineFileEditApproval = memo(
 
     // Memoize the static diff content so it doesn't re-render on keystroke
     // This prevents flicker when typing feedback in the custom input field
+    // biome-ignore lint/correctness/useExhaustiveDependencies: JSON.stringify(fileEdit.edits) provides stable value comparison for arrays
     const memoizedDiffContent = useMemo(
       () => (
         <>
@@ -398,7 +399,8 @@ export const InlineFileEditApproval = memo(
           <Text dimColor>{dottedLine}</Text>
         </>
       ),
-      // Use primitive values where possible to reduce unnecessary re-renders
+      // Use primitive values to avoid memo invalidation when parent re-renders.
+      // Arrays/objects are compared by reference, so we stringify edits for stable comparison.
       [
         fileEdit.filePath,
         fileEdit.content,
@@ -407,7 +409,7 @@ export const InlineFileEditApproval = memo(
         fileEdit.replaceAll,
         fileEdit.patchInput,
         fileEdit.toolCallId,
-        fileEdit.edits,
+        JSON.stringify(fileEdit.edits),
         precomputedDiff,
         allDiffs,
         solidLine,
