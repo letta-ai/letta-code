@@ -1,9 +1,9 @@
 ---
-name: agent-finder
+name: finding-agents
 description: Find other agents on the same server. Use when the user asks about other agents, wants to migrate memory from another agent, or needs to find an agent by name or tags.
 ---
 
-# Agent Finder
+# Finding Agents
 
 This skill helps you find other agents on the same Letta server.
 

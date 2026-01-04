@@ -1,10 +1,10 @@
 /**
- * Tests for the bundled agent-finder scripts
+ * Tests for the bundled finding-agents scripts
  */
 
 import { describe, expect, mock, test } from "bun:test";
 import type Letta from "@letta-ai/letta-client";
-import { findAgents } from "../../skills/builtin/agent-finder/scripts/find-agents";
+import { findAgents } from "../../skills/builtin/finding-agents/scripts/find-agents";
 
 // Mock data
 const mockAgentsResponse = [
