@@ -31,6 +31,26 @@ npx ts-node scripts/find-agents.ts [options]
 | `--include-blocks` | Include agent.blocks in response |
 | `--limit <n>` | Max results (default: 20) |
 
+## Common Patterns
+
+### Finding Letta Code Agents
+
+Agents created by Letta Code are tagged with `origin:letta-code`. To find only Letta Code agents:
+
+```bash
+npx ts-node scripts/find-agents.ts --tags "origin:letta-code"
+```
+
+This is useful when the user is looking for agents they've worked with in Letta Code CLI sessions.
+
+### Finding All Agents
+
+If the user has agents created outside Letta Code (via ADE, SDK, etc.), search without the tag filter:
+
+```bash
+npx ts-node scripts/find-agents.ts
+```
+
 ## Examples
 
 **List all agents (up to 20):**
@@ -48,7 +68,7 @@ npx ts-node scripts/find-agents.ts --name "ProjectX-v1"
 npx ts-node scripts/find-agents.ts --query "project"
 ```
 
-**Find Letta Code agents:**
+**Find only Letta Code agents:**
 ```bash
 npx ts-node scripts/find-agents.ts --tags "origin:letta-code"
 ```
