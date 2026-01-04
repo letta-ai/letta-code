@@ -44,15 +44,11 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
 
 ## Workflow
 
-### Step 1: List Available Agents
+### Step 1: Identify Source Agent
 
-Find the source agent you want to migrate from:
+Ask the user for the source agent's ID (e.g., `agent-abc123`).
 
-```bash
-npx ts-node scripts/list-agents.ts
-```
-
-This outputs all agents you have access to with their IDs and names.
+Example: "What's the ID of the agent you want to migrate memory from?"
 
 ### Step 2: View Source Agent's Blocks
 
@@ -90,7 +86,6 @@ All scripts are located in the `scripts/` directory and output raw API responses
 
 | Script | Purpose | Args |
 |--------|---------|------|
-| `list-agents.ts` | List all accessible agents | (none) |
 | `get-agent-blocks.ts` | Get blocks from an agent | `--agent-id` |
 | `copy-block.ts` | Copy block to current agent | `--block-id`, optional `--label` |
 | `attach-block.ts` | Attach existing block to current agent | `--block-id`, optional `--read-only` |
@@ -108,11 +103,8 @@ You can also make direct API calls using the Letta SDK if you have the API key a
 
 Scenario: You're a new agent and want to inherit memory from an existing agent "ProjectX-v1".
 
-1. **Find source agent:**
-   ```bash
-   npx ts-node scripts/list-agents.ts
-   # Find "ProjectX-v1" ID: agent-abc123
-   ```
+1. **Get source agent ID from user:**
+   User provides: `agent-abc123`
 
 2. **List its blocks:**
    ```bash

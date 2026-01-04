@@ -7,14 +7,8 @@ import type Letta from "@letta-ai/letta-client";
 import { attachBlock } from "../../skills/builtin/migrating-memory/scripts/attach-block";
 import { copyBlock } from "../../skills/builtin/migrating-memory/scripts/copy-block";
 import { getAgentBlocks } from "../../skills/builtin/migrating-memory/scripts/get-agent-blocks";
-import { listAgents } from "../../skills/builtin/migrating-memory/scripts/list-agents";
 
 // Mock data
-const mockAgentsResponse = [
-  { id: "agent-123", name: "Test Agent 1" },
-  { id: "agent-456", name: "Test Agent 2" },
-];
-
 const mockBlocksResponse = [
   {
     id: "block-abc",
@@ -58,42 +52,6 @@ const mockAgentState = {
   created_at: "2024-01-01",
   updated_at: "2024-01-01",
 };
-
-describe("list-agents", () => {
-  test("calls client.agents.list and returns result", async () => {
-    const mockList = mock(() => Promise.resolve(mockAgentsResponse));
-    const mockClient = {
-      agents: {
-        list: mockList,
-      },
-    } as unknown as Letta;
-
-    const result = await listAgents(mockClient);
-    expect(mockList).toHaveBeenCalled();
-    expect(result).toBeDefined();
-  });
-
-  test("handles empty agent list", async () => {
-    const mockClient = {
-      agents: {
-        list: mock(() => Promise.resolve([])),
-      },
-    } as unknown as Letta;
-
-    const result = await listAgents(mockClient);
-    expect(result).toBeDefined();
-  });
-
-  test("propagates API errors", async () => {
-    const mockClient = {
-      agents: {
-        list: mock(() => Promise.reject(new Error("API Error"))),
-      },
-    } as unknown as Letta;
-
-    await expect(listAgents(mockClient)).rejects.toThrow("API Error");
-  });
-});
 
 describe("get-agent-blocks", () => {
   test("calls client.agents.blocks.list with agent ID", async () => {
