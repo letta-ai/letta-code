@@ -13,6 +13,7 @@ This skill helps you find other agents on the same Letta server.
 - User wants to find a specific agent by name
 - User wants to list agents with certain tags
 - You need to find an agent ID for memory migration
+- You found an agent_id via message search and need details about that agent
 
 ## Script Usage
 
@@ -95,3 +96,20 @@ Returns the raw API response with full agent details. Key fields:
 ## Related Skills
 
 - **migrating-memory** - Once you find an agent, use this skill to copy/share memory blocks
+- **searching-messages** - Search messages across all agents to find which agent discussed a topic. Use `--all-agents` to get `agent_id` values, then use this skill to get full agent details.
+
+### Finding Agents by Topic
+
+If you need to find which agent worked on a specific topic:
+
+1. Load both skills: `searching-messages` and `finding-agents`
+2. Search messages across all agents:
+   ```bash
+   search-messages.ts --query "topic" --all-agents --limit 10
+   ```
+3. Note the `agent_id` values from matching messages
+4. Get agent details:
+   ```bash
+   find-agents.ts --query "partial-name"
+   ```
+   Or use the agent_id directly in the Letta API
