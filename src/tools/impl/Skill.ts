@@ -1,5 +1,6 @@
+import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getClient } from "../../agent/client";
 import {
   getCurrentAgentId,
@@ -102,18 +103,33 @@ function extractSkillsDir(skillsBlockValue: string): string | null {
 }
 
 /**
+ * Check if a skill directory has additional files beyond SKILL.md
+ */
+function hasAdditionalFiles(skillMdPath: string): boolean {
+  try {
+    const skillDir = dirname(skillMdPath);
+    const entries = readdirSync(skillDir);
+    return entries.some((e) => e.toUpperCase() !== "SKILL.MD");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read skill content from file or bundled source
+ * Returns both content and the path to the SKILL.md file
  */
 async function readSkillContent(
   skillId: string,
   skillsDir: string,
-): Promise<string> {
+): Promise<{ content: string; path: string }> {
   // 1. Check bundled skills first (they have a path now)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path) {
     try {
-      return await readFile(bundledSkill.path, "utf-8");
+      const content = await readFile(bundledSkill.path, "utf-8");
+      return { content, path: bundledSkill.path };
     } catch {
       // Bundled skill path not found, continue to other sources
     }
@@ -122,21 +138,24 @@ async function readSkillContent(
   // 2. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
-    return await readFile(globalSkillPath, "utf-8");
+    const content = await readFile(globalSkillPath, "utf-8");
+    return { content, path: globalSkillPath };
   } catch {
     // Not in global, continue
   }
 
   // 3. Try project skills directory
-  const skillPath = join(skillsDir, skillId, "SKILL.md");
+  const projectSkillPath = join(skillsDir, skillId, "SKILL.md");
   try {
-    return await readFile(skillPath, "utf-8");
+    const content = await readFile(projectSkillPath, "utf-8");
+    return { content, path: projectSkillPath };
   } catch (primaryError) {
     // Fallback: check for bundled skills in a repo-level skills directory (legacy)
     try {
       const bundledSkillsDir = join(process.cwd(), "skills", "skills");
       const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
-      return await readFile(bundledSkillPath, "utf-8");
+      const content = await readFile(bundledSkillPath, "utf-8");
+      return { content, path: bundledSkillPath };
     } catch {
       // If all fallbacks fail, rethrow the original error
       throw primaryError;
@@ -259,16 +278,23 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
         }
 
         try {
-          const skillContent = await readSkillContent(skillId, skillsDir);
+          const { content: skillContent, path: skillPath } =
+            await readSkillContent(skillId, skillsDir);
 
           // Replace placeholder if this is the first skill
           if (currentValue === "[CURRENTLY EMPTY]") {
             currentValue = "";
           }
 
+          // Build skill header with optional path info
+          const skillDir = dirname(skillPath);
+          const pathLine = hasAdditionalFiles(skillPath)
+            ? `# Skill Directory: ${skillDir}\n\n`
+            : "";
+
           // Append new skill
           const separator = currentValue ? "\n\n---\n\n" : "";
-          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${skillContent}`;
+          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${skillContent}`;
           loadedSkillIds.push(skillId);
           results.push(`"${skillId}" loaded`);
         } catch (error) {

@@ -18,6 +18,18 @@ This command may be run in different scenarios:
 
 Before making changes, use the `memory` tool to inspect your current memory blocks and understand what already exists.
 
+## Memory Migration Option
+
+If you're setting up a new agent that should inherit memory from an existing agent, consider using the `migrating-memory` skill:
+
+1. Load the skill: `Skill({ command: "load", skills: ["migrating-memory"] })`
+2. Follow its workflow to copy or share blocks from another agent
+
+**When to suggest migration**:
+- User mentions they have an existing agent with useful memory
+- User is replacing an old agent with a new one
+- User wants to share memory blocks across multiple agents
+
 ## What Coding Agents Should Remember
 
 ### 1. Procedures (Rules & Workflows)
