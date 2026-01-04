@@ -1,12 +1,15 @@
 #!/usr/bin/env npx ts-node
 /**
- * Copy Block - Copies a memory block to create a new independent block for another agent
+ * Copy Block - Copies a memory block to create a new independent block for the current agent
  *
  * Usage:
- *   npx ts-node copy-block.ts --block-id <block-id> --target-agent-id <agent-id>
+ *   npx ts-node copy-block.ts --block-id <block-id> [--label <new-label>]
+ *
+ * Options:
+ *   --label    Override the block label (required if you already have a block with that label)
  *
  * This creates a new block with the same content as the source block,
- * then attaches it to the target agent. Changes to the new block
+ * then attaches it to the current agent. Changes to the new block
  * won't affect the original.
  *
  * Output:
@@ -30,23 +33,23 @@ interface CopyBlockResult {
  * Copy a block's content to a new block and attach to the current agent
  * @param client - Letta client instance
  * @param blockId - The source block ID to copy from
- * @param targetAgentId - Optional target agent ID (defaults to current agent)
+ * @param options - Optional settings: labelOverride, targetAgentId
  * @returns Object containing source block, new block, and attach result
  */
 export async function copyBlock(
   client: Letta,
   blockId: string,
-  targetAgentId?: string,
+  options?: { labelOverride?: string; targetAgentId?: string },
 ): Promise<CopyBlockResult> {
   // Get current agent ID (the agent calling this script) or use provided ID
-  const currentAgentId = targetAgentId ?? getCurrentAgentId();
+  const currentAgentId = options?.targetAgentId ?? getCurrentAgentId();
 
   // 1. Get source block details
   const sourceBlock = await client.blocks.retrieve(blockId);
 
-  // 2. Create new block with same content
+  // 2. Create new block with same content (optionally override label)
   const newBlock = await client.blocks.create({
-    label: sourceBlock.label || "migrated-block",
+    label: options?.labelOverride || sourceBlock.label || "migrated-block",
     value: sourceBlock.value,
     description: sourceBlock.description || undefined,
     limit: sourceBlock.limit,
@@ -60,8 +63,9 @@ export async function copyBlock(
   return { sourceBlock, newBlock, attachResult };
 }
 
-function parseArgs(args: string[]): { blockId: string } {
+function parseArgs(args: string[]): { blockId: string; label?: string } {
   const blockIdIndex = args.indexOf("--block-id");
+  const labelIndex = args.indexOf("--label");
 
   if (blockIdIndex === -1 || blockIdIndex + 1 >= args.length) {
     throw new Error("Missing required argument: --block-id <block-id>");
@@ -69,6 +73,10 @@ function parseArgs(args: string[]): { blockId: string } {
 
   return {
     blockId: args[blockIdIndex + 1] as string,
+    label:
+      labelIndex !== -1 && labelIndex + 1 < args.length
+        ? (args[labelIndex + 1] as string)
+        : undefined,
   };
 }
 
@@ -76,10 +84,10 @@ function parseArgs(args: string[]): { blockId: string } {
 if (require.main === module) {
   (async () => {
     try {
-      const { blockId } = parseArgs(process.argv.slice(2));
+      const { blockId, label } = parseArgs(process.argv.slice(2));
       await settingsManager.initialize();
       const client = await getClient();
-      const result = await copyBlock(client, blockId);
+      const result = await copyBlock(client, blockId, { labelOverride: label });
       console.log(JSON.stringify(result, null, 2));
     } catch (error) {
       console.error(
@@ -91,7 +99,7 @@ if (require.main === module) {
         error.message.includes("Missing required argument")
       ) {
         console.error(
-          "\nUsage: npx ts-node copy-block.ts --block-id <block-id>",
+          "\nUsage: npx ts-node copy-block.ts --block-id <block-id> [--label <new-label>]",
         );
       }
       process.exit(1);

@@ -16,20 +16,31 @@ This skill helps migrate memory blocks from an existing agent to a new agent, si
 
 ## Migration Methods
 
-### 1. Copy (Independent Blocks)
+### 1. Manual Copy (Recommended for partial content)
 
-Creates new blocks with the same content. After copying:
-- The new agent owns its copy
-- Changes to one agent's block don't affect the other
+If you only need **part** of a source block, or the source is messy and needs cleanup:
+1. Use `get-agent-blocks.ts` to view the source block's content
+2. Use the `memory` tool to create a new block with just the content you want
+3. No scripts needed - you have full control over what gets copied
+
+Best for: Extracting sections, cleaning up messy content, selective migration.
+
+### 2. Script Copy (Full block duplication)
+
+Creates new blocks with the same content using `copy-block.ts`. After copying:
+- You own the copy - changes don't sync
+- Use `--label` flag if you already have a block with that label
 - Best for: One-time migration, forking an agent
 
-### 2. Share (Linked Blocks)
+### 3. Share (Linked Blocks)
 
-Attaches the same block to multiple agents. After sharing:
+Attaches the same block to multiple agents using `attach-block.ts`. After sharing:
 - All agents see the same block content
 - Changes by any agent are visible to all others
 - Can be read-only (target can read but not modify)
 - Best for: Shared knowledge bases, synchronized state
+
+**Note:** You cannot have two blocks with the same label. When copying, use `--label` to rename if needed.
 
 ## Workflow
 
@@ -59,8 +70,10 @@ For each block you want to migrate, choose copy or share:
 
 **To Copy (create independent block):**
 ```bash
-npx ts-node scripts/copy-block.ts --block-id <block-id>
+npx ts-node scripts/copy-block.ts --block-id <block-id> [--label <new-label>]
 ```
+
+Use `--label` if you already have a block with that label (e.g., `--label project-imported`).
 
 **To Share (attach existing block):**
 ```bash
@@ -75,11 +88,11 @@ Note: These scripts automatically target the current agent (you) for safety.
 
 All scripts are located in the `scripts/` directory and output raw API responses (JSON).
 
-| Script | Purpose | Required Args |
-|--------|---------|---------------|
+| Script | Purpose | Args |
+|--------|---------|------|
 | `list-agents.ts` | List all accessible agents | (none) |
 | `get-agent-blocks.ts` | Get blocks from an agent | `--agent-id` |
-| `copy-block.ts` | Copy block to current agent | `--block-id` |
+| `copy-block.ts` | Copy block to current agent | `--block-id`, optional `--label` |
 | `attach-block.ts` | Attach existing block to current agent | `--block-id`, optional `--read-only` |
 
 ## Authentication
@@ -109,7 +122,11 @@ Scenario: You're a new agent and want to inherit memory from an existing agent "
 
 3. **Copy project knowledge to yourself:**
    ```bash
+   # If you don't have a 'project' block yet:
    npx ts-node scripts/copy-block.ts --block-id block-def456
+   
+   # If you already have 'project', use --label to rename:
+   npx ts-node scripts/copy-block.ts --block-id block-def456 --label project-v1
    ```
 
 4. **Optionally share human preferences (read-only):**

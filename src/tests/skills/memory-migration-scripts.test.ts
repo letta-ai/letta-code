@@ -158,7 +158,9 @@ describe("copy-block", () => {
     } as unknown as Letta;
 
     // Pass explicit agent ID for testing (in production, defaults to current agent)
-    const result = await copyBlock(mockClient, "block-abc", "agent-789");
+    const result = await copyBlock(mockClient, "block-abc", {
+      targetAgentId: "agent-789",
+    });
 
     expect(mockRetrieve).toHaveBeenCalledWith("block-abc");
     expect(mockCreate).toHaveBeenCalledWith({
@@ -176,6 +178,33 @@ describe("copy-block", () => {
     expect(result.attachResult).toBeDefined();
   });
 
+  test("supports label override", async () => {
+    const mockCreate = mock(() => Promise.resolve(mockNewBlock));
+    const mockClient = {
+      blocks: {
+        retrieve: mock(() => Promise.resolve(mockBlock)),
+        create: mockCreate,
+      },
+      agents: {
+        blocks: {
+          attach: mock(() => Promise.resolve(mockAgentState)),
+        },
+      },
+    } as unknown as Letta;
+
+    await copyBlock(mockClient, "block-abc", {
+      labelOverride: "project-imported",
+      targetAgentId: "agent-789",
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith({
+      label: "project-imported",
+      value: "Test project content",
+      description: "Project info",
+      limit: 5000,
+    });
+  });
+
   test("handles block without description", async () => {
     const blockWithoutDesc = { ...mockBlock, description: null };
     const mockClient = {
@@ -190,7 +219,9 @@ describe("copy-block", () => {
       },
     } as unknown as Letta;
 
-    const result = await copyBlock(mockClient, "block-abc", "agent-789");
+    const result = await copyBlock(mockClient, "block-abc", {
+      targetAgentId: "agent-789",
+    });
     expect(result.newBlock).toBeDefined();
   });
 
@@ -208,7 +239,7 @@ describe("copy-block", () => {
     } as unknown as Letta;
 
     await expect(
-      copyBlock(mockClient, "nonexistent", "agent-789"),
+      copyBlock(mockClient, "nonexistent", { targetAgentId: "agent-789" }),
     ).rejects.toThrow("Block not found");
   });
 });
