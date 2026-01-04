@@ -48,6 +48,11 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
 
 Ask the user for the source agent's ID (e.g., `agent-abc123`).
 
+If they don't know the ID, load the **agent-finder** skill to search:
+```
+Skill({ command: "load", skills: ["agent-finder"] })
+```
+
 Example: "What's the ID of the agent you want to migrate memory from?"
 
 ### Step 2: View Source Agent's Blocks
