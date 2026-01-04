@@ -270,7 +270,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const skillsToProcess = skillIds as string[];
 
     if (command === "load") {
-      // Load skills
+      // Load skills - track which ones were prepared successfully
+      const preparedSkills: string[] = [];
+
       for (const skillId of skillsToProcess) {
         if (loadedSkillIds.includes(skillId)) {
           results.push(`"${skillId}" already loaded`);
@@ -296,7 +298,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
           const separator = currentValue ? "\n\n---\n\n" : "";
           currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${skillContent}`;
           loadedSkillIds.push(skillId);
-          results.push(`"${skillId}" loaded`);
+          preparedSkills.push(skillId);
         } catch (error) {
           results.push(
             `"${skillId}" failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -304,14 +306,19 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
         }
       }
 
-      // Update the block
-      await client.agents.blocks.update("loaded_skills", {
-        agent_id: agentId,
-        value: currentValue,
-      });
+      // Update the block - only report success AFTER the update succeeds
+      if (preparedSkills.length > 0) {
+        await client.agents.blocks.update("loaded_skills", {
+          agent_id: agentId,
+          value: currentValue,
+        });
 
-      // Update the cached flag
-      if (loadedSkillIds.length > 0) {
+        // Now we can report success
+        for (const skillId of preparedSkills) {
+          results.push(`"${skillId}" loaded`);
+        }
+
+        // Update the cached flag
         setHasLoadedSkills(true);
       }
     } else {
