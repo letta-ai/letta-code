@@ -27,6 +27,24 @@ function getRipgrepBinDir(): string | undefined {
 }
 
 /**
+ * Get the node_modules directory containing this package's dependencies.
+ * Skill scripts use createRequire with NODE_PATH to resolve dependencies.
+ */
+function getPackageNodeModulesDir(): string | undefined {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const require = createRequire(__filename);
+    // Find where letta-client is installed
+    const clientPath = require.resolve("@letta-ai/letta-client");
+    // Extract node_modules path: /a/b/node_modules/@letta-ai/letta-client/... -> /a/b/node_modules
+    const match = clientPath.match(/^(.+[/\\]node_modules)[/\\]/);
+    return match ? match[1] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
  */
@@ -57,6 +75,16 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     } catch {
       // Settings not initialized yet, skip
     }
+  }
+
+  // Add NODE_PATH for skill scripts to resolve @letta-ai/letta-client
+  // ES modules don't respect NODE_PATH, but createRequire does
+  const nodeModulesDir = getPackageNodeModulesDir();
+  if (nodeModulesDir) {
+    const currentNodePath = env.NODE_PATH || "";
+    env.NODE_PATH = currentNodePath
+      ? `${nodeModulesDir}${path.delimiter}${currentNodePath}`
+      : nodeModulesDir;
   }
 
   return env;
