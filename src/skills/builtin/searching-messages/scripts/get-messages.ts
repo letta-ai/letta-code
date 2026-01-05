@@ -1,17 +1,23 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env npx tsx
+
 /**
  * Get Messages - Retrieve messages from an agent in chronological order
  *
+ * This script is standalone and can be run outside the CLI process.
+ * It reads auth from LETTA_API_KEY env var or ~/.letta/settings.json.
+ * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
+ *
  * Usage:
- *   npx ts-node get-messages.ts [options]
+ *   npx tsx get-messages.ts [options]
  *
  * Options:
  *   --start-date <date>   Filter messages after this date (ISO format)
  *   --end-date <date>     Filter messages before this date (ISO format)
  *   --limit <n>           Max results (default: 20)
- *   --agent-id <id>       Explicit agent ID (for manual testing)
+ *   --agent-id <id>       Explicit agent ID (overrides LETTA_AGENT_ID env var)
  *   --after <message-id>  Cursor: get messages after this ID
  *   --before <message-id> Cursor: get messages before this ID
+ *   --order <asc|desc>    Sort order (default: desc = newest first)
  *
  * Use this after search-messages.ts to expand around a found needle.
  *
@@ -19,10 +25,10 @@
  *   Messages in chronological order (filtered by date if specified)
  */
 
-import type Letta from "@letta-ai/letta-client";
-import { getClient } from "../../../../agent/client";
-import { getCurrentAgentId } from "../../../../agent/context";
-import { settingsManager } from "../../../../settings-manager";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import Letta from "@letta-ai/letta-client";
 
 interface GetMessagesOptions {
   startDate?: string;
@@ -35,6 +41,55 @@ interface GetMessagesOptions {
 }
 
 /**
+ * Get API key from env var or settings file
+ */
+function getApiKey(): string {
+  // First check env var (set by CLI's getShellEnv)
+  if (process.env.LETTA_API_KEY) {
+    return process.env.LETTA_API_KEY;
+  }
+
+  // Fall back to settings file
+  const settingsPath = join(homedir(), ".letta", "settings.json");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (settings.env?.LETTA_API_KEY) {
+      return settings.env.LETTA_API_KEY;
+    }
+  } catch {
+    // Settings file doesn't exist or is invalid
+  }
+
+  throw new Error(
+    "No LETTA_API_KEY found. Set the env var or run the Letta CLI to authenticate.",
+  );
+}
+
+/**
+ * Get agent ID from CLI arg, env var, or throw
+ */
+function getAgentId(cliArg?: string): string {
+  // CLI arg takes precedence
+  if (cliArg) return cliArg;
+
+  // Then env var (set by CLI's getShellEnv)
+  if (process.env.LETTA_AGENT_ID) {
+    return process.env.LETTA_AGENT_ID;
+  }
+
+  throw new Error(
+    "No agent ID provided. Use --agent-id or ensure LETTA_AGENT_ID env var is set.",
+  );
+}
+
+/**
+ * Create a Letta client with auth from env/settings
+ */
+function createClient(): Letta {
+  return new Letta({ apiKey: getApiKey() });
+}
+
+/**
  * Get messages from an agent, optionally filtered by date range
  * @param client - Letta client instance
  * @param options - Options for filtering
@@ -44,7 +99,7 @@ export async function getMessages(
   client: Letta,
   options: GetMessagesOptions = {},
 ): Promise<unknown[]> {
-  const agentId = options.agentId ?? getCurrentAgentId();
+  const agentId = getAgentId(options.agentId);
   const limit = options.limit ?? 20;
 
   // Fetch messages from the agent
@@ -136,13 +191,13 @@ function parseArgs(args: string[]): GetMessagesOptions {
   return options;
 }
 
-// CLI entry point
-if (require.main === module) {
+// CLI entry point - check if this file is being run directly
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
   (async () => {
     try {
       const options = parseArgs(process.argv.slice(2));
-      await settingsManager.initialize();
-      const client = await getClient();
+      const client = createClient();
       const result = await getMessages(client, options);
       console.log(JSON.stringify(result, null, 2));
     } catch (error) {
@@ -151,14 +206,14 @@ if (require.main === module) {
         error instanceof Error ? error.message : String(error),
       );
       console.error(`
-Usage: npx ts-node get-messages.ts [options]
+Usage: npx tsx get-messages.ts [options]
 
 Options:
   --after <message-id>  Cursor: get messages after this ID
   --before <message-id> Cursor: get messages before this ID
   --order <asc|desc>    Sort order (default: desc = newest first)
   --limit <n>           Max results (default: 20)
-  --agent-id <id>       Explicit agent ID (for manual testing)
+  --agent-id <id>       Explicit agent ID (overrides LETTA_AGENT_ID env var)
   --start-date <date>   Client-side filter: after this date (ISO format)
   --end-date <date>     Client-side filter: before this date (ISO format)
 `);

@@ -290,13 +290,19 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
           // Build skill header with optional path info
           const skillDir = dirname(skillPath);
-          const pathLine = hasAdditionalFiles(skillPath)
+          const hasExtras = hasAdditionalFiles(skillPath);
+          const pathLine = hasExtras
             ? `# Skill Directory: ${skillDir}\n\n`
             : "";
 
+          // Replace <SKILL_DIR> placeholder with actual path in skill content
+          const processedContent = hasExtras
+            ? skillContent.replace(/<SKILL_DIR>/g, skillDir)
+            : skillContent;
+
           // Append new skill
           const separator = currentValue ? "\n\n---\n\n" : "";
-          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${skillContent}`;
+          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${processedContent}`;
           loadedSkillIds.push(skillId);
           preparedSkills.push(skillId);
         } catch (error) {
