@@ -137,10 +137,13 @@ export function isKittyProtocolEnabled(): boolean {
 
 function enableKittyKeyboardProtocol() {
   try {
-    // Enable keyboard progressive enhancement flags.
-    // Use 7 (=1|2|4): DISAMBIGUATE_ESCAPE_CODES | REPORT_EVENT_TYPES | REPORT_ALTERNATE_KEYS
-    // This matches what crossterm-based TUIs (e.g., codex) request.
-    fs.writeSync(process.stdout.fd, "\x1b[>7u");
+    // Enable keyboard progressive enhancement with flag 1 (DISAMBIGUATE_ESCAPE_CODES) only.
+    // Previously used flag 7 (1|2|4) but flag 2 (REPORT_EVENT_TYPES) causes release events
+    // that leak into input when typing fast in iTerm2/Kitty/etc.
+    // Flag 4 (REPORT_ALTERNATE_KEYS) provides data we don't use.
+    // Gemini CLI uses flag 1 only - this is the proven approach.
+    // See: .notes/csi-u-release-events-fix.md for full analysis.
+    fs.writeSync(process.stdout.fd, "\x1b[>1u");
     kittyEnabled = true;
   } catch {
     // Ignore errors
