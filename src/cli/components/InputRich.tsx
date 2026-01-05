@@ -490,7 +490,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      // Stay in bash mode after submitting (don't exit)
+      setIsBashMode(false); // Exit bash mode after submitting
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
