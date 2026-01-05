@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+// existsSync, readFileSync removed - no longer needed since plan content
+// is shown via StaticPlanApproval during approval, not in tool result
 import { Box, Text } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
@@ -324,40 +325,25 @@ export const ToolCallMessage = memo(
         // Fall through to regular handling if parsing fails
       }
 
-      // Check if this is ExitPlanMode - show plan content (faded) instead of simple message
+      // Check if this is ExitPlanMode - just show path, not plan content
+      // The plan content was already shown during approval via StaticPlanApproval
+      // (rendered via Ink's <Static> and is visible in terminal scrollback)
       if (rawName === "ExitPlanMode" && line.resultOk !== false) {
-        // Read plan file path from ref (captured before plan mode was exited)
         const planFilePath = lastPlanFilePath;
-        let planContent = "";
 
-        if (planFilePath && existsSync(planFilePath)) {
-          try {
-            planContent = readFileSync(planFilePath, "utf-8");
-          } catch {
-            // Fall through to default
-          }
-        }
-
-        if (planContent) {
+        if (planFilePath) {
           return (
-            <Box flexDirection="column">
-              {/* Plan file path */}
-              <Box flexDirection="row">
-                <Box width={prefixWidth} flexShrink={0}>
-                  <Text>{prefix}</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth}>
-                  <Text dimColor>Plan saved to: {planFilePath}</Text>
-                </Box>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
               </Box>
-              {/* Plan content (faded) - indent to align with content column */}
-              <Box paddingLeft={prefixWidth}>
-                <MarkdownDisplay text={planContent} dimColor={true} />
+              <Box flexGrow={1} width={contentWidth}>
+                <Text dimColor>Plan saved to: {planFilePath}</Text>
               </Box>
             </Box>
           );
         }
-        // Fall through to default if no plan content
+        // Fall through to default if no plan path
       }
 
       // Check if this is a file edit tool - show diff instead of success message

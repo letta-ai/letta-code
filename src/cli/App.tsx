@@ -62,6 +62,7 @@ import {
 } from "./commands/profile";
 import { AgentSelector } from "./components/AgentSelector";
 // ApprovalDialog removed - all approvals now render inline
+import { ApprovalPreview } from "./components/ApprovalPreview";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
@@ -74,7 +75,6 @@ import { InlineBashApproval } from "./components/InlineBashApproval";
 import { InlineEnterPlanModeApproval } from "./components/InlineEnterPlanModeApproval";
 import { InlineFileEditApproval } from "./components/InlineFileEditApproval";
 import { InlineGenericApproval } from "./components/InlineGenericApproval";
-import { InlinePlanApproval } from "./components/InlinePlanApproval";
 import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input } from "./components/InputRich";
 import { McpSelector } from "./components/McpSelector";
@@ -89,6 +89,9 @@ import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
 import { formatUsageStats } from "./components/SessionStats";
+// InlinePlanApproval kept for easy rollback if needed
+// import { InlinePlanApproval } from "./components/InlinePlanApproval";
+import { StaticPlanApproval } from "./components/StaticPlanApproval";
 import { StatusMessage } from "./components/StatusMessage";
 import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
@@ -311,7 +314,7 @@ function planFileExists(): boolean {
 }
 
 // Read plan content from the plan file
-function readPlanFile(): string {
+function _readPlanFile(): string {
   const planFilePath = permissionMode.getPlanFilePath();
   if (!planFilePath) {
     return "No plan file path set.";
@@ -377,6 +380,20 @@ type StaticItem =
         agentURL: string | null;
         error?: string;
       }>;
+    }
+  | {
+      // Preview content committed early during approval to enable flicker-free UI
+      // When an approval's content is tall enough to overflow the viewport,
+      // we commit the preview to static and only show small approval options in dynamic
+      kind: "approval_preview";
+      id: string;
+      toolCallId: string;
+      toolName: string;
+      toolArgs: string;
+      // Optional precomputed/cached data for rendering
+      precomputedDiff?: AdvancedDiffSuccess;
+      planContent?: string; // For ExitPlanMode
+      planFilePath?: string; // For ExitPlanMode
     }
   | Line;
 
@@ -891,6 +908,10 @@ export default function App({
   // (needed because plan mode is exited before rendering the result)
   const lastPlanFilePathRef = useRef<string | null>(null);
 
+  // Track which approval tool call IDs have had their previews eagerly committed
+  // This prevents double-committing when the approval changes
+  const eagerCommittedPreviewsRef = useRef<Set<string>>(new Set());
+
   // Recompute UI state from buffers after each streaming chunk
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
@@ -961,6 +982,48 @@ export default function App({
       analyzeStartupApprovals();
     }
   }, [loadingState, startupApproval, startupApprovals]);
+
+  // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
+  // This keeps the dynamic area small (just approval options) to avoid flicker
+  useEffect(() => {
+    if (!currentApproval) return;
+    if (currentApproval.toolName !== "ExitPlanMode") return;
+
+    const toolCallId = currentApproval.toolCallId;
+    if (!toolCallId) return;
+
+    // Already committed preview for this approval?
+    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
+
+    const planFilePath = permissionMode.getPlanFilePath();
+    if (!planFilePath) return;
+
+    try {
+      const { readFileSync, existsSync } = require("node:fs");
+      if (!existsSync(planFilePath)) return;
+
+      const planContent = readFileSync(planFilePath, "utf-8");
+
+      // Commit preview to static area
+      const previewItem: StaticItem = {
+        kind: "approval_preview",
+        id: `approval-preview-${toolCallId}`,
+        toolCallId,
+        toolName: currentApproval.toolName,
+        toolArgs: currentApproval.toolArgs || "{}",
+        planContent,
+        planFilePath,
+      };
+
+      setStaticItems((prev) => [...prev, previewItem]);
+      eagerCommittedPreviewsRef.current.add(toolCallId);
+
+      // Also capture plan file path for post-approval rendering
+      lastPlanFilePathRef.current = planFilePath;
+    } catch {
+      // Failed to read plan, don't commit preview
+    }
+  }, [currentApproval]);
 
   // Backfill message history when resuming (only once)
   useEffect(() => {
@@ -5643,6 +5706,16 @@ Plan file path: ${planFilePath}`;
               <CommandMessage line={item} />
             ) : item.kind === "bash_command" ? (
               <BashCommandMessage line={item} />
+            ) : item.kind === "approval_preview" ? (
+              <ApprovalPreview
+                toolName={item.toolName}
+                toolArgs={item.toolArgs}
+                precomputedDiff={item.precomputedDiff}
+                allDiffs={precomputedDiffsRef.current}
+                planContent={item.planContent}
+                planFilePath={item.planFilePath}
+                toolCallId={item.toolCallId}
+              />
             ) : null}
           </Box>
         )}
@@ -5788,10 +5861,10 @@ Plan file path: ${planFilePath}`;
 
                   return (
                     <Box key={ln.id} flexDirection="column" marginTop={1}>
-                      {/* For ExitPlanMode awaiting approval: render InlinePlanApproval */}
+                      {/* For ExitPlanMode awaiting approval: render StaticPlanApproval */}
+                      {/* Plan preview is eagerly committed to staticItems, so this only shows options */}
                       {isExitPlanModeApproval ? (
-                        <InlinePlanApproval
-                          plan={readPlanFile()}
+                        <StaticPlanApproval
                           onApprove={() => handlePlanApprove(false)}
                           onApproveAndAcceptEdits={() =>
                             handlePlanApprove(true)
