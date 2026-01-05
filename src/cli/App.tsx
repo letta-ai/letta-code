@@ -173,7 +173,7 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
-  "Interrupted – tell the agent what to do differently. Something went wrong? Use `/feedback` to report the issue.";
+  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report the issue.";
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
