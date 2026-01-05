@@ -7,11 +7,13 @@
  * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
  *
  * Usage:
- *   npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>]
+ *   npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]
  *
  * Options:
- *   --label      Override the block label (required if you already have a block with that label)
+ *   --label      Override the block label (useful to avoid duplicate label errors)
  *   --agent-id   Target agent ID (overrides LETTA_AGENT_ID env var)
+ *   --override   If you already have a block with the same label, detach it first
+ *                (on error, the original block is reattached)
  *
  * This creates a new block with the same content as the source block,
  * then attaches it to the current agent. Changes to the new block
@@ -37,6 +39,7 @@ interface CopyBlockResult {
   sourceBlock: Awaited<ReturnType<LettaClient["blocks"]["retrieve"]>>;
   newBlock: Awaited<ReturnType<LettaClient["blocks"]["create"]>>;
   attachResult: Awaited<ReturnType<LettaClient["agents"]["blocks"]["attach"]>>;
+  detachedBlock?: Awaited<ReturnType<LettaClient["blocks"]["retrieve"]>>;
 }
 
 /**
@@ -86,44 +89,125 @@ function createClient(): LettaClient {
  * Copy a block's content to a new block and attach to the current agent
  * @param client - Letta client instance
  * @param blockId - The source block ID to copy from
- * @param options - Optional settings: labelOverride, targetAgentId
+ * @param options - Optional settings: labelOverride, targetAgentId, override
  * @returns Object containing source block, new block, and attach result
  */
 export async function copyBlock(
   client: LettaClient,
   blockId: string,
-  options?: { labelOverride?: string; targetAgentId?: string },
+  options?: {
+    labelOverride?: string;
+    targetAgentId?: string;
+    override?: boolean;
+  },
 ): Promise<CopyBlockResult> {
-  // Get current agent ID (the agent calling this script) or use provided ID
   const currentAgentId = getAgentId(options?.targetAgentId);
+  let detachedBlock:
+    | Awaited<ReturnType<LettaClient["blocks"]["retrieve"]>>
+    | undefined;
 
   // 1. Get source block details
   const sourceBlock = await client.blocks.retrieve(blockId);
+  const targetLabel =
+    options?.labelOverride || sourceBlock.label || "migrated-block";
 
-  // 2. Create new block with same content (optionally override label)
-  const newBlock = await client.blocks.create({
-    label: options?.labelOverride || sourceBlock.label || "migrated-block",
-    value: sourceBlock.value,
-    description: sourceBlock.description || undefined,
-    limit: sourceBlock.limit,
-  });
+  // 2. If override is requested, check for existing block with same label and detach it
+  if (options?.override) {
+    const currentBlocksResponse =
+      await client.agents.blocks.list(currentAgentId);
+    // The response may be paginated or an array depending on SDK version
+    const currentBlocks = Array.isArray(currentBlocksResponse)
+      ? currentBlocksResponse
+      : (currentBlocksResponse as { items?: unknown[] }).items || [];
+    const conflictingBlock = currentBlocks.find(
+      (b: { label?: string }) => b.label === targetLabel,
+    );
 
-  // 3. Attach new block to current agent
-  const attachResult = await client.agents.blocks.attach(newBlock.id, {
-    agent_id: currentAgentId,
-  });
+    if (conflictingBlock) {
+      console.error(
+        `Detaching existing block with label "${targetLabel}" (${conflictingBlock.id})...`,
+      );
+      detachedBlock = conflictingBlock;
+      try {
+        await client.agents.blocks.detach(conflictingBlock.id, {
+          agent_id: currentAgentId,
+        });
+      } catch (detachError) {
+        throw new Error(
+          `Failed to detach existing block "${targetLabel}": ${detachError instanceof Error ? detachError.message : String(detachError)}`,
+        );
+      }
+    }
+  }
 
-  return { sourceBlock, newBlock, attachResult };
+  // 3. Create new block with same content
+  let newBlock: Awaited<ReturnType<LettaClient["blocks"]["create"]>>;
+  try {
+    newBlock = await client.blocks.create({
+      label: targetLabel,
+      value: sourceBlock.value,
+      description: sourceBlock.description || undefined,
+      limit: sourceBlock.limit,
+    });
+  } catch (createError) {
+    // If create failed and we detached a block, try to reattach it
+    if (detachedBlock) {
+      console.error(
+        `Create failed, reattaching original block "${detachedBlock.label}"...`,
+      );
+      try {
+        await client.agents.blocks.attach(detachedBlock.id, {
+          agent_id: currentAgentId,
+        });
+        console.error("Original block reattached successfully.");
+      } catch {
+        console.error(
+          `WARNING: Failed to reattach original block! Block ID: ${detachedBlock.id}`,
+        );
+      }
+    }
+    throw createError;
+  }
+
+  // 4. Attach new block to current agent
+  let attachResult: Awaited<ReturnType<typeof client.agents.blocks.attach>>;
+  try {
+    attachResult = await client.agents.blocks.attach(newBlock.id, {
+      agent_id: currentAgentId,
+    });
+  } catch (attachError) {
+    // If attach failed and we detached a block, try to reattach it
+    if (detachedBlock) {
+      console.error(
+        `Attach failed, reattaching original block "${detachedBlock.label}"...`,
+      );
+      try {
+        await client.agents.blocks.attach(detachedBlock.id, {
+          agent_id: currentAgentId,
+        });
+        console.error("Original block reattached successfully.");
+      } catch {
+        console.error(
+          `WARNING: Failed to reattach original block! Block ID: ${detachedBlock.id}`,
+        );
+      }
+    }
+    throw attachError;
+  }
+
+  return { sourceBlock, newBlock, attachResult, detachedBlock };
 }
 
 function parseArgs(args: string[]): {
   blockId: string;
   label?: string;
   agentId?: string;
+  override: boolean;
 } {
   const blockIdIndex = args.indexOf("--block-id");
   const labelIndex = args.indexOf("--label");
   const agentIdIndex = args.indexOf("--agent-id");
+  const override = args.includes("--override");
 
   if (blockIdIndex === -1 || blockIdIndex + 1 >= args.length) {
     throw new Error("Missing required argument: --block-id <block-id>");
@@ -139,6 +223,7 @@ function parseArgs(args: string[]): {
       agentIdIndex !== -1 && agentIdIndex + 1 < args.length
         ? (args[agentIdIndex + 1] as string)
         : undefined,
+    override,
   };
 }
 
@@ -147,11 +232,14 @@ const isMainModule = import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   (async () => {
     try {
-      const { blockId, label, agentId } = parseArgs(process.argv.slice(2));
+      const { blockId, label, agentId, override } = parseArgs(
+        process.argv.slice(2),
+      );
       const client = createClient();
       const result = await copyBlock(client, blockId, {
         labelOverride: label,
         targetAgentId: agentId,
+        override,
       });
       console.log(JSON.stringify(result, null, 2));
     } catch (error) {
@@ -164,7 +252,7 @@ if (isMainModule) {
         error.message.includes("Missing required argument")
       ) {
         console.error(
-          "\nUsage: npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>]",
+          "\nUsage: npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]",
         );
       }
       process.exit(1);
