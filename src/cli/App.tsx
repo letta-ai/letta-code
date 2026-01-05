@@ -1902,6 +1902,9 @@ export default function App({
                 (id) => id !== statusId,
               );
               refreshDerived();
+
+              // Reset interrupted flag so retry stream chunks are processed
+              buffersRef.current.interrupted = false;
               continue;
             }
 
@@ -1965,6 +1968,8 @@ export default function App({
             refreshDerived();
 
             if (!cancelled) {
+              // Reset interrupted flag so retry stream chunks are processed
+              buffersRef.current.interrupted = false;
               // Retry by continuing the while loop (same currentInput)
               continue;
             }
