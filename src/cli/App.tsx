@@ -171,6 +171,10 @@ const EAGER_CANCEL = true;
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
+// Message shown when user interrupts the stream
+const INTERRUPT_MESSAGE =
+  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report the issue.";
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1425,7 +1429,7 @@ export default function App({
             } else {
               // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
-                appendError("Stream interrupted by user", true);
+                appendError(INTERRUPT_MESSAGE, true);
               }
             }
 
@@ -2143,7 +2147,7 @@ export default function App({
 
       // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
-        appendError("Stream interrupted by user", true);
+        appendError(INTERRUPT_MESSAGE, true);
       }
 
       if (abortControllerRef.current) {
@@ -2198,7 +2202,7 @@ export default function App({
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
       if (!toolsCancelled) {
-        appendError("Stream interrupted by user", true);
+        appendError(INTERRUPT_MESSAGE, true);
       }
       refreshDerived();
 
