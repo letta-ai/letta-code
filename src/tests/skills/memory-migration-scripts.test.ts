@@ -214,12 +214,9 @@ describe("attach-block", () => {
     } as unknown as Letta;
 
     // Pass explicit agent ID for testing (in production, defaults to current agent)
-    const result = await attachBlock(
-      mockClient,
-      "block-abc",
-      false,
-      "agent-789",
-    );
+    const result = await attachBlock(mockClient, "block-abc", {
+      targetAgentId: "agent-789",
+    });
 
     expect(mockAttach).toHaveBeenCalledWith("block-abc", {
       agent_id: "agent-789",
@@ -237,12 +234,10 @@ describe("attach-block", () => {
     } as unknown as Letta;
 
     // The function should work with read-only flag (currently just warns)
-    const result = await attachBlock(
-      mockClient,
-      "block-abc",
-      true,
-      "agent-789",
-    );
+    const result = await attachBlock(mockClient, "block-abc", {
+      readOnly: true,
+      targetAgentId: "agent-789",
+    });
     expect(result).toBeDefined();
   });
 
@@ -256,7 +251,7 @@ describe("attach-block", () => {
     } as unknown as Letta;
 
     await expect(
-      attachBlock(mockClient, "block-abc", false, "agent-789"),
+      attachBlock(mockClient, "block-abc", { targetAgentId: "agent-789" }),
     ).rejects.toThrow("Cannot attach block");
   });
 });

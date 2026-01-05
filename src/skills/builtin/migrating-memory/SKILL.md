@@ -29,7 +29,6 @@ Best for: Extracting sections, cleaning up messy content, selective migration.
 
 Creates new blocks with the same content using `copy-block.ts`. After copying:
 - You own the copy - changes don't sync
-- Use `--label` flag if you already have a block with that label
 - Best for: One-time migration, forking an agent
 
 ### 3. Share (Linked Blocks)
@@ -40,7 +39,31 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
 - Can be read-only (target can read but not modify)
 - Best for: Shared knowledge bases, synchronized state
 
-**Note:** You cannot have two blocks with the same label. When copying, use `--label` to rename if needed.
+## Handling Duplicate Label Errors
+
+**You cannot have two blocks with the same label.** If you try to copy/attach a block and you already have one with that label, you'll get a `duplicate key value violates unique constraint` error.
+
+**Solutions:**
+
+1. **Use `--label` (copy only):** Rename the block when copying:
+   ```bash
+   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --label project-imported
+   ```
+
+2. **Use `--override` (copy or attach):** Automatically detach your existing block first:
+   ```bash
+   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --override
+   npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id <id> --override
+   ```
+   If the operation fails, the original block is automatically reattached.
+
+3. **Manual detach first:** Use the `memory` tool to detach your existing block:
+   ```
+   memory(agent_state, "delete", path="/memories/<label>")
+   ```
+   Then run the copy/attach script.
+
+**Note:** `attach-block.ts` does NOT support `--label` because attached blocks keep their original label (they're shared, not copied).
 
 ## Workflow
 
@@ -92,8 +115,8 @@ All scripts are located in the `scripts/` directory and output raw API responses
 | Script | Purpose | Args |
 |--------|---------|------|
 | `get-agent-blocks.ts` | Get blocks from an agent | `--agent-id` |
-| `copy-block.ts` | Copy block to current agent | `--block-id`, optional `--label` |
-| `attach-block.ts` | Attach existing block to current agent | `--block-id`, optional `--read-only` |
+| `copy-block.ts` | Copy block to current agent | `--block-id`, optional `--label`, `--override` |
+| `attach-block.ts` | Attach existing block to current agent | `--block-id`, optional `--read-only`, `--override` |
 
 ## Authentication
 
