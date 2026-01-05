@@ -28,26 +28,18 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
         if (buffer[i] === 0) return true;
       }
 
-      // Try to decode as UTF-8 and check if valid
-      try {
-        const text = buffer.slice(0, bytesRead).toString("utf-8");
-        // Check for replacement characters (indicates invalid UTF-8)
-        if (text.includes("\uFFFD")) return true;
-
-        // Count control characters (excluding whitespace)
-        let controlCharCount = 0;
-        for (let i = 0; i < text.length; i++) {
-          const code = text.charCodeAt(i);
-          // Allow tab(9), newline(10), carriage return(13)
-          if (code < 9 || (code > 13 && code < 32)) {
-            controlCharCount++;
-          }
+      // Count control characters (excluding whitespace)
+      // This catches files that are mostly control characters but lack null bytes
+      const text = buffer.slice(0, bytesRead).toString("utf-8");
+      let controlCharCount = 0;
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        // Allow tab(9), newline(10), carriage return(13)
+        if (code < 9 || (code > 13 && code < 32)) {
+          controlCharCount++;
         }
-        return controlCharCount / text.length > 0.3;
-      } catch {
-        // Invalid UTF-8 = binary
-        return true;
       }
+      return controlCharCount / text.length > 0.3;
     } finally {
       await fd.close();
     }
