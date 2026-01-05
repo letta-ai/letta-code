@@ -1,9 +1,12 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env npx tsx
 /**
  * Find Agents - Search for agents with various filters
  *
+ * This script is standalone and can be run outside the CLI process.
+ * It reads auth from LETTA_API_KEY env var or ~/.letta/settings.json.
+ *
  * Usage:
- *   npx ts-node find-agents.ts [options]
+ *   npx tsx find-agents.ts [options]
  *
  * Options:
  *   --name <name>         Exact name match
@@ -17,9 +20,17 @@
  *   Raw API response from GET /v1/agents
  */
 
-import type Letta from "@letta-ai/letta-client";
-import { getClient } from "../../../../agent/client";
-import { settingsManager } from "../../../../settings-manager";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
+// (ES module imports don't respect NODE_PATH, but require does)
+const require = createRequire(import.meta.url);
+const Letta = require("@letta-ai/letta-client")
+  .default as typeof import("@letta-ai/letta-client").default;
+type LettaClient = InstanceType<typeof Letta>;
 
 interface FindAgentsOptions {
   name?: string;
@@ -31,13 +42,45 @@ interface FindAgentsOptions {
 }
 
 /**
+ * Get API key from env var or settings file
+ */
+function getApiKey(): string {
+  // First check env var (set by CLI's getShellEnv)
+  if (process.env.LETTA_API_KEY) {
+    return process.env.LETTA_API_KEY;
+  }
+
+  // Fall back to settings file
+  const settingsPath = join(homedir(), ".letta", "settings.json");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (settings.env?.LETTA_API_KEY) {
+      return settings.env.LETTA_API_KEY;
+    }
+  } catch {
+    // Settings file doesn't exist or is invalid
+  }
+
+  throw new Error(
+    "No LETTA_API_KEY found. Set the env var or run the Letta CLI to authenticate.",
+  );
+}
+
+/**
+ * Create a Letta client with auth from env/settings
+ */
+function createClient(): LettaClient {
+  return new Letta({ apiKey: getApiKey() });
+}
+
+/**
  * Find agents matching the given criteria
  * @param client - Letta client instance
  * @param options - Search options
  * @returns Array of agent objects from the API
  */
 export async function findAgents(
-  client: Letta,
+  client: LettaClient,
   options: FindAgentsOptions = {},
 ): Promise<Awaited<ReturnType<typeof client.agents.list>>> {
   const params: Parameters<typeof client.agents.list>[0] = {
@@ -103,13 +146,13 @@ function parseArgs(args: string[]): FindAgentsOptions {
   return options;
 }
 
-// CLI entry point
-if (require.main === module) {
+// CLI entry point - check if this file is being run directly
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
   (async () => {
     try {
       const options = parseArgs(process.argv.slice(2));
-      await settingsManager.initialize();
-      const client = await getClient();
+      const client = createClient();
       const result = await findAgents(client, options);
       console.log(JSON.stringify(result, null, 2));
     } catch (error) {
@@ -118,7 +161,7 @@ if (require.main === module) {
         error instanceof Error ? error.message : String(error),
       );
       console.error(`
-Usage: npx ts-node find-agents.ts [options]
+Usage: npx tsx find-agents.ts [options]
 
 Options:
   --name <name>         Exact name match

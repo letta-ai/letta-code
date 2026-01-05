@@ -26,9 +26,16 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import Letta from "@letta-ai/letta-client";
+
+// Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
+// (ES module imports don't respect NODE_PATH, but require does)
+const require = createRequire(import.meta.url);
+const Letta = require("@letta-ai/letta-client")
+  .default as typeof import("@letta-ai/letta-client").default;
+type LettaClient = InstanceType<typeof Letta>;
 
 interface GetMessagesOptions {
   startDate?: string;
@@ -85,7 +92,7 @@ function getAgentId(cliArg?: string): string {
 /**
  * Create a Letta client with auth from env/settings
  */
-function createClient(): Letta {
+function createClient(): LettaClient {
   return new Letta({ apiKey: getApiKey() });
 }
 
@@ -96,7 +103,7 @@ function createClient(): Letta {
  * @returns Array of messages in chronological order
  */
 export async function getMessages(
-  client: Letta,
+  client: LettaClient,
   options: GetMessagesOptions = {},
 ): Promise<unknown[]> {
   const agentId = getAgentId(options.agentId);
