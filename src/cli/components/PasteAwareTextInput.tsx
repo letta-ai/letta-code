@@ -461,40 +461,19 @@ export function PasteAwareTextInput({
       // in use-input.js, which parses it as return + shift/ctrl/meta flags.
       // The useInput handler at line 186 then handles the newline insertion.
 
-      // Kitty keyboard protocol: Arrow keys
-      // Format: ESC[1;modifier:event_typeX where X is A/B/C/D for up/down/right/left
-      // Event types: 1=press, 2=repeat, 3=release
-      // Handle press AND repeat events, ignore release
-      {
-        // Match ESC[1;N:1X or ESC[1;N:2X (press or repeat)
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
-        const arrowMatch = sequence.match(/^\x1b\[1;\d+:[12]([ABCD])$/);
-        if (arrowMatch) {
-          // Emit standard arrow key sequence
-          internal_eventEmitter.emit("input", `\x1b[${arrowMatch[1]}`);
-          return;
-        }
-        // Ignore arrow key release events only
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
-        if (/^\x1b\[1;\d+:3[ABCD]$/.test(sequence)) {
-          return;
-        }
-      }
+      // Note: Arrow keys with modifiers are now handled natively by parseKeypress
+      // since we use kitty protocol flag 1 only (no event types).
+      // With flag 1, arrows come as ESC[1;modifierD which parseKeypress recognizes.
+      // Previously we handled ESC[1;modifier:eventD format (with flag 7) here.
 
       // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
-      // Also handle kitty extended format: ESC[3;modifier:event_type~
-      // Event types: 1=press, 2=repeat, 3=release
+      // With kitty flag 1, modifiers come as ESC[3;modifier~ (no event type).
       // Use caretOffsetRef which is updated synchronously via onCursorOffsetChange
       // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
-      if (sequence === "\x1b[3~" || /^\x1b\[3;\d+:[12]~$/.test(sequence)) {
+      if (sequence === "\x1b[3~" || /^\x1b\[3;\d+~$/.test(sequence)) {
         // Set timestamp so ink-text-input skips its delete handling
         globalThis.__lettaForwardDeleteTimestamp = Date.now();
         forwardDeleteAtCursor(caretOffsetRef.current);
-        return;
-      }
-      // Ignore forward delete release events
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
-      if (/^\x1b\[3;\d+:3~$/.test(sequence)) {
         return;
       }
 
