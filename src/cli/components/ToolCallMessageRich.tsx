@@ -79,15 +79,18 @@ export const ToolCallMessage = memo(
     const rawName = line.name ?? "?";
     const argsText = line.argsText ?? "...";
 
-    // Task tool - handled by SubagentGroupDisplay, don't render here
-    // Exception: Cancelled/rejected Task tools should be rendered inline
-    // since they won't appear in SubagentGroupDisplay
+    // Task tool rendering decision:
+    // - Cancelled/rejected: render as error tool call (won't appear in SubagentGroupDisplay)
+    // - Finished with success: render as normal tool call (for backfilled tools without subagent data)
+    // - In progress: don't render here (SubagentGroupDisplay handles running subagents,
+    //   and liveItems handles pending approvals via InlineGenericApproval)
     if (isTaskTool(rawName)) {
-      const isCancelledOrRejected =
-        line.phase === "finished" && line.resultOk === false;
-      if (!isCancelledOrRejected) {
+      const isFinished = line.phase === "finished";
+      if (!isFinished) {
+        // Not finished - SubagentGroupDisplay or approval UI handles this
         return null;
       }
+      // Finished Task tools render here (both success and error)
     }
 
     // Apply tool name remapping
