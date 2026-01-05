@@ -236,7 +236,7 @@ export const SubagentGroupDisplay = memo(() => {
   const hasErrors = agents.some((a) => a.status === "error");
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column">
       <GroupHeader
         count={agents.length}
         allCompleted={allCompleted}

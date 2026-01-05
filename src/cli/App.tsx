@@ -76,6 +76,7 @@ import { InlineFileEditApproval } from "./components/InlineFileEditApproval";
 import { InlineGenericApproval } from "./components/InlineGenericApproval";
 import { InlinePlanApproval } from "./components/InlinePlanApproval";
 import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
+import { InlineTaskApproval } from "./components/InlineTaskApproval";
 import { Input } from "./components/InputRich";
 import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
@@ -831,9 +832,23 @@ export default function App({
         continue;
       }
       // Handle Task tool_calls specially - track position but don't add individually
+      // (unless there's no subagent data, in which case commit as regular tool call)
       if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
-        if (firstTaskIndex === -1 && finishedTaskToolCalls.length > 0) {
-          firstTaskIndex = newlyCommitted.length;
+        // Check if this specific Task tool has subagent data (will be grouped)
+        const hasSubagentData = finishedTaskToolCalls.some(
+          (tc) => tc.lineId === id,
+        );
+        if (hasSubagentData) {
+          // Has subagent data - will be grouped later
+          if (firstTaskIndex === -1) {
+            firstTaskIndex = newlyCommitted.length;
+          }
+          continue;
+        }
+        // No subagent data (e.g., backfilled from history) - commit as regular tool call
+        if (ln.phase === "finished") {
+          emittedIdsRef.current.add(id);
+          newlyCommitted.push({ ...ln });
         }
         continue;
       }
@@ -5510,9 +5525,12 @@ Plan file path: ${planFilePath}`;
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Skip Task tool_calls - SubagentGroupDisplay handles them
+        // Task tool_calls need special handling:
+        // - Only include if pending approval (phase: "ready" or "streaming")
+        // - Running/finished Task tools are handled by SubagentGroupDisplay
         if (ln.name && isTaskTool(ln.name)) {
-          return false;
+          // Only show Task tools that are awaiting approval (not running/finished)
+          return ln.phase === "ready" || ln.phase === "streaming";
         }
         // Always show other tool calls in progress
         return ln.phase !== "finished";
@@ -5699,6 +5717,13 @@ Plan file path: ${planFilePath}`;
                     currentApproval?.toolName === "AskUserQuestion" &&
                     ln.toolCallId === currentApproval?.toolCallId;
 
+                  // Check if this tool call matches a Task tool approval
+                  const isTaskToolApproval =
+                    ln.kind === "tool_call" &&
+                    currentApproval &&
+                    isTaskTool(currentApproval.toolName) &&
+                    ln.toolCallId === currentApproval.toolCallId;
+
                   // Parse file edit info from approval args
                   const getFileEditInfo = () => {
                     if (!isFileEditApproval || !currentApproval) return null;
@@ -5786,6 +5811,36 @@ Plan file path: ${planFilePath}`;
 
                   const bashInfo = getBashInfo();
 
+                  // Parse Task tool info from approval args
+                  const getTaskInfo = () => {
+                    if (!isTaskToolApproval || !currentApproval) return null;
+                    try {
+                      const args = JSON.parse(currentApproval.toolArgs || "{}");
+                      return {
+                        subagentType:
+                          typeof args.subagent_type === "string"
+                            ? args.subagent_type
+                            : "unknown",
+                        description:
+                          typeof args.description === "string"
+                            ? args.description
+                            : "(no description)",
+                        prompt:
+                          typeof args.prompt === "string"
+                            ? args.prompt
+                            : "(no prompt)",
+                        model:
+                          typeof args.model === "string"
+                            ? args.model
+                            : undefined,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  };
+
+                  const taskInfo = getTaskInfo();
+
                   return (
                     <Box key={ln.id} flexDirection="column" marginTop={1}>
                       {/* For ExitPlanMode awaiting approval: render InlinePlanApproval */}
@@ -5851,6 +5906,23 @@ Plan file path: ${planFilePath}`;
                           onSubmit={handleQuestionSubmit}
                           onCancel={handleCancelApprovals}
                           isFocused={true}
+                        />
+                      ) : isTaskToolApproval && taskInfo ? (
+                        <InlineTaskApproval
+                          taskInfo={taskInfo}
+                          onApprove={() => handleApproveCurrent()}
+                          onApproveAlways={(scope) =>
+                            handleApproveAlways(scope)
+                          }
+                          onDeny={(reason) => handleDenyCurrent(reason)}
+                          onCancel={handleCancelApprovals}
+                          isFocused={true}
+                          approveAlwaysText={
+                            currentApprovalContext?.approveAlwaysText
+                          }
+                          allowPersistence={
+                            currentApprovalContext?.allowPersistence ?? true
+                          }
                         />
                       ) : ln.kind === "tool_call" &&
                         currentApproval &&
