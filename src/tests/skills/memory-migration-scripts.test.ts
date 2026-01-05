@@ -7,14 +7,8 @@ import type Letta from "@letta-ai/letta-client";
 import { attachBlock } from "../../skills/builtin/migrating-memory/scripts/attach-block";
 import { copyBlock } from "../../skills/builtin/migrating-memory/scripts/copy-block";
 import { getAgentBlocks } from "../../skills/builtin/migrating-memory/scripts/get-agent-blocks";
-import { listAgents } from "../../skills/builtin/migrating-memory/scripts/list-agents";
 
 // Mock data
-const mockAgentsResponse = [
-  { id: "agent-123", name: "Test Agent 1" },
-  { id: "agent-456", name: "Test Agent 2" },
-];
-
 const mockBlocksResponse = [
   {
     id: "block-abc",
@@ -58,42 +52,6 @@ const mockAgentState = {
   created_at: "2024-01-01",
   updated_at: "2024-01-01",
 };
-
-describe("list-agents", () => {
-  test("calls client.agents.list and returns result", async () => {
-    const mockList = mock(() => Promise.resolve(mockAgentsResponse));
-    const mockClient = {
-      agents: {
-        list: mockList,
-      },
-    } as unknown as Letta;
-
-    const result = await listAgents(mockClient);
-    expect(mockList).toHaveBeenCalled();
-    expect(result).toBeDefined();
-  });
-
-  test("handles empty agent list", async () => {
-    const mockClient = {
-      agents: {
-        list: mock(() => Promise.resolve([])),
-      },
-    } as unknown as Letta;
-
-    const result = await listAgents(mockClient);
-    expect(result).toBeDefined();
-  });
-
-  test("propagates API errors", async () => {
-    const mockClient = {
-      agents: {
-        list: mock(() => Promise.reject(new Error("API Error"))),
-      },
-    } as unknown as Letta;
-
-    await expect(listAgents(mockClient)).rejects.toThrow("API Error");
-  });
-});
 
 describe("get-agent-blocks", () => {
   test("calls client.agents.blocks.list with agent ID", async () => {
@@ -158,7 +116,9 @@ describe("copy-block", () => {
     } as unknown as Letta;
 
     // Pass explicit agent ID for testing (in production, defaults to current agent)
-    const result = await copyBlock(mockClient, "block-abc", "agent-789");
+    const result = await copyBlock(mockClient, "block-abc", {
+      targetAgentId: "agent-789",
+    });
 
     expect(mockRetrieve).toHaveBeenCalledWith("block-abc");
     expect(mockCreate).toHaveBeenCalledWith({
@@ -176,6 +136,33 @@ describe("copy-block", () => {
     expect(result.attachResult).toBeDefined();
   });
 
+  test("supports label override", async () => {
+    const mockCreate = mock(() => Promise.resolve(mockNewBlock));
+    const mockClient = {
+      blocks: {
+        retrieve: mock(() => Promise.resolve(mockBlock)),
+        create: mockCreate,
+      },
+      agents: {
+        blocks: {
+          attach: mock(() => Promise.resolve(mockAgentState)),
+        },
+      },
+    } as unknown as Letta;
+
+    await copyBlock(mockClient, "block-abc", {
+      labelOverride: "project-imported",
+      targetAgentId: "agent-789",
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith({
+      label: "project-imported",
+      value: "Test project content",
+      description: "Project info",
+      limit: 5000,
+    });
+  });
+
   test("handles block without description", async () => {
     const blockWithoutDesc = { ...mockBlock, description: null };
     const mockClient = {
@@ -190,7 +177,9 @@ describe("copy-block", () => {
       },
     } as unknown as Letta;
 
-    const result = await copyBlock(mockClient, "block-abc", "agent-789");
+    const result = await copyBlock(mockClient, "block-abc", {
+      targetAgentId: "agent-789",
+    });
     expect(result.newBlock).toBeDefined();
   });
 
@@ -208,7 +197,7 @@ describe("copy-block", () => {
     } as unknown as Letta;
 
     await expect(
-      copyBlock(mockClient, "nonexistent", "agent-789"),
+      copyBlock(mockClient, "nonexistent", { targetAgentId: "agent-789" }),
     ).rejects.toThrow("Block not found");
   });
 });
