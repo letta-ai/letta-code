@@ -4784,11 +4784,18 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
           setIsExecutingTool(true);
 
-          // Build ALL decisions: current + auto-allowed remaining
-          const allDecisions: Array<{
-            type: "approve";
-            approval: ApprovalRequest;
-          }> = [
+          // Snapshot current state BEFORE clearing (critical for ID matching!)
+          // This must include ALL previous decisions, auto-handled, and auto-denied
+          const approvalResultsSnapshot = [...approvalResults];
+          const autoHandledSnapshot = [...autoHandledResults];
+          const autoDeniedSnapshot = [...autoDeniedApprovals];
+
+          // Build ALL decisions: previous + current + auto-allowed remaining
+          const allDecisions: Array<
+            | { type: "approve"; approval: ApprovalRequest }
+            | { type: "deny"; approval: ApprovalRequest; reason: string }
+          > = [
+            ...approvalResultsSnapshot, // Include decisions from previous rounds
             { type: "approve", approval: currentApproval },
             ...nowAutoAllowed.map((r) => ({
               type: "approve" as const,
@@ -4819,6 +4826,25 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               },
             );
 
+            // Combine with auto-handled and auto-denied results (from initial check)
+            const allResults = [
+              ...autoHandledSnapshot.map((ar) => ({
+                type: "tool" as const,
+                tool_call_id: ar.toolCallId,
+                tool_return: ar.result.toolReturn,
+                status: ar.result.status,
+                stdout: ar.result.stdout,
+                stderr: ar.result.stderr,
+              })),
+              ...autoDeniedSnapshot.map((ad) => ({
+                type: "approval" as const,
+                tool_call_id: ad.approval.toolCallId,
+                approve: false,
+                reason: ad.reason,
+              })),
+              ...executedResults,
+            ];
+
             setThinkingMessage(getRandomThinkingVerb());
             refreshDerived();
 
@@ -4826,7 +4852,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             await processConversation([
               {
                 type: "approval",
-                approvals: executedResults as ApprovalResult[],
+                approvals: allResults as ApprovalResult[],
               },
             ]);
           } finally {
@@ -4843,6 +4869,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       approvalResults,
       approvalContexts,
       pendingApprovals,
+      autoHandledResults,
+      autoDeniedApprovals,
       handleApproveCurrent,
       processConversation,
       refreshDerived,
