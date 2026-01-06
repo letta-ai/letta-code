@@ -12,6 +12,10 @@
     "limit": {
       "type": "number",
       "description": "The number of lines to read. Only provide if the file is too large to read at once."
+    },
+    "include_types": {
+      "type": "boolean",
+      "description": "Optional: For TypeScript/JavaScript files, include type information summary. Defaults to true for files under 500 lines when LETTA_ENABLE_LSP is set."
     }
   },
   "required": ["file_path"],

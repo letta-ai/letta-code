@@ -3,10 +3,80 @@ import * as path from "node:path";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
+// Helper to include LSP diagnostics if available
+async function maybeIncludeDiagnostics(
+  formattedContent: string,
+  resolvedPath: string,
+  rawContent: string,
+  includeTypes?: boolean,
+): Promise<string> {
+  // Skip if LSP feature not enabled
+  if (!process.env.LETTA_ENABLE_LSP) {
+    return formattedContent;
+  }
+
+  // Determine if we should include diagnostics
+  const lineCount = rawContent.split("\n").length;
+  const shouldInclude =
+    includeTypes === true || (includeTypes !== false && lineCount < 500);
+
+  if (!shouldInclude) {
+    return formattedContent;
+  }
+
+  try {
+    // Import LSP manager dynamically
+    const { lspManager } = await import("../../lsp/manager.js");
+
+    // Touch the file (opens it in LSP if not already open)
+    await lspManager.touchFile(resolvedPath, false);
+
+    // Wait briefly for diagnostics (LSP servers are async)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Get diagnostics
+    const diagnostics = lspManager.getDiagnostics(resolvedPath);
+
+    if (diagnostics.length > 0) {
+      const errorCount = diagnostics.filter((d) => d.severity === 1).length;
+      const warningCount = diagnostics.filter((d) => d.severity === 2).length;
+
+      const summary = [
+        `\n\n[LSP Diagnostics - ${diagnostics.length} issue(s)]`,
+      ];
+
+      if (errorCount > 0) summary.push(`  ❌ ${errorCount} error(s)`);
+      if (warningCount > 0) summary.push(`  ⚠️  ${warningCount} warning(s)`);
+
+      // Show first few diagnostics
+      const displayed = diagnostics.slice(0, 5);
+      for (const diag of displayed) {
+        const icon =
+          diag.severity === 1 ? "❌" : diag.severity === 2 ? "⚠️" : "ℹ️";
+        const line = diag.range.start.line + 1; // Convert to 1-based
+        summary.push(`  ${icon} Line ${line}: ${diag.message}`);
+      }
+
+      if (diagnostics.length > 5) {
+        summary.push(`  ... and ${diagnostics.length - 5} more issue(s)`);
+      }
+
+      return formattedContent + summary.join("\n");
+    }
+
+    // No diagnostics - file is clean
+    return `${formattedContent}\n\n[LSP Diagnostics]\n  ✓ No issues found`;
+  } catch (_error) {
+    // If LSP fails, silently skip (don't break Read)
+    return formattedContent;
+  }
+}
+
 interface ReadArgs {
   file_path: string;
   offset?: number;
   limit?: number;
+  include_types?: boolean;
 }
 interface ReadResult {
   content: string;
@@ -110,7 +180,7 @@ function formatWithLineNumbers(
 
 export async function read(args: ReadArgs): Promise<ReadResult> {
   validateRequiredParams(args, ["file_path"], "Read");
-  const { file_path, offset, limit } = args;
+  const { file_path, offset, limit, include_types } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
@@ -132,7 +202,16 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
         content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
       };
     }
-    const formattedContent = formatWithLineNumbers(content, offset, limit);
+    let formattedContent = formatWithLineNumbers(content, offset, limit);
+
+    // Add LSP diagnostics for supported files
+    formattedContent = await maybeIncludeDiagnostics(
+      formattedContent,
+      resolvedPath,
+      content,
+      include_types,
+    );
+
     return { content: formattedContent };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

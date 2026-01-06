@@ -12,3 +12,19 @@ Usage:
 - This tool can only read files, not directories. To read a directory, use the ls command via Bash.
 - You can call multiple tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
+
+## Type Information (TypeScript/JavaScript)
+
+When reading TypeScript or JavaScript files (`.ts`, `.tsx`, `.js`, `.jsx`), the Read tool can automatically include type information:
+
+- **Auto-included** for files under 500 lines (when `LETTA_ENABLE_LSP` is set)
+- **Manually controlled** via `include_types` parameter:
+  - `include_types: true` - Force include types (even for large files)
+  - `include_types: false` - Skip types (even for small files)
+  
+The type summary shows:
+- Exported symbols (functions, classes, interfaces, types, constants)
+- Type errors if any are found
+- Suggestion to use CheckTypes for detailed information
+
+This helps you understand the file's API before making edits, reducing type-related errors.
