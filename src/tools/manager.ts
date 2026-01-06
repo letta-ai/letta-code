@@ -48,7 +48,6 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "BashOutput",
-  "CheckTypes",
   "Edit",
   "EnterPlanMode",
   "ExitPlanMode",
@@ -94,7 +93,6 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CheckTypes",
   "EnterPlanMode",
   "ExitPlanMode",
   "Task",
@@ -112,7 +110,6 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CheckTypes",
   "EnterPlanMode",
   "ExitPlanMode",
   "Skill",
@@ -134,7 +131,6 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
-  CheckTypes: { requiresApproval: false },
   Edit: { requiresApproval: true },
   EnterPlanMode: { requiresApproval: true },
   ExitPlanMode: { requiresApproval: false },
