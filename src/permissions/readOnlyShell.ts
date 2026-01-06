@@ -61,6 +61,31 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "remote",
 ]);
 
+/**
+ * Read-only bundled skill scripts that are safe to execute without approval.
+ * Only scripts from the bundled searching-messages skill are allowed.
+ * We check for specific path patterns to prevent malicious scripts in user directories.
+ */
+const BUNDLED_READ_ONLY_SCRIPTS = [
+  // Bundled skills path (production): /path/to/skills/searching-messages/scripts/...
+  "/skills/searching-messages/scripts/search-messages.ts",
+  "/skills/searching-messages/scripts/get-messages.ts",
+  // Source path (development): /path/to/src/skills/builtin/searching-messages/scripts/...
+  "/skills/builtin/searching-messages/scripts/search-messages.ts",
+  "/skills/builtin/searching-messages/scripts/get-messages.ts",
+];
+
+/**
+ * Check if a script path is a known read-only bundled skill script
+ */
+function isReadOnlySkillScript(scriptPath: string): boolean {
+  // Normalize path separators for cross-platform
+  const normalized = scriptPath.replace(/\\/g, "/");
+  return BUNDLED_READ_ONLY_SCRIPTS.some((pattern) =>
+    normalized.endsWith(pattern),
+  );
+}
+
 // Operators that are always dangerous (file redirects, command substitution)
 // Note: &&, ||, ; are handled by splitting and checking each segment
 const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
@@ -148,6 +173,14 @@ function isSafeSegment(segment: string): boolean {
     }
     if (command === "sort") {
       return !/\s-o\b/.test(segment);
+    }
+    // Allow npx tsx for read-only skill scripts (searching-messages)
+    if (command === "npx" && tokens[1] === "tsx") {
+      const scriptPath = tokens[2];
+      if (scriptPath && isReadOnlySkillScript(scriptPath)) {
+        return true;
+      }
+      return false;
     }
     return false;
   }
