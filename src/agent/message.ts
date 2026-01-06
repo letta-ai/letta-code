@@ -19,13 +19,20 @@ export async function sendMessageStream(
     background?: boolean;
     // add more later: includePings, request timeouts, etc.
   } = { streamTokens: true, background: true },
+  // Disable SDK retries by default - state management happens outside the stream,
+  // so retries would violate idempotency and create race conditions
+  requestOptions: { maxRetries?: number } = { maxRetries: 0 },
 ): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
-  return client.agents.messages.create(agentId, {
-    messages: messages,
-    streaming: true,
-    stream_tokens: opts.streamTokens ?? true,
-    background: opts.background ?? true,
-    client_tools: getClientToolsFromRegistry(),
-  });
+  return client.agents.messages.create(
+    agentId,
+    {
+      messages: messages,
+      streaming: true,
+      stream_tokens: opts.streamTokens ?? true,
+      background: opts.background ?? true,
+      client_tools: getClientToolsFromRegistry(),
+    },
+    requestOptions,
+  );
 }
