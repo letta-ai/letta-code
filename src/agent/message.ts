@@ -1,5 +1,5 @@
 /**
- * Utilities for sending messages to an agent
+ * Utilities for sending messages to an agent via conversations
  **/
 
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -11,8 +11,12 @@ import type {
 import { getClientToolsFromRegistry } from "../tools/manager";
 import { getClient } from "./client";
 
+/**
+ * Send a message to a conversation and return a streaming response.
+ * Uses the conversations API for proper message isolation per session.
+ */
 export async function sendMessageStream(
-  agentId: string,
+  conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
   opts: {
     streamTokens?: boolean;
@@ -21,7 +25,7 @@ export async function sendMessageStream(
   } = { streamTokens: true, background: true },
 ): Promise<Stream<LettaStreamingResponse>> {
   const client = await getClient();
-  return client.agents.messages.create(agentId, {
+  return client.conversations.messages.create(conversationId, {
     messages: messages,
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,

@@ -320,6 +320,7 @@ async function main(): Promise<void> {
         version: { type: "boolean", short: "v" },
         info: { type: "boolean" },
         continue: { type: "boolean", short: "c" },
+        resume: { type: "boolean", short: "r" }, // Resume exact last session (agent + conversation)
         new: { type: "boolean" },
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
@@ -397,6 +398,7 @@ async function main(): Promise<void> {
   }
 
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
+  const shouldResume = (values.resume as boolean | undefined) ?? false; // Resume exact last session
   const forceNew = (values.new as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
@@ -796,8 +798,11 @@ async function main(): Promise<void> {
     >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
+    const [conversationId, setConversationId] = useState<string | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [resumedExistingConversation, setResumedExistingConversation] =
+      useState(false);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
@@ -1211,15 +1216,67 @@ async function main(): Promise<void> {
           }
         }
 
-        // Get resume data (pending approval + message history) if resuming
-        if (resuming) {
-          setLoadingState("checking");
-          const data = await getResumeData(client, agent);
-          setResumeData(data);
+        // Handle conversation: either resume existing or create new
+        let conversationIdToUse: string;
+
+        // Debug: log resume flag status
+        if (process.env.DEBUG) {
+          console.log(`[DEBUG] shouldResume=${shouldResume}`);
         }
+
+        if (shouldResume) {
+          // Try to load the last session for this agent
+          const lastSession =
+            settingsManager.getLocalLastSession(process.cwd()) ??
+            settingsManager.getGlobalLastSession();
+
+          if (process.env.DEBUG) {
+            console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
+            console.log(`[DEBUG] agent.id=${agent.id}`);
+          }
+
+          if (lastSession && lastSession.agentId === agent.id) {
+            // Resume the exact last conversation
+            conversationIdToUse = lastSession.conversationId;
+            setResumedExistingConversation(true);
+
+            // Load message history and pending approvals from the conversation
+            setLoadingState("checking");
+            const data = await getResumeData(
+              client,
+              agent,
+              lastSession.conversationId,
+            );
+            setResumeData(data);
+          } else {
+            // No valid session to resume for this agent, create new
+            const conversation = await client.conversations.create({
+              agent_id: agent.id,
+            });
+            conversationIdToUse = conversation.id;
+          }
+        } else {
+          // Default: create a new conversation on startup
+          // This ensures each CLI session has isolated message history
+          const conversation = await client.conversations.create({
+            agent_id: agent.id,
+          });
+          conversationIdToUse = conversation.id;
+        }
+
+        // Save the session (agent + conversation) to settings
+        settingsManager.setLocalLastSession(
+          { agentId: agent.id, conversationId: conversationIdToUse },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({
+          agentId: agent.id,
+          conversationId: conversationIdToUse,
+        });
 
         setAgentId(agent.id);
         setAgentState(agent);
+        setConversationId(conversationIdToUse);
         setLoadingState("ready");
       }
 
@@ -1242,6 +1299,7 @@ async function main(): Promise<void> {
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
+      shouldResume,
     ]);
 
     // Wait for keybinding auto-install to complete before showing UI
@@ -1276,14 +1334,16 @@ async function main(): Promise<void> {
       });
     }
 
-    if (!agentId) {
+    if (!agentId || !conversationId) {
       return React.createElement(App, {
         agentId: "loading",
+        conversationId: "loading",
         loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+        resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
       });
@@ -1292,11 +1352,13 @@ async function main(): Promise<void> {
     return React.createElement(App, {
       agentId,
       agentState,
+      conversationId,
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+      resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
     });

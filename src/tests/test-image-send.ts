@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { getClient } from "../agent/client";
 import { createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 
@@ -10,17 +11,26 @@ async function main() {
   writeFileSync(testImagePath, Buffer.from(testImageBase64, "base64"));
   console.log("Created test image at", testImagePath);
 
+  const client = await getClient();
+
   // Create agent
   console.log("\nCreating test agent...");
   const { agent } = await createAgent("image-test-agent");
   console.log("Agent created:", agent.id);
+
+  // Create conversation
+  console.log("Creating conversation...");
+  const conversation = await client.conversations.create({
+    agent_id: agent.id,
+  });
+  console.log("Conversation created:", conversation.id);
 
   // Read image
   const imageData = readFileSync(testImagePath).toString("base64");
 
   // Send message with image
   console.log("\nSending image to agent...");
-  const stream = await sendMessageStream(agent.id, [
+  const stream = await sendMessageStream(conversation.id, [
     {
       role: "user",
       content: [

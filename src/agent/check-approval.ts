@@ -1,5 +1,5 @@
 // src/agent/check-approval.ts
-// Check for pending approvals and retrieve recent message history when resuming an agent
+// Check for pending approvals and retrieve recent message history when resuming an agent/conversation
 
 import type Letta from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -22,15 +22,26 @@ export interface ResumeData {
  *
  * @param client - The Letta client
  * @param agent - The agent state (includes in-context messages)
+ * @param conversationId - Optional conversation ID to fetch messages from (uses conversations API)
  * @returns Pending approval (if any) and recent message history
  */
 export async function getResumeData(
   client: Letta,
   agent: AgentState,
+  conversationId?: string,
 ): Promise<ResumeData> {
   try {
-    const messagesPage = await client.agents.messages.list(agent.id);
-    const messages = messagesPage.items;
+    // Fetch messages from conversation or agent depending on what's provided
+    let messages: Message[];
+    if (conversationId) {
+      // Use conversations API for conversation-specific history
+      messages = await client.conversations.messages.list(conversationId);
+    } else {
+      // Fall back to agent messages (legacy behavior)
+      const messagesPage = await client.agents.messages.list(agent.id);
+      messages = messagesPage.items;
+    }
+
     if (!messages || messages.length === 0) {
       return {
         pendingApproval: null,

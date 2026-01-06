@@ -66,6 +66,7 @@ import { ApprovalPreview } from "./components/ApprovalPreview";
 import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
+import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
@@ -405,16 +406,19 @@ type StaticItem =
 export default function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
+  conversationId: initialConversationId,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
   startupApprovals = [],
   messageHistory = [],
+  resumedExistingConversation = false,
   tokenStreaming = false,
   agentProvenance = null,
 }: {
   agentId: string;
   agentState?: AgentState | null;
+  conversationId: string; // Required: created at startup
   loadingState?:
     | "assembling"
     | "importing"
@@ -425,6 +429,7 @@ export default function App({
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
+  resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
 }) {
@@ -437,6 +442,9 @@ export default function App({
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
 
+  // Track current conversation (always created fresh on startup)
+  const [conversationId, setConversationId] = useState(initialConversationId);
+
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
@@ -444,11 +452,18 @@ export default function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
+  // Keep a ref to the current conversationId for use in callbacks
+  const conversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
   const resumeKey = useSuspend();
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
+  const prevInitialConversationIdRef = useRef(initialConversationId);
 
   // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
   // Only sync when the PROP actually changes, not when internal state changes
@@ -466,6 +481,14 @@ export default function App({
       setAgentState(initialAgentState);
     }
   }, [initialAgentState]);
+
+  useEffect(() => {
+    if (initialConversationId !== prevInitialConversationIdRef.current) {
+      prevInitialConversationIdRef.current = initialConversationId;
+      conversationIdRef.current = initialConversationId;
+      setConversationId(initialConversationId);
+    }
+  }, [initialConversationId]);
 
   // Set agent context for tools (especially Task tool)
   useEffect(() => {
@@ -644,6 +667,7 @@ export default function App({
     | "system"
     | "agent"
     | "resume"
+    | "conversations"
     | "search"
     | "subagent"
     | "feedback"
@@ -1075,10 +1099,6 @@ export default function App({
 
       // Add combined status at the END so user sees it without scrolling
       const statusId = `status-resumed-${Date.now().toString(36)}`;
-      const cwd = process.cwd();
-      const shortCwd = cwd.startsWith(process.env.HOME || "")
-        ? `~${cwd.slice((process.env.HOME || "").length)}`
-        : cwd;
 
       // Check if agent is pinned (locally or globally)
       const isPinned = agentState?.id
@@ -1088,23 +1108,32 @@ export default function App({
 
       // Build status message
       const agentName = agentState?.name || "Unnamed Agent";
-      const headerMessage = `Connecting to **${agentName}** (last used in ${shortCwd})`;
+      const isResumingConversation =
+        resumedExistingConversation || messageHistory.length > 0;
+      if (process.env.DEBUG) {
+        console.log(
+          `[DEBUG] Header: resumedExistingConversation=${resumedExistingConversation}, messageHistory.length=${messageHistory.length}`,
+        );
+      }
+      const headerMessage = isResumingConversation
+        ? `Resuming conversation with **${agentName}**`
+        : `Starting new conversation with **${agentName}**`;
 
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
         ? [
+            "→ **/agents**    list all agents",
+            "→ **/resume**    resume a previous conversation",
             "→ **/memory**    view your agent's memory blocks",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/agents**    list agents",
-            "→ **/ade**       open in the browser (web UI)",
           ]
         : [
+            "→ **/agents**    list all agents",
+            "→ **/resume**    resume a previous conversation",
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/agents**    list agents",
-            "→ **/ade**       open in the browser (web UI)",
           ];
 
       const statusLines = [headerMessage, ...commandHints];
@@ -1127,6 +1156,7 @@ export default function App({
     columns,
     agentState,
     agentProvenance,
+    resumedExistingConversation,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -1261,9 +1291,9 @@ export default function App({
             return;
           }
 
-          // Stream one turn - use ref to always get the latest agentId
+          // Stream one turn - use ref to always get the latest conversationId
           const stream = await sendMessageStream(
-            agentIdRef.current,
+            conversationIdRef.current,
             currentInput,
           );
 
@@ -2311,12 +2341,43 @@ export default function App({
         // Fetch new agent
         const agent = await client.agents.retrieve(targetAgentId);
 
-        // Fetch agent's message history
-        const messagesPage = await client.agents.messages.list(targetAgentId);
-        const messages = messagesPage.items;
+        // Get the most recent conversation for this agent, or create one
+        const conversations = await client.conversations.list({
+          agent_id: targetAgentId,
+          limit: 1,
+        });
+
+        let targetConversationId: string;
+        let createdNewConversation = false;
+        let messages: Message[] = [];
+
+        if (conversations.length > 0 && conversations[0]) {
+          // Use the most recent conversation
+          targetConversationId = conversations[0].id;
+          // Fetch messages from the conversation
+          messages =
+            await client.conversations.messages.list(targetConversationId);
+        } else {
+          // No conversations exist - create a new one
+          const newConversation = await client.conversations.create({
+            agent_id: targetAgentId,
+          });
+          targetConversationId = newConversation.id;
+          createdNewConversation = true;
+        }
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
+
+        // Save the session (agent + conversation) to settings
+        settingsManager.setLocalLastSession(
+          { agentId: targetAgentId, conversationId: targetConversationId },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({
+          agentId: targetAgentId,
+          conversationId: targetConversationId,
+        });
 
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
@@ -2335,10 +2396,32 @@ export default function App({
         setAgentState(agent);
         setAgentName(agent.name);
         setLlmConfig(agent.llm_config);
+        setConversationId(targetConversationId);
 
-        // Build success command
-        const agentUrl = `https://app.letta.com/projects/default-project/agents/${targetAgentId}`;
-        const successOutput = `Resumed "${agent.name || targetAgentId}"\n⎿  ${agentUrl}`;
+        // Build success command with agent + conversation info
+        const agentLabel = agent.name || targetAgentId;
+        const shortConvId = targetConversationId.slice(0, 20);
+        const successLines = createdNewConversation
+          ? [
+              `Switched to "${agentLabel}"`,
+              `⎿  Agent: ${targetAgentId}`,
+              `⎿  Conversation: ${shortConvId}... (new)`,
+              `⎿  Type /resume to resume a different conversation`,
+            ]
+          : messages.length > 0
+            ? [
+                `Resumed "${agentLabel}"`,
+                `⎿  Agent: ${targetAgentId}`,
+                `⎿  Conversation: ${shortConvId}...`,
+                `⎿  Type /resume to switch conversations`,
+              ]
+            : [
+                `Switched to "${agentLabel}"`,
+                `⎿  Agent: ${targetAgentId}`,
+                `⎿  Conversation: ${shortConvId}... (empty)`,
+                `⎿  Type /resume to resume a different conversation`,
+              ];
+        const successOutput = successLines.join("\n");
         const successItem: StaticItem = {
           kind: "command",
           id: uid("cmd"),
@@ -2369,7 +2452,12 @@ export default function App({
           setLines(toLines(buffersRef.current));
           hasBackfilledRef.current = true;
         } else {
-          setStaticItems([successItem]);
+          // Add separator for visual spacing even without backfill
+          const separator = {
+            kind: "separator" as const,
+            id: uid("sep"),
+          };
+          setStaticItems([separator, successItem]);
           setLines(toLines(buffersRef.current));
         }
       } catch (error) {
@@ -3023,14 +3111,14 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /clear command - reset conversation
+        // Special handling for /clear command - start new conversation
         if (msg.trim() === "/clear") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Clearing conversation...",
+            output: "Starting new conversation...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -3040,16 +3128,24 @@ export default function App({
 
           try {
             const client = await getClient();
-            await client.agents.messages.reset(agentId, {
-              add_default_initial_messages: false,
+
+            // Create a new conversation for the current agent
+            const conversation = await client.conversations.create({
+              agent_id: agentId,
             });
 
-            // Clear local buffers and static items
-            // buffersRef.current.byId.clear();
-            // buffersRef.current.order = [];
-            // buffersRef.current.tokenCount = 0;
-            // emittedIdsRef.current.clear();
-            // setStaticItems([]);
+            // Update conversationId state
+            setConversationId(conversation.id);
+
+            // Save the new session to settings
+            settingsManager.setLocalLastSession(
+              { agentId, conversationId: conversation.id },
+              process.cwd(),
+            );
+            settingsManager.setGlobalLastSession({
+              agentId,
+              conversationId: conversation.id,
+            });
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -3059,7 +3155,75 @@ export default function App({
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Conversation cleared",
+              output: "Started new conversation",
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Failed: ${errorDetails}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          } finally {
+            setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /clear-messages command - reset all agent messages (destructive)
+        if (msg.trim() === "/clear-messages") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Resetting agent messages...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            const client = await getClient();
+
+            // Reset all messages on the agent (destructive operation)
+            await client.agents.messages.reset(agentId, {
+              add_default_initial_messages: false,
+            });
+
+            // Also create a new conversation since messages were cleared
+            const conversation = await client.conversations.create({
+              agent_id: agentId,
+            });
+            setConversationId(conversation.id);
+            settingsManager.setLocalLastSession(
+              { agentId, conversationId: conversation.id },
+              process.cwd(),
+            );
+            settingsManager.setGlobalLastSession({
+              agentId,
+              conversationId: conversation.id,
+            });
+
+            // Reset turn counter for memory reminders
+            turnCountRef.current = 0;
+
+            // Update command with success
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "All agent messages reset",
               phase: "finished",
               success: true,
             });
@@ -3314,14 +3478,19 @@ export default function App({
         }
 
         // Special handling for /agents command - show agent browser
-        // /resume, /pinned, /profiles are hidden aliases
+        // /pinned, /profiles are hidden aliases
         if (
           msg.trim() === "/agents" ||
-          msg.trim() === "/resume" ||
           msg.trim() === "/pinned" ||
           msg.trim() === "/profiles"
         ) {
           setActiveOverlay("resume");
+          return { submitted: true };
+        }
+
+        // Special handling for /resume command - show conversation selector for current agent
+        if (msg.trim() === "/resume") {
+          setActiveOverlay("conversations");
           return { submitted: true };
         }
 
@@ -5671,12 +5840,6 @@ Plan file path: ${planFilePath}`;
       // Add status line showing agent info
       const statusId = `status-agent-${Date.now().toString(36)}`;
 
-      // Get short path for display
-      const cwd = process.cwd();
-      const shortCwd = cwd.startsWith(process.env.HOME || "")
-        ? `~${cwd.slice((process.env.HOME || "").length)}`
-        : cwd;
-
       // Check if agent is pinned (locally or globally)
       const isPinned = agentState?.id
         ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
@@ -5685,25 +5848,27 @@ Plan file path: ${planFilePath}`;
 
       // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
-      const headerMessage = continueSession
-        ? `Connecting to **${agentName}** (last used in ${shortCwd})`
-        : "Creating a new agent";
+      const headerMessage = resumedExistingConversation
+        ? `Resuming (empty) conversation with **${agentName}**`
+        : continueSession
+          ? `Starting new conversation with **${agentName}**`
+          : "Creating a new agent";
 
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
         ? [
+            "→ **/agents**    list all agents",
+            "→ **/resume**    resume a previous conversation",
             "→ **/memory**    view your agent's memory blocks",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/agents**    list agents",
-            "→ **/ade**       open in the browser (web UI)",
           ]
         : [
+            "→ **/agents**    list all agents",
+            "→ **/resume**    resume a previous conversation",
             "→ **/pin**       save + name your agent",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
-            "→ **/agents**    list agents",
-            "→ **/ade**       open in the browser (web UI)",
           ];
 
       const statusLines = [headerMessage, ...commandHints];
@@ -5719,6 +5884,7 @@ Plan file path: ${planFilePath}`;
   }, [
     loadingState,
     continueSession,
+    resumedExistingConversation,
     messageHistory.length,
     columns,
     agentProvenance,
@@ -6210,6 +6376,237 @@ Plan file path: ${planFilePath}`;
                 onSelect={async (id) => {
                   closeOverlay();
                   await handleAgentSelect(id);
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Conversation Selector - for resuming conversations */}
+            {activeOverlay === "conversations" && (
+              <ConversationSelector
+                agentId={agentId}
+                currentConversationId={conversationId}
+                onSelect={async (convId) => {
+                  closeOverlay();
+
+                  // Skip if already on this conversation
+                  if (convId === conversationId) {
+                    const cmdId = uid("cmd");
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/resume",
+                      output: "Already on this conversation",
+                      phase: "finished",
+                      success: true,
+                    });
+                    buffersRef.current.order.push(cmdId);
+                    refreshDerived();
+                    return;
+                  }
+
+                  // Lock input for async operation
+                  setCommandRunning(true);
+
+                  const inputCmd = "/resume";
+                  const cmdId = uid("cmd");
+
+                  // Show loading indicator while switching
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: inputCmd,
+                    output: "Switching conversation...",
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    // Update conversation ID and settings
+                    setConversationId(convId);
+                    settingsManager.setLocalLastSession(
+                      { agentId, conversationId: convId },
+                      process.cwd(),
+                    );
+                    settingsManager.setGlobalLastSession({
+                      agentId,
+                      conversationId: convId,
+                    });
+
+                    // Fetch message history for the selected conversation
+                    if (agentState) {
+                      const client = await getClient();
+                      const resumeData = await getResumeData(
+                        client,
+                        agentState,
+                        convId,
+                      );
+
+                      // Clear current transcript and static items
+                      buffersRef.current.byId.clear();
+                      buffersRef.current.order = [];
+                      buffersRef.current.tokenCount = 0;
+                      emittedIdsRef.current.clear();
+                      setStaticItems([]);
+                      setStaticRenderEpoch((e) => e + 1);
+
+                      // Build success command with agent + conversation info
+                      const currentAgentName =
+                        agentState.name || "Unnamed Agent";
+                      const successLines =
+                        resumeData.messageHistory.length > 0
+                          ? [
+                              `Resumed conversation with "${currentAgentName}"`,
+                              `⎿  Agent: ${agentId}`,
+                              `⎿  Conversation: ${convId}`,
+                            ]
+                          : [
+                              `Switched to conversation with "${currentAgentName}"`,
+                              `⎿  Agent: ${agentId}`,
+                              `⎿  Conversation: ${convId} (empty)`,
+                            ];
+                      const successOutput = successLines.join("\n");
+                      const successItem: StaticItem = {
+                        kind: "command",
+                        id: uid("cmd"),
+                        input: inputCmd,
+                        output: successOutput,
+                        phase: "finished",
+                        success: true,
+                      };
+
+                      // Backfill message history with visual separator
+                      if (resumeData.messageHistory.length > 0) {
+                        hasBackfilledRef.current = false;
+                        backfillBuffers(
+                          buffersRef.current,
+                          resumeData.messageHistory,
+                        );
+                        // Collect backfilled items
+                        const backfilledItems: StaticItem[] = [];
+                        for (const id of buffersRef.current.order) {
+                          const ln = buffersRef.current.byId.get(id);
+                          if (!ln) continue;
+                          emittedIdsRef.current.add(id);
+                          backfilledItems.push({ ...ln } as StaticItem);
+                        }
+                        // Add separator before backfilled messages, then success at end
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([
+                          separator,
+                          ...backfilledItems,
+                          successItem,
+                        ]);
+                        setLines(toLines(buffersRef.current));
+                        hasBackfilledRef.current = true;
+                      } else {
+                        // Add separator for visual spacing even without backfill
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([separator, successItem]);
+                        setLines(toLines(buffersRef.current));
+                      }
+                    }
+                  } catch (error) {
+                    const errorCmdId = uid("cmd");
+                    buffersRef.current.byId.set(errorCmdId, {
+                      kind: "command",
+                      id: errorCmdId,
+                      input: inputCmd,
+                      output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                    buffersRef.current.order.push(errorCmdId);
+                    refreshDerived();
+                  } finally {
+                    setCommandRunning(false);
+                  }
+                }}
+                onNewConversation={async () => {
+                  closeOverlay();
+
+                  // Lock input for async operation
+                  setCommandRunning(true);
+
+                  const inputCmd = "/resume";
+                  const cmdId = uid("cmd");
+
+                  // Show loading indicator
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: inputCmd,
+                    output: "Creating new conversation...",
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    // Create a new conversation
+                    const client = await getClient();
+                    const conversation = await client.conversations.create({
+                      agent_id: agentId,
+                    });
+                    setConversationId(conversation.id);
+                    settingsManager.setLocalLastSession(
+                      { agentId, conversationId: conversation.id },
+                      process.cwd(),
+                    );
+                    settingsManager.setGlobalLastSession({
+                      agentId,
+                      conversationId: conversation.id,
+                    });
+
+                    // Clear current transcript and static items
+                    buffersRef.current.byId.clear();
+                    buffersRef.current.order = [];
+                    buffersRef.current.tokenCount = 0;
+                    emittedIdsRef.current.clear();
+                    setStaticItems([]);
+                    setStaticRenderEpoch((e) => e + 1);
+
+                    // Build success command with agent + conversation info
+                    const currentAgentName =
+                      agentState?.name || "Unnamed Agent";
+                    const shortConvId = conversation.id.slice(0, 20);
+                    const successLines = [
+                      `Started new conversation with "${currentAgentName}"`,
+                      `⎿  Agent: ${agentId}`,
+                      `⎿  Conversation: ${shortConvId}... (new)`,
+                    ];
+                    const successItem: StaticItem = {
+                      kind: "command",
+                      id: uid("cmd"),
+                      input: inputCmd,
+                      output: successLines.join("\n"),
+                      phase: "finished",
+                      success: true,
+                    };
+                    setStaticItems([successItem]);
+                    setLines(toLines(buffersRef.current));
+                  } catch (error) {
+                    const errorCmdId = uid("cmd");
+                    buffersRef.current.byId.set(errorCmdId, {
+                      kind: "command",
+                      id: errorCmdId,
+                      input: inputCmd,
+                      output: `Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                    buffersRef.current.order.push(errorCmdId);
+                    refreshDerived();
+                  } finally {
+                    setCommandRunning(false);
+                  }
                 }}
                 onCancel={closeOverlay}
               />

@@ -68,11 +68,20 @@ export const commands: Record<string, Command> = {
     },
   },
   "/clear": {
-    desc: "Clear conversation history (keep memory)",
+    desc: "Start a new conversation (keep agent memory)",
     order: 17,
     handler: () => {
-      // Handled specially in App.tsx to access client and agent ID
-      return "Clearing messages...";
+      // Handled specially in App.tsx to create new conversation
+      return "Starting new conversation...";
+    },
+  },
+  "/clear-messages": {
+    desc: "Reset all agent messages (destructive)",
+    order: 18,
+    hidden: true, // Advanced command, not shown in autocomplete
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Resetting agent messages...";
     },
   },
 
@@ -321,11 +330,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/resume": {
-    desc: "Browse and switch to another agent",
-    hidden: true, // Backwards compatibility alias for /agents
+    desc: "Resume a previous conversation",
+    order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
+      // Handled specially in App.tsx to show conversation selector
+      return "Opening conversation selector...";
     },
   },
   "/pinned": {
