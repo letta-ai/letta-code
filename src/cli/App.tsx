@@ -2234,7 +2234,19 @@ export default function App({
       }
       refreshDerived();
 
-      // Clear any pending approvals since we're cancelling
+      // Cache any pending approvals as denials to send with the next message
+      // This tells the server "I'm rejecting these approvals" so it doesn't stay stuck waiting
+      if (pendingApprovals.length > 0) {
+        const denialResults = pendingApprovals.map((approval) => ({
+          type: "approval" as const,
+          tool_call_id: approval.toolCallId,
+          approve: false,
+          reason: "User interrupted the stream",
+        }));
+        setQueuedApprovalResults(denialResults);
+      }
+
+      // Clear local approval state
       setPendingApprovals([]);
       setApprovalContexts([]);
       setApprovalResults([]);
@@ -2282,6 +2294,7 @@ export default function App({
     isExecutingTool,
     refreshDerived,
     setStreaming,
+    pendingApprovals,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
