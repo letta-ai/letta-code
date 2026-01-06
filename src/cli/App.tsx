@@ -3488,8 +3488,143 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /resume command - show conversation selector for current agent
-        if (msg.trim() === "/resume") {
+        // Special handling for /resume command - show conversation selector or switch directly
+        if (msg.trim().startsWith("/resume")) {
+          const parts = msg.trim().split(/\s+/);
+          const targetConvId = parts[1]; // Optional conversation ID
+
+          if (targetConvId) {
+            // Direct switch to specified conversation
+            if (targetConvId === conversationId) {
+              const cmdId = uid("cmd");
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg.trim(),
+                output: "Already on this conversation",
+                phase: "finished",
+                success: true,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            // Lock input and show loading
+            setCommandRunning(true);
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg.trim(),
+              output: "Switching conversation...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            try {
+              // Update conversation ID and settings
+              setConversationId(targetConvId);
+              settingsManager.setLocalLastSession(
+                { agentId, conversationId: targetConvId },
+                process.cwd(),
+              );
+              settingsManager.setGlobalLastSession({
+                agentId,
+                conversationId: targetConvId,
+              });
+
+              // Fetch message history for the selected conversation
+              if (agentState) {
+                const client = await getClient();
+                const resumeData = await getResumeData(
+                  client,
+                  agentState,
+                  targetConvId,
+                );
+
+                // Clear current transcript and static items
+                buffersRef.current.byId.clear();
+                buffersRef.current.order = [];
+                buffersRef.current.tokenCount = 0;
+                emittedIdsRef.current.clear();
+                setStaticItems([]);
+                setStaticRenderEpoch((e) => e + 1);
+
+                // Build success message
+                const currentAgentName = agentState.name || "Unnamed Agent";
+                const successLines =
+                  resumeData.messageHistory.length > 0
+                    ? [
+                        `Resumed conversation with "${currentAgentName}"`,
+                        `⎿  Agent: ${agentId}`,
+                        `⎿  Conversation: ${targetConvId}`,
+                      ]
+                    : [
+                        `Switched to conversation with "${currentAgentName}"`,
+                        `⎿  Agent: ${agentId}`,
+                        `⎿  Conversation: ${targetConvId} (empty)`,
+                      ];
+                const successOutput = successLines.join("\n");
+                const successItem: StaticItem = {
+                  kind: "command",
+                  id: uid("cmd"),
+                  input: msg.trim(),
+                  output: successOutput,
+                  phase: "finished",
+                  success: true,
+                };
+
+                // Backfill message history
+                if (resumeData.messageHistory.length > 0) {
+                  hasBackfilledRef.current = false;
+                  backfillBuffers(
+                    buffersRef.current,
+                    resumeData.messageHistory,
+                  );
+                  const backfilledItems: StaticItem[] = [];
+                  for (const id of buffersRef.current.order) {
+                    const ln = buffersRef.current.byId.get(id);
+                    if (!ln) continue;
+                    emittedIdsRef.current.add(id);
+                    backfilledItems.push({ ...ln } as StaticItem);
+                  }
+                  const separator = {
+                    kind: "separator" as const,
+                    id: uid("sep"),
+                  };
+                  setStaticItems([separator, ...backfilledItems, successItem]);
+                  setLines(toLines(buffersRef.current));
+                  hasBackfilledRef.current = true;
+                } else {
+                  const separator = {
+                    kind: "separator" as const,
+                    id: uid("sep"),
+                  };
+                  setStaticItems([separator, successItem]);
+                  setLines(toLines(buffersRef.current));
+                }
+              }
+            } catch (error) {
+              const errorCmdId = uid("cmd");
+              buffersRef.current.byId.set(errorCmdId, {
+                kind: "command",
+                id: errorCmdId,
+                input: msg.trim(),
+                output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(errorCmdId);
+              refreshDerived();
+            } finally {
+              setCommandRunning(false);
+            }
+            return { submitted: true };
+          }
+
+          // No conversation ID provided - show selector
           setActiveOverlay("conversations");
           return { submitted: true };
         }

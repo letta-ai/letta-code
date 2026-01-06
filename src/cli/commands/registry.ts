@@ -6,6 +6,7 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
 }
@@ -331,9 +332,10 @@ export const commands: Record<string, Command> = {
   },
   "/resume": {
     desc: "Resume a previous conversation",
+    args: "[conversation_id]",
     order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show conversation selector
+      // Handled specially in App.tsx to show conversation selector or switch directly
       return "Opening conversation selector...";
     },
   },
