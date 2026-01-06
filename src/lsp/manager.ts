@@ -92,7 +92,13 @@ export class LSPManager {
         }
       }
 
-      const proc = spawn(serverDef.command[0], serverDef.command.slice(1), {
+      const command = serverDef.command[0];
+      if (!command) {
+        console.error(`[LSP] ${serverDef.id} has no command configured`);
+        return null;
+      }
+
+      const proc = spawn(command, serverDef.command.slice(1), {
         cwd: rootUri,
         env: {
           ...process.env,

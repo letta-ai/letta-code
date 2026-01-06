@@ -76,7 +76,7 @@ export class LSPClient extends EventEmitter {
     while (true) {
       // Find Content-Length header
       const headerMatch = this.buffer.match(/Content-Length: (\d+)\r\n/);
-      if (!headerMatch) break;
+      if (!headerMatch?.[1]) break;
 
       const contentLength = Number.parseInt(headerMatch[1], 10);
       const headerEnd = this.buffer.indexOf("\r\n\r\n");
