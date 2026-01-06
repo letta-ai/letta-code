@@ -193,6 +193,18 @@ export async function drainStream(
         break;
       }
 
+      // Suppress mid-stream desync errors (match headless behavior)
+      // These are transient and will be handled by end-of-turn desync recovery
+      const errObj = (chunk as unknown as { error?: { detail?: string } })
+        .error;
+      if (
+        errObj?.detail?.includes("No tool call is currently awaiting approval")
+      ) {
+        // Server isn't ready for approval yet; let the stream continue
+        // Suppress the error frame from output
+        continue;
+      }
+
       onChunk(buffers, chunk);
       queueMicrotask(refresh);
 
