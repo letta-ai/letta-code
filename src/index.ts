@@ -936,7 +936,10 @@ async function main(): Promise<void> {
               await client.agents.retrieve(localProjectSettings.lastAgent);
               resumingAgentId = localProjectSettings.lastAgent;
             } catch {
-              // Agent no longer exists, will create new
+              // LRU agent doesn't exist (wrong org, deleted, etc.)
+              // Show selector instead of silently creating a new agent
+              setLoadingState("selecting_global");
+              return;
             }
           }
 
@@ -946,7 +949,9 @@ async function main(): Promise<void> {
               await client.agents.retrieve(settings.lastAgent);
               resumingAgentId = settings.lastAgent;
             } catch {
-              // Agent no longer exists
+              // Global agent doesn't exist - show selector
+              setLoadingState("selecting_global");
+              return;
             }
           }
 
@@ -1049,33 +1054,34 @@ async function main(): Promise<void> {
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
-        if (!agent) {
-          await settingsManager.loadLocalProjectSettings();
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
-            try {
-              agent = await client.agents.retrieve(
-                localProjectSettings.lastAgent,
-              );
-              // console.log(`Resuming project agent ${localProjectSettings.lastAgent}...`);
-            } catch (error) {
-              console.error(
-                `Project agent ${localProjectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
-              );
-            }
+        // Note: If LRU retrieval failed in early validation, we already showed selector and returned
+        // This block handles the case where we have a valid resumingAgentId from early validation
+        if (!agent && resumingAgentId) {
+          try {
+            agent = await client.agents.retrieve(resumingAgentId);
+          } catch (error) {
+            // Agent disappeared between validation and now - show selector
+            console.error(
+              `Agent ${resumingAgentId} not found (error: ${JSON.stringify(error)})`,
+            );
+            setLoadingState("selecting_global");
+            return;
           }
         }
 
         // Priority 6: Try to reuse global lastAgent if --continue flag is passed
+        // Note: If global lastAgent retrieval failed in early validation (with --continue),
+        // we already showed selector and returned. This is a safety fallback.
         if (!agent && continueSession && settings.lastAgent) {
           try {
             agent = await client.agents.retrieve(settings.lastAgent);
-            // console.log(`Continuing previous agent ${settings.lastAgent}...`);
           } catch (error) {
+            // Agent disappeared - show selector instead of silently creating
             console.error(
-              `Previous agent ${settings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
+              `Previous agent ${settings.lastAgent} not found (error: ${JSON.stringify(error)})`,
             );
+            setLoadingState("selecting_global");
+            return;
           }
         }
 
