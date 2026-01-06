@@ -407,6 +407,8 @@ const READ_ONLY_SUBAGENT_TYPES = new Set([
   "Explore",
   "plan", // Planning agent - Glob, Grep, Read, LS, BashOutput
   "Plan",
+  "recall", // Conversation history search - Skill, Bash, Read, BashOutput
+  "Recall",
 ]);
 
 /**

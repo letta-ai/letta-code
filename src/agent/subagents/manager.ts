@@ -385,12 +385,22 @@ async function executeSubagent(
     // Spawn Letta Code in headless mode.
     // Some environments may have a different `letta` binary earlier in PATH.
     const lettaCmd = process.env.LETTA_CODE_BIN || "letta";
+    // Pass parent agent ID so subagents can access parent's context (e.g., search history)
+    let parentAgentId: string | undefined;
+    try {
+      parentAgentId = getCurrentAgentId();
+    } catch {
+      // Context not available
+    }
+
     const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),
       env: {
         ...process.env,
         // Tag Task-spawned agents for easy filtering.
         LETTA_CODE_AGENT_ROLE: "subagent",
+        // Pass parent agent ID for subagents that need to access parent's context
+        ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
       },
     });
 

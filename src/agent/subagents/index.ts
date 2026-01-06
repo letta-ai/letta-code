@@ -21,8 +21,14 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 import exploreAgentMd from "./builtin/explore.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import planAgentMd from "./builtin/plan.md";
+import recallAgentMd from "./builtin/recall.md";
 
-const BUILTIN_SOURCES = [exploreAgentMd, generalPurposeAgentMd, planAgentMd];
+const BUILTIN_SOURCES = [
+  exploreAgentMd,
+  generalPurposeAgentMd,
+  planAgentMd,
+  recallAgentMd,
+];
 
 // Re-export for convenience
 export type { MemoryBlockLabel };
