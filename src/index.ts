@@ -310,17 +310,23 @@ async function main(): Promise<void> {
   });
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
+  // Preprocess args to support --conv as alias for --conversation
+  const processedArgs = process.argv.map((arg) =>
+    arg === "--conv" ? "--conversation" : arg,
+  );
+
   let values: Record<string, unknown>;
   let positionals: string[];
   try {
     const parsed = parseArgs({
-      args: process.argv,
+      args: processedArgs,
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         info: { type: "boolean" },
-        continue: { type: "boolean", short: "c" },
-        resume: { type: "boolean", short: "r" }, // Resume exact last session (agent + conversation)
+        continue: { type: "boolean" }, // Deprecated - kept for error message
+        resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
+        conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
         new: { type: "boolean" },
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
@@ -397,8 +403,18 @@ async function main(): Promise<void> {
     process.exit(result.success ? 0 : 1);
   }
 
-  const shouldContinue = (values.continue as boolean | undefined) ?? false;
-  const shouldResume = (values.resume as boolean | undefined) ?? false; // Resume exact last session
+  // Check for deprecated --continue flag
+  if (values.continue) {
+    console.error(
+      "Error: --continue is deprecated. Did you mean --resume (-r)?\n" +
+        "  --resume resumes your last session (agent + conversation)",
+    );
+    process.exit(1);
+  }
+
+  const shouldResume = (values.resume as boolean | undefined) ?? false; // Resume last session
+  const specifiedConversationId =
+    (values.conversation as string | undefined) ?? null; // Specific conversation to resume
   const forceNew = (values.new as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
@@ -548,8 +564,8 @@ async function main(): Promise<void> {
       console.error("Error: --from-af cannot be used with --name");
       process.exit(1);
     }
-    if (shouldContinue) {
-      console.error("Error: --from-af cannot be used with --continue");
+    if (shouldResume) {
+      console.error("Error: --from-af cannot be used with --resume");
       process.exit(1);
     }
     if (forceNew) {
@@ -1163,7 +1179,7 @@ async function main(): Promise<void> {
         // Check if we're resuming an existing agent
         // We're resuming if:
         // 1. We specified an agent ID via --agent flag (agentIdArg)
-        // 2. We used --continue flag (continueSession)
+        // 2. We used --resume flag (continueSession)
         // 3. We're reusing a project agent (detected early as resumingAgentId)
         // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !forceNew && !!resumingAgentId;
@@ -1222,9 +1238,25 @@ async function main(): Promise<void> {
         // Debug: log resume flag status
         if (process.env.DEBUG) {
           console.log(`[DEBUG] shouldResume=${shouldResume}`);
+          console.log(
+            `[DEBUG] specifiedConversationId=${specifiedConversationId}`,
+          );
         }
 
-        if (shouldResume) {
+        if (specifiedConversationId) {
+          // Use the explicitly specified conversation ID
+          conversationIdToUse = specifiedConversationId;
+          setResumedExistingConversation(true);
+
+          // Load message history and pending approvals from the conversation
+          setLoadingState("checking");
+          const data = await getResumeData(
+            client,
+            agent,
+            specifiedConversationId,
+          );
+          setResumeData(data);
+        } else if (shouldResume) {
           // Try to load the last session for this agent
           const lastSession =
             settingsManager.getLocalLastSession(process.cwd()) ??
@@ -1366,7 +1398,7 @@ async function main(): Promise<void> {
 
   render(
     React.createElement(LoadingApp, {
-      continueSession: shouldContinue,
+      continueSession: shouldResume,
       forceNew: forceNew,
       initBlocks: initBlocks,
       baseTools: baseTools,
