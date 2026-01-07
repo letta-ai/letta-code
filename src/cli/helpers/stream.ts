@@ -193,6 +193,18 @@ export async function drainStream(
         break;
       }
 
+      // Suppress mid-stream desync errors (match headless behavior)
+      // These are transient and will be handled by end-of-turn desync recovery
+      const errObj = (chunk as unknown as { error?: { detail?: string } })
+        .error;
+      if (
+        errObj?.detail?.includes("No tool call is currently awaiting approval")
+      ) {
+        // Server isn't ready for approval yet; let the stream continue
+        // Suppress the error frame from output
+        continue;
+      }
+
       onChunk(buffers, chunk);
       queueMicrotask(refresh);
 
@@ -364,10 +376,15 @@ export async function drainStreamWithResume(
       buffers.interrupted = false;
 
       // Resume from Redis where we left off
-      const resumeStream = await client.runs.messages.stream(result.lastRunId, {
-        starting_after: result.lastSeqId,
-        batch_size: 1000, // Fetch buffered chunks quickly
-      });
+      // Disable SDK retries - state management happens outside, retries would create race conditions
+      const resumeStream = await client.runs.messages.stream(
+        result.lastRunId,
+        {
+          starting_after: result.lastSeqId,
+          batch_size: 1000, // Fetch buffered chunks quickly
+        },
+        { maxRetries: 0 },
+      );
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain

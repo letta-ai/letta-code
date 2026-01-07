@@ -1,6 +1,7 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -482,6 +483,10 @@ export default function App({
   // Separate from streaming state which may be set early for UI responsiveness
   // Tracks depth to allow intentional reentry while blocking parallel calls
   const processingConversationRef = useRef(0);
+
+  // Generation counter - incremented on each ESC interrupt.
+  // Allows processConversation to detect if it's been superseded.
+  const conversationGenerationRef = useRef(0);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
@@ -1209,11 +1214,23 @@ export default function App({
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: { allowReentry?: boolean },
+      options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
       // Copy so we can safely mutate for retry recovery flows
       const currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
+
+      // Use provided generation (from onSubmit) or capture current
+      // This allows detecting if ESC was pressed during async work before this function was called
+      const myGeneration =
+        options?.submissionGeneration ?? conversationGenerationRef.current;
+
+      // Check if we're already stale (ESC was pressed while we were queued in onSubmit).
+      // This can happen if ESC was pressed during async work before processConversation was called.
+      // We check early to avoid setting state (streaming, etc.) for stale conversations.
+      if (myGeneration !== conversationGenerationRef.current) {
+        return;
+      }
 
       // Guard against concurrent processConversation calls
       // This can happen if user submits two messages in quick succession
@@ -1238,12 +1255,19 @@ export default function App({
           return;
         }
 
+        // Double-check we haven't become stale between entry and try block
+        if (myGeneration !== conversationGenerationRef.current) {
+          return;
+        }
+
         setStreaming(true);
         abortControllerRef.current = new AbortController();
 
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
-        markIncompleteToolsAsCancelled(buffersRef.current);
+        // Pass false to avoid setting interrupted=true, which causes race conditions
+        // with concurrent processConversation calls reading the flag
+        markIncompleteToolsAsCancelled(buffersRef.current, false);
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
@@ -1257,7 +1281,13 @@ export default function App({
 
           // Check if cancelled before starting new stream
           if (signal?.aborted) {
-            setStreaming(false);
+            const isStaleAtAbort =
+              myGeneration !== conversationGenerationRef.current;
+            // Only set streaming=false if this is the current generation.
+            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            if (!isStaleAtAbort) {
+              setStreaming(false);
+            }
             return;
           }
 
@@ -1269,7 +1299,13 @@ export default function App({
 
           // Check again after network call - user may have pressed Escape during sendMessageStream
           if (signal?.aborted) {
-            setStreaming(false);
+            const isStaleAtAbort =
+              myGeneration !== conversationGenerationRef.current;
+            // Only set streaming=false if this is the current generation.
+            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            if (!isStaleAtAbort) {
+              setStreaming(false);
+            }
             return;
           }
 
@@ -1348,6 +1384,17 @@ export default function App({
           const wasInterrupted = !!buffersRef.current.interrupted;
           const wasAborted = !!signal?.aborted;
           let stopReasonToHandle = wasAborted ? "cancelled" : stopReason;
+
+          // Check if this conversation became stale while the stream was running.
+          // If stale, a newer processConversation is running and we shouldn't modify UI state.
+          const isStaleAfterDrain =
+            myGeneration !== conversationGenerationRef.current;
+
+          // If this conversation is stale, exit without modifying UI state.
+          // A newer conversation is running and should control the UI.
+          if (isStaleAfterDrain) {
+            return;
+          }
 
           // Immediate refresh after stream completes to show final state unless
           // the user already cancelled (handleInterrupt rendered the UI).
@@ -1851,8 +1898,12 @@ export default function App({
 
           // Unexpected stop reason (error, llm_api_error, etc.)
           // Cache desync detection and last failure for consistent handling
-          const isApprovalPayload =
-            currentInput.length === 1 && currentInput[0]?.type === "approval";
+          // Check if payload contains approvals (could be approval-only or mixed with user message)
+          const hasApprovalInPayload = currentInput.some(
+            (item) => item?.type === "approval",
+          );
+          const isApprovalOnlyPayload =
+            hasApprovalInPayload && currentInput.length === 1;
 
           // Capture the most recent error text in this turn (if any)
           let latestErrorText: string | null = null;
@@ -1876,7 +1927,8 @@ export default function App({
           const lastFailureMessage = latestErrorText || detailFromRun || null;
 
           // Check for approval desync errors even if stop_reason isn't llm_api_error.
-          if (isApprovalPayload && desyncDetected) {
+          // Handle both approval-only payloads and mixed [approval, message] payloads.
+          if (hasApprovalInPayload && desyncDetected) {
             if (llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES) {
               llmApiErrorRetriesRef.current += 1;
               const statusId = uid("status");
@@ -1890,11 +1942,29 @@ export default function App({
               buffersRef.current.order.push(statusId);
               refreshDerived();
 
-              currentInput.splice(
-                0,
-                currentInput.length,
-                buildApprovalRecoveryMessage(),
-              );
+              if (isApprovalOnlyPayload) {
+                // Approval-only payload: send recovery prompt
+                currentInput.splice(
+                  0,
+                  currentInput.length,
+                  buildApprovalRecoveryMessage(),
+                );
+              } else {
+                // Mixed payload [approval, message]: strip stale approval, keep user message
+                const messageItems = currentInput.filter(
+                  (item) => item?.type !== "approval",
+                );
+                if (messageItems.length > 0) {
+                  currentInput.splice(0, currentInput.length, ...messageItems);
+                } else {
+                  // Fallback if somehow no message items remain
+                  currentInput.splice(
+                    0,
+                    currentInput.length,
+                    buildApprovalRecoveryMessage(),
+                  );
+                }
+              }
 
               // Remove the transient status before retrying
               buffersRef.current.byId.delete(statusId);
@@ -2102,11 +2172,19 @@ export default function App({
         sendDesktopNotification(); // Notify user of error
         refreshDerived();
       } finally {
+        // Check if this conversation was superseded by an ESC interrupt
+        const isStale = myGeneration !== conversationGenerationRef.current;
+
         abortControllerRef.current = null;
-        processingConversationRef.current = Math.max(
-          0,
-          processingConversationRef.current - 1,
-        );
+
+        // Only decrement ref if this conversation is still current.
+        // If stale (ESC was pressed), handleInterrupt already reset ref to 0.
+        if (!isStale) {
+          processingConversationRef.current = Math.max(
+            0,
+            processingConversationRef.current - 1,
+          );
+        }
       }
     },
     [
@@ -2175,7 +2253,9 @@ export default function App({
       return;
     }
 
-    if (!streaming || interruptRequested) return;
+    if (!streaming || interruptRequested) {
+      return;
+    }
 
     // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
@@ -2203,6 +2283,14 @@ export default function App({
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
 
+      // Increment generation to mark any in-flight processConversation as stale.
+      // The stale processConversation will check this and exit quietly without
+      // decrementing the ref (since we reset it here).
+      conversationGenerationRef.current += 1;
+
+      // Reset the processing guard so the next message can start a new conversation.
+      processingConversationRef.current = 0;
+
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
@@ -2211,7 +2299,19 @@ export default function App({
       }
       refreshDerived();
 
-      // Clear any pending approvals since we're cancelling
+      // Cache any pending approvals as denials to send with the next message
+      // This tells the server "I'm rejecting these approvals" so it doesn't stay stuck waiting
+      if (pendingApprovals.length > 0) {
+        const denialResults = pendingApprovals.map((approval) => ({
+          type: "approval" as const,
+          tool_call_id: approval.toolCallId,
+          approve: false,
+          reason: "User interrupted the stream",
+        }));
+        setQueuedApprovalResults(denialResults);
+      }
+
+      // Clear local approval state
       setPendingApprovals([]);
       setApprovalContexts([]);
       setApprovalResults([]);
@@ -2259,6 +2359,7 @@ export default function App({
     isExecutingTool,
     refreshDerived,
     setStreaming,
+    pendingApprovals,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
@@ -2556,6 +2657,154 @@ export default function App({
     [refreshDerived],
   );
 
+  /**
+   * Check and handle any pending approvals before sending a slash command.
+   * Returns true if approvals need user input (caller should return { submitted: false }).
+   * Returns false if no approvals or all auto-handled (caller can proceed).
+   */
+  const checkPendingApprovalsForSlashCommand = useCallback(async (): Promise<
+    { blocked: true } | { blocked: false }
+  > => {
+    if (!CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+      return { blocked: false };
+    }
+
+    try {
+      const client = await getClient();
+      const agent = await client.agents.retrieve(agentId);
+      const { pendingApprovals: existingApprovals } = await getResumeData(
+        client,
+        agent,
+      );
+
+      if (!existingApprovals || existingApprovals.length === 0) {
+        return { blocked: false };
+      }
+
+      // There are pending approvals - check permissions (respects yolo mode)
+      const approvalResults = await Promise.all(
+        existingApprovals.map(async (approvalItem) => {
+          if (!approvalItem.toolName) {
+            return {
+              approval: approvalItem,
+              permission: {
+                decision: "deny" as const,
+                reason: "Tool call incomplete - missing name",
+              },
+              context: null,
+            };
+          }
+          const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+            approvalItem.toolArgs,
+            {},
+          );
+          const permission = await checkToolPermission(
+            approvalItem.toolName,
+            parsedArgs,
+          );
+          const context = await analyzeToolApproval(
+            approvalItem.toolName,
+            parsedArgs,
+          );
+          return { approval: approvalItem, permission, context };
+        }),
+      );
+
+      // Categorize by permission decision
+      const needsUserInput: typeof approvalResults = [];
+      const autoAllowed: typeof approvalResults = [];
+      const autoDenied: typeof approvalResults = [];
+
+      for (const ac of approvalResults) {
+        const { approval, permission } = ac;
+        let decision = permission.decision;
+
+        if (
+          alwaysRequiresUserInput(approval.toolName) &&
+          decision === "allow"
+        ) {
+          decision = "ask";
+        }
+
+        if (decision === "ask") {
+          needsUserInput.push(ac);
+        } else if (decision === "deny") {
+          autoDenied.push(ac);
+        } else {
+          autoAllowed.push(ac);
+        }
+      }
+
+      // If any approvals need user input, show dialog
+      if (needsUserInput.length > 0) {
+        setPendingApprovals(needsUserInput.map((ac) => ac.approval));
+        setApprovalContexts(
+          needsUserInput
+            .map((ac) => ac.context)
+            .filter((ctx): ctx is ApprovalContext => ctx !== null),
+        );
+        return { blocked: true };
+      }
+
+      // All approvals can be auto-handled - execute them before proceeding
+      const allResults: ApprovalResult[] = [];
+
+      // Execute auto-allowed tools
+      if (autoAllowed.length > 0) {
+        const autoAllowedResults = await executeAutoAllowedTools(
+          autoAllowed,
+          (chunk) => onChunk(buffersRef.current, chunk),
+        );
+        // Map to ApprovalResult format (ToolReturn)
+        allResults.push(
+          ...autoAllowedResults.map((ar) => ({
+            type: "tool" as const,
+            tool_call_id: ar.toolCallId,
+            tool_return: ar.result.toolReturn,
+            status: ar.result.status,
+            stdout: ar.result.stdout,
+            stderr: ar.result.stderr,
+          })),
+        );
+      }
+
+      // Create denial results for auto-denied
+      for (const ac of autoDenied) {
+        const reason = ac.permission.reason || "Permission denied";
+        // Update UI with denial
+        onChunk(buffersRef.current, {
+          message_type: "tool_return_message",
+          id: "dummy",
+          date: new Date().toISOString(),
+          tool_call_id: ac.approval.toolCallId,
+          tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+          status: "error",
+          stdout: null,
+          stderr: null,
+        });
+        // Map to ApprovalResult format (ApprovalReturn)
+        allResults.push({
+          type: "approval" as const,
+          tool_call_id: ac.approval.toolCallId,
+          approve: false,
+          reason,
+        });
+      }
+
+      // Send all results to server if any
+      if (allResults.length > 0) {
+        await processConversation([
+          { type: "approval", approvals: allResults },
+        ]);
+      }
+
+      return { blocked: false };
+    } catch {
+      // If check fails, proceed anyway (don't block user)
+      return { blocked: false };
+    }
+  }, [agentId, processConversation]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
@@ -2592,6 +2841,10 @@ export default function App({
 
       if (!msg) return { submitted: false };
 
+      // Capture the generation at submission time, BEFORE any async work.
+      // This allows detecting if ESC was pressed during async operations.
+      const submissionGeneration = conversationGenerationRef.current;
+
       // Track user input (agent_id automatically added from telemetry.currentAgentId)
       telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
 
@@ -2624,6 +2877,12 @@ export default function App({
           ) {
             waitingForQueueCancelRef.current = true;
             queueSnapshotRef.current = [...newQueue];
+
+            // Abort client-side tool execution if in progress
+            // This makes tool interruption visible immediately instead of waiting for completion
+            if (toolAbortControllerRef.current) {
+              toolAbortControllerRef.current.abort();
+            }
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
@@ -3551,6 +3810,12 @@ export default function App({
 
         // Special handling for /skill command - enter skill creation mode
         if (trimmed.startsWith("/skill")) {
+          // Check for pending approvals before sending
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            return { submitted: false }; // Keep /skill in input box, user handles approval first
+          }
+
           const cmdId = uid("cmd");
 
           // Extract optional description after `/skill`
@@ -3626,6 +3891,12 @@ export default function App({
 
         // Special handling for /remember command - remember something from conversation
         if (trimmed.startsWith("/remember")) {
+          // Check for pending approvals before sending (mirrors regular message flow)
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            return { submitted: false }; // Keep /remember in input box, user handles approval first
+          }
+
           const cmdId = uid("cmd");
 
           // Extract optional description after `/remember`
@@ -3700,6 +3971,12 @@ export default function App({
 
         // Special handling for /init command - initialize agent memory
         if (trimmed === "/init") {
+          // Check for pending approvals before sending
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            return { submitted: false }; // Keep /init in input box, user handles approval first
+          }
+
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -3846,6 +4123,12 @@ ${gitContext}
         const matchedCustom = await findCustomCommand(commandName);
 
         if (matchedCustom) {
+          // Check for pending approvals before sending
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            return { submitted: false }; // Keep custom command in input box, user handles approval first
+          }
+
           const cmdId = uid("cmd");
 
           // Extract arguments (everything after command name)
@@ -4438,7 +4721,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         content: messageContent as unknown as MessageCreate["content"],
       });
 
-      await processConversation(initialInput);
+      await processConversation(initialInput, { submissionGeneration });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
@@ -4635,6 +4918,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             setQueuedApprovalResults(allResults as ApprovalResult[]);
           }
           setStreaming(false);
+
+          // Reset queue-cancel flag so dequeue effect can fire
+          waitingForQueueCancelRef.current = false;
+          queueSnapshotRef.current = [];
         } else {
           // Continue conversation with all results
           await processConversation([
@@ -5727,7 +6014,7 @@ Plan file path: ${planFilePath}`;
   ]);
 
   return (
-    <Box key={resumeKey} flexDirection="column" gap={1}>
+    <Box key={resumeKey} flexDirection="column">
       <Static
         key={staticRenderEpoch}
         items={staticItems}
@@ -5776,7 +6063,7 @@ Plan file path: ${planFilePath}`;
         )}
       </Static>
 
-      <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column">
         {/* Loading screen / intro text */}
         {loadingState !== "ready" && (
           <WelcomeScreen
@@ -6131,7 +6418,7 @@ Plan file path: ${planFilePath}`;
             )}
 
             {/* Input row - always mounted to preserve state */}
-            <Box marginTop={liveItems.length > 0 ? 0 : 1}>
+            <Box marginTop={1}>
               <Input
                 visible={
                   !showExitStats &&
