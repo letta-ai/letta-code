@@ -197,6 +197,23 @@ class PermissionModeManager {
           }
         }
 
+        // Allow Task tool with read-only subagent types
+        // These subagents only have access to read-only tools (Glob, Grep, Read, LS, BashOutput)
+        const readOnlySubagentTypes = new Set([
+          "explore",
+          "Explore",
+          "plan",
+          "Plan",
+          "recall",
+          "Recall",
+        ]);
+        if (toolName === "Task" || toolName === "task") {
+          const subagentType = toolArgs?.subagent_type as string | undefined;
+          if (subagentType && readOnlySubagentTypes.has(subagentType)) {
+            return "allow";
+          }
+        }
+
         // Allow read-only shell commands (ls, git status, git log, etc.)
         const shellTools = [
           "Bash",
