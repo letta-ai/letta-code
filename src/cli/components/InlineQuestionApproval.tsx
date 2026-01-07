@@ -31,6 +31,7 @@ export const InlineQuestionApproval = memo(
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
     const [customText, setCustomText] = useState("");
+    const [cursorPos, setCursorPos] = useState(0);
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
     const columns = useTerminalWidth();
 
@@ -100,6 +101,16 @@ export const InlineQuestionApproval = memo(
 
         // When on custom input option ("Type something")
         if (isOnCustomOption) {
+          // Arrow key navigation within text
+          if (key.leftArrow) {
+            setCursorPos((prev) => Math.max(0, prev - 1));
+            return;
+          }
+          if (key.rightArrow) {
+            setCursorPos((prev) => Math.min(customText.length, prev + 1));
+            return;
+          }
+
           if (key.return) {
             // Enter toggles the checkbox (same as other options)
             if (currentQuestion.multiSelect) {
@@ -129,24 +140,39 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             }
-            // Always insert the space character
-            setCustomText((prev) => `${prev} `);
+            // Insert the space at cursor position
+            setCustomText(
+              (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
+            );
+            setCursorPos((prev) => prev + 1);
             return;
           }
           if (key.escape) {
             if (customText) {
               setCustomText("");
+              setCursorPos(0);
             } else {
               onCancel?.();
             }
             return;
           }
+          // Backspace: delete character before cursor
           if (key.backspace || key.delete) {
-            setCustomText((prev) => prev.slice(0, -1));
+            if (cursorPos > 0) {
+              setCustomText(
+                (prev) => prev.slice(0, cursorPos - 1) + prev.slice(cursorPos),
+              );
+              setCursorPos((prev) => prev - 1);
+            }
             return;
           }
+          // Typing: insert at cursor position
           if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomText((prev) => prev + input);
+            setCustomText(
+              (prev) =>
+                prev.slice(0, cursorPos) + input + prev.slice(cursorPos),
+            );
+            setCursorPos((prev) => prev + 1);
           }
           return;
         }
@@ -364,11 +390,12 @@ export const InlineQuestionApproval = memo(
                       // Custom input option ("Type something")
                       customText ? (
                         <Text wrap="wrap">
-                          {customText}
+                          {customText.slice(0, cursorPos)}
                           {isSelected && "█"}
+                          {customText.slice(cursorPos)}
                         </Text>
                       ) : (
-                        <Text wrap="wrap" dimColor>
+                        <Text wrap="wrap" dimColor={!isSelected}>
                           {option.label}
                           {isSelected && "█"}
                         </Text>

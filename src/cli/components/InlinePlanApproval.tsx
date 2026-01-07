@@ -34,6 +34,7 @@ export const InlinePlanApproval = memo(
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const [customReason, setCustomReason] = useState("");
+    const [cursorPos, setCursorPos] = useState(0);
     const columns = useTerminalWidth();
 
     const customOptionIndex = 2;
@@ -64,6 +65,16 @@ export const InlinePlanApproval = memo(
 
         // When on custom input option
         if (isOnCustomOption) {
+          // Arrow key navigation within text
+          if (key.leftArrow) {
+            setCursorPos((prev) => Math.max(0, prev - 1));
+            return;
+          }
+          if (key.rightArrow) {
+            setCursorPos((prev) => Math.min(customReason.length, prev + 1));
+            return;
+          }
+
           if (key.return) {
             if (customReason.trim()) {
               onKeepPlanning(customReason.trim());
@@ -73,18 +84,30 @@ export const InlinePlanApproval = memo(
           if (key.escape) {
             if (customReason) {
               setCustomReason("");
+              setCursorPos(0);
             } else {
               // Esc without text - just clear, stay on planning
               onKeepPlanning("User cancelled");
             }
             return;
           }
+          // Backspace: delete character before cursor
           if (key.backspace || key.delete) {
-            setCustomReason((prev) => prev.slice(0, -1));
+            if (cursorPos > 0) {
+              setCustomReason(
+                (prev) => prev.slice(0, cursorPos - 1) + prev.slice(cursorPos),
+              );
+              setCursorPos((prev) => prev - 1);
+            }
             return;
           }
+          // Typing: insert at cursor position
           if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomReason((prev) => prev + input);
+            setCustomReason(
+              (prev) =>
+                prev.slice(0, cursorPos) + input + prev.slice(cursorPos),
+            );
+            setCursorPos((prev) => prev + 1);
           }
           return;
         }
@@ -212,11 +235,12 @@ export const InlinePlanApproval = memo(
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               {customReason ? (
                 <Text wrap="wrap">
-                  {customReason}
+                  {customReason.slice(0, cursorPos)}
                   {isOnCustomOption && "█"}
+                  {customReason.slice(cursorPos)}
                 </Text>
               ) : (
-                <Text wrap="wrap" dimColor>
+                <Text wrap="wrap" dimColor={!isOnCustomOption}>
                   {customOptionPlaceholder}
                   {isOnCustomOption && "█"}
                 </Text>
