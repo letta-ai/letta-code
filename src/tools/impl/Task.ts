@@ -5,7 +5,11 @@
  * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
  */
 
-import { getAllSubagentConfigs } from "../../agent/subagents";
+import {
+  clearSubagentConfigCache,
+  discoverSubagents,
+  getAllSubagentConfigs,
+} from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
 import {
   completeSubagent,
@@ -15,9 +19,10 @@ import {
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {
-  subagent_type: string;
-  prompt: string;
-  description: string;
+  command?: "run" | "refresh";
+  subagent_type?: string;
+  prompt?: string;
+  description?: string;
   model?: string;
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
@@ -27,15 +32,45 @@ interface TaskArgs {
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
 export async function task(args: TaskArgs): Promise<string> {
-  // Validate required parameters
+  const { command = "run", model, toolCallId, signal } = args;
+
+  // Handle refresh command - re-discover subagents from .letta/agents/ directories
+  if (command === "refresh") {
+    // Clear the cache to force re-discovery
+    clearSubagentConfigCache();
+
+    // Discover subagents from global and project directories
+    const { subagents, errors } = await discoverSubagents();
+
+    // Get all configs (builtins + discovered) to report accurate count
+    const allConfigs = await getAllSubagentConfigs();
+    const totalCount = Object.keys(allConfigs).length;
+    const customCount = subagents.length;
+
+    // Log any errors
+    if (errors.length > 0) {
+      for (const error of errors) {
+        console.warn(
+          `Subagent discovery error: ${error.path}: ${error.message}`,
+        );
+      }
+    }
+
+    const errorSuffix = errors.length > 0 ? `, ${errors.length} error(s)` : "";
+    return `Refreshed subagents list: found ${totalCount} total (${customCount} custom)${errorSuffix}`;
+  }
+
+  // For run command, validate required parameters
   validateRequiredParams(
     args,
     ["subagent_type", "prompt", "description"],
     "Task",
   );
 
-  const { subagent_type, prompt, description, model, toolCallId, signal } =
-    args;
+  // Extract validated params (guaranteed to exist after validateRequiredParams)
+  const subagent_type = args.subagent_type as string;
+  const prompt = args.prompt as string;
+  const description = args.description as string;
 
   // Get all available subagent configs (built-in + custom)
   const allConfigs = await getAllSubagentConfigs();
