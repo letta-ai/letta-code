@@ -34,6 +34,11 @@ import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
+import {
+  DEFAULT_COMPLETION_PROMISE,
+  type RalphState,
+  ralphMode,
+} from "../ralph/mode";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
@@ -361,6 +366,100 @@ function getSkillUnloadReminder(): string {
   return "";
 }
 
+// Parse /ralph or /yolo-ralph command arguments
+function parseRalphArgs(input: string): {
+  prompt: string | null;
+  completionPromise: string | null | undefined; // undefined = use default, null = no promise
+  maxIterations: number;
+} {
+  let rest = input.replace(/^\/(yolo-)?ralph\s*/, "");
+
+  // Extract --completion-promise "value" or --completion-promise 'value'
+  // Also handles --completion-promise "" or none for opt-out
+  let completionPromise: string | null | undefined;
+  const promiseMatch = rest.match(/--completion-promise\s+["']([^"']*)["']/);
+  if (promiseMatch) {
+    const val = promiseMatch[1] ?? "";
+    completionPromise = val === "" || val.toLowerCase() === "none" ? null : val;
+    rest = rest.replace(/--completion-promise\s+["'][^"']*["']\s*/, "");
+  }
+
+  // Extract --max-iterations N
+  const maxMatch = rest.match(/--max-iterations\s+(\d+)/);
+  const maxIterations = maxMatch?.[1] ? parseInt(maxMatch[1], 10) : 0;
+  rest = rest.replace(/--max-iterations\s+\d+\s*/, "");
+
+  // Remaining text is the inline prompt (may be quoted)
+  const prompt = rest.trim().replace(/^["']|["']$/g, "") || null;
+  return { prompt, completionPromise, maxIterations };
+}
+
+// Build Ralph first-turn reminder (when activating)
+// Uses exact wording from claude-code/plugins/ralph-wiggum/scripts/setup-ralph-loop.sh
+function buildRalphFirstTurnReminder(state: RalphState): string {
+  const iterInfo =
+    state.maxIterations > 0
+      ? `${state.currentIteration}/${state.maxIterations}`
+      : `${state.currentIteration}`;
+
+  let reminder = `<system-reminder>
+🔄 Ralph Wiggum mode activated (iteration ${iterInfo})
+`;
+
+  if (state.completionPromise) {
+    reminder += `
+═══════════════════════════════════════════════════════════
+RALPH LOOP COMPLETION PROMISE
+═══════════════════════════════════════════════════════════
+
+To complete this loop, output this EXACT text:
+  <promise>${state.completionPromise}</promise>
+
+STRICT REQUIREMENTS (DO NOT VIOLATE):
+  ✓ Use <promise> XML tags EXACTLY as shown above
+  ✓ The statement MUST be completely and unequivocally TRUE
+  ✓ Do NOT output false statements to exit the loop
+  ✓ Do NOT lie even if you think you should exit
+
+IMPORTANT - Do not circumvent the loop:
+  Even if you believe you're stuck, the task is impossible,
+  or you've been running too long - you MUST NOT output a
+  false promise statement. The loop is designed to continue
+  until the promise is GENUINELY TRUE. Trust the process.
+
+  If the loop should stop, the promise statement will become
+  true naturally. Do not force it by lying.
+═══════════════════════════════════════════════════════════
+`;
+  } else {
+    reminder += `
+No completion promise set - loop runs until --max-iterations or ESC/Shift+Tab to exit.
+`;
+  }
+
+  reminder += `</system-reminder>`;
+  return reminder;
+}
+
+// Build Ralph continuation reminder (on subsequent iterations)
+// Exact format from claude-code/plugins/ralph-wiggum/hooks/stop-hook.sh line 160
+function buildRalphContinuationReminder(state: RalphState): string {
+  const iterInfo =
+    state.maxIterations > 0
+      ? `${state.currentIteration}/${state.maxIterations}`
+      : `${state.currentIteration}`;
+
+  if (state.completionPromise) {
+    return `<system-reminder>
+🔄 Ralph iteration ${iterInfo} | To stop: output <promise>${state.completionPromise}</promise> (ONLY when statement is TRUE - do not lie to exit!)
+</system-reminder>`;
+  } else {
+    return `<system-reminder>
+🔄 Ralph iteration ${iterInfo} | No completion promise set - loop runs infinitely
+</system-reminder>`;
+  }
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -542,6 +641,18 @@ export default function App({
   // Use ref instead of state to avoid stale closure issues in onSubmit
   const bashCommandCacheRef = useRef<Array<{ input: string; output: string }>>(
     [],
+  );
+
+  // Ralph Wiggum mode: config waiting for next message to capture as prompt
+  const [pendingRalphConfig, setPendingRalphConfig] = useState<{
+    completionPromise: string | null | undefined;
+    maxIterations: number;
+    isYolo: boolean;
+  } | null>(null);
+
+  // Track ralph mode for UI updates (singleton state doesn't trigger re-renders)
+  const [uiRalphActive, setUiRalphActive] = useState(
+    ralphMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -1216,6 +1327,91 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
+      // Helper function for Ralph Wiggum mode continuation
+      // Defined here to have access to buffersRef, processConversation via closure
+      const handleRalphContinuation = () => {
+        const ralphState = ralphMode.getState();
+
+        // Extract LAST assistant message from buffers to check for promise
+        // (We only want to check the most recent response, not the entire transcript)
+        const lines = toLines(buffersRef.current);
+        const assistantLines = lines.filter(
+          (l): l is Line & { kind: "assistant" } => l.kind === "assistant",
+        );
+        const lastAssistantText =
+          assistantLines.length > 0
+            ? (assistantLines[assistantLines.length - 1]?.text ?? "")
+            : "";
+
+        // Check for completion promise
+        if (ralphMode.checkForPromise(lastAssistantText)) {
+          // Promise matched - exit ralph mode
+          const wasYolo = ralphState.isYolo;
+          ralphMode.deactivate();
+          setUiRalphActive(false);
+          if (wasYolo) {
+            permissionMode.setMode("default");
+          }
+
+          // Add completion status to transcript
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [
+              `✅ Ralph loop complete: promise detected after ${ralphState.currentIteration} iteration(s)`,
+            ],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          return;
+        }
+
+        // Check iteration limit
+        if (!ralphMode.shouldContinue()) {
+          // Max iterations reached - exit ralph mode
+          const wasYolo = ralphState.isYolo;
+          ralphMode.deactivate();
+          setUiRalphActive(false);
+          if (wasYolo) {
+            permissionMode.setMode("default");
+          }
+
+          // Add status to transcript
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [
+              `🛑 Ralph loop: Max iterations (${ralphState.maxIterations}) reached`,
+            ],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          return;
+        }
+
+        // Continue loop - increment iteration and re-send prompt
+        ralphMode.incrementIteration();
+        const newState = ralphMode.getState();
+        const systemMsg = buildRalphContinuationReminder(newState);
+
+        // Re-inject original prompt with ralph reminder prepended
+        // Use setTimeout to avoid blocking the current render cycle
+        setTimeout(() => {
+          processConversation(
+            [
+              {
+                type: "message",
+                role: "user",
+                content: `${systemMsg}\n\n${newState.originalPrompt}`,
+              },
+            ],
+            { allowReentry: true },
+          );
+        }, 0);
+      };
+
       // Copy so we can safely mutate for retry recovery flows
       const currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
@@ -1444,6 +1640,14 @@ export default function App({
               queueSnapshotRef.current = [];
             }
 
+            // === RALPH WIGGUM CONTINUATION CHECK ===
+            // Check if ralph mode is active and should auto-continue
+            // This happens at the very end, right before we'd release input
+            if (ralphMode.getState().isActive) {
+              handleRalphContinuation();
+              return;
+            }
+
             return;
           }
 
@@ -1477,6 +1681,23 @@ export default function App({
               // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
                 appendError(INTERRUPT_MESSAGE, true);
+              }
+
+              // In ralph mode, ESC interrupts but does NOT exit ralph
+              // User can type additional instructions, which will get ralph prefix prepended
+              // (Similar to how plan mode works)
+              if (ralphMode.getState().isActive) {
+                // Add status to transcript showing ralph is paused
+                const statusId = uid("status");
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: [
+                    `⏸️ Ralph loop paused - type to continue or shift+tab to exit`,
+                  ],
+                });
+                buffersRef.current.order.push(statusId);
+                refreshDerived();
               }
             }
 
@@ -2902,6 +3123,44 @@ export default function App({
       // Note: userCancelledRef.current was already reset above before the queue check
       // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
+      // Handle pending Ralph config - activate ralph mode but let message flow through normal path
+      // This ensures session context and other reminders are included
+      // Track if we just activated so we can use first turn reminder vs continuation
+      let justActivatedRalph = false;
+      if (pendingRalphConfig && !msg.startsWith("/")) {
+        const { completionPromise, maxIterations, isYolo } = pendingRalphConfig;
+        ralphMode.activate(msg, completionPromise, maxIterations, isYolo);
+        setUiRalphActive(true);
+        setPendingRalphConfig(null);
+        justActivatedRalph = true;
+        if (isYolo) {
+          permissionMode.setMode("bypassPermissions");
+        }
+
+        const ralphState = ralphMode.getState();
+
+        // Add status to transcript
+        const statusId = uid("status");
+        const promiseDisplay = ralphState.completionPromise
+          ? `"${ralphState.completionPromise.slice(0, 50)}${ralphState.completionPromise.length > 50 ? "..." : ""}"`
+          : "(none)";
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: [
+            `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode started (iter 1/${maxIterations || "∞"})`,
+            `Promise: ${promiseDisplay}`,
+          ],
+        });
+        buffersRef.current.order.push(statusId);
+        refreshDerived();
+
+        // Don't return - let message flow through normal path which will:
+        // 1. Add session context reminder (if first message)
+        // 2. Add ralph mode reminder (since ralph is now active)
+        // 3. Add other reminders (skill unload, memory, etc.)
+      }
+
       let aliasedMsg = msg;
       if (msg === "exit" || msg === "quit") {
         aliasedMsg = "/exit";
@@ -3223,6 +3482,75 @@ export default function App({
             refreshDerived();
           } finally {
             setCommandRunning(false);
+          }
+          return { submitted: true };
+        }
+
+        // Special handling for /ralph and /yolo-ralph commands - Ralph Wiggum mode
+        if (trimmed.startsWith("/yolo-ralph") || trimmed.startsWith("/ralph")) {
+          const isYolo = trimmed.startsWith("/yolo-ralph");
+          const { prompt, completionPromise, maxIterations } =
+            parseRalphArgs(trimmed);
+
+          const cmdId = uid("cmd");
+
+          if (prompt) {
+            // Inline prompt - activate immediately and send
+            ralphMode.activate(
+              prompt,
+              completionPromise,
+              maxIterations,
+              isYolo,
+            );
+            setUiRalphActive(true);
+            if (isYolo) {
+              permissionMode.setMode("bypassPermissions");
+            }
+
+            const ralphState = ralphMode.getState();
+            const promiseDisplay = ralphState.completionPromise
+              ? `"${ralphState.completionPromise.slice(0, 50)}${ralphState.completionPromise.length > 50 ? "..." : ""}"`
+              : "(none)";
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode activated (iter 1/${maxIterations || "∞"})\nPromise: ${promiseDisplay}`,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            // Send the prompt with ralph reminder prepended
+            const systemMsg = buildRalphFirstTurnReminder(ralphState);
+            processConversation([
+              {
+                type: "message",
+                role: "user",
+                content: `${systemMsg}\n\n${prompt}`,
+              },
+            ]);
+          } else {
+            // No inline prompt - wait for next message
+            setPendingRalphConfig({ completionPromise, maxIterations, isYolo });
+
+            const defaultPromisePreview = DEFAULT_COMPLETION_PROMISE.slice(
+              0,
+              40,
+            );
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode ready (waiting for task)\nMax iterations: ${maxIterations || "unlimited"}\nPromise: ${completionPromise === null ? "(none)" : (completionPromise ?? `"${defaultPromisePreview}..." (default)`)}\n\nType your task to begin the loop.`,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
           }
           return { submitted: true };
         }
@@ -4248,6 +4576,21 @@ ${gitContext}
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
 
+      // Prepend ralph mode reminder if in ralph mode
+      let ralphModeReminder = "";
+      if (ralphMode.getState().isActive) {
+        if (justActivatedRalph) {
+          // First turn - use full first turn reminder, don't increment (already at 1)
+          const ralphState = ralphMode.getState();
+          ralphModeReminder = `${buildRalphFirstTurnReminder(ralphState)}\n\n`;
+        } else {
+          // Continuation after ESC - increment iteration and use shorter reminder
+          ralphMode.incrementIteration();
+          const ralphState = ralphMode.getState();
+          ralphModeReminder = `${buildRalphContinuationReminder(ralphState)}\n\n`;
+        }
+      }
+
       // Prepend skill unload reminder if skills are loaded (using cached flag)
       const skillUnloadReminder = getSkillUnloadReminder();
 
@@ -4294,10 +4637,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       // Increment turn count for next iteration
       turnCountRef.current += 1;
 
-      // Combine reminders with content (session context first, then plan mode, then skill unload, then bash commands, then memory reminder)
+      // Combine reminders with content (session context first, then plan mode, then ralph mode, then skill unload, then bash commands, then memory reminder)
       const allReminders =
         sessionContextReminder +
         planModeReminder +
+        ralphModeReminder +
         skillUnloadReminder +
         bashCommandPrefix +
         memoryReminderContent;
@@ -4747,6 +5091,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       isAgentBusy,
       setStreaming,
       setCommandRunning,
+      pendingRalphConfig,
     ],
   );
 
@@ -5636,6 +5981,20 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     permissionMode.getMode(),
   );
 
+  // Handle ralph mode exit from Input component (shift+tab)
+  const handleRalphExit = useCallback(() => {
+    const ralph = ralphMode.getState();
+    if (ralph.isActive) {
+      const wasYolo = ralph.isYolo;
+      ralphMode.deactivate();
+      setUiRalphActive(false);
+      if (wasYolo) {
+        permissionMode.setMode("default");
+        setUiPermissionMode("default");
+      }
+    }
+  }, []);
+
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
     // When entering plan mode via tab cycling, generate and set the plan file path
@@ -6446,6 +6805,9 @@ Plan file path: ${planFilePath}`;
                 onEscapeCancel={
                   profileConfirmPending ? handleProfileEscapeCancel : undefined
                 }
+                ralphActive={uiRalphActive}
+                ralphPending={pendingRalphConfig !== null}
+                onRalphExit={handleRalphExit}
               />
             </Box>
 
