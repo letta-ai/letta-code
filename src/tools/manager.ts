@@ -140,6 +140,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
   TodoWrite: { requiresApproval: false },
@@ -476,6 +477,22 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
       throw new Error(
         `Required tool "${name}" could not be loaded from bundled assets. ${message}`,
       );
+    }
+  }
+
+  // If LSP is enabled, swap Read with LSP-enhanced version
+  if (process.env.LETTA_ENABLE_LSP && toolRegistry.has("Read")) {
+    const lspDefinition = TOOL_DEFINITIONS.ReadLSP;
+    if (lspDefinition) {
+      // Replace Read with ReadLSP (but keep the name "Read" for the agent)
+      toolRegistry.set("Read", {
+        schema: {
+          name: "Read", // Keep the tool name as "Read" for the agent
+          description: lspDefinition.description,
+          input_schema: lspDefinition.schema,
+        },
+        fn: lspDefinition.impl,
+      });
     }
   }
 }

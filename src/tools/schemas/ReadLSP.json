@@ -12,6 +12,10 @@
     "limit": {
       "type": "number",
       "description": "The number of lines to read. Only provide if the file is too large to read at once."
+    },
+    "include_types": {
+      "type": "boolean",
+      "description": "Optional: Include LSP diagnostics (type errors, syntax errors) for supported files (TypeScript, JavaScript, Python). Defaults to true for files under 500 lines."
     }
   },
   "required": ["file_path"],

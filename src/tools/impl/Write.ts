@@ -29,51 +29,8 @@ export async function write(args: WriteArgs): Promise<WriteResult> {
       if (err.code !== "ENOENT") throw err;
     }
     await fs.writeFile(resolvedPath, content, "utf-8");
-
-    // Notify LSP of the change and get diagnostics
-    let diagnosticsMessage = "";
-    if (process.env.LETTA_ENABLE_LSP) {
-      try {
-        const { lspManager } = await import("../../lsp/manager.js");
-        await lspManager.touchFile(resolvedPath, true);
-
-        // Wait briefly for diagnostics
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        const diagnostics = lspManager.getDiagnostics(resolvedPath);
-        if (diagnostics.length > 0) {
-          const errorCount = diagnostics.filter((d) => d.severity === 1).length;
-          const warningCount = diagnostics.filter(
-            (d) => d.severity === 2,
-          ).length;
-
-          diagnosticsMessage = `\n\n[LSP Diagnostics]\n`;
-          if (errorCount > 0)
-            diagnosticsMessage += `  ❌ ${errorCount} error(s)\n`;
-          if (warningCount > 0)
-            diagnosticsMessage += `  ⚠️  ${warningCount} warning(s)\n`;
-
-          // Show first few
-          const displayed = diagnostics.slice(0, 3);
-          for (const diag of displayed) {
-            const icon =
-              diag.severity === 1 ? "❌" : diag.severity === 2 ? "⚠️" : "ℹ️";
-            const line = diag.range.start.line + 1;
-            diagnosticsMessage += `  ${icon} Line ${line}: ${diag.message}\n`;
-          }
-          if (diagnostics.length > 3) {
-            diagnosticsMessage += `  ... and ${diagnostics.length - 3} more\n`;
-          }
-        } else {
-          diagnosticsMessage = "\n\n[LSP Diagnostics]\n  ✓ No issues found";
-        }
-      } catch {
-        // LSP failed, ignore
-      }
-    }
-
     return {
-      message: `Successfully wrote ${content.length} characters to ${resolvedPath}${diagnosticsMessage}`,
+      message: `Successfully wrote ${content.length} characters to ${resolvedPath}`,
     };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
