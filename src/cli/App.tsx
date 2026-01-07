@@ -3166,6 +3166,85 @@ export default function App({
         aliasedMsg = "/exit";
       }
 
+      // Handle shell commands (messages starting with "$")
+      if (aliasedMsg.trim().startsWith("$")) {
+        const command = aliasedMsg.trim().slice(1).trim(); // Remove "$" prefix
+        
+        if (!command) {
+          // Empty command - show usage
+          const cmdId = uid("bash");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "bash_command",
+            id: cmdId,
+            input: aliasedMsg.trim(),
+            output: "Usage: $ <command>\nExample: $ git status",
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
+        const cmdId = uid("bash");
+        
+        // Add initial running state
+        buffersRef.current.byId.set(cmdId, {
+          kind: "bash_command",
+          id: cmdId,
+          input: `$ ${command}`,
+          output: "",
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Execute command asynchronously
+        (async () => {
+          try {
+            const { spawnCommand } = await import("../tools/impl/Bash.js");
+            const { getShellEnv } = await import("../tools/impl/shellEnv.js");
+            
+            const cwd = process.cwd();
+            const env = getShellEnv(cwd);
+            const timeout = 120000; // 2 minutes default timeout
+            
+            const result = await spawnCommand(command, { cwd, env, timeout });
+            
+            // Combine stdout and stderr
+            let output = "";
+            if (result.stdout) output += result.stdout;
+            if (result.stderr) output += result.stderr;
+            
+            // Update with final result
+            buffersRef.current.byId.set(cmdId, {
+              kind: "bash_command",
+              id: cmdId,
+              input: `$ ${command}`,
+              output: output || "(no output)",
+              phase: "finished",
+              success: result.exitCode === 0,
+            });
+            refreshDerived();
+          } catch (error) {
+            // Update with error
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+            buffersRef.current.byId.set(cmdId, {
+              kind: "bash_command",
+              id: cmdId,
+              input: `$ ${command}`,
+              output: `Error: ${errorMessage}`,
+              phase: "finished",
+              success: false,
+            });
+            refreshDerived();
+          }
+        })();
+
+        return { submitted: true };
+      }
+
       // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();

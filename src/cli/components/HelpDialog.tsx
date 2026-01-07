@@ -62,6 +62,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
     return [
       { keys: "/", description: "Open command autocomplete" },
       { keys: "@", description: "Open file autocomplete" },
+      { keys: "$", description: "Execute shell command (e.g., $ git status)" },
       {
         keys: "Esc",
         description: "Cancel dialog / clear input (double press)",
