@@ -287,6 +287,24 @@ export const commands: Record<string, Command> = {
     },
   },
 
+  // === Ralph Wiggum mode (order 45-46) ===
+  "/ralph": {
+    desc: 'Start Ralph Wiggum loop (/ralph [prompt] [--completion-promise "X"] [--max-iterations N])',
+    order: 45,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating ralph mode...";
+    },
+  },
+  "/yolo-ralph": {
+    desc: "Start Ralph loop with bypass permissions (yolo + ralph)",
+    order: 46,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating yolo-ralph mode...";
+    },
+  },
+
   // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
     desc: "Toggle token streaming on/off",
