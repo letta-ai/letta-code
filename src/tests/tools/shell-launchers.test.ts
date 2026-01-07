@@ -54,10 +54,10 @@ describe("Shell Launchers", () => {
     });
   } else {
     describe("Unix-specific", () => {
-      test("includes bash with -lc flag", () => {
+      test("includes bash with -c flag", () => {
         const launchers = buildShellLaunchers("echo test");
         const bashLauncher = launchers.find(
-          (l) => l[0]?.includes("bash") && l[1] === "-lc",
+          (l) => l[0]?.includes("bash") && l[1] === "-c",
         );
 
         expect(bashLauncher).toBeDefined();
