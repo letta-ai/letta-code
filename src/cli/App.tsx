@@ -1,6 +1,26 @@
 // src/cli/App.tsx
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+
+// Debug logger for tracking message flow issues
+const DEBUG_LOG_PATH = "/tmp/letta-debug.log";
+const DEBUG_ENABLED = true;
+function debugLog(context: string, data: Record<string, unknown>) {
+  if (!DEBUG_ENABLED) return;
+  const timestamp = new Date().toISOString();
+  const line = `[${timestamp}] [${context}] ${JSON.stringify(data)}\n`;
+  try {
+    appendFileSync(DEBUG_LOG_PATH, line);
+  } catch {
+    // Ignore write errors
+  }
+}
+
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -482,6 +502,10 @@ export default function App({
   // Separate from streaming state which may be set early for UI responsiveness
   // Tracks depth to allow intentional reentry while blocking parallel calls
   const processingConversationRef = useRef(0);
+
+  // Generation counter - incremented on each ESC interrupt.
+  // Allows processConversation to detect if it's been superseded.
+  const conversationGenerationRef = useRef(0);
 
   // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
@@ -1209,16 +1233,45 @@ export default function App({
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
-      options?: { allowReentry?: boolean },
+      options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
       // Copy so we can safely mutate for retry recovery flows
       const currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
 
+      // Use provided generation (from onSubmit) or capture current
+      // This allows detecting if ESC was pressed during async work before this function was called
+      const myGeneration =
+        options?.submissionGeneration ?? conversationGenerationRef.current;
+
+      debugLog("processConversation:entry", {
+        inputTypes: initialInput.map((i) => i.type),
+        allowReentry,
+        processingConversationRef: processingConversationRef.current,
+        userCancelledRef: userCancelledRef.current,
+        myGeneration,
+        currentGeneration: conversationGenerationRef.current,
+      });
+
+      // Check if we're already stale (ESC was pressed while we were queued in onSubmit).
+      // This can happen if ESC was pressed during async work before processConversation was called.
+      // We check early to avoid setting state (streaming, etc.) for stale conversations.
+      if (myGeneration !== conversationGenerationRef.current) {
+        debugLog("processConversation:blocked:alreadyStale", {
+          myGeneration,
+          currentGeneration: conversationGenerationRef.current,
+        });
+        return;
+      }
+
       // Guard against concurrent processConversation calls
       // This can happen if user submits two messages in quick succession
       // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
       if (processingConversationRef.current > 0 && !allowReentry) {
+        debugLog("processConversation:blocked:concurrentGuard", {
+          processingConversationRef: processingConversationRef.current,
+          allowReentry,
+        });
         return;
       }
       processingConversationRef.current += 1;
@@ -1234,16 +1287,35 @@ export default function App({
       try {
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
+          debugLog("processConversation:blocked:userCancelled", {
+            userCancelledRef: userCancelledRef.current,
+          });
           userCancelledRef.current = false; // Reset for next time
           return;
         }
+
+        // Double-check we haven't become stale between entry and try block
+        if (myGeneration !== conversationGenerationRef.current) {
+          debugLog("processConversation:blocked:becameStale", {
+            myGeneration,
+            currentGeneration: conversationGenerationRef.current,
+          });
+          return;
+        }
+
+        debugLog("processConversation:startingStream", {
+          processingConversationRef: processingConversationRef.current,
+          userCancelledRef: userCancelledRef.current,
+        });
 
         setStreaming(true);
         abortControllerRef.current = new AbortController();
 
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
-        markIncompleteToolsAsCancelled(buffersRef.current);
+        // Pass false to avoid setting interrupted=true, which causes race conditions
+        // with concurrent processConversation calls reading the flag
+        markIncompleteToolsAsCancelled(buffersRef.current, false);
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
@@ -1257,9 +1329,24 @@ export default function App({
 
           // Check if cancelled before starting new stream
           if (signal?.aborted) {
-            setStreaming(false);
+            const isStaleAtAbort =
+              myGeneration !== conversationGenerationRef.current;
+            debugLog("processConversation:blocked:signalAborted:beforeStream", {
+              myGeneration,
+              currentGeneration: conversationGenerationRef.current,
+              isStaleAtAbort,
+            });
+            // Only set streaming=false if this is the current generation.
+            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            if (!isStaleAtAbort) {
+              setStreaming(false);
+            }
             return;
           }
+
+          debugLog("processConversation:sendingStream", {
+            agentId: agentIdRef.current,
+          });
 
           // Stream one turn - use ref to always get the latest agentId
           const stream = await sendMessageStream(
@@ -1269,9 +1356,22 @@ export default function App({
 
           // Check again after network call - user may have pressed Escape during sendMessageStream
           if (signal?.aborted) {
-            setStreaming(false);
+            const isStaleAtAbort =
+              myGeneration !== conversationGenerationRef.current;
+            debugLog("processConversation:blocked:signalAborted:afterStream", {
+              myGeneration,
+              currentGeneration: conversationGenerationRef.current,
+              isStaleAtAbort,
+            });
+            // Only set streaming=false if this is the current generation.
+            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            if (!isStaleAtAbort) {
+              setStreaming(false);
+            }
             return;
           }
+
+          debugLog("processConversation:drainingStream", {});
 
           // Define callback to sync agent state on first message chunk
           // This ensures the UI shows the correct model as early as possible
@@ -1348,6 +1448,26 @@ export default function App({
           const wasInterrupted = !!buffersRef.current.interrupted;
           const wasAborted = !!signal?.aborted;
           let stopReasonToHandle = wasAborted ? "cancelled" : stopReason;
+
+          // Check if this conversation became stale while the stream was running.
+          // If stale, a newer processConversation is running and we shouldn't modify UI state.
+          const isStaleAfterDrain =
+            myGeneration !== conversationGenerationRef.current;
+
+          debugLog("processConversation:streamDrained", {
+            stopReason,
+            stopReasonToHandle,
+            wasInterrupted,
+            wasAborted,
+            lastRunId,
+            isStaleAfterDrain,
+          });
+
+          // If this conversation is stale, exit without modifying UI state.
+          // A newer conversation is running and should control the UI.
+          if (isStaleAfterDrain) {
+            return;
+          }
 
           // Immediate refresh after stream completes to show final state unless
           // the user already cancelled (handleInterrupt rendered the UI).
@@ -2125,11 +2245,27 @@ export default function App({
         sendDesktopNotification(); // Notify user of error
         refreshDerived();
       } finally {
+        // Check if this conversation was superseded by an ESC interrupt
+        const isStale = myGeneration !== conversationGenerationRef.current;
+
+        debugLog("processConversation:finally", {
+          processingConversationRef: processingConversationRef.current,
+          userCancelledRef: userCancelledRef.current,
+          myGeneration,
+          currentGeneration: conversationGenerationRef.current,
+          isStale,
+        });
+
         abortControllerRef.current = null;
-        processingConversationRef.current = Math.max(
-          0,
-          processingConversationRef.current - 1,
-        );
+
+        // Only decrement ref if this conversation is still current.
+        // If stale (ESC was pressed), handleInterrupt already reset ref to 0.
+        if (!isStale) {
+          processingConversationRef.current = Math.max(
+            0,
+            processingConversationRef.current - 1,
+          );
+        }
       }
     },
     [
@@ -2198,7 +2334,23 @@ export default function App({
       return;
     }
 
-    if (!streaming || interruptRequested) return;
+    debugLog("handleInterrupt:entry", {
+      streaming,
+      interruptRequested,
+      isExecutingTool,
+      userCancelledRef: userCancelledRef.current,
+      processingConversationRef: processingConversationRef.current,
+      abortControllerExists: !!abortControllerRef.current,
+      waitingForQueueCancel: waitingForQueueCancelRef.current,
+    });
+
+    if (!streaming || interruptRequested) {
+      debugLog("handleInterrupt:earlyReturn", {
+        streaming,
+        interruptRequested,
+      });
+      return;
+    }
 
     // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
@@ -2225,6 +2377,14 @@ export default function App({
 
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
+
+      // Increment generation to mark any in-flight processConversation as stale.
+      // The stale processConversation will check this and exit quietly without
+      // decrementing the ref (since we reset it here).
+      conversationGenerationRef.current += 1;
+
+      // Reset the processing guard so the next message can start a new conversation.
+      processingConversationRef.current = 0;
 
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
@@ -2261,11 +2421,21 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
+      debugLog("handleInterrupt:eagerCancel:complete", {
+        userCancelledRef: userCancelledRef.current,
+        processingConversationRef: processingConversationRef.current,
+        pendingApprovalsCleared: true,
+      });
+
       // Reset cancellation flags after cleanup is complete.
       // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
       // the streaming=false state before we allow the dequeue effect to start a new conversation.
       // This prevents the "Maximum update depth exceeded" infinite render loop.
       setTimeout(() => {
+        debugLog("handleInterrupt:timeout:reset", {
+          userCancelledRef: userCancelledRef.current,
+          resettingTo: false,
+        });
         userCancelledRef.current = false;
         setInterruptRequested(false);
       }, 50);
@@ -2776,12 +2946,32 @@ export default function App({
 
       if (!msg) return { submitted: false };
 
+      // Capture the generation at submission time, BEFORE any async work.
+      // This allows detecting if ESC was pressed during async operations.
+      const submissionGeneration = conversationGenerationRef.current;
+
       // Track user input (agent_id automatically added from telemetry.currentAgentId)
       telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
+
+      debugLog("onSubmit:entry", {
+        msgLength: msg.length,
+        msgPreview: msg.slice(0, 50),
+        pendingApprovalsLength: pendingApprovals.length,
+        userCancelledRef: userCancelledRef.current,
+        processingConversationRef: processingConversationRef.current,
+        streamingRef: streamingRef.current,
+        isExecutingTool,
+        commandRunning,
+        queuedApprovalResults: !!queuedApprovalResults,
+        submissionGeneration,
+      });
 
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
       if (pendingApprovals.length > 0) {
+        debugLog("onSubmit:blocked:pendingApprovals", {
+          count: pendingApprovals.length,
+        });
         return { submitted: false };
       }
 
@@ -2793,7 +2983,16 @@ export default function App({
       // userCancelledRef.current, so we must clear it here to prevent blocking.
       userCancelledRef.current = false;
 
-      if (isAgentBusy()) {
+      const busyCheck = isAgentBusy();
+      debugLog("onSubmit:busyCheck", {
+        isAgentBusy: busyCheck,
+        streamingRef: streamingRef.current,
+        isExecutingTool,
+        commandRunningRef: commandRunningRef.current,
+        abortControllerExists: !!abortControllerRef.current,
+      });
+
+      if (busyCheck) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
@@ -4652,7 +4851,22 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         content: messageContent as unknown as MessageCreate["content"],
       });
 
-      await processConversation(initialInput);
+      debugLog("onSubmit:beforeProcessConversation", {
+        initialInputTypes: initialInput.map((i) => i.type),
+        userCancelledRef: userCancelledRef.current,
+        processingConversationRef: processingConversationRef.current,
+        streamingRef: streamingRef.current,
+        submissionGeneration,
+        currentGeneration: conversationGenerationRef.current,
+      });
+
+      await processConversation(initialInput, { submissionGeneration });
+
+      debugLog("onSubmit:afterProcessConversation", {
+        userCancelledRef: userCancelledRef.current,
+        processingConversationRef: processingConversationRef.current,
+        streamingRef: streamingRef.current,
+      });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);

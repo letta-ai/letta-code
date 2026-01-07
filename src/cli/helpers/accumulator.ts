@@ -174,11 +174,21 @@ export function markCurrentLineAsFinished(b: Buffers) {
 /**
  * Mark any incomplete tool calls as cancelled when stream is interrupted.
  * This prevents blinking tool calls from staying in progress state.
+ * @param b - The buffers object
+ * @param setInterruptedFlag - Whether to set the interrupted flag (default true).
+ *   Pass false when clearing stale tool calls at stream startup to avoid race conditions
+ *   with concurrent processConversation calls reading the flag.
  * @returns true if any tool calls were marked as cancelled
  */
-export function markIncompleteToolsAsCancelled(b: Buffers): boolean {
+export function markIncompleteToolsAsCancelled(
+  b: Buffers,
+  setInterruptedFlag = true,
+): boolean {
   // Mark buffer as interrupted to skip stale throttled refreshes
-  b.interrupted = true;
+  // (only when actually interrupting, not when clearing stale state at startup)
+  if (setInterruptedFlag) {
+    b.interrupted = true;
+  }
 
   let anyToolsCancelled = false;
   for (const [id, line] of b.byId.entries()) {
