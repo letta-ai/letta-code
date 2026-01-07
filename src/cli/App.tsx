@@ -1,25 +1,6 @@
 // src/cli/App.tsx
 
-import {
-  appendFileSync,
-  existsSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-
-// Debug logger for tracking message flow issues
-const DEBUG_LOG_PATH = "/tmp/letta-debug.log";
-const DEBUG_ENABLED = true;
-function debugLog(context: string, data: Record<string, unknown>) {
-  if (!DEBUG_ENABLED) return;
-  const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${context}] ${JSON.stringify(data)}\n`;
-  try {
-    appendFileSync(DEBUG_LOG_PATH, line);
-  } catch {
-    // Ignore write errors
-  }
-}
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -1244,23 +1225,10 @@ export default function App({
       const myGeneration =
         options?.submissionGeneration ?? conversationGenerationRef.current;
 
-      debugLog("processConversation:entry", {
-        inputTypes: initialInput.map((i) => i.type),
-        allowReentry,
-        processingConversationRef: processingConversationRef.current,
-        userCancelledRef: userCancelledRef.current,
-        myGeneration,
-        currentGeneration: conversationGenerationRef.current,
-      });
-
       // Check if we're already stale (ESC was pressed while we were queued in onSubmit).
       // This can happen if ESC was pressed during async work before processConversation was called.
       // We check early to avoid setting state (streaming, etc.) for stale conversations.
       if (myGeneration !== conversationGenerationRef.current) {
-        debugLog("processConversation:blocked:alreadyStale", {
-          myGeneration,
-          currentGeneration: conversationGenerationRef.current,
-        });
         return;
       }
 
@@ -1268,10 +1236,6 @@ export default function App({
       // This can happen if user submits two messages in quick succession
       // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
       if (processingConversationRef.current > 0 && !allowReentry) {
-        debugLog("processConversation:blocked:concurrentGuard", {
-          processingConversationRef: processingConversationRef.current,
-          allowReentry,
-        });
         return;
       }
       processingConversationRef.current += 1;
@@ -1287,26 +1251,14 @@ export default function App({
       try {
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
-          debugLog("processConversation:blocked:userCancelled", {
-            userCancelledRef: userCancelledRef.current,
-          });
           userCancelledRef.current = false; // Reset for next time
           return;
         }
 
         // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
-          debugLog("processConversation:blocked:becameStale", {
-            myGeneration,
-            currentGeneration: conversationGenerationRef.current,
-          });
           return;
         }
-
-        debugLog("processConversation:startingStream", {
-          processingConversationRef: processingConversationRef.current,
-          userCancelledRef: userCancelledRef.current,
-        });
 
         setStreaming(true);
         abortControllerRef.current = new AbortController();
@@ -1331,11 +1283,6 @@ export default function App({
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            debugLog("processConversation:blocked:signalAborted:beforeStream", {
-              myGeneration,
-              currentGeneration: conversationGenerationRef.current,
-              isStaleAtAbort,
-            });
             // Only set streaming=false if this is the current generation.
             // If stale, a newer processConversation might be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
@@ -1343,10 +1290,6 @@ export default function App({
             }
             return;
           }
-
-          debugLog("processConversation:sendingStream", {
-            agentId: agentIdRef.current,
-          });
 
           // Stream one turn - use ref to always get the latest agentId
           const stream = await sendMessageStream(
@@ -1358,11 +1301,6 @@ export default function App({
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            debugLog("processConversation:blocked:signalAborted:afterStream", {
-              myGeneration,
-              currentGeneration: conversationGenerationRef.current,
-              isStaleAtAbort,
-            });
             // Only set streaming=false if this is the current generation.
             // If stale, a newer processConversation might be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
@@ -1370,8 +1308,6 @@ export default function App({
             }
             return;
           }
-
-          debugLog("processConversation:drainingStream", {});
 
           // Define callback to sync agent state on first message chunk
           // This ensures the UI shows the correct model as early as possible
@@ -1453,15 +1389,6 @@ export default function App({
           // If stale, a newer processConversation is running and we shouldn't modify UI state.
           const isStaleAfterDrain =
             myGeneration !== conversationGenerationRef.current;
-
-          debugLog("processConversation:streamDrained", {
-            stopReason,
-            stopReasonToHandle,
-            wasInterrupted,
-            wasAborted,
-            lastRunId,
-            isStaleAfterDrain,
-          });
 
           // If this conversation is stale, exit without modifying UI state.
           // A newer conversation is running and should control the UI.
@@ -2248,14 +2175,6 @@ export default function App({
         // Check if this conversation was superseded by an ESC interrupt
         const isStale = myGeneration !== conversationGenerationRef.current;
 
-        debugLog("processConversation:finally", {
-          processingConversationRef: processingConversationRef.current,
-          userCancelledRef: userCancelledRef.current,
-          myGeneration,
-          currentGeneration: conversationGenerationRef.current,
-          isStale,
-        });
-
         abortControllerRef.current = null;
 
         // Only decrement ref if this conversation is still current.
@@ -2334,21 +2253,7 @@ export default function App({
       return;
     }
 
-    debugLog("handleInterrupt:entry", {
-      streaming,
-      interruptRequested,
-      isExecutingTool,
-      userCancelledRef: userCancelledRef.current,
-      processingConversationRef: processingConversationRef.current,
-      abortControllerExists: !!abortControllerRef.current,
-      waitingForQueueCancel: waitingForQueueCancelRef.current,
-    });
-
     if (!streaming || interruptRequested) {
-      debugLog("handleInterrupt:earlyReturn", {
-        streaming,
-        interruptRequested,
-      });
       return;
     }
 
@@ -2421,21 +2326,11 @@ export default function App({
           // Silently ignore - cancellation already happened client-side
         });
 
-      debugLog("handleInterrupt:eagerCancel:complete", {
-        userCancelledRef: userCancelledRef.current,
-        processingConversationRef: processingConversationRef.current,
-        pendingApprovalsCleared: true,
-      });
-
       // Reset cancellation flags after cleanup is complete.
       // Use setTimeout(50) instead of setTimeout(0) to ensure React has fully processed
       // the streaming=false state before we allow the dequeue effect to start a new conversation.
       // This prevents the "Maximum update depth exceeded" infinite render loop.
       setTimeout(() => {
-        debugLog("handleInterrupt:timeout:reset", {
-          userCancelledRef: userCancelledRef.current,
-          resettingTo: false,
-        });
         userCancelledRef.current = false;
         setInterruptRequested(false);
       }, 50);
@@ -2953,25 +2848,9 @@ export default function App({
       // Track user input (agent_id automatically added from telemetry.currentAgentId)
       telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
 
-      debugLog("onSubmit:entry", {
-        msgLength: msg.length,
-        msgPreview: msg.slice(0, 50),
-        pendingApprovalsLength: pendingApprovals.length,
-        userCancelledRef: userCancelledRef.current,
-        processingConversationRef: processingConversationRef.current,
-        streamingRef: streamingRef.current,
-        isExecutingTool,
-        commandRunning,
-        queuedApprovalResults: !!queuedApprovalResults,
-        submissionGeneration,
-      });
-
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
       if (pendingApprovals.length > 0) {
-        debugLog("onSubmit:blocked:pendingApprovals", {
-          count: pendingApprovals.length,
-        });
         return { submitted: false };
       }
 
@@ -2983,16 +2862,7 @@ export default function App({
       // userCancelledRef.current, so we must clear it here to prevent blocking.
       userCancelledRef.current = false;
 
-      const busyCheck = isAgentBusy();
-      debugLog("onSubmit:busyCheck", {
-        isAgentBusy: busyCheck,
-        streamingRef: streamingRef.current,
-        isExecutingTool,
-        commandRunningRef: commandRunningRef.current,
-        abortControllerExists: !!abortControllerRef.current,
-      });
-
-      if (busyCheck) {
+      if (isAgentBusy()) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
@@ -4851,22 +4721,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         content: messageContent as unknown as MessageCreate["content"],
       });
 
-      debugLog("onSubmit:beforeProcessConversation", {
-        initialInputTypes: initialInput.map((i) => i.type),
-        userCancelledRef: userCancelledRef.current,
-        processingConversationRef: processingConversationRef.current,
-        streamingRef: streamingRef.current,
-        submissionGeneration,
-        currentGeneration: conversationGenerationRef.current,
-      });
-
       await processConversation(initialInput, { submissionGeneration });
-
-      debugLog("onSubmit:afterProcessConversation", {
-        userCancelledRef: userCancelledRef.current,
-        processingConversationRef: processingConversationRef.current,
-        streamingRef: streamingRef.current,
-      });
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
