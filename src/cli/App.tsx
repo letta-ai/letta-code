@@ -6807,6 +6807,7 @@ Plan file path: ${planFilePath}`;
                 }
                 ralphActive={uiRalphActive}
                 ralphPending={pendingRalphConfig !== null}
+                ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
                 onRalphExit={handleRalphExit}
               />
             </Box>

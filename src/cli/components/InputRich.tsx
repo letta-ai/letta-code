@@ -59,6 +59,7 @@ export function Input({
   onEscapeCancel,
   ralphActive = false,
   ralphPending = false,
+  ralphPendingYolo = false,
   onRalphExit,
 }: {
   visible?: boolean;
@@ -81,6 +82,7 @@ export function Input({
   onEscapeCancel?: () => void;
   ralphActive?: boolean;
   ralphPending?: boolean;
+  ralphPendingYolo?: boolean;
   onRalphExit?: () => void;
 }) {
   const [value, setValue] = useState("");
@@ -587,6 +589,12 @@ export function Input({
   const getModeInfo = () => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
+      if (ralphPendingYolo) {
+        return {
+          name: "yolo-ralph (waiting)",
+          color: "#FF8C00", // dark orange
+        };
+      }
       return {
         name: "ralph (waiting)",
         color: "#FEE19C", // yellow (brandColors.statusWarning)
