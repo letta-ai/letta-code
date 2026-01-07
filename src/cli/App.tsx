@@ -3169,7 +3169,7 @@ export default function App({
       // Handle shell commands (messages starting with "$")
       if (aliasedMsg.trim().startsWith("$")) {
         const command = aliasedMsg.trim().slice(1).trim(); // Remove "$" prefix
-        
+
         if (!command) {
           // Empty command - show usage
           const cmdId = uid("bash");
@@ -3187,7 +3187,7 @@ export default function App({
         }
 
         const cmdId = uid("bash");
-        
+
         // Add initial running state
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
@@ -3204,18 +3204,18 @@ export default function App({
           try {
             const { spawnCommand } = await import("../tools/impl/Bash.js");
             const { getShellEnv } = await import("../tools/impl/shellEnv.js");
-            
+
             const cwd = process.cwd();
             const env = getShellEnv(cwd);
             const timeout = 120000; // 2 minutes default timeout
-            
+
             const result = await spawnCommand(command, { cwd, env, timeout });
-            
+
             // Combine stdout and stderr
             let output = "";
             if (result.stdout) output += result.stdout;
             if (result.stderr) output += result.stderr;
-            
+
             // Update with final result
             buffersRef.current.byId.set(cmdId, {
               kind: "bash_command",
