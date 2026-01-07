@@ -324,6 +324,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       output || "(Command completed with no output)",
       LIMITS.BASH_OUTPUT_CHARS,
       "Bash",
+      { workingDirectory: userCwd, toolName: "Bash" },
     );
 
     // Non-zero exit code is an error
@@ -376,6 +377,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       errorMessage.trim() || "Command failed with unknown error",
       LIMITS.BASH_OUTPUT_CHARS,
       "Bash",
+      { workingDirectory: userCwd, toolName: "Bash" },
     );
 
     return {

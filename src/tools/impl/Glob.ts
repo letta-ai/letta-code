@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { LIMITS } from "./truncation.js";
+import { LIMITS, truncateArray } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 const execFileAsync = promisify(execFile);
@@ -32,20 +32,27 @@ interface GlobResult {
   totalFiles?: number;
 }
 
-function applyFileLimit(files: string[]): GlobResult {
+function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
   const totalFiles = files.length;
   if (totalFiles <= LIMITS.GLOB_MAX_FILES) {
     return { files };
   }
 
-  const truncatedFiles = files.slice(0, LIMITS.GLOB_MAX_FILES);
-  truncatedFiles.push(
-    `\n[Output truncated: showing ${LIMITS.GLOB_MAX_FILES.toLocaleString()} of ${totalFiles.toLocaleString()} files.]`,
+  const { content, wasTruncated, overflowPath } = truncateArray(
+    files,
+    LIMITS.GLOB_MAX_FILES,
+    (items) => items.join("\n"),
+    "files",
+    "Glob",
+    { workingDirectory, toolName: "Glob" },
   );
 
+  // Split the content back into an array of file paths + notice
+  const resultFiles = content.split("\n");
+
   return {
-    files: truncatedFiles,
-    truncated: true,
+    files: resultFiles,
+    truncated: wasTruncated,
     totalFiles,
   };
 }
@@ -90,7 +97,7 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
 
     const files = stdout.trim().split("\n").filter(Boolean).sort();
 
-    return applyFileLimit(files);
+    return applyFileLimit(files, userCwd);
   } catch (error) {
     const err = error as Error & {
       stdout?: string;
@@ -105,7 +112,7 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
     // If stdout has content despite error, use it (partial results)
     if (err.stdout?.trim()) {
       const files = err.stdout.trim().split("\n").filter(Boolean).sort();
-      return applyFileLimit(files);
+      return applyFileLimit(files, userCwd);
     }
 
     throw new Error(`Glob failed: ${err.message || "Unknown error"}`);

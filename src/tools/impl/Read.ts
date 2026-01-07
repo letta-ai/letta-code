@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { LIMITS } from "./truncation.js";
+import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ReadArgs {
@@ -52,6 +53,7 @@ function formatWithLineNumbers(
   content: string,
   offset?: number,
   limit?: number,
+  workingDirectory?: string,
 ): string {
   const lines = content.split("\n");
   const originalLineCount = lines.length;
@@ -88,6 +90,21 @@ function formatWithLineNumbers(
   const notices: string[] = [];
   const wasTruncatedByLineCount = actualEndLine < originalLineCount;
 
+  // Write to overflow file if content was truncated and overflow is enabled
+  let overflowPath: string | undefined;
+  if (
+    (wasTruncatedByLineCount || linesWereTruncatedInLength) &&
+    OVERFLOW_CONFIG.ENABLED &&
+    workingDirectory
+  ) {
+    try {
+      overflowPath = writeOverflowFile(content, workingDirectory, "Read");
+    } catch (error) {
+      // Silently fail if overflow file creation fails
+      console.error("Failed to write overflow file:", error);
+    }
+  }
+
   if (wasTruncatedByLineCount && !limit) {
     // Only show this notice if user didn't explicitly set a limit
     notices.push(
@@ -99,6 +116,10 @@ function formatWithLineNumbers(
     notices.push(
       `\n\n[Some lines exceeded ${LIMITS.READ_MAX_CHARS_PER_LINE.toLocaleString()} characters and were truncated.]`,
     );
+  }
+
+  if (overflowPath) {
+    notices.push(`\n\n[Full file content written to: ${overflowPath}]`);
   }
 
   if (notices.length > 0) {
@@ -132,7 +153,12 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
         content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
       };
     }
-    const formattedContent = formatWithLineNumbers(content, offset, limit);
+    const formattedContent = formatWithLineNumbers(
+      content,
+      offset,
+      limit,
+      userCwd,
+    );
     return { content: formattedContent };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
