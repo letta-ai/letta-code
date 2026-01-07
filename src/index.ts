@@ -300,6 +300,16 @@ async function main(): Promise<void> {
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
 
+  // Initialize LSP infrastructure for type checking
+  if (process.env.LETTA_ENABLE_LSP) {
+    try {
+      const { lspManager } = await import("./lsp/manager.js");
+      await lspManager.initialize(process.cwd());
+    } catch (error) {
+      console.error("[LSP] Failed to initialize:", error);
+    }
+  }
+
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   telemetry.init();
 
