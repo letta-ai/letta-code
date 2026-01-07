@@ -1,24 +1,28 @@
 {
   "type": "object",
   "properties": {
+    "command": {
+      "type": "string",
+      "enum": ["run", "refresh"],
+      "description": "The operation to perform: \"run\" to spawn a subagent (default), \"refresh\" to re-scan the .letta/agents/ directories and update the available subagents list"
+    },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use. Available agents are discovered from .letta/agents/ directory."
+      "description": "The type of specialized agent to use. Available agents are discovered from .letta/agents/ directory. Required for \"run\" command."
     },
     "prompt": {
       "type": "string",
-      "description": "The task for the agent to perform"
+      "description": "The task for the agent to perform. Required for \"run\" command."
     },
     "description": {
       "type": "string",
-      "description": "A short (3-5 word) description of the task"
+      "description": "A short (3-5 word) description of the task. Required for \"run\" command."
     },
     "model": {
       "type": "string",
       "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type."
     }
   },
-  "required": ["subagent_type", "prompt", "description"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }
