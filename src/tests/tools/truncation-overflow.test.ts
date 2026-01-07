@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getOverflowDirectory } from "../../tools/impl/overflow";
 import {
-  LIMITS,
   truncateArray,
   truncateByChars,
   truncateByLines,
@@ -56,7 +55,7 @@ describe("truncation with overflow support", () => {
     });
 
     test("uses middle truncation when enabled", () => {
-      const text = "a".repeat(500) + "MIDDLE" + "b".repeat(500);
+      const text = `${"a".repeat(500)}MIDDLE${"b".repeat(500)}`;
       const result = truncateByChars(text, 600, "TestTool", {
         workingDirectory: testWorkingDir,
         useMiddleTruncation: true,
@@ -71,7 +70,7 @@ describe("truncation with overflow support", () => {
     });
 
     test("uses post truncation when middle truncation disabled", () => {
-      const text = "a".repeat(500) + "END";
+      const text = `${"a".repeat(500)}END`;
       const result = truncateByChars(text, 300, "TestTool", {
         workingDirectory: testWorkingDir,
         useMiddleTruncation: false,

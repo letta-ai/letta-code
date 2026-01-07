@@ -42,7 +42,7 @@ describe("overflow integration tests", () => {
       );
       expect(match).toBeDefined();
 
-      if (match) {
+      if (match?.[1]) {
         const overflowPath = match[1];
         expect(fs.existsSync(overflowPath)).toBe(true);
 
@@ -85,7 +85,7 @@ describe("overflow integration tests", () => {
         const match = result.output.match(/Full output written to: (.+\.txt)/);
         expect(match).toBeDefined();
 
-        if (match) {
+        if (match?.[1]) {
           const overflowPath = match[1];
           expect(fs.existsSync(overflowPath)).toBe(true);
 

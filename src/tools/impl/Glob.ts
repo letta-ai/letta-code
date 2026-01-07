@@ -38,7 +38,7 @@ function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
     return { files };
   }
 
-  const { content, wasTruncated, overflowPath } = truncateArray(
+  const { content, wasTruncated } = truncateArray(
     files,
     LIMITS.GLOB_MAX_FILES,
     (items) => items.join("\n"),
