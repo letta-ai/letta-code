@@ -139,12 +139,18 @@ export async function spawnCommand(
     signal?: AbortSignal;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  // If we have a cached working launcher, try it first
+  // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
+  // This avoids the complexity of fallback logic which caused issues on ARM64 CI
+  if (process.platform !== "win32") {
+    // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
+    const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
+    return spawnWithLauncher([executable, "-c", command], options);
+  }
+
+  // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
-    // Rebuild launcher with current command (cached launcher has old command)
     const [executable, ...launcherArgs] = cachedWorkingLauncher;
     if (executable) {
-      // The last element is the command, replace it
       const newLauncher = [executable, ...launcherArgs.slice(0, -1), command];
       try {
         const result = await spawnWithLauncher(newLauncher, options);
@@ -154,7 +160,6 @@ export async function spawnCommand(
         if (err.code !== "ENOENT") {
           throw error;
         }
-        // Cached shell no longer available, clear cache and try all
         cachedWorkingLauncher = null;
       }
     }
@@ -171,7 +176,6 @@ export async function spawnCommand(
   for (const launcher of launchers) {
     try {
       const result = await spawnWithLauncher(launcher, options);
-      // Cache this working launcher for future use
       cachedWorkingLauncher = launcher;
       return result;
     } catch (error) {
@@ -181,12 +185,10 @@ export async function spawnCommand(
         lastError = err;
         continue;
       }
-      // Non-ENOENT errors should be thrown immediately
       throw error;
     }
   }
 
-  // All launchers failed with ENOENT
   const suffix = tried.filter(Boolean).join(", ");
   const reason = lastError?.message || "Shell unavailable";
   throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
