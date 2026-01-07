@@ -143,9 +143,7 @@ describe("tool truncation integration tests", () => {
       });
 
       expect(result.output.length).toBeLessThanOrEqual(15000); // 10K + notice
-      expect(result.output).toContain(
-        "[Output truncated: showing 10,000",
-      );
+      expect(result.output).toContain("[Output truncated: showing 10,000");
     });
 
     test("truncates file list exceeding 10K characters", async () => {
@@ -165,9 +163,7 @@ describe("tool truncation integration tests", () => {
 
       expect(result.output.length).toBeLessThanOrEqual(15000);
       if (result.output.length > 10000) {
-        expect(result.output).toContain(
-          "[Output truncated: showing 10,000",
-        );
+        expect(result.output).toContain("[Output truncated: showing 10,000");
       }
     });
 
