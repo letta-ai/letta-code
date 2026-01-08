@@ -25,9 +25,9 @@ describe("overflow integration tests", () => {
       // Set USER_CWD for the test
       process.env.USER_CWD = testWorkingDir;
 
-      // Generate a large output (more than 30K characters)
+      // Generate a large output (more than 30K characters) using node (cross-platform)
       const command =
-        'for i in {1..2000}; do echo "Line $i with some padding text to make it longer"; done';
+        "node -e \"for(let i=1;i<=2000;i++) console.log('Line '+i+' with some padding text to make it longer')\"";
 
       const result = await bash({ command });
 
@@ -100,9 +100,9 @@ describe("overflow integration tests", () => {
     test("shows beginning and end of output", async () => {
       process.env.USER_CWD = testWorkingDir;
 
-      // Generate output with distinctive beginning and end
+      // Generate output with distinctive beginning and end using node (cross-platform)
       const command =
-        'echo "START_MARKER"; for i in {1..1000}; do echo "Middle line $i"; done; echo "END_MARKER"';
+        "node -e \"console.log('START_MARKER'); for(let i=1;i<=1000;i++) console.log('Middle line '+i); console.log('END_MARKER')\"";
 
       const result = await bash({ command });
 
