@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 
 /**
  * Get Messages - Retrieve messages from an agent in chronological order
@@ -8,7 +8,7 @@
  * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
  *
  * Usage:
- *   npx tsx get-messages.ts [options]
+ *   bun get-messages.ts [options]
  *
  * Options:
  *   --start-date <date>   Filter messages after this date (ISO format)
@@ -213,7 +213,7 @@ if (isMainModule) {
         error instanceof Error ? error.message : String(error),
       );
       console.error(`
-Usage: npx tsx get-messages.ts [options]
+Usage: bun get-messages.ts [options]
 
 Options:
   --after <message-id>  Cursor: get messages after this ID

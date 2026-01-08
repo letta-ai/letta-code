@@ -1,13 +1,13 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env bun
 /**
  * Skill Initializer - Creates a new skill from template
  *
  * Usage:
- *   npx ts-node init-skill.ts <skill-name> --path <path>
+ *   bun init-skill.ts <skill-name> --path <path>
  *
  * Examples:
- *   npx ts-node init-skill.ts my-new-skill --path .skills
- *   npx ts-node init-skill.ts my-api-helper --path ~/.letta/skills
+ *   bun init-skill.ts my-new-skill --path .skills
+ *   bun init-skill.ts my-api-helper --path ~/.letta/skills
  */
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -86,7 +86,7 @@ Files not intended to be loaded into context, but rather used within the output 
 **Any unneeded directories can be deleted.** Not every skill requires all three types of resources.
 `;
 
-const EXAMPLE_SCRIPT = `#!/usr/bin/env npx ts-node
+const EXAMPLE_SCRIPT = `#!/usr/bin/env bun
 /**
  * Example helper script for {skill_name}
  *
@@ -252,16 +252,16 @@ if (require.main === module) {
   const args = process.argv.slice(2);
 
   if (args.length < 3 || args[1] !== "--path") {
-    console.log("Usage: npx ts-node init-skill.ts <skill-name> --path <path>");
+    console.log("Usage: bun init-skill.ts <skill-name> --path <path>");
     console.log("\nSkill name requirements:");
     console.log("  - Hyphen-case identifier (e.g., 'data-analyzer')");
     console.log("  - Lowercase letters, digits, and hyphens only");
     console.log("  - Max 64 characters");
     console.log("  - Must match directory name exactly");
     console.log("\nExamples:");
-    console.log("  npx ts-node init-skill.ts my-new-skill --path .skills");
+    console.log("  bun init-skill.ts my-new-skill --path .skills");
     console.log(
-      "  npx ts-node init-skill.ts my-api-helper --path ~/.letta/skills",
+      "  bun init-skill.ts my-api-helper --path ~/.letta/skills",
     );
     process.exit(1);
   }

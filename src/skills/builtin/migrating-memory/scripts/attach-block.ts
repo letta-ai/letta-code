@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Attach Block - Attaches an existing memory block to an agent (sharing)
  *
@@ -7,7 +7,7 @@
  * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
  *
  * Usage:
- *   npx tsx attach-block.ts --block-id <block-id> [--agent-id <agent-id>] [--read-only] [--override]
+ *   bun attach-block.ts --block-id <block-id> [--agent-id <agent-id>] [--read-only] [--override]
  *
  * This attaches an existing block to another agent, making it shared.
  * Changes to the block will be visible to all agents that have it attached.
@@ -221,7 +221,7 @@ if (isMainModule) {
         error.message.includes("Missing required argument")
       ) {
         console.error(
-          "\nUsage: npx tsx attach-block.ts --block-id <block-id> [--agent-id <agent-id>] [--read-only] [--override]",
+          "\nUsage: bun attach-block.ts --block-id <block-id> [--agent-id <agent-id>] [--read-only] [--override]",
         );
       }
       process.exit(1);

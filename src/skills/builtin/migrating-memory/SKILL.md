@@ -47,13 +47,13 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
 
 1. **Use `--label` (copy only):** Rename the block when copying:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --label project-imported
+   bun <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --label project-imported
    ```
 
 2. **Use `--override` (copy or attach):** Automatically detach your existing block first:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --override
-   npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id <id> --override
+   bun <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --override
+   bun <SKILL_DIR>/scripts/attach-block.ts --block-id <id> --override
    ```
    If the operation fails, the original block is automatically reattached.
 
@@ -83,7 +83,7 @@ Example: "What's the ID of the agent you want to migrate memory from?"
 Inspect what memory blocks the source agent has:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id <source-agent-id>
+bun <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id <source-agent-id>
 ```
 
 This shows each block's ID, label, description, and value.
@@ -94,14 +94,14 @@ For each block you want to migrate, choose copy or share:
 
 **To Copy (create independent block):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <block-id> [--label <new-label>]
+bun <SKILL_DIR>/scripts/copy-block.ts --block-id <block-id> [--label <new-label>]
 ```
 
 Use `--label` if you already have a block with that label (e.g., `--label project-imported`).
 
 **To Share (attach existing block):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id <block-id>
+bun <SKILL_DIR>/scripts/attach-block.ts --block-id <block-id>
 ```
 
 Add `--read-only` flag to share to make this agent unable to modify the block.
@@ -136,20 +136,20 @@ Scenario: You're a new agent and want to inherit memory from an existing agent "
 
 2. **List its blocks:**
    ```bash
-   npx tsx <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id agent-abc123
+   bun <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id agent-abc123
    # Shows: project (block-def456), human (block-ghi789), persona (block-jkl012)
    ```
 
 3. **Copy project knowledge to yourself:**
    ```bash
    # If you don't have a 'project' block yet:
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456
-   
+   bun <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456
+
    # If you already have 'project', use --label to rename:
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456 --label project-v1
+   bun <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456 --label project-v1
    ```
 
 4. **Optionally share human preferences (read-only):**
    ```bash
-   npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id block-ghi789 --read-only
+   bun <SKILL_DIR>/scripts/attach-block.ts --block-id block-ghi789 --read-only
    ```
