@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 
 /**
  * Search Messages - Search past conversations with vector/FTS search
@@ -8,7 +8,7 @@
  * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
  *
  * Usage:
- *   npx tsx search-messages.ts --query <text> [options]
+ *   bun search-messages.ts --query <text> [options]
  *
  * Options:
  *   --query <text>        Search query (required)
@@ -183,7 +183,7 @@ if (isMainModule) {
         error instanceof Error ? error.message : String(error),
       );
       console.error(`
-Usage: npx tsx search-messages.ts --query <text> [options]
+Usage: bun search-messages.ts --query <text> [options]
 
 Options:
   --query <text>        Search query (required)

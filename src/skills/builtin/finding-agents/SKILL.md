@@ -18,7 +18,7 @@ This skill helps you find other agents on the same Letta server.
 ## Script Usage
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts [options]
+bun <SKILL_DIR>/scripts/find-agents.ts [options]
 ```
 
 ### Options
@@ -39,7 +39,7 @@ npx tsx <SKILL_DIR>/scripts/find-agents.ts [options]
 Agents created by Letta Code are tagged with `origin:letta-code`. To find only Letta Code agents:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
+bun <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
 ```
 
 This is useful when the user is looking for agents they've worked with in Letta Code CLI sessions.
@@ -49,39 +49,39 @@ This is useful when the user is looking for agents they've worked with in Letta 
 If the user has agents created outside Letta Code (via ADE, SDK, etc.), search without the tag filter:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts
+bun <SKILL_DIR>/scripts/find-agents.ts
 ```
 
 ## Examples
 
 **List all agents (up to 20):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts
+bun <SKILL_DIR>/scripts/find-agents.ts
 ```
 
 **Find agent by exact name:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --name "ProjectX-v1"
+bun <SKILL_DIR>/scripts/find-agents.ts --name "ProjectX-v1"
 ```
 
 **Search agents by name (fuzzy):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --query "project"
+bun <SKILL_DIR>/scripts/find-agents.ts --query "project"
 ```
 
 **Find only Letta Code agents:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
+bun <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
 ```
 
 **Find agents with multiple tags:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "frontend,production" --match-all-tags
+bun <SKILL_DIR>/scripts/find-agents.ts --tags "frontend,production" --match-all-tags
 ```
 
 **Include memory blocks in results:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --query "project" --include-blocks
+bun <SKILL_DIR>/scripts/find-agents.ts --query "project" --include-blocks
 ```
 
 ## Output

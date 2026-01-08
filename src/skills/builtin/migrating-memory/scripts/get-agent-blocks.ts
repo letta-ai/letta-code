@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Get Agent Blocks - Retrieves memory blocks from a specific agent
  *
@@ -6,7 +6,7 @@
  * It reads auth from LETTA_API_KEY env var or ~/.letta/settings.json.
  *
  * Usage:
- *   npx tsx get-agent-blocks.ts --agent-id <agent-id>
+ *   bun get-agent-blocks.ts --agent-id <agent-id>
  *
  * Output:
  *   Raw API response from GET /v1/agents/{id}/core-memory/blocks
@@ -94,7 +94,7 @@ if (isMainModule) {
         error.message.includes("Missing required argument")
       ) {
         console.error(
-          "\nUsage: npx tsx get-agent-blocks.ts --agent-id <agent-id>",
+          "\nUsage: bun get-agent-blocks.ts --agent-id <agent-id>",
         );
       }
       process.exit(1);

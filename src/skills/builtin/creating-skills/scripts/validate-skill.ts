@@ -1,12 +1,12 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env bun
 /**
  * Skill Validator - Validates skill structure and frontmatter
  *
  * Usage:
- *   npx ts-node validate-skill.ts <skill-directory>
+ *   bun validate-skill.ts <skill-directory>
  *
  * Example:
- *   npx ts-node validate-skill.ts .skills/my-skill
+ *   bun validate-skill.ts .skills/my-skill
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -165,7 +165,7 @@ export function validateSkill(skillPath: string): ValidationResult {
 if (require.main === module) {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
-    console.log("Usage: npx ts-node validate-skill.ts <skill-directory>");
+    console.log("Usage: bun validate-skill.ts <skill-directory>");
     process.exit(1);
   }
 

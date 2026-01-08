@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Find Agents - Search for agents with various filters
  *
@@ -6,7 +6,7 @@
  * It reads auth from LETTA_API_KEY env var or ~/.letta/settings.json.
  *
  * Usage:
- *   npx tsx find-agents.ts [options]
+ *   bun find-agents.ts [options]
  *
  * Options:
  *   --name <name>         Exact name match
@@ -161,7 +161,7 @@ if (isMainModule) {
         error instanceof Error ? error.message : String(error),
       );
       console.error(`
-Usage: npx tsx find-agents.ts [options]
+Usage: bun find-agents.ts [options]
 
 Options:
   --name <name>         Exact name match

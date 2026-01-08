@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env bun
 /**
  * Copy Block - Copies a memory block to create a new independent block for the current agent
  *
@@ -7,7 +7,7 @@
  * It reads agent ID from LETTA_AGENT_ID env var or --agent-id arg.
  *
  * Usage:
- *   npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]
+ *   bun copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]
  *
  * Options:
  *   --label      Override the block label (useful to avoid duplicate label errors)
@@ -252,7 +252,7 @@ if (isMainModule) {
         error.message.includes("Missing required argument")
       ) {
         console.error(
-          "\nUsage: npx tsx copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]",
+          "\nUsage: bun copy-block.ts --block-id <block-id> [--label <new-label>] [--agent-id <agent-id>] [--override]",
         );
       }
       process.exit(1);
