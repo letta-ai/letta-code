@@ -401,10 +401,18 @@ async function executeSubagent(
       // Context not available
     }
 
+    // Get API credentials from settings to pass to subagent
+    const settings = await settingsManager.getSettingsWithSecureTokens();
+    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+    const baseUrlFromSettings = process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
+
     const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        // Pass API credentials to subagent
+        ...(apiKey && { LETTA_API_KEY: apiKey }),
+        ...(baseUrlFromSettings && { LETTA_BASE_URL: baseUrlFromSettings }),
         // Tag Task-spawned agents for easy filtering.
         LETTA_CODE_AGENT_ROLE: "subagent",
         // Pass parent agent ID for subagents that need to access parent's context
