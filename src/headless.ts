@@ -130,6 +130,17 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Set CLI permission overrides if provided (inherited from parent agent)
+  if (values.allowedTools || values.disallowedTools) {
+    const { cliPermissions } = await import("./permissions/cli");
+    if (values.allowedTools) {
+      cliPermissions.setAllowedTools(values.allowedTools as string);
+    }
+    if (values.disallowedTools) {
+      cliPermissions.setDisallowedTools(values.disallowedTools as string);
+    }
+  }
+
   // Check for input-format early - if stream-json, we don't need a prompt
   const inputFormat = values["input-format"] as string | undefined;
   const isBidirectionalMode = inputFormat === "stream-json";
