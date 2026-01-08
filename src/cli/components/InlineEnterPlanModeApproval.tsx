@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
@@ -49,6 +50,7 @@ export const InlineEnterPlanModeApproval = memo(
   ({ onApprove, onReject, isFocused = true }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     const options = [
       { label: "Yes, enter plan mode", action: onApprove },

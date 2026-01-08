@@ -574,6 +574,14 @@ export default function App({
     }
   }, [agentId]);
 
+  // Set terminal title to "{Agent Name} | Letta Code"
+  useEffect(() => {
+    const title = agentState?.name
+      ? `${agentState.name} | Letta Code`
+      : "Letta Code";
+    process.stdout.write(`\x1b]0;${title}\x07`);
+  }, [agentState?.name]);
+
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);

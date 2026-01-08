@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { Fragment, memo, useMemo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
@@ -41,6 +42,7 @@ export const InlineQuestionApproval = memo(
     } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     const currentQuestion = questions[currentQuestionIndex];
 
