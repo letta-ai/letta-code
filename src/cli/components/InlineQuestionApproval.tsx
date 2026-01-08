@@ -374,7 +374,7 @@ export const InlineQuestionApproval = memo(
                           {customText.slice(cursorPos)}
                         </Text>
                       ) : (
-                        <Text wrap="wrap" dimColor={!isSelected}>
+                        <Text wrap="wrap" dimColor>
                           {option.label}
                           {isSelected && "█"}
                         </Text>

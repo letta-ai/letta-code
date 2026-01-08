@@ -179,7 +179,7 @@ export const StaticPlanApproval = memo(
                   {customReason.slice(cursorPos)}
                 </Text>
               ) : (
-                <Text wrap="wrap" dimColor={!isOnCustomOption}>
+                <Text wrap="wrap" dimColor>
                   {customOptionPlaceholder}
                   {isOnCustomOption && "█"}
                 </Text>
