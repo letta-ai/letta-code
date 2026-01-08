@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 
@@ -33,7 +34,12 @@ export const InlinePlanApproval = memo(
     isFocused = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customReason, setCustomReason] = useState("");
+    const {
+      text: customReason,
+      cursorPos,
+      handleKey,
+      clear,
+    } = useTextInputCursor();
     const columns = useTerminalWidth();
 
     const customOptionIndex = 2;
@@ -72,21 +78,14 @@ export const InlinePlanApproval = memo(
           }
           if (key.escape) {
             if (customReason) {
-              setCustomReason("");
+              clear();
             } else {
-              // Esc without text - just clear, stay on planning
               onKeepPlanning("User cancelled");
             }
             return;
           }
-          if (key.backspace || key.delete) {
-            setCustomReason((prev) => prev.slice(0, -1));
-            return;
-          }
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomReason((prev) => prev + input);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on regular options
@@ -212,8 +211,9 @@ export const InlinePlanApproval = memo(
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               {customReason ? (
                 <Text wrap="wrap">
-                  {customReason}
+                  {customReason.slice(0, cursorPos)}
                   {isOnCustomOption && "█"}
+                  {customReason.slice(cursorPos)}
                 </Text>
               ) : (
                 <Text wrap="wrap" dimColor>

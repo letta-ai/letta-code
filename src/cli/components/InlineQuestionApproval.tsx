@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { Fragment, memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 
 interface QuestionOption {
@@ -30,7 +31,14 @@ export const InlineQuestionApproval = memo(
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customText, setCustomText] = useState("");
+    const {
+      text: customText,
+      setText: setCustomText,
+      cursorPos,
+      setCursorPos,
+      handleKey,
+      clear: clearCustomText,
+    } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
     const columns = useTerminalWidth();
 
@@ -69,7 +77,7 @@ export const InlineQuestionApproval = memo(
       if (currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(currentQuestionIndex + 1);
         setSelectedOption(0);
-        setCustomText("");
+        clearCustomText();
         setSelectedMulti(new Set());
       } else {
         onSubmit(newAnswers);
@@ -121,7 +129,7 @@ export const InlineQuestionApproval = memo(
             return;
           }
           if (input === " " && currentQuestion.multiSelect) {
-            // Space: if not checked, toggle + insert space. If already checked, just insert space.
+            // Space in multi-select: toggle checkbox if not checked, then insert space
             if (!selectedMulti.has(customOptionIndex)) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
@@ -129,26 +137,23 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             }
-            // Always insert the space character
-            setCustomText((prev) => `${prev} `);
+            // Insert space at cursor position
+            setCustomText(
+              (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
+            );
+            setCursorPos((prev) => prev + 1);
             return;
           }
           if (key.escape) {
             if (customText) {
-              setCustomText("");
+              clearCustomText();
             } else {
               onCancel?.();
             }
             return;
           }
-          if (key.backspace || key.delete) {
-            setCustomText((prev) => prev.slice(0, -1));
-            return;
-          }
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomText((prev) => prev + input);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on Submit option (multi-select only)
@@ -364,8 +369,9 @@ export const InlineQuestionApproval = memo(
                       // Custom input option ("Type something")
                       customText ? (
                         <Text wrap="wrap">
-                          {customText}
+                          {customText.slice(0, cursorPos)}
                           {isSelected && "█"}
+                          {customText.slice(cursorPos)}
                         </Text>
                       ) : (
                         <Text wrap="wrap" dimColor>
