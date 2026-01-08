@@ -64,7 +64,7 @@ interface AgentRowProps {
 const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
   const columns = useTerminalWidth();
-  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const gutterWidth = 7; // continueChar (3) + " ⎿  " (4)
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   const getDotElement = () => {
@@ -105,17 +105,9 @@ const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Box width={gutterWidth} flexShrink={0}>
-            <Text>
-              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-              <Text dimColor>{" ⎿  "}</Text>
-            </Text>
-          </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <Text wrap="wrap" dimColor>
-              Subagent: {agent.agentURL}
-            </Text>
-          </Box>
+          <Text color={colors.subagent.treeChar}>{continueChar}</Text>
+          <Text dimColor>{" ⎿  Subagent: "}</Text>
+          <Text dimColor>{agent.agentURL}</Text>
         </Box>
       )}
 
@@ -198,7 +190,7 @@ const GroupHeader = memo(
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={dotColor}>⏺</Text>
+          <Text color={dotColor}>●</Text>
         ) : (
           <BlinkDot color={colors.subagent.header} />
         )}
