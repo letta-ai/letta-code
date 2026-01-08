@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { Fragment, memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 
 interface QuestionOption {
@@ -30,8 +31,14 @@ export const InlineQuestionApproval = memo(
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customText, setCustomText] = useState("");
-    const [cursorPos, setCursorPos] = useState(0);
+    const {
+      text: customText,
+      setText: setCustomText,
+      cursorPos,
+      setCursorPos,
+      handleKey,
+      clear: clearCustomText,
+    } = useTextInputCursor();
     const [selectedMulti, setSelectedMulti] = useState<Set<number>>(new Set());
     const columns = useTerminalWidth();
 
@@ -70,7 +77,7 @@ export const InlineQuestionApproval = memo(
       if (currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(currentQuestionIndex + 1);
         setSelectedOption(0);
-        setCustomText("");
+        clearCustomText();
         setSelectedMulti(new Set());
       } else {
         onSubmit(newAnswers);
@@ -101,16 +108,6 @@ export const InlineQuestionApproval = memo(
 
         // When on custom input option ("Type something")
         if (isOnCustomOption) {
-          // Arrow key navigation within text
-          if (key.leftArrow) {
-            setCursorPos((prev) => Math.max(0, prev - 1));
-            return;
-          }
-          if (key.rightArrow) {
-            setCursorPos((prev) => Math.min(customText.length, prev + 1));
-            return;
-          }
-
           if (key.return) {
             // Enter toggles the checkbox (same as other options)
             if (currentQuestion.multiSelect) {
@@ -132,7 +129,7 @@ export const InlineQuestionApproval = memo(
             return;
           }
           if (input === " " && currentQuestion.multiSelect) {
-            // Space: if not checked, toggle + insert space. If already checked, just insert space.
+            // Space in multi-select: toggle checkbox if not checked, then insert space
             if (!selectedMulti.has(customOptionIndex)) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
@@ -140,7 +137,7 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             }
-            // Insert the space at cursor position
+            // Insert space at cursor position
             setCustomText(
               (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
             );
@@ -149,32 +146,14 @@ export const InlineQuestionApproval = memo(
           }
           if (key.escape) {
             if (customText) {
-              setCustomText("");
-              setCursorPos(0);
+              clearCustomText();
             } else {
               onCancel?.();
             }
             return;
           }
-          // Backspace: delete character before cursor
-          if (key.backspace || key.delete) {
-            if (cursorPos > 0) {
-              setCustomText(
-                (prev) => prev.slice(0, cursorPos - 1) + prev.slice(cursorPos),
-              );
-              setCursorPos((prev) => prev - 1);
-            }
-            return;
-          }
-          // Typing: insert at cursor position
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomText(
-              (prev) =>
-                prev.slice(0, cursorPos) + input + prev.slice(cursorPos),
-            );
-            setCursorPos((prev) => prev + 1);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on Submit option (multi-select only)

@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 
 type Props = {
@@ -47,8 +48,12 @@ export const InlineTaskApproval = memo(
     allowPersistence = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customReason, setCustomReason] = useState("");
-    const [cursorPos, setCursorPos] = useState(0);
+    const {
+      text: customReason,
+      cursorPos,
+      handleKey,
+      clear,
+    } = useTextInputCursor();
     const columns = useTerminalWidth();
 
     // Custom option index depends on whether "always" option is shown
@@ -80,16 +85,6 @@ export const InlineTaskApproval = memo(
 
         // When on custom input option
         if (isOnCustomOption) {
-          // Arrow key navigation within text
-          if (key.leftArrow) {
-            setCursorPos((prev) => Math.max(0, prev - 1));
-            return;
-          }
-          if (key.rightArrow) {
-            setCursorPos((prev) => Math.min(customReason.length, prev + 1));
-            return;
-          }
-
           if (key.return) {
             if (customReason.trim()) {
               onDeny(customReason.trim());
@@ -98,32 +93,14 @@ export const InlineTaskApproval = memo(
           }
           if (key.escape) {
             if (customReason) {
-              setCustomReason("");
-              setCursorPos(0);
+              clear();
             } else {
               onCancel?.();
             }
             return;
           }
-          // Backspace: delete character before cursor
-          if (key.backspace || key.delete) {
-            if (cursorPos > 0) {
-              setCustomReason(
-                (prev) => prev.slice(0, cursorPos - 1) + prev.slice(cursorPos),
-              );
-              setCursorPos((prev) => prev - 1);
-            }
-            return;
-          }
-          // Typing: insert at cursor position
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomReason(
-              (prev) =>
-                prev.slice(0, cursorPos) + input + prev.slice(cursorPos),
-            );
-            setCursorPos((prev) => prev + 1);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on regular options
