@@ -5370,13 +5370,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
-        // Distinguish between ESC (user cancelled) vs queue-cancel (new message sent):
-        // - ESC: handleInterrupt nulls abortControllerRef.current
-        // - Queue-cancel: abortControllerRef.current still exists
-        // The 50ms userCancelledRef timeout is too short for long-running tools (subagents),
-        // so we check if abortControllerRef was nulled instead.
-        const userCancelledViaESC = abortControllerRef.current === null;
-        const userCancelled = userCancelledRef.current || userCancelledViaESC;
+        // Check if user cancelled via ESC. We use wasAborted (toolAbortController was aborted)
+        // as the primary signal, plus userCancelledRef for cancellations that happen just before
+        // tools complete. Note: we can't use `abortControllerRef.current === null` because
+        // abortControllerRef is also null in the normal approval flow (no stream running).
+        const userCancelled = userCancelledRef.current;
 
         if (wasAborted || userCancelled) {
           // Queue results to send alongside the next user message (if not cancelled entirely)
