@@ -14,7 +14,7 @@ import type {
 async function runHeadlessCommand(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 90000, // 90s timeout for slow CI environments
+  timeoutMs = 120000, // 120s timeout for slow CI environments (matches test-level timeout)
 ): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(

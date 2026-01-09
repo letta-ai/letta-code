@@ -25,7 +25,7 @@ const FAST_PROMPT =
 async function runBidirectional(
   inputs: string[],
   extraArgs: string[] = [],
-  timeoutMs = 90000, // Overall timeout for the entire operation
+  timeoutMs = 120000, // Overall timeout for the entire operation (matches test-level timeout)
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -297,22 +297,27 @@ describe("input-format stream-json", () => {
   test(
     "multi-turn conversation maintains context",
     async () => {
-      const objects = (await runBidirectional([
-        JSON.stringify({
-          type: "user",
-          message: {
-            role: "user",
-            content: "Say hello",
-          },
-        }),
-        JSON.stringify({
-          type: "user",
-          message: {
-            role: "user",
-            content: "Say goodbye",
-          },
-        }),
-      ])) as WireMessage[];
+      // Multi-turn test needs 2 sequential LLM calls, so allow more time
+      const objects = (await runBidirectional(
+        [
+          JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content: "Say hello",
+            },
+          }),
+          JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content: "Say goodbye",
+            },
+          }),
+        ],
+        [], // no extra args
+        150000, // 150s for 2 sequential LLM calls
+      )) as WireMessage[];
 
       // Should have at least two results (one per turn)
       const results = objects.filter(
