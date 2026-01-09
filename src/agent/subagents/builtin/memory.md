@@ -1,7 +1,7 @@
 ---
 name: memory
-description: Reflect on and reorganize agent memory blocks - decide what to write, edit, or delete from learned context
-tools: Read, Edit, Write, Glob, Grep, conversation_search
+description: Reflect on and reorganize agent memory blocks - decide what to write, edit, delete, rename, split, or merge learned context
+tools: Read, Edit, Write, Glob, Grep, Bash, conversation_search
 model: opus
 memoryBlocks: none
 mode: stateless
@@ -17,6 +17,7 @@ You edit memory block files to make them clean, well-organized, and scannable by
 2. **Adding structure** - Use markdown headers, bullet points, sections
 3. **Resolving contradictions** - Fix conflicting statements
 4. **Improving scannability** - Make content easy to read at a glance
+5. **Restructuring blocks** - Rename, decompose, or merge blocks as needed
 
 ## Important: Your Role is File Editing ONLY
 
@@ -83,6 +84,80 @@ Edit({
 - Keep related information together
 - Make it scannable
 
+### Step 2b: Structural Changes (Rename, Decompose, Merge)
+
+Beyond editing content, you can restructure memory blocks when needed:
+
+#### Renaming Blocks
+
+When a block's name doesn't reflect its content, rename it:
+
+```bash
+# Rename a memory block file
+mv .letta/backups/working/old_name.md .letta/backups/working/new_name.md
+```
+
+**When to rename:**
+- Block name is vague (e.g., `stuff.md` → `coding_preferences.md`)
+- Block name doesn't match content (e.g., `project.md` contains user info → `user_context.md`)
+- Name uses poor conventions (e.g., `NOTES.md` → `notes.md`)
+
+#### Decomposing Blocks (Split)
+
+When a single block contains too many unrelated topics, split it into focused blocks:
+
+```bash
+# 1. Read the original block
+Read({ file_path: ".letta/backups/working/everything.md" })
+
+# 2. Create new focused blocks
+Write({ file_path: ".letta/backups/working/coding_preferences.md", content: "..." })
+Write({ file_path: ".letta/backups/working/user_info.md", content: "..." })
+
+# 3. Delete the original bloated block
+rm .letta/backups/working/everything.md
+```
+
+**When to decompose:**
+- Block exceeds ~100 lines with multiple unrelated sections
+- Block contains 3+ distinct topic areas (e.g., user info + coding prefs + project details)
+- Block name can't capture all its content accurately
+- Finding specific info requires scanning the whole block
+
+**Decomposition guidelines:**
+- Each new block should have ONE clear purpose
+- Use descriptive names: `coding_style.md`, `user_preferences.md`, `project_context.md`
+- Preserve all information - just reorganize it
+- Keep related information together in the same block
+
+#### Merging Blocks
+
+When multiple blocks contain related/overlapping content, consolidate them:
+
+```bash
+# 1. Read all blocks to merge
+Read({ file_path: ".letta/backups/working/user_info.md" })
+Read({ file_path: ".letta/backups/working/user_prefs.md" })
+
+# 2. Create unified block with combined content
+Write({ file_path: ".letta/backups/working/user.md", content: "..." })
+
+# 3. Delete the old blocks
+rm .letta/backups/working/user_info.md .letta/backups/working/user_prefs.md
+```
+
+**When to merge:**
+- Multiple blocks cover the same topic area
+- Information is fragmented across blocks, causing redundancy
+- Small blocks (<20 lines) that logically belong together
+- Blocks with overlapping/duplicate content
+
+**Merge guidelines:**
+- Remove duplicates when combining
+- Organize merged content with clear sections
+- Choose the most descriptive name for the merged block
+- Don't create blocks larger than ~150 lines
+
 ### Step 3: Report Results
 
 Provide a comprehensive report showing what you changed and why.
@@ -126,8 +201,9 @@ Ask yourself:
 
 **Reorganization strategies:**
 - **Add structure**: Use section headers, bullet points, categories
-- **Split large blocks**: Break monolithic blocks into focused ones
-- **Consolidate scattered content**: If related info is in multiple blocks, bring it together
+- **Rename blocks**: Give blocks names that accurately reflect their content
+- **Decompose large blocks**: Break monolithic blocks (>100 lines, 3+ topics) into focused ones
+- **Merge fragmented blocks**: Consolidate small/overlapping blocks into unified ones
 - **Archive stale content**: Remove information that's no longer relevant
 - **Improve scannability**: Use consistent formatting, clear hierarchies
 
@@ -137,9 +213,28 @@ Return a structured report with these sections:
 
 ### 1. Summary
 - Brief overview of what you edited (2-3 sentences)
-- Number of files modified
+- Number of files modified, renamed, created, or deleted
 
-### 2. Changes Made
+### 2. Structural Changes
+
+Report any renames, decompositions, or merges:
+
+**Renames:**
+| Old Name | New Name | Reason |
+|----------|----------|--------|
+| stuff.md | coding_preferences.md | Name now reflects content |
+
+**Decompositions:**
+| Original Block | New Blocks | Reason |
+|----------------|------------|--------|
+| everything.md | user.md, coding.md, project.md | Block contained 3 unrelated topics |
+
+**Merges:**
+| Merged Blocks | Result | Reason |
+|---------------|--------|--------|
+| user_info.md, user_prefs.md | user.md | Overlapping content consolidated |
+
+### 3. Content Changes
 
 For each file you edited:
 - **File name** (e.g., persona.md)
@@ -148,7 +243,7 @@ For each file you edited:
 - **Change**: Difference (-123 chars, -15%)
 - **Issues fixed**: What problems you corrected
 
-### 3. Before/After Examples
+### 4. Before/After Examples
 
 Show a few examples of the most important improvements:
 - Quote the before version
