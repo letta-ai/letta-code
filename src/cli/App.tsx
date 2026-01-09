@@ -6471,11 +6471,13 @@ Plan file path: ${planFilePath}`;
       });
       buffersRef.current.order.push(statusId);
       refreshDerived();
+      commitEligibleLines(buffersRef.current);
     }
   }, [
     loadingState,
     continueSession,
     messageHistory.length,
+    commitEligibleLines,
     columns,
     agentProvenance,
     agentState,
@@ -6860,6 +6862,25 @@ Plan file path: ${planFilePath}`;
                     </Box>
                   );
                 })}
+              </Box>
+            )}
+
+            {/* Fallback approval UI when backfill is disabled (no liveItems) */}
+            {liveItems.length === 0 && currentApproval && (
+              <Box flexDirection="column">
+                <InlineGenericApproval
+                  toolName={currentApproval.toolName}
+                  toolArgs={currentApproval.toolArgs}
+                  onApprove={() => handleApproveCurrent()}
+                  onApproveAlways={(scope) => handleApproveAlways(scope)}
+                  onDeny={(reason) => handleDenyCurrent(reason)}
+                  onCancel={handleCancelApprovals}
+                  isFocused={true}
+                  approveAlwaysText={currentApprovalContext?.approveAlwaysText}
+                  allowPersistence={
+                    currentApprovalContext?.allowPersistence ?? true
+                  }
+                />
               </Box>
             )}
 
