@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
@@ -49,6 +50,7 @@ export const InlineBashApproval = memo(
       clear,
     } = useTextInputCursor();
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;

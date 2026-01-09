@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
@@ -41,6 +42,7 @@ export const InlinePlanApproval = memo(
       clear,
     } = useTextInputCursor();
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     const customOptionIndex = 2;
     const maxOptionIndex = customOptionIndex;

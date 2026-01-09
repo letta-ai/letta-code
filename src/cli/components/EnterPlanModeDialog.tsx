@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { colors } from "./colors";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 
 export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
   const [selectedOption, setSelectedOption] = useState(0);
+  useProgressIndicator();
 
   const options = [
     { label: "Yes, enter plan mode", action: onApprove },

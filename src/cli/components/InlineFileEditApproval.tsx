@@ -3,6 +3,7 @@ import { memo, useMemo, useState } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { parsePatchToAdvancedDiff } from "../helpers/diff";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
@@ -165,6 +166,7 @@ export const InlineFileEditApproval = memo(
       clear,
     } = useTextInputCursor();
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
