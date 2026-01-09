@@ -13,6 +13,7 @@ import {
 import {
   getDisplayToolName,
   isFileEditTool,
+  isFileReadTool,
   isFileWriteTool,
   isMemoryTool,
   isPatchTool,
@@ -545,6 +546,28 @@ export const ToolCallMessage = memo(
         } catch {
           // If parsing fails, fall through to regular handling
         }
+      }
+
+      // Check if this is a file read tool - show line count summary
+      if (
+        isFileReadTool(rawName) &&
+        line.resultOk !== false &&
+        line.resultText
+      ) {
+        // Count lines in the result (the content returned by Read tool)
+        const lineCount = line.resultText.split("\n").length;
+        return (
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>{prefix}</Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text>
+                Read <Text bold>{lineCount}</Text> lines
+              </Text>
+            </Box>
+          </Box>
+        );
       }
 
       // Regular result handling
