@@ -76,10 +76,15 @@ async function restoreMemory(
   
   console.log(`Found ${filesToRestore.length} files to restore\n`);
   
+  // Detect blocks to delete (exist on agent but not in backup)
+  const backupLabels = new Set(filesToRestore.map((f) => f.label));
+  const blocksToDelete = currentBlocks.filter((b) => !backupLabels.has(b.label));
+  
   // Restore each block
   let updated = 0;
   let created = 0;
   let skipped = 0;
+  let deleted = 0;
   
   for (const { label, filename } of filesToRestore) {
     const filepath = join(backupDir, filename);
@@ -123,10 +128,44 @@ async function restoreMemory(
     }
   }
   
+  // Handle deletions (blocks that exist on agent but not in backup)
+  if (blocksToDelete.length > 0) {
+    console.log(`\n⚠️  Found ${blocksToDelete.length} block(s) that were removed from backup:`);
+    for (const block of blocksToDelete) {
+      console.log(`    - ${block.label}`);
+    }
+    
+    if (!options.dryRun) {
+      console.log(`\nThese blocks will be DELETED from the agent.`);
+      console.log(`Press Ctrl+C to cancel, or press Enter to confirm deletion...`);
+      
+      // Wait for user confirmation
+      await new Promise<void>((resolve) => {
+        process.stdin.once('data', () => resolve());
+      });
+      
+      console.log();
+      for (const block of blocksToDelete) {
+        try {
+          await client.agents.blocks.detach(block.id, {
+            agent_id: agentId,
+          });
+          console.log(`  🗑️  ${block.label} - deleted`);
+          deleted++;
+        } catch (error) {
+          console.error(`  ❌ ${block.label} - error deleting: ${error.message}`);
+        }
+      }
+    } else {
+      console.log(`\n(Would delete these blocks if not in dry-run mode)`);
+    }
+  }
+  
   console.log(`\n📊 Summary:`);
   console.log(`   Updated: ${updated}`);
   console.log(`   Skipped: ${skipped}`);
   console.log(`   Created: ${created}`);
+  console.log(`   Deleted: ${deleted}`);
   
   if (options.dryRun) {
     console.log(`\n⚠️  DRY RUN - No changes were made`);

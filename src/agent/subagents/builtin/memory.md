@@ -130,9 +130,9 @@ rm .letta/backups/working/everything.md
 - Preserve all information - just reorganize it
 - Keep related information together in the same block
 
-#### Merging Blocks
+#### Merging and Deleting Blocks
 
-When multiple blocks contain related/overlapping content, consolidate them:
+When multiple blocks contain related/overlapping content, consolidate them and DELETE the old blocks:
 
 ```bash
 # 1. Read all blocks to merge
@@ -142,9 +142,15 @@ Read({ file_path: ".letta/backups/working/user_prefs.md" })
 # 2. Create unified block with combined content
 Write({ file_path: ".letta/backups/working/user.md", content: "..." })
 
-# 3. Delete the old blocks
-rm .letta/backups/working/user_info.md .letta/backups/working/user_prefs.md
+# 3. DELETE the old blocks using Bash
+Bash({ command: "rm .letta/backups/working/user_info.md .letta/backups/working/user_prefs.md" })
 ```
+
+**IMPORTANT: When to delete blocks:**
+- After consolidating content from multiple blocks into one
+- When a block becomes nearly empty after moving content elsewhere
+- When a block is redundant or no longer serves a purpose
+- The parent agent will prompt the user for confirmation before deleting
 
 **When to merge:**
 - Multiple blocks cover the same topic area
@@ -157,6 +163,7 @@ rm .letta/backups/working/user_info.md .letta/backups/working/user_prefs.md
 - Organize merged content with clear sections
 - Choose the most descriptive name for the merged block
 - Don't create blocks larger than ~150 lines
+- **DELETE the old block files** after consolidating their content
 
 ### Step 3: Report Results
 
@@ -230,9 +237,11 @@ Report any renames, decompositions, or merges:
 | everything.md | user.md, coding.md, project.md | Block contained 3 unrelated topics |
 
 **Merges:**
-| Merged Blocks | Result | Reason |
-|---------------|--------|--------|
-| user_info.md, user_prefs.md | user.md | Overlapping content consolidated |
+| Merged Blocks | Result | Deleted | Reason |
+|---------------|--------|---------|--------|
+| user_info.md, user_prefs.md | user.md | ✅ user_info.md, user_prefs.md | Overlapping content consolidated |
+
+**Note:** When blocks are merged, the original blocks MUST be deleted. The restore script will prompt the user for confirmation before deletion.
 
 ### 3. Content Changes
 
