@@ -14,7 +14,7 @@ import type {
 async function runHeadlessCommand(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 90000, // 90s timeout for slow CI environments
+  timeoutMs = 180000, // 180s timeout - CI can be very slow
 ): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -105,7 +105,7 @@ describe("stream-json format", () => {
       expect(init.cwd).toBeDefined();
       expect(init.uuid).toBe(`init-${init.agent_id}`);
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -131,7 +131,7 @@ describe("stream-json format", () => {
       // uuid should be otid or id from the Letta SDK chunk
       expect(msg.uuid).toBeTruthy();
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -156,7 +156,7 @@ describe("stream-json format", () => {
       expect(result.uuid).toContain("result-");
       expect(result.result).toBeDefined();
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -183,7 +183,7 @@ describe("stream-json format", () => {
       // The event should contain the original Letta SDK chunk
       expect("message_type" in event.event).toBe(true);
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -217,6 +217,6 @@ describe("stream-json format", () => {
       });
       expect(resultLine).toBeDefined();
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 });

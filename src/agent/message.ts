@@ -9,7 +9,11 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClientToolsFromRegistry } from "../tools/manager";
+import { isTimingsEnabled } from "../utils/timing";
 import { getClient } from "./client";
+
+// Symbol to store timing info on the stream object
+export const STREAM_REQUEST_START_TIME = Symbol("streamRequestStartTime");
 
 export async function sendMessageStream(
   agentId: string,
@@ -23,8 +27,11 @@ export async function sendMessageStream(
   // so retries would violate idempotency and create race conditions
   requestOptions: { maxRetries?: number } = { maxRetries: 0 },
 ): Promise<Stream<LettaStreamingResponse>> {
+  // Capture request start time for TTFT measurement when timings are enabled
+  const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
+
   const client = await getClient();
-  return client.agents.messages.create(
+  const stream = await client.agents.messages.create(
     agentId,
     {
       messages: messages,
@@ -35,4 +42,12 @@ export async function sendMessageStream(
     },
     requestOptions,
   );
+
+  // Attach start time to stream for TTFT calculation in drainStream
+  if (requestStartTime !== undefined) {
+    (stream as unknown as Record<symbol, number>)[STREAM_REQUEST_START_TIME] =
+      requestStartTime;
+  }
+
+  return stream;
 }
