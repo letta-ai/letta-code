@@ -274,6 +274,29 @@ export function hasActiveSubagents(): boolean {
   return false;
 }
 
+/**
+ * Mark all running/pending subagents as interrupted
+ * Called when user presses ESC to interrupt execution
+ */
+export function interruptActiveSubagents(errorMessage: string): void {
+  let anyInterrupted = false;
+  for (const [id, agent] of store.agents.entries()) {
+    if (agent.status === "pending" || agent.status === "running") {
+      const updatedAgent: SubagentState = {
+        ...agent,
+        status: "error",
+        error: errorMessage,
+        durationMs: Date.now() - agent.startTime,
+      };
+      store.agents.set(id, updatedAgent);
+      anyInterrupted = true;
+    }
+  }
+  if (anyInterrupted) {
+    notifyListeners();
+  }
+}
+
 // ============================================================================
 // React Integration (useSyncExternalStore compatible)
 // ============================================================================

@@ -1,7 +1,6 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -32,6 +31,7 @@ import { type AgentProvenance, createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
+import { INTERRUPTED_BY_USER } from "../constants";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import {
@@ -144,6 +144,7 @@ import {
 import {
   clearCompletedSubagents,
   clearSubagentsByIds,
+  interruptActiveSubagents,
 } from "./helpers/subagentState";
 import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import {
@@ -2559,6 +2560,9 @@ export default function App({
         (buffersRef.current.abortGeneration || 0) + 1;
       const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
 
+      // Mark any running subagents as interrupted
+      interruptActiveSubagents(INTERRUPTED_BY_USER);
+
       // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
@@ -2604,6 +2608,9 @@ export default function App({
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
       const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+
+      // Mark any running subagents as interrupted
+      interruptActiveSubagents(INTERRUPTED_BY_USER);
 
       // NOW abort the stream - interrupted flag is already set
       if (abortControllerRef.current) {

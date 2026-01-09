@@ -127,7 +127,7 @@ export const colors = {
     running: brandColors.statusWarning,
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
-    treeChar: brandColors.textDisabled,
+    treeChar: brandColors.textSecondary,
     hint: brandColors.textDisabled,
   },
 
