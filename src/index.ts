@@ -813,6 +813,8 @@ async function main(): Promise<void> {
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
+    // Track when user explicitly requested new agent from selector (not via --new flag)
+    const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
 
     // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
     useEffect(() => {
@@ -937,8 +939,9 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 2: LRU from local settings (if not --new)
-        if (!resumingAgentId && !forceNew) {
+        // Priority 2: LRU from local settings (if not --new or user explicitly requested new from selector)
+        const shouldCreateNew = forceNew || userRequestedNewAgent;
+        if (!resumingAgentId && !shouldCreateNew) {
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
@@ -1044,8 +1047,8 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 3: Check if --new flag was passed - create new agent
-        if (!agent && forceNew) {
+        // Priority 3: Check if --new flag was passed or user requested new from selector
+        if (!agent && shouldCreateNew) {
           const updateArgs = getModelUpdateArgs(model);
           const result = await createAgent(
             undefined,
@@ -1171,9 +1174,9 @@ async function main(): Promise<void> {
         // 2. We used --continue flag (continueSession)
         // 3. We're reusing a project agent (detected early as resumingAgentId)
         // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
-        const isResumingProject = !forceNew && !!resumingAgentId;
+        const isResumingProject = !shouldCreateNew && !!resumingAgentId;
         const isReusingExistingAgent =
-          !forceNew && !fromAfFile && agent && agent.id;
+          !shouldCreateNew && !fromAfFile && agent && agent.id;
         const resuming = !!(
           continueSession ||
           agentIdArg ||
@@ -1246,6 +1249,7 @@ async function main(): Promise<void> {
     }, [
       continueSession,
       forceNew,
+      userRequestedNewAgent,
       agentIdArg,
       model,
       systemPromptPreset,
@@ -1278,6 +1282,7 @@ async function main(): Promise<void> {
           setLoadingState("assembling");
         },
         onCreateNew: () => {
+          setUserRequestedNewAgent(true);
           setLoadingState("assembling");
         },
         onExit: () => {
