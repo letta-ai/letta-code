@@ -214,6 +214,15 @@ class PermissionModeManager {
           }
         }
 
+        // Allow Skill tool with read-only commands (load, unload, refresh)
+        // These commands only modify memory blocks, not files
+        if (toolName === "Skill" || toolName === "skill") {
+          const command = toolArgs?.command as string | undefined;
+          if (command && ["load", "unload", "refresh"].includes(command)) {
+            return "allow";
+          }
+        }
+
         // Allow read-only shell commands (ls, git status, git log, etc.)
         const shellTools = [
           "Bash",
