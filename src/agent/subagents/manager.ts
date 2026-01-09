@@ -319,10 +319,15 @@ function buildSubagentArgs(
     "stream-json",
   ];
 
-  // Inherit permission mode from parent
-  const currentMode = permissionMode.getMode();
-  if (currentMode !== "default") {
-    args.push("--permission-mode", currentMode);
+  // Use subagent's permission mode if specified, otherwise inherit from parent
+  const subagentPermissionMode = config.permissionMode;
+  if (subagentPermissionMode && subagentPermissionMode !== "default") {
+    args.push("--permission-mode", subagentPermissionMode);
+  } else {
+    const currentMode = permissionMode.getMode();
+    if (currentMode !== "default") {
+      args.push("--permission-mode", currentMode);
+    }
   }
 
   // Inherit permission rules from parent (CLI + session rules)
@@ -404,7 +409,8 @@ async function executeSubagent(
     // Get API credentials from settings to pass to subagent
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-    const baseUrlFromSettings = process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
+    const baseUrlFromSettings =
+      process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
 
     const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),

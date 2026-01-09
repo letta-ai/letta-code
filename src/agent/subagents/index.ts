@@ -57,6 +57,8 @@ export interface SubagentConfig {
   skills: string[];
   /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
   memoryBlocks: MemoryBlockLabel[] | "all" | "none";
+  /** Permission mode for this subagent (default, acceptEdits, plan, bypassPermissions) */
+  permissionMode?: string;
 }
 
 /**
@@ -221,6 +223,7 @@ function parseSubagentContent(content: string): SubagentConfig {
     memoryBlocks: parseMemoryBlocks(
       getStringField(frontmatter, "memoryBlocks"),
     ),
+    permissionMode: getStringField(frontmatter, "permissionMode"),
   };
 }
 
