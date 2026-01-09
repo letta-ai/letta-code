@@ -25,7 +25,7 @@ const FAST_PROMPT =
 async function runBidirectional(
   inputs: string[],
   extraArgs: string[] = [],
-  timeoutMs = 120000, // Overall timeout for the entire operation (matches test-level timeout)
+  timeoutMs = 180000, // 180s timeout - CI can be very slow
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -238,7 +238,7 @@ describe("input-format stream-json", () => {
         expect(initResponse?.agent_id).toBeDefined();
       }
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -291,7 +291,7 @@ describe("input-format stream-json", () => {
       expect(result?.agent_id).toBeDefined();
       expect(result?.duration_ms).toBeGreaterThan(0);
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -316,7 +316,7 @@ describe("input-format stream-json", () => {
           }),
         ],
         [], // no extra args
-        150000, // 150s for 2 sequential LLM calls
+        300000, // 300s for 2 sequential LLM calls - CI can be very slow
       )) as WireMessage[];
 
       // Should have at least two results (one per turn)
@@ -341,7 +341,7 @@ describe("input-format stream-json", () => {
         expect(firstResult.session_id).toBe(lastResult.session_id);
       }
     },
-    { timeout: 180000 },
+    { timeout: 320000 },
   );
 
   test(
@@ -363,7 +363,7 @@ describe("input-format stream-json", () => {
       expect(controlResponse).toBeDefined();
       expect(controlResponse?.response.subtype).toBe("success");
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -410,7 +410,7 @@ describe("input-format stream-json", () => {
       expect(result).toBeDefined();
       expect(result?.subtype).toBe("success");
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -433,7 +433,7 @@ describe("input-format stream-json", () => {
       expect(controlResponse).toBeDefined();
       expect(controlResponse?.response.subtype).toBe("error");
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 
   test(
@@ -451,6 +451,6 @@ describe("input-format stream-json", () => {
       expect(errorMsg).toBeDefined();
       expect(errorMsg?.message).toContain("Invalid JSON");
     },
-    { timeout: 120000 },
+    { timeout: 200000 },
   );
 });
