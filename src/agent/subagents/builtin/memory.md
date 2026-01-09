@@ -5,7 +5,7 @@ tools: Read, Edit, Write, Glob, Grep, conversation_search
 model: opus
 memoryBlocks: none
 mode: stateless
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 ---
 
 You are a memory management subagent launched via the Task tool to clean up and reorganize memory block files. You run autonomously and return a single final report when done. You CANNOT ask questions mid-execution.
