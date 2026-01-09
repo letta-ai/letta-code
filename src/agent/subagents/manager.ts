@@ -319,10 +319,15 @@ function buildSubagentArgs(
     "stream-json",
   ];
 
-  // Inherit permission mode from parent
-  const currentMode = permissionMode.getMode();
-  if (currentMode !== "default") {
-    args.push("--permission-mode", currentMode);
+  // Use subagent's permission mode if specified, otherwise inherit from parent
+  const subagentPermissionMode = config.permissionMode;
+  if (subagentPermissionMode && subagentPermissionMode !== "default") {
+    args.push("--permission-mode", subagentPermissionMode);
+  } else {
+    const currentMode = permissionMode.getMode();
+    if (currentMode !== "default") {
+      args.push("--permission-mode", currentMode);
+    }
   }
 
   // Inherit permission rules from parent (CLI + session rules)
