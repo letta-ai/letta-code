@@ -86,6 +86,9 @@ async function restoreMemory(
   let skipped = 0;
   let deleted = 0;
   
+  // Track new blocks for later confirmation
+  const blocksToCreate: Array<{ label: string; value: string; description: string }> = [];
+  
   for (const { label, filename } of filesToRestore) {
     const filepath = join(backupDir, filename);
     
@@ -118,13 +121,63 @@ async function restoreMemory(
         console.log(`  ✓ ${label} - updated (${oldLen} -> ${newLen} chars, ${diffStr})`);
         updated++;
       } else {
-        // Create new block (this shouldn't happen in normal defrag flow, but handle it)
-        console.log(`  ⚠️  ${label} - block doesn't exist on agent, skipping`);
-        console.log(`      (If you want to create it, use the memory tool or API directly)`);
-        skipped++;
+        // New block - collect for later confirmation
+        console.log(`  ➕ ${label} - new block (${newValue.length} chars)`);
+        blocksToCreate.push({
+          label,
+          value: newValue,
+          description: `Memory block: ${label}`,
+        });
       }
     } catch (error) {
       console.error(`  ❌ ${label} - error: ${error.message}`);
+    }
+  }
+  
+  // Handle new blocks (exist in backup but not on agent)
+  if (blocksToCreate.length > 0) {
+    console.log(`\n➕ Found ${blocksToCreate.length} new block(s) to create:`);
+    for (const block of blocksToCreate) {
+      console.log(`    - ${block.label} (${block.value.length} chars)`);
+    }
+    
+    if (!options.dryRun) {
+      console.log(`\nThese blocks will be CREATED on the agent.`);
+      console.log(`Press Ctrl+C to cancel, or press Enter to confirm creation...`);
+      
+      // Wait for user confirmation
+      await new Promise<void>((resolve) => {
+        process.stdin.once('data', () => resolve());
+      });
+      
+      console.log();
+      for (const block of blocksToCreate) {
+        try {
+          // Create the block
+          const createdBlock = await client.blocks.create({
+            label: block.label,
+            value: block.value,
+            description: block.description,
+            limit: 20000,
+          });
+          
+          if (!createdBlock.id) {
+            throw new Error(`Created block ${block.label} has no ID`);
+          }
+          
+          // Attach the newly created block to the agent
+          await client.agents.blocks.attach(createdBlock.id, {
+            agent_id: agentId,
+          });
+          
+          console.log(`  ✅ ${block.label} - created and attached`);
+          created++;
+        } catch (error) {
+          console.error(`  ❌ ${block.label} - error creating: ${error.message}`);
+        }
+      }
+    } else {
+      console.log(`\n(Would create these blocks if not in dry-run mode)`);
     }
   }
   
