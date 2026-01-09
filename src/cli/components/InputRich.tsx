@@ -5,7 +5,14 @@ import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
-import { type ComponentType, useEffect, useRef, useState } from "react";
+import {
+  type ComponentType,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -29,6 +36,69 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+
+/**
+ * Memoized footer component to prevent re-renders during high-frequency
+ * shimmer/timer updates. Only updates when its specific props change.
+ */
+const InputFooter = memo(function InputFooter({
+  ctrlCPressed,
+  escapePressed,
+  isBashMode,
+  modeName,
+  modeColor,
+  showExitHint,
+  agentName,
+  currentModel,
+  isAnthropicProvider,
+}: {
+  ctrlCPressed: boolean;
+  escapePressed: boolean;
+  isBashMode: boolean;
+  modeName: string | null;
+  modeColor: string | null;
+  showExitHint: boolean;
+  agentName: string | null | undefined;
+  currentModel: string | null | undefined;
+  isAnthropicProvider: boolean;
+}) {
+  return (
+    <Box justifyContent="space-between" marginBottom={1}>
+      {ctrlCPressed ? (
+        <Text dimColor>Press CTRL-C again to exit</Text>
+      ) : escapePressed ? (
+        <Text dimColor>Press Esc again to clear</Text>
+      ) : isBashMode ? (
+        <Text>
+          <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+          <Text color={colors.bash.prompt} dimColor>
+            {" "}
+            (backspace to exit)
+          </Text>
+        </Text>
+      ) : modeName && modeColor ? (
+        <Text>
+          <Text color={modeColor}>⏵⏵ {modeName}</Text>
+          <Text color={modeColor} dimColor>
+            {" "}
+            (shift+tab to {showExitHint ? "exit" : "cycle"})
+          </Text>
+        </Text>
+      ) : (
+        <Text dimColor>Press / for commands</Text>
+      )}
+      <Text>
+        <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
+        <Text
+          dimColor={!isAnthropicProvider}
+          color={isAnthropicProvider ? "#FFC787" : undefined}
+        >
+          {` [${currentModel ?? "unknown"}]`}
+        </Text>
+      </Text>
+    </Box>
+  );
+});
 
 // Increase max listeners to accommodate multiple useInput hooks
 // (5 in this component + autocomplete components)
@@ -586,7 +656,8 @@ export function Input({
   };
 
   // Get display name and color for permission mode (ralph modes take precedence)
-  const getModeInfo = () => {
+  // Memoized to prevent unnecessary footer re-renders
+  const modeInfo = useMemo(() => {
     // Check ralph pending first (waiting for task input)
     if (ralphPending) {
       if (ralphPendingYolo) {
@@ -635,9 +706,7 @@ export function Input({
       default:
         return null;
     }
-  };
-
-  const modeInfo = getModeInfo();
+  }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   const estimatedTokens = charsToTokens(tokenCount);
   const shouldShowTokenCount =
@@ -647,8 +716,8 @@ export function Input({
   const elapsedMinutes = Math.floor(elapsedMs / 60000);
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
-  // In ralph mode, also show "shift+tab to exit"
-  const statusHintText = (() => {
+  // Memoized to prevent unnecessary re-renders during shimmer updates
+  const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
     const suffix =
@@ -661,10 +730,17 @@ export function Input({
     return (
       hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
-  })();
+  }, [
+    shouldShowElapsed,
+    elapsedMinutes,
+    shouldShowTokenCount,
+    estimatedTokens,
+    interruptRequested,
+  ]);
 
   // Create a horizontal line using box-drawing characters
-  const horizontalLine = "─".repeat(columns);
+  // Memoized since it only changes when terminal width changes
+  const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
 
   // If not visible, render nothing but keep component mounted to preserve state
   if (!visible) {
@@ -749,46 +825,17 @@ export function Input({
           workingDirectory={process.cwd()}
         />
 
-        <Box justifyContent="space-between" marginBottom={1}>
-          {ctrlCPressed ? (
-            <Text dimColor>Press CTRL-C again to exit</Text>
-          ) : escapePressed ? (
-            <Text dimColor>Press Esc again to clear</Text>
-          ) : isBashMode ? (
-            <Text>
-              <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-              <Text color={colors.bash.prompt} dimColor>
-                {" "}
-                (backspace to exit)
-              </Text>
-            </Text>
-          ) : modeInfo ? (
-            <Text>
-              <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
-              <Text color={modeInfo.color} dimColor>
-                {" "}
-                (shift+tab to {ralphActive || ralphPending ? "exit" : "cycle"})
-              </Text>
-            </Text>
-          ) : (
-            <Text dimColor>Press / for commands</Text>
-          )}
-          <Text>
-            <Text color={colors.footer.agentName}>
-              {agentName || "Unnamed"}
-            </Text>
-            <Text
-              dimColor={currentModelProvider !== ANTHROPIC_PROVIDER_NAME}
-              color={
-                currentModelProvider === ANTHROPIC_PROVIDER_NAME
-                  ? "#FFC787"
-                  : undefined
-              }
-            >
-              {` [${currentModel ?? "unknown"}]`}
-            </Text>
-          </Text>
-        </Box>
+        <InputFooter
+          ctrlCPressed={ctrlCPressed}
+          escapePressed={escapePressed}
+          isBashMode={isBashMode}
+          modeName={modeInfo?.name ?? null}
+          modeColor={modeInfo?.color ?? null}
+          showExitHint={ralphActive || ralphPending}
+          agentName={agentName}
+          currentModel={currentModel}
+          isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+        />
       </Box>
     </Box>
   );

@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { Text } from "ink";
-import type React from "react";
+import { memo } from "react";
 import { colors } from "./colors.js";
 
 interface ShimmerTextProps {
@@ -10,12 +10,12 @@ interface ShimmerTextProps {
   shimmerOffset: number;
 }
 
-export const ShimmerText: React.FC<ShimmerTextProps> = ({
+export const ShimmerText = memo(function ShimmerText({
   color = colors.status.processing,
   boldPrefix,
   message,
   shimmerOffset,
-}) => {
+}: ShimmerTextProps) {
   const fullText = `${boldPrefix ? `${boldPrefix} ` : ""}${message}…`;
   const prefixLength = boldPrefix ? boldPrefix.length + 1 : 0; // +1 for space
 
@@ -37,4 +37,4 @@ export const ShimmerText: React.FC<ShimmerTextProps> = ({
     .join("");
 
   return <Text>{shimmerText}</Text>;
-};
+});
