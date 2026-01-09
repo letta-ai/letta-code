@@ -130,6 +130,22 @@ rm .letta/backups/working/everything.md
 - Preserve all information - just reorganize it
 - Keep related information together in the same block
 
+#### Creating New Blocks
+
+You can create entirely new memory blocks by writing new `.md` files:
+
+```bash
+Write({ 
+  file_path: ".letta/backups/working/new_block.md", 
+  content: "## New Block\n\nContent here..." 
+})
+```
+
+**When to create new blocks:**
+- Splitting a large block (>150 lines) into focused smaller blocks
+- Organizing content into a new category that doesn't fit existing blocks
+- The parent agent will prompt the user for confirmation before creating
+
 #### Merging and Deleting Blocks
 
 When multiple blocks contain related/overlapping content, consolidate them and DELETE the old blocks:
@@ -221,6 +237,7 @@ Return a structured report with these sections:
 ### 1. Summary
 - Brief overview of what you edited (2-3 sentences)
 - Number of files modified, renamed, created, or deleted
+- The parent agent will prompt the user to confirm any creations or deletions
 
 ### 2. Structural Changes
 
@@ -231,10 +248,15 @@ Report any renames, decompositions, or merges:
 |----------|----------|--------|
 | stuff.md | coding_preferences.md | Name now reflects content |
 
-**Decompositions:**
-| Original Block | New Blocks | Reason |
-|----------------|------------|--------|
-| everything.md | user.md, coding.md, project.md | Block contained 3 unrelated topics |
+**Decompositions (splitting large blocks):**
+| Original Block | New Blocks | Deleted | Reason |
+|----------------|------------|---------|--------|
+| everything.md | user.md, coding.md, project.md | ✅ everything.md | Block contained 3 unrelated topics |
+
+**New Blocks (created from scratch):**
+| Block Name | Size | Reason |
+|------------|------|--------|
+| security_practices.md | 156 chars | New category for security-related conventions discovered |
 
 **Merges:**
 | Merged Blocks | Result | Deleted | Reason |
