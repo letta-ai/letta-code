@@ -17,6 +17,7 @@
 
 import { Box, Text, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
+import { useAnimation } from "../contexts/AnimationContext.js";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
@@ -24,10 +25,7 @@ import {
   subscribe,
   toggleExpanded,
 } from "../helpers/subagentState.js";
-import {
-  useTerminalRows,
-  useTerminalWidth,
-} from "../hooks/useTerminalWidth.js";
+import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 
@@ -268,7 +266,7 @@ GroupHeader.displayName = "GroupHeader";
 
 export const SubagentGroupDisplay = memo(() => {
   const { agents, expanded } = useSyncExternalStore(subscribe, getSnapshot);
-  const terminalRows = useTerminalRows();
+  const { shouldAnimate } = useAnimation();
 
   // Handle ctrl+o for expand/collapse
   useInput((input, key) => {
@@ -282,15 +280,9 @@ export const SubagentGroupDisplay = memo(() => {
     return null;
   }
 
-  // Overflow detection: switch to condensed mode when content would exceed viewport
-  // Animation is controlled globally via AnimationContext (BlinkDot consumes it)
-  // Condensed mode is a local rendering decision for this component
-  const LINES_PER_AGENT = 4; // description + URL + status + margin
-  const HEADER_LINES = 2; // header + some buffer for footer/input
-  const FOOTER_BUFFER = 16; // input area, status bar, margins + safety buffer
-  const expectedHeight =
-    agents.length * LINES_PER_AGENT + HEADER_LINES + FOOTER_BUFFER;
-  const wouldOverflow = expectedHeight >= terminalRows;
+  // Use condensed mode when animation is disabled (overflow detected by AnimationContext)
+  // This ensures consistent behavior - when we disable animation, we also simplify the view
+  const condensed = !shouldAnimate;
 
   const allCompleted = agents.every(
     (a) => a.status === "completed" || a.status === "error",
@@ -311,7 +303,7 @@ export const SubagentGroupDisplay = memo(() => {
           agent={agent}
           isLast={index === agents.length - 1}
           expanded={expanded}
-          condensed={wouldOverflow}
+          condensed={condensed}
         />
       ))}
     </Box>

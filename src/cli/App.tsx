@@ -13,7 +13,14 @@ import type {
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
@@ -147,6 +154,7 @@ import {
   clearSubagentsByIds,
   getSnapshot as getSubagentSnapshot,
   interruptActiveSubagents,
+  subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
 import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import {
@@ -6409,12 +6417,15 @@ Plan file path: ${planFilePath}`;
     });
   }, [lines, tokenStreamingEnabled]);
 
+  // Subscribe to subagent state for reactive overflow detection
+  const { agents: subagents } = useSyncExternalStore(
+    subscribeToSubagents,
+    getSubagentSnapshot,
+  );
+
   // Overflow detection: disable animations when live content exceeds viewport
   // This prevents Ink's clearTerminal flicker on every re-render cycle
   const shouldAnimate = useMemo(() => {
-    // Get subagent count from the external store
-    const { agents: subagents } = getSubagentSnapshot();
-
     // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {
       if (!text) return 0;
@@ -6457,7 +6468,7 @@ Plan file path: ${planFilePath}`;
     const estimatedHeight = liveItemsHeight + subagentsHeight + FIXED_BUFFER;
 
     return estimatedHeight < terminalRows;
-  }, [liveItems, terminalRows]);
+  }, [liveItems, terminalRows, subagents.length]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
