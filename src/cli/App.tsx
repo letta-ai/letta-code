@@ -14,6 +14,7 @@ import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
 import {
+  type ComponentType,
   useCallback,
   useEffect,
   useMemo,
@@ -90,7 +91,7 @@ import { InlineFileEditApproval } from "./components/InlineFileEditApproval";
 import { InlineGenericApproval } from "./components/InlineGenericApproval";
 import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { InlineTaskApproval } from "./components/InlineTaskApproval";
-import { Input } from "./components/InputRich";
+import { Input as DefaultInput, type InputProps } from "./components/InputRich";
 import { McpSelector } from "./components/McpSelector";
 import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
@@ -523,6 +524,7 @@ export default function App({
   messageHistory = [],
   tokenStreaming = false,
   agentProvenance = null,
+  InputComponent,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -538,7 +540,10 @@ export default function App({
   messageHistory?: Message[];
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
+  InputComponent?: ComponentType<InputProps>;
 }) {
+  const Input = InputComponent ?? DefaultInput;
+
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
     prefetchAvailableModelHandles();
