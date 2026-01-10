@@ -230,17 +230,10 @@ interface GroupHeaderProps {
   allCompleted: boolean;
   hasErrors: boolean;
   expanded: boolean;
-  shouldAnimate?: boolean;
 }
 
 const GroupHeader = memo(
-  ({
-    count,
-    allCompleted,
-    hasErrors,
-    expanded,
-    shouldAnimate = true,
-  }: GroupHeaderProps) => {
+  ({ count, allCompleted, hasErrors, expanded }: GroupHeaderProps) => {
     const statusText = allCompleted
       ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
       : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
@@ -257,10 +250,8 @@ const GroupHeader = memo(
         {allCompleted ? (
           <Text color={dotColor}>●</Text>
         ) : (
-          <BlinkDot
-            color={colors.subagent.header}
-            shouldAnimate={shouldAnimate}
-          />
+          // BlinkDot now gets shouldAnimate from AnimationContext
+          <BlinkDot color={colors.subagent.header} />
         )}
         <Text color={colors.subagent.header}> {statusText} </Text>
         <Text color={colors.subagent.hint}>{hint}</Text>
@@ -291,15 +282,15 @@ export const SubagentGroupDisplay = memo(() => {
     return null;
   }
 
-  // Overflow detection: disable animation when content would exceed viewport
-  // This prevents Ink's clearTerminal flicker on every BlinkDot toggle
+  // Overflow detection: switch to condensed mode when content would exceed viewport
+  // Animation is controlled globally via AnimationContext (BlinkDot consumes it)
+  // Condensed mode is a local rendering decision for this component
   const LINES_PER_AGENT = 4; // description + URL + status + margin
   const HEADER_LINES = 2; // header + some buffer for footer/input
-  const FOOTER_BUFFER = 6; // input area, status bar, margins
+  const FOOTER_BUFFER = 16; // input area, status bar, margins + safety buffer
   const expectedHeight =
     agents.length * LINES_PER_AGENT + HEADER_LINES + FOOTER_BUFFER;
   const wouldOverflow = expectedHeight >= terminalRows;
-  const shouldAnimate = !wouldOverflow;
 
   const allCompleted = agents.every(
     (a) => a.status === "completed" || a.status === "error",
@@ -313,7 +304,6 @@ export const SubagentGroupDisplay = memo(() => {
         allCompleted={allCompleted}
         hasErrors={hasErrors}
         expanded={expanded}
-        shouldAnimate={shouldAnimate}
       />
       {agents.map((agent, index) => (
         <AgentRow
