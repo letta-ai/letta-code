@@ -6,7 +6,7 @@ description: Defragment and clean up agent memory blocks. Use when memory become
 # Memory Defragmentation Skill
 
 This skill helps you maintain clean, well-organized memory blocks by:
-1. Backing up current memory to local files
+1. Dumping current memory to local files and backing up the agent file
 2. Using the memory subagent to clean up the files
 3. Restoring the cleaned files back to memory
 
@@ -21,14 +21,19 @@ This skill helps you maintain clean, well-organized memory blocks by:
 
 ## Workflow
 
-### Step 1: Backup Memory to Files
+### Step 1: Download Agent File and Dump Memory to Files
 
 ```bash
+# Download agent file to backups
+bun .letta/memory-utils/download-agent.ts $LETTA_AGENT_ID
+
+# Dump memory blocks to files
 bun .letta/memory-utils/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working
 ```
 
 This creates:
-- `.letta/backups/<agent-id>/<timestamp>/` - Timestamped backup for rollback
+- `.letta/backups/<agent-id>/<timestamp>.af` - Complete agent file backup for full rollback
+- `.letta/backups/<agent-id>/<timestamp>/` - Timestamped memory blocks backup
 - `.letta/backups/working/` - Working directory with editable files
 - Each memory block as a `.md` file: `persona.md`, `human.md`, `project.md`, etc.
 
@@ -47,16 +52,19 @@ Focus on:
 - Resolve contradictions
 - Improve scannability
 
+IMPORTANT: If a file is 100% redundant (all content exists in other files), DELETE the file using Bash (rm command). Do NOT just mark it as deprecated - actually delete it.
+
 Files to edit: persona.md, human.md, project.md
 Do NOT edit: skills.md (auto-generated), loaded_skills.md (system-managed)
 
-After editing, provide a report with before/after character counts.`
+After editing, provide a report with before/after character counts and list any deleted files.`
 })
 ```
 
 The memory subagent will:
 - Read the files from `.letta/backups/working/`
 - Edit them to remove redundancy and add structure
+- DELETE files that are completely redundant (don't just mark as deprecated)
 - Provide a detailed report of changes
 
 ### Step 3: Restore Cleaned Files to Memory
@@ -74,17 +82,17 @@ This will:
 ## Example Complete Flow
 
 ```typescript
-// Step 1: Backup
+// Step 1: Download agent file and dump memory
 Bash({
-  command: "bun .letta/memory-utils/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working",
-  description: "Backup memory to local files"
+  command: "bun .letta/memory-utils/download-agent.ts $LETTA_AGENT_ID && bun .letta/memory-utils/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working",
+  description: "Download agent file and dump memory to files"
 })
 
 // Step 2: Clean up (subagent edits files)
 Task({
   subagent_type: "memory",
   description: "Clean up memory files",
-  prompt: "Edit memory files in .letta/backups/working/ to remove redundancy and add structure. Focus on persona.md, human.md, and project.md. Report changes made."
+  prompt: "Edit memory files in .letta/backups/working/ to remove redundancy and add structure. Focus on persona.md, human.md, and project.md. DELETE any files that are 100% redundant (use rm command). Report changes made."
 })
 
 // Step 3: Restore
@@ -96,7 +104,9 @@ Bash({
 
 ## Rollback
 
-If something goes wrong, restore from the timestamped backup:
+If something goes wrong, you have two rollback options:
+
+### Option 1: Restore Memory Blocks Only
 
 ```bash
 # Find the backup directory
@@ -104,6 +114,18 @@ ls -la .letta/backups/<agent-id>/
 
 # Restore from specific timestamp
 bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/<agent-id>/<timestamp>
+```
+
+### Option 2: Full Agent Restore (Nuclear Option)
+
+If memory restoration isn't enough, restore the entire agent from the .af backup:
+
+```bash
+# Find the agent backup
+ls -la .letta/backups/<agent-id>/*.af
+
+# The .af file can be used to recreate the agent entirely
+# Use: letta --from-af .letta/backups/<agent-id>/<timestamp>.af
 ```
 
 ## Dry Run
@@ -116,14 +138,15 @@ bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working
 
 ## What the Memory Subagent Does
 
-The memory subagent focuses ONLY on editing files. It:
+The memory subagent focuses on cleaning up files. It:
 - ✅ Reads files from `.letta/backups/working/`
 - ✅ Edits files to improve structure and remove redundancy
+- ✅ Deletes completely redundant files (using `rm` command)
 - ✅ Provides detailed before/after reports
 - ❌ Does NOT run backup scripts (main agent does this)
 - ❌ Does NOT run restore scripts (main agent does this)
 
-This separation means the subagent only needs file editing permissions (`acceptEdits` mode), not full Bash access.
+The subagent needs Bash access to delete redundant files, but does not need to manage the backup/restore workflow.
 
 ## Tips
 
@@ -133,6 +156,11 @@ This separation means the subagent only needs file editing permissions (`acceptE
 - Contradictions ("be detailed" vs "sometimes be concise")
 - Speculation ("probably", "maybe")
 - Transient details that won't matter in a week
+
+**When to DELETE a file:**
+- File is 100% redundant - all content already exists in other organized files
+- File is just a "deprecated" notice pointing to other files
+- Don't just mark it deprecated - actually delete it with `rm`
 
 **What to preserve:**
 - User preferences (sacred - don't delete)
