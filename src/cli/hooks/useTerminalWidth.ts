@@ -7,21 +7,33 @@ const getStdout = () => {
 };
 
 const getTerminalWidth = () => getStdout()?.columns ?? 80;
+const getTerminalRows = () => getStdout()?.rows ?? 24;
 
-type Listener = (columns: number) => void;
+type WidthListener = (columns: number) => void;
+type RowsListener = (rows: number) => void;
 
-const listeners = new Set<Listener>();
+const widthListeners = new Set<WidthListener>();
+const rowsListeners = new Set<RowsListener>();
 let resizeHandlerRegistered = false;
 let trackedColumns = getTerminalWidth();
+let trackedRows = getTerminalRows();
 
 const resizeHandler = () => {
   const nextColumns = getTerminalWidth();
-  if (nextColumns === trackedColumns) {
-    return;
+  const nextRows = getTerminalRows();
+
+  if (nextColumns !== trackedColumns) {
+    trackedColumns = nextColumns;
+    for (const listener of widthListeners) {
+      listener(nextColumns);
+    }
   }
-  trackedColumns = nextColumns;
-  for (const listener of listeners) {
-    listener(nextColumns);
+
+  if (nextRows !== trackedRows) {
+    trackedRows = nextRows;
+    for (const listener of rowsListeners) {
+      listener(nextRows);
+    }
   }
 };
 
@@ -34,7 +46,8 @@ const ensureResizeHandler = () => {
 };
 
 const removeResizeHandlerIfIdle = () => {
-  if (!resizeHandlerRegistered || listeners.size > 0) return;
+  if (!resizeHandlerRegistered) return;
+  if (widthListeners.size > 0 || rowsListeners.size > 0) return;
   const stdout = getStdout();
   if (!stdout) return;
   stdout.off("resize", resizeHandler);
@@ -50,16 +63,39 @@ export function useTerminalWidth(): number {
 
   useEffect(() => {
     ensureResizeHandler();
-    const listener: Listener = (value) => {
+    const listener: WidthListener = (value) => {
       setColumns(value);
     };
-    listeners.add(listener);
+    widthListeners.add(listener);
 
     return () => {
-      listeners.delete(listener);
+      widthListeners.delete(listener);
       removeResizeHandlerIfIdle();
     };
   }, []);
 
   return columns;
+}
+
+/**
+ * Hook to get terminal rows and reactively update on resize.
+ * Uses the same shared resize listener as useTerminalWidth.
+ */
+export function useTerminalRows(): number {
+  const [rows, setRows] = useState(trackedRows);
+
+  useEffect(() => {
+    ensureResizeHandler();
+    const listener: RowsListener = (value) => {
+      setRows(value);
+    };
+    rowsListeners.add(listener);
+
+    return () => {
+      rowsListeners.delete(listener);
+      removeResizeHandlerIfIdle();
+    };
+  }, []);
+
+  return rows;
 }
