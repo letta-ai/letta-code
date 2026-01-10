@@ -6559,6 +6559,19 @@ Plan file path: ${planFilePath}`;
             {liveItems.length > 0 && (
               <Box flexDirection="column">
                 {liveItems.map((ln) => {
+                  // Skip Task tools that don't have a pending approval
+                  // They render as empty Boxes (ToolCallMessage returns null for non-finished Task tools)
+                  // which causes N blank lines when N Task tools are called in parallel
+                  if (
+                    ln.kind === "tool_call" &&
+                    ln.name &&
+                    isTaskTool(ln.name) &&
+                    ln.toolCallId &&
+                    !pendingIds.has(ln.toolCallId)
+                  ) {
+                    return null;
+                  }
+
                   // Check if this tool call matches the current ExitPlanMode approval
                   const isExitPlanModeApproval =
                     ln.kind === "tool_call" &&
