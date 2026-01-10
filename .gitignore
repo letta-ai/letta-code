@@ -3,6 +3,8 @@
 .letta
 # User-defined skills
 .skills
+# Local notes (not for repo)
+.notes
 
 .idea
 node_modules
