@@ -15,6 +15,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { Box, Static, Text } from "ink";
 import {
   type ComponentType,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -514,6 +515,100 @@ type StaticItem =
     }
   | Line;
 
+type ActiveOverlay =
+  | "model"
+  | "toolset"
+  | "system"
+  | "agent"
+  | "resume"
+  | "search"
+  | "subagent"
+  | "feedback"
+  | "memory"
+  | "pin"
+  | "new"
+  | "mcp"
+  | "help"
+  | "oauth"
+  | null;
+
+type RenderFallback = () => ReactNode;
+type RenderWithFallback<T> = (args: T, fallback: RenderFallback) => ReactNode;
+
+type RenderStaticItemArgs = {
+  item: StaticItem;
+  index: number;
+  columns: number;
+  precomputedDiffs: Map<string, AdvancedDiffSuccess>;
+  lastPlanFilePath: string | null;
+};
+
+type RenderLiveItemArgs = {
+  item: Line;
+  columns: number;
+  currentApproval: ApprovalRequest | undefined;
+  currentApprovalContext: ApprovalContext | null | undefined;
+  pendingApprovals: ApprovalRequest[];
+  pendingIds: Set<string>;
+  queuedIds: Set<string>;
+  precomputedDiffs: Map<string, AdvancedDiffSuccess>;
+  lastPlanFilePath: string | null;
+};
+
+type RenderOverlayArgs = {
+  activeOverlay: ActiveOverlay;
+  openOverlay: (overlay: Exclude<ActiveOverlay, null>) => void;
+  closeOverlay: () => void;
+
+  agentId: string;
+  agentName: string | null;
+  agentState: AgentState | null | undefined;
+
+  currentModelId: string | null;
+  currentToolset: string | null;
+  currentSystemPromptId: string | null;
+
+  feedbackPrefill: string;
+  setFeedbackPrefill: (value: string) => void;
+
+  onSelectModel: (modelId: string) => Promise<void>;
+  onSelectToolset: (
+    toolset:
+      | "codex"
+      | "codex_snake"
+      | "default"
+      | "gemini"
+      | "gemini_snake"
+      | "none",
+  ) => Promise<void>;
+  onSelectSystemPrompt: (promptId: string) => Promise<void>;
+  onSelectAgent: (agentId: string) => Promise<void>;
+
+  // Useful for touch UIs that replace inline/overlay Ink components.
+  pendingApprovals: ApprovalRequest[];
+  currentApprovalIndex: number;
+  currentApproval: ApprovalRequest | undefined;
+  currentApprovalContext: ApprovalContext | null | undefined;
+
+  onApproveCurrent: (diffs?: Map<string, AdvancedDiffSuccess>) => Promise<void>;
+  onApproveAlways: (
+    scope?: "project" | "session",
+    diffs?: Map<string, AdvancedDiffSuccess>,
+  ) => Promise<void>;
+  onDenyCurrent: (reason: string) => Promise<void>;
+  onCancelApprovals: () => void;
+  onPlanApprove: (acceptEdits?: boolean) => Promise<void>;
+  onPlanKeepPlanning: (reason: string) => Promise<void>;
+  onQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
+};
+
+type CliUi = {
+  Input?: ComponentType<InputProps>;
+  renderStaticItem?: RenderWithFallback<RenderStaticItemArgs>;
+  renderLiveItem?: RenderWithFallback<RenderLiveItemArgs>;
+  renderOverlay?: RenderWithFallback<RenderOverlayArgs>;
+};
+
 export default function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
@@ -524,7 +619,7 @@ export default function App({
   messageHistory = [],
   tokenStreaming = false,
   agentProvenance = null,
-  InputComponent,
+  ui: uiOverrides,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -540,9 +635,9 @@ export default function App({
   messageHistory?: Message[];
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
-  InputComponent?: ComponentType<InputProps>;
+  ui?: CliUi;
 }) {
-  const Input = InputComponent ?? DefaultInput;
+  const Input = uiOverrides?.Input ?? DefaultInput;
 
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -778,22 +873,6 @@ export default function App({
   }, [pendingApprovals, approvalResults, activeApprovalId]);
 
   // Overlay/selector state - only one can be open at a time
-  type ActiveOverlay =
-    | "model"
-    | "toolset"
-    | "system"
-    | "agent"
-    | "resume"
-    | "search"
-    | "subagent"
-    | "feedback"
-    | "memory"
-    | "pin"
-    | "new"
-    | "mcp"
-    | "help"
-    | "oauth"
-    | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const closeOverlay = useCallback(() => {
@@ -6568,47 +6647,62 @@ Plan file path: ${planFilePath}`;
         items={staticItems}
         style={{ flexDirection: "column" }}
       >
-        {(item: StaticItem, index: number) => (
-          <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-            {item.kind === "welcome" ? (
-              <WelcomeScreen loadingState="ready" {...item.snapshot} />
-            ) : item.kind === "user" ? (
-              <UserMessage line={item} />
-            ) : item.kind === "reasoning" ? (
-              <ReasoningMessage line={item} />
-            ) : item.kind === "assistant" ? (
-              <AssistantMessage line={item} />
-            ) : item.kind === "tool_call" ? (
-              <ToolCallMessage
-                line={item}
-                precomputedDiffs={precomputedDiffsRef.current}
-                lastPlanFilePath={lastPlanFilePathRef.current}
-              />
-            ) : item.kind === "subagent_group" ? (
-              <SubagentGroupStatic agents={item.agents} />
-            ) : item.kind === "error" ? (
-              <ErrorMessage line={item} />
-            ) : item.kind === "status" ? (
-              <StatusMessage line={item} />
-            ) : item.kind === "separator" ? (
-              <Text dimColor>{"─".repeat(columns)}</Text>
-            ) : item.kind === "command" ? (
-              <CommandMessage line={item} />
-            ) : item.kind === "bash_command" ? (
-              <BashCommandMessage line={item} />
-            ) : item.kind === "approval_preview" ? (
-              <ApprovalPreview
-                toolName={item.toolName}
-                toolArgs={item.toolArgs}
-                precomputedDiff={item.precomputedDiff}
-                allDiffs={precomputedDiffsRef.current}
-                planContent={item.planContent}
-                planFilePath={item.planFilePath}
-                toolCallId={item.toolCallId}
-              />
-            ) : null}
-          </Box>
-        )}
+        {(item: StaticItem, index: number) => {
+          const fallback = () => (
+            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+              {item.kind === "welcome" ? (
+                <WelcomeScreen loadingState="ready" {...item.snapshot} />
+              ) : item.kind === "user" ? (
+                <UserMessage line={item} />
+              ) : item.kind === "reasoning" ? (
+                <ReasoningMessage line={item} />
+              ) : item.kind === "assistant" ? (
+                <AssistantMessage line={item} />
+              ) : item.kind === "tool_call" ? (
+                <ToolCallMessage
+                  line={item}
+                  precomputedDiffs={precomputedDiffsRef.current}
+                  lastPlanFilePath={lastPlanFilePathRef.current}
+                />
+              ) : item.kind === "subagent_group" ? (
+                <SubagentGroupStatic agents={item.agents} />
+              ) : item.kind === "error" ? (
+                <ErrorMessage line={item} />
+              ) : item.kind === "status" ? (
+                <StatusMessage line={item} />
+              ) : item.kind === "separator" ? (
+                <Text dimColor>{"─".repeat(columns)}</Text>
+              ) : item.kind === "command" ? (
+                <CommandMessage line={item} />
+              ) : item.kind === "bash_command" ? (
+                <BashCommandMessage line={item} />
+              ) : item.kind === "approval_preview" ? (
+                <ApprovalPreview
+                  toolName={item.toolName}
+                  toolArgs={item.toolArgs}
+                  precomputedDiff={item.precomputedDiff}
+                  allDiffs={precomputedDiffsRef.current}
+                  planContent={item.planContent}
+                  planFilePath={item.planFilePath}
+                  toolCallId={item.toolCallId}
+                />
+              ) : null}
+            </Box>
+          );
+
+          return uiOverrides?.renderStaticItem
+            ? uiOverrides.renderStaticItem(
+                {
+                  item,
+                  index,
+                  columns,
+                  precomputedDiffs: precomputedDiffsRef.current,
+                  lastPlanFilePath: lastPlanFilePathRef.current,
+                },
+                fallback,
+              )
+            : fallback();
+        }}
       </Static>
 
       <Box flexDirection="column">
@@ -6806,7 +6900,7 @@ Plan file path: ${planFilePath}`;
 
                     const taskInfo = getTaskInfo();
 
-                    return (
+                    const fallback = () => (
                       <Box key={ln.id} flexDirection="column" marginTop={1}>
                         {/* For ExitPlanMode awaiting approval: render StaticPlanApproval */}
                         {/* Plan preview is eagerly committed to staticItems, so this only shows options */}
@@ -6960,6 +7054,23 @@ Plan file path: ${planFilePath}`;
                         ) : null}
                       </Box>
                     );
+
+                    return uiOverrides?.renderLiveItem
+                      ? uiOverrides.renderLiveItem(
+                          {
+                            item: ln,
+                            columns,
+                            currentApproval,
+                            currentApprovalContext,
+                            pendingApprovals,
+                            pendingIds,
+                            queuedIds,
+                            precomputedDiffs: precomputedDiffsRef.current,
+                            lastPlanFilePath: lastPlanFilePathRef.current,
+                          },
+                          fallback,
+                        )
+                      : fallback();
                   })}
                 </Box>
               )}
@@ -7024,219 +7135,266 @@ Plan file path: ${planFilePath}`;
               />
             </Box>
 
-            {/* Model Selector - conditionally mounted as overlay */}
-            {activeOverlay === "model" && (
-              <ModelSelector
-                currentModelId={currentModelId ?? undefined}
-                onSelect={handleModelSelect}
-                onCancel={closeOverlay}
-              />
-            )}
+            {(() => {
+              const fallback = () => (
+                <>
+                  {/* Model Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "model" && (
+                    <ModelSelector
+                      currentModelId={currentModelId ?? undefined}
+                      onSelect={handleModelSelect}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Toolset Selector - conditionally mounted as overlay */}
-            {activeOverlay === "toolset" && (
-              <ToolsetSelector
-                currentToolset={currentToolset ?? undefined}
-                onSelect={handleToolsetSelect}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* Toolset Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "toolset" && (
+                    <ToolsetSelector
+                      currentToolset={currentToolset ?? undefined}
+                      onSelect={handleToolsetSelect}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* System Prompt Selector - conditionally mounted as overlay */}
-            {activeOverlay === "system" && (
-              <SystemPromptSelector
-                currentPromptId={currentSystemPromptId ?? undefined}
-                onSelect={handleSystemPromptSelect}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* System Prompt Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "system" && (
+                    <SystemPromptSelector
+                      currentPromptId={currentSystemPromptId ?? undefined}
+                      onSelect={handleSystemPromptSelect}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Agent Selector - conditionally mounted as overlay */}
-            {activeOverlay === "agent" && (
-              <AgentSelector
-                currentAgentId={agentId}
-                onSelect={handleAgentSelect}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* Agent Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "agent" && (
+                    <AgentSelector
+                      currentAgentId={agentId}
+                      onSelect={handleAgentSelect}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Subagent Manager - for managing custom subagents */}
-            {activeOverlay === "subagent" && (
-              <SubagentManager onClose={closeOverlay} />
-            )}
+                  {/* Subagent Manager - for managing custom subagents */}
+                  {activeOverlay === "subagent" && (
+                    <SubagentManager onClose={closeOverlay} />
+                  )}
 
-            {/* Resume Selector - conditionally mounted as overlay */}
-            {activeOverlay === "resume" && (
-              <ResumeSelector
-                currentAgentId={agentId}
-                onSelect={async (id) => {
-                  closeOverlay();
-                  await handleAgentSelect(id);
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* Resume Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "resume" && (
+                    <ResumeSelector
+                      currentAgentId={agentId}
+                      onSelect={async (id) => {
+                        closeOverlay();
+                        await handleAgentSelect(id);
+                      }}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Message Search - conditionally mounted as overlay */}
-            {activeOverlay === "search" && (
-              <MessageSearch onClose={closeOverlay} />
-            )}
+                  {/* Message Search - conditionally mounted as overlay */}
+                  {activeOverlay === "search" && (
+                    <MessageSearch onClose={closeOverlay} />
+                  )}
 
-            {/* Feedback Dialog - conditionally mounted as overlay */}
-            {activeOverlay === "feedback" && (
-              <FeedbackDialog
-                onSubmit={handleFeedbackSubmit}
-                onCancel={closeOverlay}
-                initialValue={feedbackPrefill}
-              />
-            )}
+                  {/* Feedback Dialog - conditionally mounted as overlay */}
+                  {activeOverlay === "feedback" && (
+                    <FeedbackDialog
+                      onSubmit={handleFeedbackSubmit}
+                      onCancel={closeOverlay}
+                      initialValue={feedbackPrefill}
+                    />
+                  )}
 
-            {/* Memory Viewer - conditionally mounted as overlay */}
-            {activeOverlay === "memory" && (
-              <MemoryViewer
-                blocks={agentState?.memory?.blocks || []}
-                agentId={agentId}
-                agentName={agentName}
-                onClose={closeOverlay}
-              />
-            )}
+                  {/* Memory Viewer - conditionally mounted as overlay */}
+                  {activeOverlay === "memory" && (
+                    <MemoryViewer
+                      blocks={agentState?.memory?.blocks || []}
+                      agentId={agentId}
+                      agentName={agentName}
+                      onClose={closeOverlay}
+                    />
+                  )}
 
-            {/* MCP Server Selector - conditionally mounted as overlay */}
-            {activeOverlay === "mcp" && (
-              <McpSelector
-                agentId={agentId}
-                onAdd={() => {
-                  // Close overlay and prompt user to use /mcp add command
-                  closeOverlay();
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/mcp",
-                    output:
-                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
-                    phase: "finished",
-                    success: true,
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* MCP Server Selector - conditionally mounted as overlay */}
+                  {activeOverlay === "mcp" && (
+                    <McpSelector
+                      agentId={agentId}
+                      onAdd={() => {
+                        // Close overlay and prompt user to use /mcp add command
+                        closeOverlay();
+                        const cmdId = uid("cmd");
+                        buffersRef.current.byId.set(cmdId, {
+                          kind: "command",
+                          id: cmdId,
+                          input: "/mcp",
+                          output:
+                            "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                          phase: "finished",
+                          success: true,
+                        });
+                        buffersRef.current.order.push(cmdId);
+                        refreshDerived();
+                      }}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Help Dialog - conditionally mounted as overlay */}
-            {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+                  {/* Help Dialog - conditionally mounted as overlay */}
+                  {activeOverlay === "help" && (
+                    <HelpDialog onClose={closeOverlay} />
+                  )}
 
-            {/* OAuth Code Dialog - for Claude OAuth connection */}
-            {activeOverlay === "oauth" && (
-              <OAuthCodeDialog
-                onComplete={(success, message) => {
-                  closeOverlay();
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/connect claude",
-                    output: message,
-                    phase: "finished",
-                    success,
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
-                }}
-                onCancel={closeOverlay}
-                onModelSwitch={async (modelHandle: string) => {
-                  const { updateAgentLLMConfig } = await import(
-                    "../agent/modify"
-                  );
-                  const { getModelUpdateArgs, getModelInfo } = await import(
-                    "../agent/model"
-                  );
-                  const updateArgs = getModelUpdateArgs(modelHandle);
-                  await updateAgentLLMConfig(agentId, modelHandle, updateArgs);
-                  // Update current model display - use model id for correct "(current)" indicator
-                  const modelInfo = getModelInfo(modelHandle);
-                  setCurrentModelId(modelInfo?.id || modelHandle);
-                }}
-              />
-            )}
+                  {/* OAuth Code Dialog - for Claude OAuth connection */}
+                  {activeOverlay === "oauth" && (
+                    <OAuthCodeDialog
+                      onComplete={(success, message) => {
+                        closeOverlay();
+                        const cmdId = uid("cmd");
+                        buffersRef.current.byId.set(cmdId, {
+                          kind: "command",
+                          id: cmdId,
+                          input: "/connect claude",
+                          output: message,
+                          phase: "finished",
+                          success,
+                        });
+                        buffersRef.current.order.push(cmdId);
+                        refreshDerived();
+                      }}
+                      onCancel={closeOverlay}
+                      onModelSwitch={async (modelHandle: string) => {
+                        const { updateAgentLLMConfig } = await import(
+                          "../agent/modify"
+                        );
+                        const { getModelUpdateArgs, getModelInfo } =
+                          await import("../agent/model");
+                        const updateArgs = getModelUpdateArgs(modelHandle);
+                        await updateAgentLLMConfig(
+                          agentId,
+                          modelHandle,
+                          updateArgs,
+                        );
+                        // Update current model display - use model id for correct "(current)" indicator
+                        const modelInfo = getModelInfo(modelHandle);
+                        setCurrentModelId(modelInfo?.id || modelHandle);
+                      }}
+                    />
+                  )}
 
-            {/* New Agent Dialog - for naming new agent before creation */}
-            {activeOverlay === "new" && (
-              <NewAgentDialog
-                onSubmit={handleCreateNewAgent}
-                onCancel={closeOverlay}
-              />
-            )}
+                  {/* New Agent Dialog - for naming new agent before creation */}
+                  {activeOverlay === "new" && (
+                    <NewAgentDialog
+                      onSubmit={handleCreateNewAgent}
+                      onCancel={closeOverlay}
+                    />
+                  )}
 
-            {/* Pin Dialog - for naming agent before pinning */}
-            {activeOverlay === "pin" && (
-              <PinDialog
-                currentName={agentName || ""}
-                local={pinDialogLocal}
-                onSubmit={async (newName) => {
-                  closeOverlay();
-                  setCommandRunning(true);
+                  {/* Pin Dialog - for naming agent before pinning */}
+                  {activeOverlay === "pin" && (
+                    <PinDialog
+                      currentName={agentName || ""}
+                      local={pinDialogLocal}
+                      onSubmit={async (newName) => {
+                        closeOverlay();
+                        setCommandRunning(true);
 
-                  const cmdId = uid("cmd");
-                  const scopeText = pinDialogLocal
-                    ? "to this project"
-                    : "globally";
-                  const displayName =
-                    newName || agentName || agentId.slice(0, 12);
+                        const cmdId = uid("cmd");
+                        const scopeText = pinDialogLocal
+                          ? "to this project"
+                          : "globally";
+                        const displayName =
+                          newName || agentName || agentId.slice(0, 12);
 
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/pin",
-                    output: `Pinning "${displayName}" ${scopeText}...`,
-                    phase: "running",
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
+                        buffersRef.current.byId.set(cmdId, {
+                          kind: "command",
+                          id: cmdId,
+                          input: "/pin",
+                          output: `Pinning "${displayName}" ${scopeText}...`,
+                          phase: "running",
+                        });
+                        buffersRef.current.order.push(cmdId);
+                        refreshDerived();
 
-                  try {
-                    const client = await getClient();
+                        try {
+                          const client = await getClient();
 
-                    // Rename if new name provided
-                    if (newName && newName !== agentName) {
-                      await client.agents.update(agentId, { name: newName });
-                      setAgentName(newName);
-                    }
+                          // Rename if new name provided
+                          if (newName && newName !== agentName) {
+                            await client.agents.update(agentId, {
+                              name: newName,
+                            });
+                            setAgentName(newName);
+                          }
 
-                    // Pin the agent
-                    if (pinDialogLocal) {
-                      settingsManager.pinLocal(agentId);
-                    } else {
-                      settingsManager.pinGlobal(agentId);
-                    }
+                          // Pin the agent
+                          if (pinDialogLocal) {
+                            settingsManager.pinLocal(agentId);
+                          } else {
+                            settingsManager.pinGlobal(agentId);
+                          }
 
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/pin",
-                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
-                      phase: "finished",
-                      success: true,
-                    });
-                  } catch (error) {
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/pin",
-                      output: `Failed to pin: ${error}`,
-                      phase: "finished",
-                      success: false,
-                    });
-                  } finally {
-                    setCommandRunning(false);
-                    refreshDerived();
-                  }
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
+                          buffersRef.current.byId.set(cmdId, {
+                            kind: "command",
+                            id: cmdId,
+                            input: "/pin",
+                            output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                            phase: "finished",
+                            success: true,
+                          });
+                        } catch (error) {
+                          buffersRef.current.byId.set(cmdId, {
+                            kind: "command",
+                            id: cmdId,
+                            input: "/pin",
+                            output: `Failed to pin: ${error}`,
+                            phase: "finished",
+                            success: false,
+                          });
+                        } finally {
+                          setCommandRunning(false);
+                          refreshDerived();
+                        }
+                      }}
+                      onCancel={closeOverlay}
+                    />
+                  )}
+                </>
+              );
+
+              return uiOverrides?.renderOverlay
+                ? uiOverrides.renderOverlay(
+                    {
+                      activeOverlay,
+                      openOverlay: (overlay) => setActiveOverlay(overlay),
+                      closeOverlay,
+                      agentId,
+                      agentName,
+                      agentState,
+                      currentModelId,
+                      currentToolset,
+                      currentSystemPromptId,
+                      feedbackPrefill,
+                      setFeedbackPrefill,
+                      onSelectModel: handleModelSelect,
+                      onSelectToolset: handleToolsetSelect,
+                      onSelectSystemPrompt: handleSystemPromptSelect,
+                      onSelectAgent: handleAgentSelect,
+                      pendingApprovals,
+                      currentApprovalIndex: approvalResults.length,
+                      currentApproval,
+                      currentApprovalContext,
+                      onApproveCurrent: handleApproveCurrent,
+                      onApproveAlways: handleApproveAlways,
+                      onDenyCurrent: handleDenyCurrent,
+                      onCancelApprovals: handleCancelApprovals,
+                      onPlanApprove: handlePlanApprove,
+                      onPlanKeepPlanning: handlePlanKeepPlanning,
+                      onQuestionSubmit: handleQuestionSubmit,
+                    },
+                    fallback,
+                  )
+                : fallback();
+            })()}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
             {/* ExitPlanMode approval is handled by InlinePlanApproval component */}
