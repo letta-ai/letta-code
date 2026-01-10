@@ -46,13 +46,13 @@ Task({
   prompt: `Edit the memory block files in .letta/backups/working/ to clean them up.
 
 Focus on:
-- Remove redundant information
+- Reorganize and consolidate redundant information
 - Add clear structure with markdown headers
 - Organize content with bullet points
 - Resolve contradictions
 - Improve scannability
 
-IMPORTANT: If a file is 100% redundant (all content exists in other files), DELETE the file using Bash (rm command). Do NOT just mark it as deprecated - actually delete it.
+IMPORTANT: When merging blocks, DELETE the redundant source files after consolidating their content (use Bash rm command). You have full bash access in the .letta/backups/working directory. Only delete files when: (1) you've merged their content into another block, or (2) the file contains only irrelevant/junk data with no project value.
 
 Files to edit: persona.md, human.md, project.md
 Do NOT edit: skills.md (auto-generated), loaded_skills.md (system-managed)
@@ -63,9 +63,11 @@ After editing, provide a report with before/after character counts and list any 
 
 The memory subagent will:
 - Read the files from `.letta/backups/working/`
-- Edit them to remove redundancy and add structure
-- DELETE files that are completely redundant (don't just mark as deprecated)
-- Provide a detailed report of changes
+- Edit them to reorganize and consolidate redundancy
+- Merge related blocks together for better organization
+- Add clear structure with markdown formatting
+- Delete source files after merging their content into other blocks
+- Provide a detailed report of changes (including what was merged where)
 
 ### Step 3: Restore Cleaned Files to Memory
 
@@ -88,11 +90,11 @@ Bash({
   description: "Download agent file and dump memory to files"
 })
 
-// Step 2: Clean up (subagent edits files)
+// Step 2: Clean up (subagent edits files and deletes merged ones)
 Task({
   subagent_type: "memory",
   description: "Clean up memory files",
-  prompt: "Edit memory files in .letta/backups/working/ to remove redundancy and add structure. Focus on persona.md, human.md, and project.md. DELETE any files that are 100% redundant (use rm command). Report changes made."
+  prompt: "Edit memory files in .letta/backups/working/ to reorganize and consolidate redundancy. Focus on persona.md, human.md, and project.md. Merge related blocks together and DELETE the source files after merging (use Bash rm command - you have full bash access). Add clear structure. Report what was merged and where, and which files were deleted."
 })
 
 // Step 3: Restore
@@ -140,33 +142,44 @@ bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working
 
 The memory subagent focuses on cleaning up files. It:
 - ✅ Reads files from `.letta/backups/working/`
-- ✅ Edits files to improve structure and remove redundancy
-- ✅ Deletes completely redundant files (using `rm` command)
-- ✅ Provides detailed before/after reports
+- ✅ Edits files to improve structure and consolidate redundancy
+- ✅ Merges related blocks together to reduce fragmentation
+- ✅ Reorganizes information for better clarity and scannability
+- ✅ Deletes source files after merging their content (using Bash `rm` command)
+- ✅ Provides detailed before/after reports including merge operations
 - ❌ Does NOT run backup scripts (main agent does this)
 - ❌ Does NOT run restore scripts (main agent does this)
 
-The subagent needs Bash access to delete redundant files, but does not need to manage the backup/restore workflow.
+The memory subagent runs with `bypassPermissions` mode, giving it full Bash access to delete files after merging them. The focus is on consolidation and reorganization.
 
 ## Tips
 
 **What to clean up:**
-- Duplicate information (version mentioned 3x, preferences repeated)
-- Walls of text without structure
-- Contradictions ("be detailed" vs "sometimes be concise")
-- Speculation ("probably", "maybe")
+- Duplicate information (consolidate into one well-organized section)
+- Walls of text without structure (add headers and bullets)
+- Contradictions (resolve by clarifying or choosing the better guidance)
+- Speculation ("probably", "maybe" - make it concrete or remove)
 - Transient details that won't matter in a week
 
+**Reorganization Strategy:**
+- Consolidate duplicate information into a single, well-structured section
+- Merge related content that's scattered across multiple blocks
+- Add clear headers and bullet points for scannability
+- Group similar information together logically
+- After merging blocks, DELETE the source files to avoid duplication
+
 **When to DELETE a file:**
-- File is 100% redundant - all content already exists in other organized files
-- File is just a "deprecated" notice pointing to other files
-- Don't just mark it deprecated - actually delete it with `rm`
+- ✅ **After merging** - You've consolidated its content into another block (common and encouraged)
+- ✅ **Junk data** - File contains only irrelevant test/junk data with no project connection
+- ✅ **Empty/deprecated** - File is just a notice with no unique information
+- ❌ **Don't delete** - If file has unique information that hasn't been merged elsewhere
 
 **What to preserve:**
-- User preferences (sacred - don't delete)
+- User preferences (sacred - never delete)
 - Project conventions discovered through experience
 - Important context for future sessions
 - Learnings from past mistakes
+- Any information that has unique value
 
 **Good memory structure:**
 - Use markdown headers (##, ###)
