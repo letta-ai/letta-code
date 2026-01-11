@@ -533,7 +533,7 @@ type ActiveOverlay =
   | null;
 
 type RenderFallback = () => ReactNode;
-type RenderWithFallback<T> = (args: T, fallback: RenderFallback) => ReactNode;
+type RenderWithFallback<T> = (args: T, next: RenderFallback) => ReactNode;
 
 type RenderStaticItemArgs = {
   item: StaticItem;
@@ -6648,7 +6648,7 @@ Plan file path: ${planFilePath}`;
         style={{ flexDirection: "column" }}
       >
         {(item: StaticItem, index: number) => {
-          const fallback = () => (
+          const next = () => (
             <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
@@ -6699,9 +6699,9 @@ Plan file path: ${planFilePath}`;
                   precomputedDiffs: precomputedDiffsRef.current,
                   lastPlanFilePath: lastPlanFilePathRef.current,
                 },
-                fallback,
+                next,
               )
-            : fallback();
+            : next();
         }}
       </Static>
 
@@ -6900,7 +6900,7 @@ Plan file path: ${planFilePath}`;
 
                     const taskInfo = getTaskInfo();
 
-                    const fallback = () => (
+                    const next = () => (
                       <Box key={ln.id} flexDirection="column" marginTop={1}>
                         {/* For ExitPlanMode awaiting approval: render StaticPlanApproval */}
                         {/* Plan preview is eagerly committed to staticItems, so this only shows options */}
@@ -7068,9 +7068,9 @@ Plan file path: ${planFilePath}`;
                             precomputedDiffs: precomputedDiffsRef.current,
                             lastPlanFilePath: lastPlanFilePathRef.current,
                           },
-                          fallback,
+                          next,
                         )
-                      : fallback();
+                      : next();
                   })}
                 </Box>
               )}
@@ -7136,7 +7136,7 @@ Plan file path: ${planFilePath}`;
             </Box>
 
             {(() => {
-              const fallback = () => (
+              const next = () => (
                 <>
                   {/* Model Selector - conditionally mounted as overlay */}
                   {activeOverlay === "model" && (
@@ -7391,9 +7391,9 @@ Plan file path: ${planFilePath}`;
                       onPlanKeepPlanning: handlePlanKeepPlanning,
                       onQuestionSubmit: handleQuestionSubmit,
                     },
-                    fallback,
+                    next,
                   )
-                : fallback();
+                : next();
             })()}
 
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}

@@ -93,17 +93,17 @@ describe("cli ui seam types", () => {
 
     const ui: Ui = {
       Input: CustomInput,
-      renderStaticItem: (args, fallback) => {
+      renderStaticItem: (args, next) => {
         consume(args);
-        return fallback();
+        return next();
       },
-      renderLiveItem: (args, fallback) => {
+      renderLiveItem: (args, next) => {
         consume(args);
-        return fallback();
+        return next();
       },
-      renderOverlay: (args, fallback) => {
+      renderOverlay: (args, next) => {
         consume(args);
-        return fallback();
+        return next();
       },
     };
 
