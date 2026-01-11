@@ -142,15 +142,16 @@ export const ToolCallMessage = memo(
         args = "(…)";
       } else {
         const formatted = formatArgsDisplay(argsText, rawName);
-        // Args render in a box of width (rightWidth - displayName.length)
-        // For max 2 lines: boxWidth * 2, minus parens (2) and safety margin (2)
+        // Normalize newlines to spaces to prevent forced line breaks
+        const normalizedDisplay = formatted.display.replace(/\n/g, " ");
+        // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
         const argsBoxWidth = rightWidth - displayName.length;
         const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
 
-        const needsTruncation = formatted.display.length > maxArgsChars;
+        const needsTruncation = normalizedDisplay.length > maxArgsChars;
         const truncatedDisplay = needsTruncation
-          ? `${formatted.display.slice(0, maxArgsChars - 1)}…`
-          : formatted.display;
+          ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
+          : normalizedDisplay;
         args = `(${truncatedDisplay})`;
       }
     }
