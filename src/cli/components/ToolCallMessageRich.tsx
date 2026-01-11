@@ -69,10 +69,12 @@ export const ToolCallMessage = memo(
     line,
     precomputedDiffs,
     lastPlanFilePath,
+    isStreaming,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
+    isStreaming?: boolean;
   }) => {
     const columns = useTerminalWidth();
 
@@ -124,13 +126,30 @@ export const ToolCallMessage = memo(
       }
     }
 
-    // Format arguments for display using the old formatting logic
-    // Pass rawName to enable special formatting for file tools
-    const formatted = formatArgsDisplay(argsText, rawName);
-    // Hide args for question tool (shown in result instead)
-    const args = isQuestionTool(rawName) ? "" : `(${formatted.display})`;
-
     const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
+
+    // Determine args display:
+    // - Question tool: hide args (shown in result instead)
+    // - Streaming: show ellipsis to prevent jitter as args build up
+    // - Otherwise: format and truncate to ~2 lines
+    let args = "";
+    if (!isQuestionTool(rawName)) {
+      if (isStreaming) {
+        args = "(…)";
+      } else {
+        const formatted = formatArgsDisplay(argsText, rawName);
+        // Args render in a box of width (rightWidth - displayName.length)
+        // Max 2 lines = boxWidth * 2, minus 2 for "()", minus 2 for wrap margin
+        const argsBoxWidth = rightWidth - displayName.length;
+        const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
+
+        const needsTruncation = formatted.display.length > maxArgsChars;
+        const truncatedDisplay = needsTruncation
+          ? `${formatted.display.slice(0, maxArgsChars - 1)}…`
+          : formatted.display;
+        args = `(${truncatedDisplay})`;
+      }
+    }
 
     // If name exceeds available width, fall back to simple wrapped rendering
     const fallback = displayName.length >= rightWidth;

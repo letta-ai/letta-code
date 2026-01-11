@@ -6963,6 +6963,7 @@ Plan file path: ${planFilePath}`;
                             line={ln}
                             precomputedDiffs={precomputedDiffsRef.current}
                             lastPlanFilePath={lastPlanFilePathRef.current}
+                            isStreaming={streaming}
                           />
                         ) : ln.kind === "error" ? (
                           <ErrorMessage line={ln} />
