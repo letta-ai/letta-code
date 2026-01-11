@@ -201,7 +201,7 @@ async function runBidirectional(
   });
 }
 
-describe("input-format stream-json", () => {
+describe.skipIf(!process.env.LETTA_API_KEY)("input-format stream-json", () => {
   test(
     "initialize control request returns session info",
     async () => {

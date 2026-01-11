@@ -82,7 +82,7 @@ async function runHeadlessCommand(
 const FAST_PROMPT =
   "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
-describe("stream-json format", () => {
+describe.skipIf(!process.env.LETTA_API_KEY)("stream-json format", () => {
   test(
     "init message has type 'system' with subtype 'init'",
     async () => {
