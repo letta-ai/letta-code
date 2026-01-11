@@ -29,9 +29,11 @@ function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
 }
 
+import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
+import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -41,6 +43,7 @@ import {
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
+import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 type ToolCallLine = {
@@ -52,7 +55,24 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
+  streaming?: StreamingState;
 };
+
+/**
+ * Check if tool is a shell/bash tool that supports streaming output
+ */
+function isShellTool(name: string): boolean {
+  const shellTools = [
+    "Bash",
+    "Shell",
+    "shell",
+    "shell_command",
+    "run_shell_command",
+    "RunShellCommand",
+    "ShellCommand",
+  ];
+  return shellTools.includes(name);
+}
 
 /**
  * ToolCallMessageRich - Rich formatting version with old layout logic
@@ -680,8 +700,31 @@ export const ToolCallMessage = memo(
           </Box>
         </Box>
 
-        {/* Tool result (if present) */}
-        {getResultElement()}
+        {/* Streaming output for shell tools during execution */}
+        {isShellTool(rawName) && line.phase === "running" && line.streaming && (
+          <StreamingOutputDisplay streaming={line.streaming} />
+        )}
+
+        {/* Collapsed output for shell tools after completion */}
+        {isShellTool(rawName) &&
+          line.phase === "finished" &&
+          line.resultText &&
+          line.resultOk !== false && (
+            <CollapsedOutputDisplay output={line.resultText} />
+          )}
+
+        {/* Tool result for non-shell tools or shell tool errors */}
+        {(() => {
+          // Show default result element when:
+          // - Not a shell tool (always show result)
+          // - Shell tool with error (show error message)
+          // - Shell tool in streaming/ready phase (show default "Running..." etc)
+          const showDefaultResult =
+            !isShellTool(rawName) ||
+            (line.phase === "finished" && line.resultOk === false) ||
+            (line.phase !== "running" && line.phase !== "finished");
+          return showDefaultResult ? getResultElement() : null;
+        })()}
       </Box>
     );
   },

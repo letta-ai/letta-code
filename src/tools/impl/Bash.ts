@@ -37,6 +37,7 @@ function spawnWithLauncher(
     env: NodeJS.ProcessEnv;
     timeout: number;
     signal?: AbortSignal;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
@@ -71,10 +72,12 @@ function spawnWithLauncher(
 
     childProcess.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      options.onOutput?.(chunk.toString("utf8"), "stdout");
     });
 
     childProcess.stderr?.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
+      options.onOutput?.(chunk.toString("utf8"), "stderr");
     });
 
     childProcess.on("error", (err) => {
@@ -137,6 +140,7 @@ export async function spawnCommand(
     env: NodeJS.ProcessEnv;
     timeout: number;
     signal?: AbortSignal;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
@@ -200,6 +204,7 @@ interface BashArgs {
   description?: string;
   run_in_background?: boolean;
   signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
 interface BashResult {
@@ -218,6 +223,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     description: _description,
     run_in_background = false,
     signal,
+    onOutput,
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
 
@@ -314,6 +320,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       env: getShellEnv(),
       timeout: effectiveTimeout,
       signal,
+      onOutput,
     });
 
     let output = stdout;

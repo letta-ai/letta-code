@@ -87,5 +87,15 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       : nodeModulesDir;
   }
 
+  // Disable interactive pagers (fixes git log, man, etc. hanging)
+  env.PAGER = "cat";
+  env.GIT_PAGER = "cat";
+  env.MANPAGER = "cat";
+
+  // Ensure TERM is set for proper color support
+  if (!env.TERM) {
+    env.TERM = "xterm-256color";
+  }
+
   return env;
 }

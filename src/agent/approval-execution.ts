@@ -160,7 +160,14 @@ export type ApprovalResult = ToolReturn | ApprovalReturn;
 async function executeSingleDecision(
   decision: ApprovalDecision,
   onChunk?: (chunk: ToolReturnMessage) => void,
-  options?: { abortSignal?: AbortSignal },
+  options?: {
+    abortSignal?: AbortSignal;
+    onStreamingOutput?: (
+      toolCallId: string,
+      chunk: string,
+      isStderr?: boolean,
+    ) => void;
+  },
 ): Promise<ApprovalResult> {
   // If aborted, record an interrupted result
   if (options?.abortSignal?.aborted) {
@@ -216,6 +223,14 @@ async function executeSingleDecision(
         {
           signal: options?.abortSignal,
           toolCallId: decision.approval.toolCallId,
+          onOutput: options?.onStreamingOutput
+            ? (chunk, stream) =>
+                options.onStreamingOutput?.(
+                  decision.approval.toolCallId,
+                  chunk,
+                  stream === "stderr",
+                )
+            : undefined,
         },
       );
 
@@ -312,7 +327,14 @@ async function executeSingleDecision(
 export async function executeApprovalBatch(
   decisions: ApprovalDecision[],
   onChunk?: (chunk: ToolReturnMessage) => void,
-  options?: { abortSignal?: AbortSignal },
+  options?: {
+    abortSignal?: AbortSignal;
+    onStreamingOutput?: (
+      toolCallId: string,
+      chunk: string,
+      isStderr?: boolean,
+    ) => void;
+  },
 ): Promise<ApprovalResult[]> {
   // Pre-allocate results array to maintain original order
   const results: (ApprovalResult | null)[] = new Array(decisions.length).fill(
@@ -400,7 +422,14 @@ export async function executeApprovalBatch(
 export async function executeAutoAllowedTools(
   autoAllowed: Array<{ approval: ApprovalRequest }>,
   onChunk: (chunk: ToolReturnMessage) => void,
-  options?: { abortSignal?: AbortSignal },
+  options?: {
+    abortSignal?: AbortSignal;
+    onStreamingOutput?: (
+      toolCallId: string,
+      chunk: string,
+      isStderr?: boolean,
+    ) => void;
+  },
 ): Promise<AutoAllowedResult[]> {
   const decisions: ApprovalDecision[] = autoAllowed.map((ac) => ({
     type: "approve" as const,
