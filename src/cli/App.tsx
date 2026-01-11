@@ -932,22 +932,42 @@ export default function App({
   const terminalRows = useTerminalRows();
   const prevColumnsRef = useRef(columns);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
+  const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const prev = prevColumnsRef.current;
     if (columns === prev) return;
 
+    // Clear pending debounced clear on any resize
+    if (resizeClearTimeout.current) {
+      clearTimeout(resizeClearTimeout.current);
+      resizeClearTimeout.current = null;
+    }
+
+    // Only clear screen on significant width decrease (4+ columns)
+    // Debounce to avoid flicker from transient resize events (e.g., Ghostty focus/tab changes)
     if (
-      columns < prev &&
+      columns < prev - 3 &&
       typeof process !== "undefined" &&
       process.stdout &&
       "write" in process.stdout &&
       process.stdout.isTTY
     ) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      resizeClearTimeout.current = setTimeout(() => {
+        resizeClearTimeout.current = null;
+        process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      }, 150);
     }
 
     setStaticRenderEpoch((epoch) => epoch + 1);
     prevColumnsRef.current = columns;
+
+    // Cleanup on unmount
+    return () => {
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+    };
   }, [columns]);
 
   // Commit immutable/finished lines into the historical log
