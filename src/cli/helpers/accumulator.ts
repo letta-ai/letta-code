@@ -508,3 +508,19 @@ export function toLines(b: Buffers): Line[] {
   }
   return out;
 }
+
+/**
+ * Set tool calls to "running" phase before execution.
+ * This updates the UI to show the formatted args instead of ellipsis.
+ */
+export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
+  for (const toolCallId of toolCallIds) {
+    const lineId = b.toolCallIdToLineId.get(toolCallId);
+    if (lineId) {
+      const line = b.byId.get(lineId);
+      if (line && line.kind === "tool_call") {
+        b.byId.set(lineId, { ...line, phase: "running" });
+      }
+    }
+  }
+}

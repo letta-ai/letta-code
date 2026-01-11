@@ -122,6 +122,7 @@ import {
   type Line,
   markIncompleteToolsAsCancelled,
   onChunk,
+  setToolCallsRunning,
   toLines,
 } from "./helpers/accumulator";
 import { backfillBuffers } from "./helpers/backfill";
@@ -2063,6 +2064,13 @@ export default function App({
               }
             }
 
+            // Set phase to "running" for auto-allowed tools
+            setToolCallsRunning(
+              buffersRef.current,
+              autoAllowed.map((ac) => ac.approval.toolCallId),
+            );
+            refreshDerived();
+
             // Execute auto-allowed tools (sequential for writes, parallel for reads)
             const autoAllowedResults = await executeAutoAllowedTools(
               autoAllowed,
@@ -3120,6 +3128,13 @@ export default function App({
 
       // Execute auto-allowed tools
       if (autoAllowed.length > 0) {
+        // Set phase to "running" for auto-allowed tools
+        setToolCallsRunning(
+          buffersRef.current,
+          autoAllowed.map((ac) => ac.approval.toolCallId),
+        );
+        refreshDerived();
+
         const autoAllowedResults = await executeAutoAllowedTools(
           autoAllowed,
           (chunk) => onChunk(buffersRef.current, chunk),
@@ -3172,7 +3187,7 @@ export default function App({
       // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
-  }, [agentId, processConversation]);
+  }, [agentId, processConversation, refreshDerived]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
@@ -4993,6 +5008,13 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                 }
               }
 
+              // Set phase to "running" for auto-allowed tools
+              setToolCallsRunning(
+                buffersRef.current,
+                autoAllowed.map((ac) => ac.approval.toolCallId),
+              );
+              refreshDerived();
+
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
               const autoAllowedResults = await executeAutoAllowedTools(
                 autoAllowed,
@@ -5326,6 +5348,15 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           ...(additionalDecision ? [additionalDecision] : []),
         ];
 
+        // Set phase to "running" for all approved tools
+        setToolCallsRunning(
+          buffersRef.current,
+          allDecisions
+            .filter((d) => d.type === "approve")
+            .map((d) => d.approval.toolCallId),
+        );
+        refreshDerived();
+
         // Execute approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
           "../agent/approval-execution"
@@ -5600,6 +5631,15 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
           setStreaming(true);
           buffersRef.current.interrupted = false;
+
+          // Set phase to "running" for all approved tools
+          setToolCallsRunning(
+            buffersRef.current,
+            allDecisions
+              .filter((d) => d.type === "approve")
+              .map((d) => d.approval.toolCallId),
+          );
+          refreshDerived();
 
           try {
             // Execute ALL decisions together

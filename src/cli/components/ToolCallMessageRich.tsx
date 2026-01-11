@@ -130,16 +130,20 @@ export const ToolCallMessage = memo(
 
     // Determine args display:
     // - Question tool: hide args (shown in result instead)
-    // - Streaming: show ellipsis to prevent jitter as args build up
-    // - Otherwise: format and truncate to ~2 lines
+    // - Still streaming + phase "ready": args may be incomplete, show ellipsis
+    // - Phase "running"/"finished" or stream done: args complete, show formatted
     let args = "";
     if (!isQuestionTool(rawName)) {
-      if (isStreaming) {
+      // Args are complete once running, finished, or stream is done
+      const argsComplete =
+        line.phase === "running" || line.phase === "finished" || !isStreaming;
+
+      if (!argsComplete) {
         args = "(…)";
       } else {
         const formatted = formatArgsDisplay(argsText, rawName);
         // Args render in a box of width (rightWidth - displayName.length)
-        // Max 2 lines = boxWidth * 2, minus 2 for "()", minus 2 for wrap margin
+        // For max 2 lines: boxWidth * 2, minus parens (2) and safety margin (2)
         const argsBoxWidth = rightWidth - displayName.length;
         const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
 
