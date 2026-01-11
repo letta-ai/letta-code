@@ -718,6 +718,7 @@ export function Input({
   const elapsedMinutes = Math.floor(elapsedMs / 60000);
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
+  // Uses chalk.dim to match reasoning text styling
   // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
