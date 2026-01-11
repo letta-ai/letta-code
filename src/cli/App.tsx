@@ -117,6 +117,7 @@ import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { AnimationProvider } from "./contexts/AnimationContext";
 import {
+  appendStreamingOutput,
   type Buffers,
   createBuffers,
   type Line,
@@ -1097,6 +1098,60 @@ export default function App({
     commitEligibleLines(b);
   }, [commitEligibleLines]);
 
+  // Trailing-edge debounce for bash streaming output (100ms = max 10 updates/sec)
+  // Unlike refreshDerivedThrottled, this REPLACES pending updates to always show latest state
+  const streamingRefreshTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const refreshDerivedStreaming = useCallback(() => {
+    // Cancel any pending refresh - we want the LATEST state
+    if (streamingRefreshTimeoutRef.current) {
+      clearTimeout(streamingRefreshTimeoutRef.current);
+    }
+    streamingRefreshTimeoutRef.current = setTimeout(() => {
+      streamingRefreshTimeoutRef.current = null;
+      if (!buffersRef.current.interrupted) {
+        refreshDerived();
+      }
+    }, 100);
+  }, [refreshDerived]);
+
+  // Cleanup streaming refresh on unmount
+  useEffect(() => {
+    return () => {
+      if (streamingRefreshTimeoutRef.current) {
+        clearTimeout(streamingRefreshTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Helper to update streaming output for bash/shell tools
+  const updateStreamingOutput = useCallback(
+    (toolCallId: string, chunk: string, isStderr = false) => {
+      const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
+      if (!lineId) return;
+
+      const entry = buffersRef.current.byId.get(lineId);
+      if (!entry || entry.kind !== "tool_call") return;
+
+      // Immutable update with tail buffer
+      const newStreaming = appendStreamingOutput(
+        entry.streaming,
+        chunk,
+        entry.streaming?.startTime || Date.now(),
+        isStderr,
+      );
+
+      buffersRef.current.byId.set(lineId, {
+        ...entry,
+        streaming: newStreaming,
+      });
+
+      refreshDerivedStreaming();
+    },
+    [refreshDerivedStreaming],
+  );
+
   // Throttled version for streaming updates (~60fps max)
   const refreshDerivedThrottled = useCallback(() => {
     // Use a ref to track pending refresh
@@ -2075,6 +2130,10 @@ export default function App({
             const autoAllowedResults = await executeAutoAllowedTools(
               autoAllowed,
               (chunk) => onChunk(buffersRef.current, chunk),
+              {
+                abortSignal: signal,
+                onStreamingOutput: updateStreamingOutput,
+              },
             );
 
             // Create denial results for auto-denied tools and update buffers
@@ -2564,6 +2623,7 @@ export default function App({
       refreshDerivedThrottled,
       setStreaming,
       currentModelId,
+      updateStreamingOutput,
     ],
   );
 
@@ -2965,14 +3025,22 @@ export default function App({
   const handleBashSubmit = useCallback(
     async (command: string) => {
       const cmdId = uid("bash");
+      const startTime = Date.now();
 
-      // Add running bash_command line
+      // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
         kind: "bash_command",
         id: cmdId,
         input: command,
         output: "",
         phase: "running",
+        streaming: {
+          tailLines: [],
+          partialLine: "",
+          partialIsStderr: false,
+          totalLineCount: 0,
+          startTime,
+        },
       });
       buffersRef.current.order.push(cmdId);
       refreshDerived();
@@ -2986,13 +3054,29 @@ export default function App({
           cwd: process.cwd(),
           env: getShellEnv(),
           timeout: 30000, // 30 second timeout
+          onOutput: (chunk, stream) => {
+            const entry = buffersRef.current.byId.get(cmdId);
+            if (entry && entry.kind === "bash_command") {
+              const newStreaming = appendStreamingOutput(
+                entry.streaming,
+                chunk,
+                startTime,
+                stream === "stderr",
+              );
+              buffersRef.current.byId.set(cmdId, {
+                ...entry,
+                streaming: newStreaming,
+              });
+              refreshDerivedStreaming();
+            }
+          },
         });
 
         // Combine stdout and stderr for output
         const output = (result.stdout + result.stderr).trim();
         const success = result.exitCode === 0;
 
-        // Update line with output
+        // Update line with output, clear streaming state
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
@@ -3000,6 +3084,7 @@ export default function App({
           output: output || (success ? "" : `Exit code: ${result.exitCode}`),
           phase: "finished",
           success,
+          streaming: undefined,
         });
 
         // Cache for next user message
@@ -3023,6 +3108,7 @@ export default function App({
           output: errOutput,
           phase: "finished",
           success: false,
+          streaming: undefined,
         });
 
         // Still cache for next user message (even failures are visible to agent)
@@ -3031,7 +3117,7 @@ export default function App({
 
       refreshDerived();
     },
-    [refreshDerived],
+    [refreshDerived, refreshDerivedStreaming],
   );
 
   /**
@@ -3138,6 +3224,7 @@ export default function App({
         const autoAllowedResults = await executeAutoAllowedTools(
           autoAllowed,
           (chunk) => onChunk(buffersRef.current, chunk),
+          { onStreamingOutput: updateStreamingOutput },
         );
         // Map to ApprovalResult format (ToolReturn)
         allResults.push(
@@ -3187,7 +3274,7 @@ export default function App({
       // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
-  }, [agentId, processConversation, refreshDerived]);
+  }, [agentId, processConversation, refreshDerived, updateStreamingOutput]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
@@ -5019,6 +5106,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               const autoAllowedResults = await executeAutoAllowedTools(
                 autoAllowed,
                 (chunk) => onChunk(buffersRef.current, chunk),
+                { onStreamingOutput: updateStreamingOutput },
               );
 
               // Create denial results for auto-denied and update UI
@@ -5175,6 +5263,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               const autoAllowedWithResults = await executeAutoAllowedTools(
                 autoAllowed,
                 (chunk) => onChunk(buffersRef.current, chunk),
+                { onStreamingOutput: updateStreamingOutput },
               );
 
               // Create denial reasons for auto-denied and update UI
@@ -5380,7 +5469,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             // Flush UI so completed tools show up while the batch continues
             refreshDerived();
           },
-          { abortSignal: approvalAbortController.signal },
+          {
+            abortSignal: approvalAbortController.signal,
+            onStreamingOutput: updateStreamingOutput,
+          },
         );
 
         // Combine with auto-handled and auto-denied results using snapshots
@@ -5473,6 +5565,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       refreshDerived,
       appendError,
       setStreaming,
+      updateStreamingOutput,
     ],
   );
 
@@ -5652,6 +5745,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                 onChunk(buffersRef.current, chunk);
                 refreshDerived();
               },
+              { onStreamingOutput: updateStreamingOutput },
             );
 
             // Combine with auto-handled and auto-denied results (from initial check)
@@ -5704,6 +5798,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       refreshDerived,
       isExecutingTool,
       setStreaming,
+      updateStreamingOutput,
     ],
   );
 

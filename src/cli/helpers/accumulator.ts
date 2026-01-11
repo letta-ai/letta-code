@@ -7,6 +7,93 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
 
+// Constants for streaming output
+const MAX_TAIL_LINES = 5;
+const MAX_BUFFER_SIZE = 100_000; // 100KB
+
+/**
+ * A line of streaming output with its source (stdout or stderr).
+ */
+export interface StreamingLine {
+  text: string;
+  isStderr: boolean;
+}
+
+/**
+ * Streaming state for bash/shell tools.
+ * Tracks a rolling window of output during execution.
+ */
+export interface StreamingState {
+  tailLines: StreamingLine[]; // Last 5 complete lines (for rolling display)
+  partialLine: string; // Incomplete line being accumulated
+  partialIsStderr: boolean; // Whether partial line is from stderr
+  totalLineCount: number; // Total lines seen (for "+N more" count)
+  startTime: number; // For elapsed time display
+}
+
+/**
+ * Append a chunk of output to the streaming state.
+ * Maintains a tail buffer of the last N lines and handles partial line accumulation.
+ */
+export function appendStreamingOutput(
+  state: StreamingState | undefined,
+  chunk: string,
+  startTime: number,
+  isStderr = false,
+): StreamingState {
+  const current = state || {
+    tailLines: [],
+    partialLine: "",
+    partialIsStderr: false,
+    totalLineCount: 0,
+    startTime,
+  };
+
+  let tailLines = [...current.tailLines];
+  let totalLineCount = current.totalLineCount;
+  let partialLine = current.partialLine;
+  let partialIsStderr = current.partialIsStderr;
+
+  // If stream type changed and we have a partial, flush it as a complete line
+  if (partialLine && isStderr !== partialIsStderr) {
+    tailLines.push({ text: partialLine, isStderr: partialIsStderr });
+    totalLineCount++;
+    partialLine = "";
+  }
+
+  // Append chunk to partial line
+  let buffer = partialLine + chunk;
+
+  // Size limit check - slice at line boundary to avoid corrupted lines
+  if (buffer.length > MAX_BUFFER_SIZE) {
+    const truncated = buffer.slice(-MAX_BUFFER_SIZE);
+    const firstNewline = truncated.indexOf("\n");
+    buffer = firstNewline >= 0 ? truncated.slice(firstNewline + 1) : truncated;
+  }
+
+  // Split into complete lines + remainder
+  const lines = buffer.split("\n");
+  const newPartialLine = lines.pop() || ""; // Last element is incomplete
+
+  // Convert string lines to StreamingLine objects with current stream's stderr flag
+  const newLines: StreamingLine[] = lines.map((text) => ({
+    text,
+    isStderr,
+  }));
+
+  // Update tail with new complete lines (keep empty lines for accurate display)
+  const allLines = [...tailLines, ...newLines];
+  const finalTailLines = allLines.slice(-MAX_TAIL_LINES);
+
+  return {
+    tailLines: finalTailLines,
+    partialLine: newPartialLine,
+    partialIsStderr: isStderr,
+    totalLineCount: totalLineCount + lines.length,
+    startTime: current.startTime,
+  };
+}
+
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
 export type Line =
@@ -36,6 +123,8 @@ export type Line =
       resultOk?: boolean;
       // state that's useful for rendering
       phase: "streaming" | "ready" | "running" | "finished";
+      // streaming output state (for shell tools during execution)
+      streaming?: StreamingState;
     }
   | { kind: "error"; id: string; text: string }
   | {
@@ -54,6 +143,8 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
+      // streaming output state (during execution)
+      streaming?: StreamingState;
     }
   | {
       kind: "status";

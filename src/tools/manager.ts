@@ -686,13 +686,17 @@ function flattenToolResponse(result: unknown): string {
  *
  * @param name - The name of the tool to execute
  * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID)
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
 export async function executeTool(
   name: string,
   args: ToolArgs,
-  options?: { signal?: AbortSignal; toolCallId?: string },
+  options?: {
+    signal?: AbortSignal;
+    toolCallId?: string;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  },
 ): Promise<ToolExecutionResult> {
   const internalName = resolveInternalToolName(name);
   if (!internalName) {
@@ -716,9 +720,14 @@ export async function executeTool(
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
 
-    // Inject abort signal for Bash tool
-    if (internalName === "Bash" && options?.signal) {
-      enhancedArgs = { ...enhancedArgs, signal: options.signal };
+    // Inject abort signal and streaming callback for Bash tool
+    if (internalName === "Bash") {
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
+      if (options?.onOutput) {
+        enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+      }
     }
 
     // Inject toolCallId and abort signal for Task tool
