@@ -21,18 +21,13 @@ This skill helps you maintain clean, well-organized memory blocks by:
 
 ## Workflow
 
-### Step 1: Download Agent File and Dump Memory to Files
+### Step 1: Backup Memory to Files
 
 ```bash
-# Download agent file to backups
-bun .letta/memory-utils/download-agent.ts $LETTA_AGENT_ID
-
-# Dump memory blocks to files
-bun .letta/memory-utils/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working
+npx tsx <SKILL_DIR>/scripts/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working
 ```
 
 This creates:
-- `.letta/backups/<agent-id>/<timestamp>.af` - Complete agent file backup for full rollback
 - `.letta/backups/<agent-id>/<timestamp>/` - Timestamped memory blocks backup
 - `.letta/backups/working/` - Working directory with editable files
 - Each memory block as a `.md` file: `persona.md`, `human.md`, `project.md`, etc.
@@ -72,7 +67,7 @@ The memory subagent will:
 ### Step 3: Restore Cleaned Files to Memory
 
 ```bash
-bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working
+npx tsx <SKILL_DIR>/scripts/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working
 ```
 
 This will:
@@ -84,10 +79,10 @@ This will:
 ## Example Complete Flow
 
 ```typescript
-// Step 1: Download agent file and dump memory
+// Step 1: Backup memory to files
 Bash({
-  command: "bun .letta/memory-utils/download-agent.ts $LETTA_AGENT_ID && bun .letta/memory-utils/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working",
-  description: "Download agent file and dump memory to files"
+  command: "npx tsx <SKILL_DIR>/scripts/backup-memory.ts $LETTA_AGENT_ID .letta/backups/working",
+  description: "Backup memory to files"
 })
 
 // Step 2: Clean up (subagent edits files and deletes merged ones)
@@ -99,35 +94,21 @@ Task({
 
 // Step 3: Restore
 Bash({
-  command: "bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working",
+  command: "npx tsx <SKILL_DIR>/scripts/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working",
   description: "Restore cleaned memory blocks"
 })
 ```
 
 ## Rollback
 
-If something goes wrong, you have two rollback options:
-
-### Option 1: Restore Memory Blocks Only
+If something goes wrong, restore from a previous backup:
 
 ```bash
 # Find the backup directory
 ls -la .letta/backups/<agent-id>/
 
 # Restore from specific timestamp
-bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/<agent-id>/<timestamp>
-```
-
-### Option 2: Full Agent Restore (Nuclear Option)
-
-If memory restoration isn't enough, restore the entire agent from the .af backup:
-
-```bash
-# Find the agent backup
-ls -la .letta/backups/<agent-id>/*.af
-
-# The .af file can be used to recreate the agent entirely
-# Use: letta --from-af .letta/backups/<agent-id>/<timestamp>.af
+npx tsx <SKILL_DIR>/scripts/restore-memory.ts $LETTA_AGENT_ID .letta/backups/<agent-id>/<timestamp>
 ```
 
 ## Dry Run
@@ -135,20 +116,20 @@ ls -la .letta/backups/<agent-id>/*.af
 Preview changes without applying them:
 
 ```bash
-bun .letta/memory-utils/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working --dry-run
+npx tsx <SKILL_DIR>/scripts/restore-memory.ts $LETTA_AGENT_ID .letta/backups/working --dry-run
 ```
 
 ## What the Memory Subagent Does
 
 The memory subagent focuses on cleaning up files. It:
-- ✅ Reads files from `.letta/backups/working/`
-- ✅ Edits files to improve structure and consolidate redundancy
-- ✅ Merges related blocks together to reduce fragmentation
-- ✅ Reorganizes information for better clarity and scannability
-- ✅ Deletes source files after merging their content (using Bash `rm` command)
-- ✅ Provides detailed before/after reports including merge operations
-- ❌ Does NOT run backup scripts (main agent does this)
-- ❌ Does NOT run restore scripts (main agent does this)
+- Reads files from `.letta/backups/working/`
+- Edits files to improve structure and consolidate redundancy
+- Merges related blocks together to reduce fragmentation
+- Reorganizes information for better clarity and scannability
+- Deletes source files after merging their content (using Bash `rm` command)
+- Provides detailed before/after reports including merge operations
+- Does NOT run backup scripts (main agent does this)
+- Does NOT run restore scripts (main agent does this)
 
 The memory subagent runs with `bypassPermissions` mode, giving it full Bash access to delete files after merging them. The focus is on consolidation and reorganization.
 
@@ -169,10 +150,10 @@ The memory subagent runs with `bypassPermissions` mode, giving it full Bash acce
 - After merging blocks, DELETE the source files to avoid duplication
 
 **When to DELETE a file:**
-- ✅ **After merging** - You've consolidated its content into another block (common and encouraged)
-- ✅ **Junk data** - File contains only irrelevant test/junk data with no project connection
-- ✅ **Empty/deprecated** - File is just a notice with no unique information
-- ❌ **Don't delete** - If file has unique information that hasn't been merged elsewhere
+- After merging - You've consolidated its content into another block (common and encouraged)
+- Junk data - File contains only irrelevant test/junk data with no project connection
+- Empty/deprecated - File is just a notice with no unique information
+- Don't delete - If file has unique information that hasn't been merged elsewhere
 
 **What to preserve:**
 - User preferences (sacred - never delete)
