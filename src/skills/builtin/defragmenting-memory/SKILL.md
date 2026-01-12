@@ -1,6 +1,6 @@
 ---
-name: memory-defrag
-description: Defragment and clean up agent memory blocks. Use when memory becomes messy, redundant, or poorly organized. Backs up memory, uses a subagent to clean it up, then restores the cleaned version.
+name: defragmenting-memory
+description: Defragments and cleans up agent memory blocks. Use when memory becomes messy, redundant, or poorly organized. Backs up memory, uses a subagent to clean it up, then restores the cleaned version.
 ---
 
 # Memory Defragmentation Skill
