@@ -1268,6 +1268,7 @@ export async function handleHeadlessCommand(
             "Google Vertex API error", // google_vertex_client.py:848
             "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
             "api_error", // Anthropic SDK error type field
+            "Network error", // Transient network failures during streaming
           ];
           const isLlmErrorFromDetail =
             errorType === "internal_error" &&
