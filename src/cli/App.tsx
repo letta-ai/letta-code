@@ -1,6 +1,8 @@
 // src/cli/App.tsx
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
@@ -6396,10 +6398,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     const approval = pendingApprovals[currentIndex];
     if (approval?.toolName === "ExitPlanMode" && !planFileExists()) {
       const planFilePath = permissionMode.getPlanFilePath();
+      const plansDir = join(homedir(), ".letta", "plans");
       handlePlanKeepPlanning(
-        `You must write your plan to the plan file before exiting plan mode.\n` +
-          `Plan file path: ${planFilePath || "not set"}\n` +
-          `Use a write tool (e.g. Write, ApplyPatch, etc.) to create your plan, then call ExitPlanMode again.`,
+        `You must write your plan to a plan file before exiting plan mode.\n` +
+          (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+          `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
       );
     }
   }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
@@ -6788,6 +6791,18 @@ Plan file path: ${planFilePath}`;
                       isTaskTool(ln.name) &&
                       ln.toolCallId &&
                       !pendingIds.has(ln.toolCallId)
+                    ) {
+                      return null;
+                    }
+
+                    // Skip tool calls that were eagerly committed to staticItems
+                    // (e.g., ExitPlanMode preview) - but only AFTER approval is complete
+                    // We still need to render the approval options while awaiting approval
+                    if (
+                      ln.kind === "tool_call" &&
+                      ln.toolCallId &&
+                      eagerCommittedPreviewsRef.current.has(ln.toolCallId) &&
+                      ln.toolCallId !== currentApproval?.toolCallId
                     ) {
                       return null;
                     }

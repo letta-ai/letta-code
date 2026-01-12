@@ -1,6 +1,9 @@
 // src/permissions/mode.ts
 // Permission mode management (default, acceptEdits, plan, bypassPermissions)
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { isReadOnlyShellCommand } from "./readOnlyShell";
 
 export type PermissionMode =
@@ -171,9 +174,12 @@ class PermissionModeManager {
           return "allow";
         }
 
-        // Special case: allow writes to the plan file only
+        // Special case: allow writes to any plan file in ~/.letta/plans/
+        // NOTE: We allow writing to ANY plan file, not just the assigned one.
+        // This is intentional - it allows the agent to "resume" planning after
+        // plan mode was exited/reset by simply writing to any plan file.
         if (writeTools.includes(toolName)) {
-          const planFilePath = this.getPlanFilePath();
+          const plansDir = join(homedir(), ".letta", "plans");
           let targetPath =
             (toolArgs?.file_path as string) || (toolArgs?.path as string);
 
@@ -192,7 +198,12 @@ class PermissionModeManager {
             }
           }
 
-          if (planFilePath && targetPath && targetPath === planFilePath) {
+          // Allow if target is any .md file in the plans directory
+          if (
+            targetPath &&
+            targetPath.startsWith(plansDir) &&
+            targetPath.endsWith(".md")
+          ) {
             return "allow";
           }
         }
