@@ -12,6 +12,12 @@ import {
   createOrUpdateAnthropicProvider,
   removeAnthropicProvider,
 } from "../../providers/anthropic-provider";
+import {
+  ZAI_PROVIDER_NAME,
+  createOrUpdateZaiProvider,
+  getZaiProvider,
+  removeZaiProvider,
+} from "../../providers/zai-provider";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
@@ -102,20 +108,26 @@ export async function handleConnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect claude\n\nConnect to Claude via OAuth to authenticate without an API key.",
+      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  • claude          - Connect via OAuth to authenticate without an API key\n  • zai <api_key>   - Connect to Zai with your API key",
       false,
     );
     return;
   }
 
-  if (provider !== "claude") {
+  if (provider !== "claude" && provider !== "zai") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Error: Unknown provider "${provider}"\n\nCurrently only 'claude' provider is supported.\nUsage: /connect claude`,
+      `Error: Unknown provider "${provider}"\n\nAvailable providers: claude, zai\nUsage: /connect <provider> [options]`,
       false,
     );
+    return;
+  }
+
+  // Zai is handled separately in App.tsx, but add a fallback just in case
+  if (provider === "zai") {
+    await handleConnectZai(ctx, msg);
     return;
   }
 
@@ -382,7 +394,7 @@ async function completeOAuthFlow(
 
 /**
  * Handle /disconnect command
- * Usage: /disconnect [claude]
+ * Usage: /disconnect <provider>
  */
 export async function handleDisconnect(
   ctx: ConnectCommandContext,
@@ -391,18 +403,47 @@ export async function handleDisconnect(
   const parts = msg.trim().split(/\s+/);
   const provider = parts[1]?.toLowerCase();
 
-  // If no provider specified, show help or assume claude
-  if (provider && provider !== "claude") {
+  // If no provider specified, show usage
+  if (!provider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Error: Unknown provider "${provider}"\n\nCurrently only 'claude' provider is supported.\nUsage: /disconnect`,
+      "Usage: /disconnect <provider>\n\nAvailable providers: claude, zai",
       false,
     );
     return;
   }
 
+  // Handle /disconnect zai
+  if (provider === "zai") {
+    await handleDisconnectZai(ctx, msg);
+    return;
+  }
+
+  // Handle /disconnect claude
+  if (provider === "claude") {
+    await handleDisconnectClaude(ctx, msg);
+    return;
+  }
+
+  // Unknown provider
+  addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Error: Unknown provider "${provider}"\n\nAvailable providers: claude, zai\nUsage: /disconnect <provider>`,
+    false,
+  );
+}
+
+/**
+ * Handle /disconnect claude
+ */
+async function handleDisconnectClaude(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
   // Check if connected
   if (!settingsManager.hasAnthropicOAuth()) {
     addCommandResult(
@@ -457,6 +498,137 @@ export async function handleDisconnect(
         `Warning: Failed to remove provider from Letta: ${getErrorMessage(error)}\n` +
         `Your local OAuth tokens have been removed.`,
       true,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /disconnect zai
+ */
+async function handleDisconnectZai(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  // Check if Zai provider exists
+  const existing = await getZaiProvider();
+  if (!existing) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Not currently connected to Zai.\n\nUse /connect zai <api_key> to connect.",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Disconnecting from Zai...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Remove provider from Letta
+    await removeZaiProvider();
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Disconnected from Zai.\n\n` +
+        `Provider '${ZAI_PROVIDER_NAME}' removed from Letta.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✗ Failed to disconnect from Zai: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /connect zai command
+ * Usage: /connect zai <api_key>
+ *
+ * Creates the zai-coding-plan provider with the provided API key
+ */
+export async function handleConnectZai(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  const parts = msg.trim().split(/\s+/);
+  // Join all remaining parts in case the API key got split
+  const apiKey = parts.slice(2).join("");
+
+  // If no API key provided, show usage
+  if (!apiKey || apiKey.length === 0) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Usage: /connect zai <api_key>\n\n" +
+        "Connect to Zai by providing your API key.\n\n" +
+        "Example: /connect zai <api_key>...",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Creating Zai coding plan provider...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Create or update the Zai provider with the API key
+    await createOrUpdateZaiProvider(apiKey);
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Successfully connected to Zai!\n\n` +
+        `Provider '${ZAI_PROVIDER_NAME}' created in Letta.\n\n` +
+        `The models are populated in /model → "All Available Models"`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✗ Failed to create Zai provider: ${getErrorMessage(error)}`,
+      false,
       "finished",
     );
   } finally {
