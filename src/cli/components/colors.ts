@@ -117,7 +117,7 @@ export const colors = {
 
   // Todo list
   todo: {
-    completed: brandColors.blue,
+    completed: brandColors.primaryAccent, // Same blue as in-progress, with strikethrough
     inProgress: brandColors.primaryAccent,
   },
 
@@ -127,8 +127,8 @@ export const colors = {
     running: brandColors.statusWarning,
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
-    treeChar: brandColors.textDisabled,
-    hint: brandColors.textDisabled,
+    treeChar: brandColors.textSecondary,
+    hint: "#808080", // Grey to match Ink's dimColor
   },
 
   // Info/modal views

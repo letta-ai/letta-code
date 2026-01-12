@@ -1,9 +1,12 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
+import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 
 type BashCommandLine = {
   kind: "bash_command";
@@ -12,6 +15,7 @@ type BashCommandLine = {
   output: string;
   phase?: "running" | "finished";
   success?: boolean;
+  streaming?: StreamingState;
 };
 
 /**
@@ -54,8 +58,18 @@ export const BashCommandMessage = memo(
           </Box>
         </Box>
 
-        {/* Command output (if present) */}
-        {line.output && (
+        {/* Streaming output during execution */}
+        {line.phase === "running" && line.streaming && (
+          <StreamingOutputDisplay streaming={line.streaming} />
+        )}
+
+        {/* Collapsed output after completion */}
+        {line.phase === "finished" && line.output && (
+          <CollapsedOutputDisplay output={line.output} />
+        )}
+
+        {/* Fallback: show output when phase is undefined (legacy bash commands before streaming) */}
+        {!line.phase && line.output && (
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text>{"  ⎿  "}</Text>

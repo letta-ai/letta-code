@@ -20,12 +20,14 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 // Built-in subagent definitions (embedded at build time)
 import exploreAgentMd from "./builtin/explore.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
+import memoryAgentMd from "./builtin/memory.md";
 import planAgentMd from "./builtin/plan.md";
 import recallAgentMd from "./builtin/recall.md";
 
 const BUILTIN_SOURCES = [
   exploreAgentMd,
   generalPurposeAgentMd,
+  memoryAgentMd,
   planAgentMd,
   recallAgentMd,
 ];
@@ -55,6 +57,8 @@ export interface SubagentConfig {
   skills: string[];
   /** Memory blocks the subagent has access to - list of labels or "all" or "none" */
   memoryBlocks: MemoryBlockLabel[] | "all" | "none";
+  /** Permission mode for this subagent (default, acceptEdits, plan, bypassPermissions) */
+  permissionMode?: string;
 }
 
 /**
@@ -219,6 +223,7 @@ function parseSubagentContent(content: string): SubagentConfig {
     memoryBlocks: parseMemoryBlocks(
       getStringField(frontmatter, "memoryBlocks"),
     ),
+    permissionMode: getStringField(frontmatter, "permissionMode"),
   };
 }
 

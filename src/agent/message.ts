@@ -23,9 +23,11 @@ export async function sendMessageStream(
     background?: boolean;
     // add more later: includePings, request timeouts, etc.
   } = { streamTokens: true, background: true },
+  // TODO: Re-enable once issues are resolved - disabled retries were causing problems
   // Disable SDK retries by default - state management happens outside the stream,
   // so retries would violate idempotency and create race conditions
-  requestOptions: { maxRetries?: number } = { maxRetries: 0 },
+  // requestOptions: { maxRetries?: number } = { maxRetries: 0 },
+  requestOptions: { maxRetries?: number } = {},
 ): Promise<Stream<LettaStreamingResponse>> {
   // Capture request start time for TTFT measurement when timings are enabled
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
