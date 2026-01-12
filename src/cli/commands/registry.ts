@@ -247,15 +247,15 @@ export const commands: Record<string, Command> = {
 
   // === Session management (order 40-49) ===
   "/connect": {
-    desc: "Connect an existing Claude account (/connect claude)",
+    desc: "Connect an existing account (/connect zai <api-key>)",
     order: 40,
     handler: () => {
       // Handled specially in App.tsx
-      return "Initiating OAuth connection...";
+      return "Initiating account connection...";
     },
   },
   "/disconnect": {
-    desc: "Disconnect from Claude OAuth",
+    desc: "Disconnect an existing account (/disconnect zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx

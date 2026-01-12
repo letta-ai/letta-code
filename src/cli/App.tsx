@@ -3516,6 +3516,20 @@ export default function App({
           const provider = parts[1]?.toLowerCase();
           const hasCode = parts.length > 2;
 
+          // Handle /connect zai - create zai-coding-plan provider
+          if (provider === "zai") {
+            const { handleConnectZai } = await import("./commands/connect");
+            await handleConnectZai(
+              {
+                buffersRef,
+                refreshDerived,
+                setCommandRunning,
+              },
+              msg,
+            );
+            return { submitted: true };
+          }
+
           // If no code provided and provider is claude, show the OAuth dialog
           if (provider === "claude" && !hasCode) {
             setActiveOverlay("oauth");
