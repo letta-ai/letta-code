@@ -1,61 +1,116 @@
-#!/usr/bin/env bun
+#!/usr/bin/env npx tsx
 /**
  * Restore Memory Blocks from Local Files
- * 
+ *
  * Imports memory blocks from local files back into an agent.
  * Reads files from a backup directory and updates the agent's memory blocks.
- * 
+ *
+ * This script is standalone and can be run outside the CLI process.
+ * It reads auth from LETTA_API_KEY env var or ~/.letta/settings.json.
+ *
  * Usage:
- *   bun .letta/memory-utils/restore-memory.ts <agent-id> <backup-dir>
- * 
+ *   npx tsx restore-memory.ts <agent-id> <backup-dir> [options]
+ *
  * Example:
- *   bun .letta/memory-utils/restore-memory.ts agent-abc123 .letta/backups/working
- *   bun .letta/memory-utils/restore-memory.ts $LETTA_PARENT_AGENT_ID .letta/backups/working
+ *   npx tsx restore-memory.ts agent-abc123 .letta/backups/working
+ *   npx tsx restore-memory.ts $LETTA_AGENT_ID .letta/backups/working --dry-run
  */
 
-import { readFile, readdir } from "node:fs/promises";
-import { join, extname } from "node:path";
-import { getClient } from "../../src/agent/client";
-import { settingsManager } from "../../src/settings-manager";
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { extname, join } from "node:path";
+
 import type { BackupManifest } from "./backup-memory";
 
+// Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
+// (ES module imports don't respect NODE_PATH, but require does)
+const require = createRequire(import.meta.url);
+const Letta = require("@letta-ai/letta-client")
+  .default as typeof import("@letta-ai/letta-client").default;
+type LettaClient = InstanceType<typeof Letta>;
+
+/**
+ * Get API key from env var or settings file
+ */
+function getApiKey(): string {
+  if (process.env.LETTA_API_KEY) {
+    return process.env.LETTA_API_KEY;
+  }
+
+  const settingsPath = join(homedir(), ".letta", "settings.json");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (settings.env?.LETTA_API_KEY) {
+      return settings.env.LETTA_API_KEY;
+    }
+  } catch {
+    // Settings file doesn't exist or is invalid
+  }
+
+  throw new Error(
+    "No LETTA_API_KEY found. Set the env var or run the Letta CLI to authenticate.",
+  );
+}
+
+/**
+ * Create a Letta client with auth from env/settings
+ */
+function createClient(): LettaClient {
+  return new Letta({ apiKey: getApiKey() });
+}
+
+/**
+ * Restore memory blocks from local files
+ */
 async function restoreMemory(
   agentId: string,
   backupDir: string,
   options: { dryRun?: boolean } = {},
 ): Promise<void> {
-  await settingsManager.initialize();
-  const client = await getClient();
-  
+  const client = createClient();
+
   console.log(`Restoring memory blocks for agent ${agentId}...`);
   console.log(`Source: ${backupDir}`);
-  
+
   if (options.dryRun) {
     console.log("⚠️  DRY RUN MODE - No changes will be made\n");
   }
-  
+
   // Read manifest
   const manifestPath = join(backupDir, "manifest.json");
   let manifest: BackupManifest | null = null;
-  
+
   try {
-    const manifestContent = await readFile(manifestPath, "utf-8");
+    const manifestContent = readFileSync(manifestPath, "utf-8");
     manifest = JSON.parse(manifestContent);
-    console.log(`Loaded manifest (${manifest.blocks.length} blocks)\n`);
-  } catch (error) {
-    console.warn("Warning: No manifest.json found, will scan directory for .md files");
+    console.log(`Loaded manifest (${manifest?.blocks.length} blocks)\n`);
+  } catch {
+    console.warn(
+      "Warning: No manifest.json found, will scan directory for .md files",
+    );
   }
-  
+
   // Get current agent blocks
   const blocksResponse = await client.agents.blocks.list(agentId);
-  const currentBlocks = Array.isArray(blocksResponse) 
-    ? blocksResponse 
-    : (blocksResponse.items || blocksResponse.blocks || []);
-  const blocksByLabel = new Map(currentBlocks.map((b) => [b.label, b]));
-  
+  const currentBlocks = Array.isArray(blocksResponse)
+    ? blocksResponse
+    : (blocksResponse as { items?: unknown[] }).items ||
+      (blocksResponse as { blocks?: unknown[] }).blocks ||
+      [];
+  const blocksByLabel = new Map(
+    (currentBlocks as Array<{ label: string; id: string; value?: string }>).map(
+      (b) => [b.label, b],
+    ),
+  );
+
   // Determine which files to restore
-  let filesToRestore: Array<{ label: string; filename: string; blockId?: string }> = [];
-  
+  let filesToRestore: Array<{
+    label: string;
+    filename: string;
+    blockId?: string;
+  }> = [];
+
   if (manifest) {
     // Use manifest
     filesToRestore = manifest.blocks.map((b) => ({
@@ -65,7 +120,7 @@ async function restoreMemory(
     }));
   } else {
     // Scan directory for .md files
-    const files = await readdir(backupDir);
+    const files = readdirSync(backupDir);
     filesToRestore = files
       .filter((f) => extname(f) === ".md")
       .map((f) => ({
@@ -73,52 +128,60 @@ async function restoreMemory(
         filename: f,
       }));
   }
-  
+
   console.log(`Found ${filesToRestore.length} files to restore\n`);
-  
+
   // Detect blocks to delete (exist on agent but not in backup)
   const backupLabels = new Set(filesToRestore.map((f) => f.label));
-  const blocksToDelete = currentBlocks.filter((b) => !backupLabels.has(b.label));
-  
+  const blocksToDelete = (
+    currentBlocks as Array<{ label: string; id: string }>
+  ).filter((b) => !backupLabels.has(b.label));
+
   // Restore each block
   let updated = 0;
   let created = 0;
   let skipped = 0;
   let deleted = 0;
-  
+
   // Track new blocks for later confirmation
-  const blocksToCreate: Array<{ label: string; value: string; description: string }> = [];
-  
+  const blocksToCreate: Array<{
+    label: string;
+    value: string;
+    description: string;
+  }> = [];
+
   for (const { label, filename } of filesToRestore) {
     const filepath = join(backupDir, filename);
-    
+
     try {
-      const newValue = await readFile(filepath, "utf-8");
+      const newValue = readFileSync(filepath, "utf-8");
       const existingBlock = blocksByLabel.get(label);
-      
+
       if (existingBlock) {
         // Update existing block
         const unchanged = existingBlock.value === newValue;
-        
+
         if (unchanged) {
           console.log(`  ⏭️  ${label} - unchanged, skipping`);
           skipped++;
           continue;
         }
-        
+
         if (!options.dryRun) {
           await client.agents.blocks.update(label, {
             agent_id: agentId,
             value: newValue,
           });
         }
-        
+
         const oldLen = existingBlock.value?.length || 0;
         const newLen = newValue.length;
         const diff = newLen - oldLen;
         const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
-        
-        console.log(`  ✓ ${label} - updated (${oldLen} -> ${newLen} chars, ${diffStr})`);
+
+        console.log(
+          `  ✓ ${label} - updated (${oldLen} -> ${newLen} chars, ${diffStr})`,
+        );
         updated++;
       } else {
         // New block - collect for later confirmation
@@ -130,26 +193,30 @@ async function restoreMemory(
         });
       }
     } catch (error) {
-      console.error(`  ❌ ${label} - error: ${error.message}`);
+      console.error(
+        `  ❌ ${label} - error: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
-  
+
   // Handle new blocks (exist in backup but not on agent)
   if (blocksToCreate.length > 0) {
     console.log(`\n➕ Found ${blocksToCreate.length} new block(s) to create:`);
     for (const block of blocksToCreate) {
       console.log(`    - ${block.label} (${block.value.length} chars)`);
     }
-    
+
     if (!options.dryRun) {
       console.log(`\nThese blocks will be CREATED on the agent.`);
-      console.log(`Press Ctrl+C to cancel, or press Enter to confirm creation...`);
-      
+      console.log(
+        `Press Ctrl+C to cancel, or press Enter to confirm creation...`,
+      );
+
       // Wait for user confirmation
       await new Promise<void>((resolve) => {
-        process.stdin.once('data', () => resolve());
+        process.stdin.once("data", () => resolve());
       });
-      
+
       console.log();
       for (const block of blocksToCreate) {
         try {
@@ -160,43 +227,49 @@ async function restoreMemory(
             description: block.description,
             limit: 20000,
           });
-          
+
           if (!createdBlock.id) {
             throw new Error(`Created block ${block.label} has no ID`);
           }
-          
+
           // Attach the newly created block to the agent
           await client.agents.blocks.attach(createdBlock.id, {
             agent_id: agentId,
           });
-          
+
           console.log(`  ✅ ${block.label} - created and attached`);
           created++;
         } catch (error) {
-          console.error(`  ❌ ${block.label} - error creating: ${error.message}`);
+          console.error(
+            `  ❌ ${block.label} - error creating: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
     } else {
       console.log(`\n(Would create these blocks if not in dry-run mode)`);
     }
   }
-  
+
   // Handle deletions (blocks that exist on agent but not in backup)
   if (blocksToDelete.length > 0) {
-    console.log(`\n⚠️  Found ${blocksToDelete.length} block(s) that were removed from backup:`);
+    console.log(
+      `\n⚠️  Found ${blocksToDelete.length} block(s) that were removed from backup:`,
+    );
     for (const block of blocksToDelete) {
       console.log(`    - ${block.label}`);
     }
-    
+
     if (!options.dryRun) {
       console.log(`\nThese blocks will be DELETED from the agent.`);
-      console.log(`Press Ctrl+C to cancel, or press Enter to confirm deletion...`);
-      
+      console.log(
+        `Press Ctrl+C to cancel, or press Enter to confirm deletion...`,
+      );
+
       // Wait for user confirmation
       await new Promise<void>((resolve) => {
-        process.stdin.once('data', () => resolve());
+        process.stdin.once("data", () => resolve());
       });
-      
+
       console.log();
       for (const block of blocksToDelete) {
         try {
@@ -206,20 +279,22 @@ async function restoreMemory(
           console.log(`  🗑️  ${block.label} - deleted`);
           deleted++;
         } catch (error) {
-          console.error(`  ❌ ${block.label} - error deleting: ${error.message}`);
+          console.error(
+            `  ❌ ${block.label} - error deleting: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
     } else {
       console.log(`\n(Would delete these blocks if not in dry-run mode)`);
     }
   }
-  
+
   console.log(`\n📊 Summary:`);
   console.log(`   Updated: ${updated}`);
   console.log(`   Skipped: ${skipped}`);
   console.log(`   Created: ${created}`);
   console.log(`   Deleted: ${deleted}`);
-  
+
   if (options.dryRun) {
     console.log(`\n⚠️  DRY RUN - No changes were made`);
     console.log(`   Run without --dry-run to apply changes`);
@@ -228,43 +303,46 @@ async function restoreMemory(
   }
 }
 
-// CLI Entry Point
-if (import.meta.main) {
+// CLI Entry Point - check if this file is being run directly
+const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
   const args = process.argv.slice(2);
-  
+
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(`
-Usage: bun .letta/memory-utils/restore-memory.ts <agent-id> <backup-dir> [options]
+Usage: npx tsx restore-memory.ts <agent-id> <backup-dir> [options]
 
 Arguments:
-  agent-id     Agent ID to restore to (can use $LETTA_PARENT_AGENT_ID)
+  agent-id     Agent ID to restore to (can use $LETTA_AGENT_ID)
   backup-dir   Backup directory containing memory block files
 
 Options:
   --dry-run    Preview changes without applying them
 
 Examples:
-  bun .letta/memory-utils/restore-memory.ts agent-abc123 .letta/backups/working
-  bun .letta/memory-utils/restore-memory.ts $LETTA_PARENT_AGENT_ID .letta/backups/working
-  bun .letta/memory-utils/restore-memory.ts agent-abc123 .letta/backups/working --dry-run
+  npx tsx restore-memory.ts agent-abc123 .letta/backups/working
+  npx tsx restore-memory.ts $LETTA_AGENT_ID .letta/backups/working
+  npx tsx restore-memory.ts agent-abc123 .letta/backups/working --dry-run
     `);
     process.exit(0);
   }
-  
+
   const agentId = args[0];
   const backupDir = args[1];
   const dryRun = args.includes("--dry-run");
-  
+
   if (!agentId || !backupDir) {
     console.error("Error: agent-id and backup-dir are required");
     process.exit(1);
   }
-  
-  restoreMemory(agentId, backupDir, { dryRun })
-    .catch((error) => {
-      console.error("Error restoring memory:", error.message);
-      process.exit(1);
-    });
+
+  restoreMemory(agentId, backupDir, { dryRun }).catch((error) => {
+    console.error(
+      "Error restoring memory:",
+      error instanceof Error ? error.message : String(error),
+    );
+    process.exit(1);
+  });
 }
 
 export { restoreMemory };
