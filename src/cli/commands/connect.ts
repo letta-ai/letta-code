@@ -13,10 +13,10 @@ import {
   removeAnthropicProvider,
 } from "../../providers/anthropic-provider";
 import {
-  ZAI_PROVIDER_NAME,
   createOrUpdateZaiProvider,
   getZaiProvider,
   removeZaiProvider,
+  ZAI_PROVIDER_NAME,
 } from "../../providers/zai-provider";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
