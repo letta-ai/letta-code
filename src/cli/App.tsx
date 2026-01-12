@@ -6795,6 +6795,18 @@ Plan file path: ${planFilePath}`;
                       return null;
                     }
 
+                    // Skip tool calls that were eagerly committed to staticItems
+                    // (e.g., ExitPlanMode preview) - but only AFTER approval is complete
+                    // We still need to render the approval options while awaiting approval
+                    if (
+                      ln.kind === "tool_call" &&
+                      ln.toolCallId &&
+                      eagerCommittedPreviewsRef.current.has(ln.toolCallId) &&
+                      ln.toolCallId !== currentApproval?.toolCallId
+                    ) {
+                      return null;
+                    }
+
                     // Check if this tool call matches the current ExitPlanMode approval
                     const isExitPlanModeApproval =
                       ln.kind === "tool_call" &&
