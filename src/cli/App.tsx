@@ -48,6 +48,7 @@ import {
   type RalphState,
   ralphMode,
 } from "../ralph/mode";
+import { getSandboxStatus, type SandboxStatus } from "../sandbox";
 import { updateProjectSettings } from "../settings";
 import { settingsManager } from "../settings-manager";
 import { telemetry } from "../telemetry";
@@ -104,6 +105,7 @@ import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { ResumeSelector } from "./components/ResumeSelector";
+import { SandboxSelector } from "./components/SandboxSelector";
 import { formatUsageStats } from "./components/SessionStats";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -791,6 +793,7 @@ export default function App({
     | "pin"
     | "new"
     | "mcp"
+    | "sandbox"
     | "help"
     | "oauth"
     | null;
@@ -803,6 +806,11 @@ export default function App({
 
   // Pin dialog state
   const [pinDialogLocal, setPinDialogLocal] = useState(false);
+
+  // Sandbox state
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(
+    null,
+  );
 
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
@@ -1380,6 +1388,14 @@ export default function App({
                 ? "gemini"
                 : "default";
             setCurrentToolset(derivedToolset);
+          }
+
+          // Fetch sandbox status
+          try {
+            const status = await getSandboxStatus(agentId);
+            setSandboxStatus(status);
+          } catch {
+            setSandboxStatus(null);
           }
         } catch (error) {
           console.error("Error fetching agent config:", error);
@@ -3507,6 +3523,69 @@ export default function App({
 
           // Unknown subcommand
           handleMcpUsage(mcpCtx, msg);
+          return { submitted: true };
+        }
+
+        // Special handling for /sandbox command - manage sandbox providers
+        if (trimmed === "/sandbox" || trimmed.startsWith("/sandbox ")) {
+          const afterSandbox = trimmed.slice(8).trim();
+          const firstWord = afterSandbox.split(/\s+/)[0]?.toLowerCase();
+
+          // /sandbox or /sandbox enable - open sandbox selector
+          if (!firstWord || firstWord === "enable") {
+            setActiveOverlay("sandbox");
+            return { submitted: true };
+          }
+
+          // /sandbox disable - disable sandbox directly
+          if (firstWord === "disable") {
+            setCommandRunning(true);
+
+            try {
+              const { disableSandbox } = await import("../sandbox");
+              const removed = await disableSandbox(agentId);
+              setSandboxStatus({ enabled: false, provider: null });
+              const cmdId = uid("cmd");
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Sandbox disabled (${removed} tools removed)`,
+                phase: "finished",
+                success: true,
+              });
+              buffersRef.current.order.push(cmdId);
+            } catch (err) {
+              const cmdId = uid("cmd");
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: trimmed,
+                output: `Failed to disable sandbox: ${err}`,
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+            }
+
+            setCommandRunning(false);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // Unknown subcommand - show usage
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output:
+              "Usage: /sandbox [enable|disable]\n  /sandbox        - Open sandbox provider selector\n  /sandbox enable - Same as /sandbox\n  /sandbox disable - Remove sandbox tools",
+            phase: "finished",
+            success: true,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           return { submitted: true };
         }
 
@@ -7179,6 +7258,7 @@ Plan file path: ${planFilePath}`;
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                sandboxProvider={sandboxStatus?.provider ?? null}
                 messageQueue={messageQueue}
                 onEnterQueueEditMode={handleEnterQueueEditMode}
                 onEscapeCancel={
@@ -7282,6 +7362,34 @@ Plan file path: ${planFilePath}`;
                     input: "/mcp",
                     output:
                       "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                    phase: "finished",
+                    success: true,
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* Sandbox Selector - conditionally mounted as overlay */}
+            {activeOverlay === "sandbox" && (
+              <SandboxSelector
+                agentId={agentId}
+                initialStatus={sandboxStatus ?? undefined}
+                onComplete={(message) => {
+                  closeOverlay();
+                  // Update sandbox status
+                  getSandboxStatus(agentId)
+                    .then(setSandboxStatus)
+                    .catch(() => setSandboxStatus(null));
+                  // Show result
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/sandbox",
+                    output: message,
                     phase: "finished",
                     success: true,
                   });
