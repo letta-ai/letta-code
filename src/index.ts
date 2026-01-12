@@ -769,6 +769,14 @@ async function main(): Promise<void> {
   const AppModule = await import("./cli/App");
   const App = AppModule.default;
 
+  type AppType = typeof App;
+  type AppProps = Parameters<AppType>[0];
+  let ui: AppProps["ui"] | undefined;
+  if (process.env.LETTA_CODE_WEB_UI_SOCKET) {
+    const { createWebTuiUi } = await import("./cli/web-tui/ui");
+    ui = createWebTuiUi();
+  }
+
   function LoadingApp({
     continueSession,
     forceNew,
@@ -1301,6 +1309,7 @@ async function main(): Promise<void> {
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
+        ui,
       });
     }
 
@@ -1314,6 +1323,7 @@ async function main(): Promise<void> {
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
+      ui,
     });
   }
 

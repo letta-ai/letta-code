@@ -3,7 +3,13 @@
  * Exits plan mode - the plan is read from the plan file by the UI
  */
 
+import { permissionMode } from "../../permissions/mode";
+
 export async function exit_plan_mode(): Promise<{ message: string }> {
+  if (permissionMode.getMode() === "plan") {
+    permissionMode.setMode("default");
+  }
+
   // Return confirmation message that plan was approved
   // Note: The plan is read from the plan file by the UI before this return is shown
   // The UI layer checks if the plan file exists and auto-rejects if not

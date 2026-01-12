@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { permissionMode } from "../../permissions/mode";
 import { exit_plan_mode } from "../../tools/impl/ExitPlanMode";
 
 describe("ExitPlanMode tool", () => {
@@ -14,5 +15,13 @@ describe("ExitPlanMode tool", () => {
 
     expect(result.message).toBeDefined();
     expect(result.message).toContain("todo list");
+  });
+
+  test("exits plan permission mode", async () => {
+    permissionMode.setMode("plan");
+    expect(permissionMode.getMode()).toBe("plan");
+
+    await exit_plan_mode();
+    expect(permissionMode.getMode()).toBe("default");
   });
 });
