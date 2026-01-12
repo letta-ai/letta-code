@@ -100,6 +100,10 @@ export function SetupUI({ onComplete }: SetupUIProps) {
               tokenExpiresAt: now + tokens.expires_in * 1000,
             });
 
+            // Wait for all pending writes (keychain, disk) to complete before continuing
+            // This prevents a race condition where main() validation runs before tokens are persisted
+            await settingsManager.flush();
+
             setMode("done");
             setTimeout(() => onComplete(), 1000);
           } catch (err) {
