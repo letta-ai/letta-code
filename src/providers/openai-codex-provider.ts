@@ -1,13 +1,13 @@
 /**
- * Direct API calls to Letta for managing Anthropic provider
+ * Direct API calls to Letta for managing OpenAI Codex provider
  * Bypasses SDK since it doesn't expose providers API
  */
 
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
-// Provider name constant for letta-code's Anthropic OAuth provider
-export const ANTHROPIC_PROVIDER_NAME = "claude-pro-max";
+// Provider name constant for letta-code's OpenAI Codex OAuth provider
+export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
 
 interface ProviderResponse {
   id: string;
@@ -116,79 +116,79 @@ export async function listProviders(): Promise<ProviderResponse[]> {
 }
 
 /**
- * Get the letta-code-claude provider if it exists
+ * Get the chatgpt-plus-pro provider if it exists
  */
-export async function getAnthropicProvider(): Promise<ProviderResponse | null> {
+export async function getOpenAICodexProvider(): Promise<ProviderResponse | null> {
   const providers = await listProviders();
-  return providers.find((p) => p.name === ANTHROPIC_PROVIDER_NAME) || null;
+  return providers.find((p) => p.name === OPENAI_CODEX_PROVIDER_NAME) || null;
 }
 
 /**
- * Create a new Anthropic provider with OAuth access token
+ * Create a new OpenAI Codex provider with API key
  */
-export async function createAnthropicProvider(
-  accessToken: string,
+export async function createOpenAICodexProvider(
+  apiKey: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
-    name: ANTHROPIC_PROVIDER_NAME,
-    provider_type: "anthropic",
-    api_key: accessToken,
+    name: OPENAI_CODEX_PROVIDER_NAME,
+    provider_type: "openai",
+    api_key: apiKey,
   });
 }
 
 /**
- * Update an existing Anthropic provider with new access token
+ * Update an existing OpenAI Codex provider with new API key
  */
-export async function updateAnthropicProvider(
+export async function updateOpenAICodexProvider(
   providerId: string,
-  accessToken: string,
+  apiKey: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
-      api_key: accessToken,
+      api_key: apiKey,
     },
   );
 }
 
 /**
- * Delete the Anthropic provider
+ * Delete the OpenAI Codex provider
  */
-export async function deleteAnthropicProvider(
+export async function deleteOpenAICodexProvider(
   providerId: string,
 ): Promise<void> {
   await providersRequest<void>("DELETE", `/v1/providers/${providerId}`);
 }
 
 /**
- * Create or update the Anthropic provider with OAuth access token
+ * Create or update the OpenAI Codex provider with API key
  * This is the main function called after successful /connect
  */
-export async function createOrUpdateAnthropicProvider(
-  accessToken: string,
+export async function createOrUpdateOpenAICodexProvider(
+  apiKey: string,
 ): Promise<ProviderResponse> {
-  const existing = await getAnthropicProvider();
+  const existing = await getOpenAICodexProvider();
 
   if (existing) {
-    // Update existing provider with new token
-    return updateAnthropicProvider(existing.id, accessToken);
+    // Update existing provider with new API key
+    return updateOpenAICodexProvider(existing.id, apiKey);
   } else {
     // Create new provider
-    return createAnthropicProvider(accessToken);
+    return createOpenAICodexProvider(apiKey);
   }
 }
 
 /**
- * Ensure the Anthropic provider has a valid (non-expired) token
+ * Ensure the OpenAI Codex provider has a valid (non-expired) token
  * Call this before making requests that use the provider
  */
-export async function ensureAnthropicProviderToken(): Promise<void> {
+export async function ensureOpenAICodexProviderToken(): Promise<void> {
   const settings = settingsManager.getSettings();
-  const tokens = settings.anthropicOAuth;
+  const tokens = settings.openaiOAuth;
 
   if (!tokens) {
-    // No Anthropic OAuth configured, nothing to do
+    // No OpenAI OAuth configured, nothing to do
     return;
   }
 
@@ -196,39 +196,42 @@ export async function ensureAnthropicProviderToken(): Promise<void> {
   const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
   if (tokens.expires_at < fiveMinutesFromNow && tokens.refresh_token) {
     // Token is expired or about to expire, refresh it
-    const { refreshAnthropicToken } = await import("../auth/anthropic-oauth");
+    const { refreshOpenAIToken, exchangeTokenForApiKey } = await import(
+      "../auth/openai-oauth"
+    );
 
     try {
-      const newTokens = await refreshAnthropicToken(tokens.refresh_token);
-      settingsManager.storeAnthropicTokens(newTokens);
+      const newTokens = await refreshOpenAIToken(tokens.refresh_token);
+      const apiKey = await exchangeTokenForApiKey(newTokens.id_token);
+      settingsManager.storeOpenAITokens(newTokens, apiKey);
 
-      // Update the provider with the new access token
-      const existing = await getAnthropicProvider();
+      // Update the provider with the new API key
+      const existing = await getOpenAICodexProvider();
       if (existing) {
-        await updateAnthropicProvider(existing.id, newTokens.access_token);
+        await updateOpenAICodexProvider(existing.id, apiKey);
       }
     } catch (error) {
-      console.error("Failed to refresh Anthropic access token:", error);
+      console.error("Failed to refresh OpenAI access token:", error);
       // Continue with existing token, it might still work
     }
   }
 }
 
 /**
- * Remove the Anthropic provider (called on /disconnect)
+ * Remove the OpenAI Codex provider (called on /disconnect)
  */
-export async function removeAnthropicProvider(): Promise<void> {
-  const existing = await getAnthropicProvider();
+export async function removeOpenAICodexProvider(): Promise<void> {
+  const existing = await getOpenAICodexProvider();
   if (existing) {
-    await deleteAnthropicProvider(existing.id);
+    await deleteOpenAICodexProvider(existing.id);
   }
 }
 
 /**
- * Check if user is eligible for Anthropic OAuth
+ * Check if user is eligible for OpenAI Codex OAuth
  * Requires Pro or Enterprise billing tier
  */
-export async function checkAnthropicOAuthEligibility(): Promise<EligibilityCheckResult> {
+export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckResult> {
   try {
     const balance = await providersRequest<BalanceResponse>(
       "GET",
@@ -248,12 +251,12 @@ export async function checkAnthropicOAuthEligibility(): Promise<EligibilityCheck
     return {
       eligible: false,
       billing_tier: balance.billing_tier,
-      reason: `Claude OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
+      reason: `OpenAI Codex OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
     };
   } catch (error) {
     // If we can't check eligibility, allow the flow to continue
     // The provider creation will handle the error appropriately
-    console.warn("Failed to check Anthropic OAuth eligibility:", error);
+    console.warn("Failed to check OpenAI Codex OAuth eligibility:", error);
     return {
       eligible: true,
       billing_tier: "unknown",

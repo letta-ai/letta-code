@@ -47,46 +47,51 @@
     }
   },
   {
-    "id": "sonnet-4.5-pro-max",
-    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
-    "label": "Sonnet 4.5",
-    "description": "Sonnet 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-codex-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+    "label": "GPT-5.2 Codex",
+    "description": "GPT-5.2 Codex (med reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "sonnet-4.5-no-reasoning-pro-max",
-    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
-    "label": "Sonnet 4.5",
-    "description": "Sonnet 4.5 (no reasoning) via Claude Pro/Max Plan",
+    "id": "gpt-5.2-codex-high",
+    "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+    "label": "GPT-5.2 Codex",
+    "description": "GPT-5.2 Codex (high reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "enable_reasoner": false,
-      "context_window": 180000,
-      "max_output_tokens": 64000
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "opus-pro-max",
-    "handle": "claude-pro-max/claude-opus-4-5-20251101",
-    "label": "Opus 4.5",
-    "description": "Opus 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.2",
+    "label": "GPT-5.2",
+    "description": "GPT-5.2 (med reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "haiku-pro-max",
-    "handle": "claude-pro-max/claude-haiku-4-5-20251001",
-    "label": "Haiku 4.5",
-    "description": "Haiku 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.2",
+    "label": "GPT-5.2",
+    "description": "GPT-5.2 (high reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {

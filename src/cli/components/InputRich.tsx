@@ -20,7 +20,7 @@ import {
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
-import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
@@ -50,7 +50,7 @@ const InputFooter = memo(function InputFooter({
   showExitHint,
   agentName,
   currentModel,
-  isAnthropicProvider,
+  isOpenAICodexProvider,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -60,7 +60,7 @@ const InputFooter = memo(function InputFooter({
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
-  isAnthropicProvider: boolean;
+  isOpenAICodexProvider: boolean;
 }) {
   return (
     <Box justifyContent="space-between" marginBottom={1}>
@@ -90,8 +90,8 @@ const InputFooter = memo(function InputFooter({
       <Text>
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
         <Text
-          dimColor={!isAnthropicProvider}
-          color={isAnthropicProvider ? "#FFC787" : undefined}
+          dimColor={!isOpenAICodexProvider}
+          color={isOpenAICodexProvider ? "#74AA9C" : undefined}
         >
           {` [${currentModel ?? "unknown"}]`}
         </Text>
@@ -835,7 +835,9 @@ export function Input({
           showExitHint={ralphActive || ralphPending}
           agentName={agentName}
           currentModel={currentModel}
-          isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+          isOpenAICodexProvider={
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
         />
       </Box>
     </Box>

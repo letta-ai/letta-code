@@ -29,18 +29,20 @@ export interface Settings {
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
-  // Anthropic OAuth
-  anthropicOAuth?: {
+  // OpenAI Codex OAuth
+  openaiOAuth?: {
     access_token: string;
+    id_token: string;
     refresh_token?: string;
     expires_at: number; // Unix timestamp in milliseconds
-    scope?: string;
+    api_key?: string; // The exchanged API key
   };
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
     codeVerifier: string;
-    provider: "anthropic";
+    redirectUri: string;
+    provider: "openai";
     timestamp: number;
   };
 }
@@ -837,43 +839,47 @@ class SettingsManager {
   }
 
   // =====================================================================
-  // Anthropic OAuth Management
+  // OpenAI Codex OAuth Management
   // =====================================================================
 
   /**
-   * Store Anthropic OAuth tokens
+   * Store OpenAI OAuth tokens and API key
    */
-  storeAnthropicTokens(tokens: {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-    scope?: string;
-  }): void {
+  storeOpenAITokens(
+    tokens: {
+      access_token: string;
+      id_token: string;
+      refresh_token?: string;
+      expires_in: number;
+    },
+    apiKey?: string,
+  ): void {
     this.updateSettings({
-      anthropicOAuth: {
+      openaiOAuth: {
         access_token: tokens.access_token,
+        id_token: tokens.id_token,
         refresh_token: tokens.refresh_token,
         expires_at: Date.now() + tokens.expires_in * 1000,
-        scope: tokens.scope,
+        api_key: apiKey,
       },
     });
   }
 
   /**
-   * Get Anthropic OAuth tokens (returns null if not set or expired)
+   * Get OpenAI OAuth tokens (returns null if not set)
    */
-  getAnthropicTokens(): Settings["anthropicOAuth"] | null {
+  getOpenAITokens(): Settings["openaiOAuth"] | null {
     const settings = this.getSettings();
-    if (!settings.anthropicOAuth) return null;
-    return settings.anthropicOAuth;
+    if (!settings.openaiOAuth) return null;
+    return settings.openaiOAuth;
   }
 
   /**
-   * Check if Anthropic OAuth tokens are expired or about to expire
+   * Check if OpenAI OAuth tokens are expired or about to expire
    * Returns true if token expires within the next 5 minutes
    */
-  isAnthropicTokenExpired(): boolean {
-    const tokens = this.getAnthropicTokens();
+  isOpenAITokenExpired(): boolean {
+    const tokens = this.getOpenAITokens();
     if (!tokens) return true;
 
     const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
@@ -881,22 +887,22 @@ class SettingsManager {
   }
 
   /**
-   * Check if Anthropic OAuth is configured
+   * Check if OpenAI OAuth is configured
    */
-  hasAnthropicOAuth(): boolean {
-    return !!this.getAnthropicTokens();
+  hasOpenAIOAuth(): boolean {
+    return !!this.getOpenAITokens();
   }
 
   /**
-   * Clear Anthropic OAuth tokens and state
+   * Clear OpenAI OAuth tokens and state
    */
-  clearAnthropicOAuth(): void {
+  clearOpenAIOAuth(): void {
     const settings = this.getSettings();
-    const { anthropicOAuth: _, oauthState: __, ...rest } = settings;
+    const { openaiOAuth: _, oauthState: __, ...rest } = settings;
     this.settings = { ...DEFAULT_SETTINGS, ...rest };
     this.persistSettings().catch((error) => {
       console.error(
-        "Failed to persist settings after clearing Anthropic OAuth:",
+        "Failed to persist settings after clearing OpenAI OAuth:",
         error,
       );
     });
@@ -908,12 +914,14 @@ class SettingsManager {
   storeOAuthState(
     state: string,
     codeVerifier: string,
-    provider: "anthropic",
+    redirectUri: string,
+    provider: "openai",
   ): void {
     this.updateSettings({
       oauthState: {
         state,
         codeVerifier,
+        redirectUri,
         provider,
         timestamp: Date.now(),
       },

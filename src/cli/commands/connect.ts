@@ -3,15 +3,18 @@
 
 import {
   exchangeCodeForTokens,
-  startAnthropicOAuth,
-  validateAnthropicCredentials,
-} from "../../auth/anthropic-oauth";
+  exchangeTokenForApiKey,
+  OPENAI_OAUTH_CONFIG,
+  startLocalOAuthServer,
+  startOpenAIOAuth,
+  validateOpenAICredentials,
+} from "../../auth/openai-oauth";
 import {
-  ANTHROPIC_PROVIDER_NAME,
-  checkAnthropicOAuthEligibility,
-  createOrUpdateAnthropicProvider,
-  removeAnthropicProvider,
-} from "../../providers/anthropic-provider";
+  checkOpenAICodexEligibility,
+  createOrUpdateOpenAICodexProvider,
+  OPENAI_CODEX_PROVIDER_NAME,
+  removeOpenAICodexProvider,
+} from "../../providers/openai-codex-provider";
 import {
   createOrUpdateZaiProvider,
   getZaiProvider,
@@ -85,13 +88,13 @@ function updateCommandResult(
 
 /**
  * Handle /connect command
- * Usage: /connect claude [code]
+ * Usage: /connect codex
  *
  * Flow:
- * 1. User runs `/connect claude` - opens browser for authorization
- * 2. User authorizes on claude.ai, gets redirected to Anthropic's callback page
- * 3. User copies the authorization code from the URL
- * 4. User runs `/connect claude <code>` to complete the exchange
+ * 1. User runs `/connect codex` - starts local server and opens browser for authorization
+ * 2. User authorizes in browser, gets redirected back to local server
+ * 3. Server automatically exchanges code for tokens and API key
+ * 4. Provider is created and user sees success message
  */
 export async function handleConnect(
   ctx: ConnectCommandContext,
@@ -99,8 +102,6 @@ export async function handleConnect(
 ): Promise<void> {
   const parts = msg.trim().split(/\s+/);
   const provider = parts[1]?.toLowerCase();
-  // Join all remaining parts in case the code#state got split across lines
-  const authCode = parts.slice(2).join(""); // Optional authorization code
 
   // Validate provider argument
   if (!provider) {
@@ -108,18 +109,18 @@ export async function handleConnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  • claude          - Connect via OAuth to authenticate without an API key\n  • zai <api_key>   - Connect to Zai with your API key",
+      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex          - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>   - Connect to Zai with your API key",
       false,
     );
     return;
   }
 
-  if (provider !== "claude" && provider !== "zai") {
+  if (provider !== "codex" && provider !== "zai") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Error: Unknown provider "${provider}"\n\nAvailable providers: claude, zai\nUsage: /connect <provider> [options]`,
+      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai\nUsage: /connect <provider> [options]`,
       false,
     );
     return;
@@ -131,28 +132,33 @@ export async function handleConnect(
     return;
   }
 
-  // If authorization code is provided, complete the OAuth flow
-  if (authCode && authCode.length > 0) {
-    await completeOAuthFlow(ctx, msg, authCode);
-    return;
-  }
+  // Handle /connect codex
+  await handleConnectCodex(ctx, msg);
+}
 
+/**
+ * Handle /connect codex - OpenAI Codex OAuth with local server
+ */
+async function handleConnectCodex(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
   // Check if already connected
   if (
-    settingsManager.hasAnthropicOAuth() &&
-    !settingsManager.isAnthropicTokenExpired()
+    settingsManager.hasOpenAIOAuth() &&
+    !settingsManager.isOpenAITokenExpired()
   ) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Already connected to Claude via OAuth.\n\nUse /disconnect to remove the current connection first.",
+      "Already connected to OpenAI Codex via OAuth.\n\nUse /disconnect codex to remove the current connection first.",
       false,
     );
     return;
   }
 
-  // Start the OAuth flow (step 1)
+  // Start the OAuth flow
   ctx.setCommandRunning(true);
 
   // Show initial status
@@ -167,20 +173,20 @@ export async function handleConnect(
 
   try {
     // 1. Check eligibility before starting OAuth flow
-    const eligibility = await checkAnthropicOAuthEligibility();
+    const eligibility = await checkOpenAICodexEligibility();
     if (!eligibility.eligible) {
       updateCommandResult(
         ctx.buffersRef,
         ctx.refreshDerived,
         cmdId,
         msg,
-        `✗ Claude OAuth requires a Pro or Enterprise plan\n\n` +
+        `\u2717 OpenAI Codex OAuth requires a Pro or Enterprise plan\n\n` +
           `This feature is only available for Letta Pro or Enterprise customers.\n` +
           `Current plan: ${eligibility.billing_tier}\n\n` +
           `To upgrade your plan, visit:\n\n` +
           `  https://app.letta.com/settings/organization/usage\n\n` +
-          `If you have an Anthropic API key, you can use it directly by setting:\n` +
-          `  export ANTHROPIC_API_KEY=your-key`,
+          `If you have an OpenAI API key, you can use it directly by setting:\n` +
+          `  export OPENAI_API_KEY=your-key`,
         false,
         "finished",
       );
@@ -188,18 +194,46 @@ export async function handleConnect(
     }
 
     // 2. Start OAuth flow - generate PKCE and authorization URL
-    const { authorizationUrl, state, codeVerifier } =
-      await startAnthropicOAuth();
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      "Starting OAuth flow...\nA browser window will open for authorization.",
+      true,
+      "running",
+    );
 
-    // 3. Store state for validation when user returns with code
-    settingsManager.storeOAuthState(state, codeVerifier, "anthropic");
+    const { authorizationUrl, state, codeVerifier, redirectUri } =
+      await startOpenAIOAuth(OPENAI_OAUTH_CONFIG.defaultPort);
 
-    // 4. Try to open browser
-    let browserOpened = false;
+    // 3. Store state for validation
+    settingsManager.storeOAuthState(state, codeVerifier, redirectUri, "openai");
+
+    // 4. Start local server to receive callback
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `Starting local OAuth server on port ${OPENAI_OAUTH_CONFIG.defaultPort}...\n\n` +
+        `Opening browser for authorization...\n` +
+        `If the browser doesn't open automatically, visit:\n\n` +
+        `${authorizationUrl}`,
+      true,
+      "running",
+    );
+
+    // Start the server and wait for callback
+    const serverPromise = startLocalOAuthServer(
+      state,
+      OPENAI_OAUTH_CONFIG.defaultPort,
+    );
+
+    // 5. Try to open browser
     try {
       const { default: open } = await import("open");
       const subprocess = await open(authorizationUrl, { wait: false });
-      browserOpened = true;
       // Handle errors from the spawned process (e.g., xdg-open not found in containers)
       subprocess.on("error", () => {
         // Silently ignore - user can still manually visit the URL
@@ -208,109 +242,56 @@ export async function handleConnect(
       // If auto-open fails, user can still manually visit the URL
     }
 
-    // 5. Show instructions
-    const browserMsg = browserOpened
-      ? "Opening browser for authorization..."
-      : "Please open the following URL in your browser:";
-
+    // 6. Wait for callback
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `${browserMsg}\n\n${authorizationUrl}\n\n` +
-        "After authorizing, you'll be redirected to a page showing: code#state\n" +
-        "Copy the entire value and run:\n\n" +
-        "  /connect claude <code#state>\n\n" +
-        "Example: /connect claude abc123...#def456...",
+      `Waiting for authorization...\n\n` +
+        `Please complete the sign-in process in your browser.\n` +
+        `The page will redirect automatically when done.\n\n` +
+        `If needed, visit:\n${authorizationUrl}`,
       true,
-      "finished",
+      "running",
     );
-  } catch (error) {
-    // Clear any partial state
-    settingsManager.clearOAuthState();
 
+    const { result, server } = await serverPromise;
+
+    // Close the server
+    server.close();
+
+    // 7. Exchange code for tokens
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to start OAuth flow: ${getErrorMessage(error)}`,
-      false,
-      "finished",
+      "Authorization received! Exchanging code for tokens...",
+      true,
+      "running",
     );
-  } finally {
-    ctx.setCommandRunning(false);
-  }
-}
 
-/**
- * Complete OAuth flow after user provides authorization code
- * Accepts either:
- * - Just the code: "n3nzU6B7gMep..."
- * - Code#state format: "n3nzU6B7gMep...#9ba626d8..."
- */
-async function completeOAuthFlow(
-  ctx: ConnectCommandContext,
-  msg: string,
-  authCodeInput: string,
-): Promise<void> {
-  // Show initial status
-  const cmdId = addCommandResult(
-    ctx.buffersRef,
-    ctx.refreshDerived,
-    msg,
-    "Exchanging authorization code for tokens...",
-    true,
-    "running",
-  );
-
-  ctx.setCommandRunning(true);
-
-  try {
-    // 1. Get stored OAuth state
-    const storedState = settingsManager.getOAuthState();
-    if (!storedState) {
-      throw new Error(
-        "No pending OAuth flow found. Please run '/connect claude' first to start the authorization.",
-      );
-    }
-
-    // 2. Check if state is too old (5 minute timeout)
-    const fiveMinutes = 5 * 60 * 1000;
-    if (Date.now() - storedState.timestamp > fiveMinutes) {
-      settingsManager.clearOAuthState();
-      throw new Error(
-        "OAuth session expired. Please run '/connect claude' again to start a new authorization.",
-      );
-    }
-
-    // 3. Parse code#state format if provided
-    let authCode = authCodeInput;
-    let stateFromInput: string | undefined;
-    if (authCodeInput.includes("#")) {
-      const [code, stateVal] = authCodeInput.split("#");
-      authCode = code ?? authCodeInput;
-      stateFromInput = stateVal;
-      // Validate state matches what we stored
-      if (stateVal && stateVal !== storedState.state) {
-        throw new Error(
-          "State mismatch - the authorization may have been tampered with. Please try again.",
-        );
-      }
-    }
-
-    // Use state from input if provided, otherwise use stored state
-    const stateToUse = stateFromInput || storedState.state;
-
-    // 4. Exchange code for tokens
     const tokens = await exchangeCodeForTokens(
-      authCode,
-      storedState.codeVerifier,
-      stateToUse,
+      result.code,
+      codeVerifier,
+      redirectUri,
     );
 
-    // 5. Update status
+    // 8. Exchange tokens for API key
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      "Getting API key...",
+      true,
+      "running",
+    );
+
+    const apiKey = await exchangeTokenForApiKey(tokens.id_token);
+
+    // 9. Validate the API key works
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -321,61 +302,63 @@ async function completeOAuthFlow(
       "running",
     );
 
-    // 6. Validate tokens work
-    const isValid = await validateAnthropicCredentials(tokens.access_token);
+    const isValid = await validateOpenAICredentials(apiKey);
     if (!isValid) {
       throw new Error(
-        "Token validation failed - the token may not have the required permissions.",
+        "API key validation failed - the key may not have the required permissions.",
       );
     }
 
-    // 7. Store tokens locally
-    settingsManager.storeAnthropicTokens(tokens);
+    // 10. Store tokens and API key locally
+    settingsManager.storeOpenAITokens(tokens, apiKey);
 
-    // 8. Update status for provider creation
+    // 11. Create or update provider in Letta
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      "Creating Anthropic provider...",
+      "Creating OpenAI Codex provider...",
       true,
       "running",
     );
 
-    // 9. Create or update provider in Letta with the access token
-    await createOrUpdateAnthropicProvider(tokens.access_token);
+    await createOrUpdateOpenAICodexProvider(apiKey);
 
-    // 10. Clear OAuth state
+    // 12. Clear OAuth state
     settingsManager.clearOAuthState();
 
-    // 11. Success!
+    // 13. Success!
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Successfully connected to Claude via OAuth!\n\n` +
-        `Provider '${ANTHROPIC_PROVIDER_NAME}' created/updated in Letta.\n` +
-        `Your OAuth tokens are stored securely in ~/.letta/settings.json`,
+      `\u2713 Successfully connected to OpenAI Codex!\n\n` +
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
+        `Your credentials are stored securely in ~/.letta/settings.json\n\n` +
+        `You can now use ChatGPT Plus/Pro models via /model`,
       true,
       "finished",
     );
   } catch (error) {
+    // Clear any partial state
+    settingsManager.clearOAuthState();
+
     // Check if this is a plan upgrade requirement error from provider creation
     const errorMessage = getErrorMessage(error);
 
     let displayMessage: string;
     if (errorMessage === "PLAN_UPGRADE_REQUIRED") {
       displayMessage =
-        `✗ Claude OAuth requires a Pro or Enterprise plan\n\n` +
+        `\u2717 OpenAI Codex OAuth requires a Pro or Enterprise plan\n\n` +
         `This feature is only available for Letta Pro or Enterprise customers.\n` +
         `To upgrade your plan, visit:\n\n` +
         `  https://app.letta.com/settings/organization/usage\n\n` +
-        `If you have an Anthropic API key, you can use it directly by setting:\n` +
-        `  export ANTHROPIC_API_KEY=your-key`;
+        `If you have an OpenAI API key, you can use it directly by setting:\n` +
+        `  export OPENAI_API_KEY=your-key`;
     } else {
-      displayMessage = `✗ Failed to connect: ${errorMessage}`;
+      displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
     }
 
     updateCommandResult(
@@ -409,7 +392,7 @@ export async function handleDisconnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>\n\nAvailable providers: claude, zai",
+      "Usage: /disconnect <provider>\n\nAvailable providers: codex, zai",
       false,
     );
     return;
@@ -421,9 +404,9 @@ export async function handleDisconnect(
     return;
   }
 
-  // Handle /disconnect claude
-  if (provider === "claude") {
-    await handleDisconnectClaude(ctx, msg);
+  // Handle /disconnect codex
+  if (provider === "codex") {
+    await handleDisconnectCodex(ctx, msg);
     return;
   }
 
@@ -432,25 +415,25 @@ export async function handleDisconnect(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    `Error: Unknown provider "${provider}"\n\nAvailable providers: claude, zai\nUsage: /disconnect <provider>`,
+    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai\nUsage: /disconnect <provider>`,
     false,
   );
 }
 
 /**
- * Handle /disconnect claude
+ * Handle /disconnect codex
  */
-async function handleDisconnectClaude(
+async function handleDisconnectCodex(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
   // Check if connected
-  if (!settingsManager.hasAnthropicOAuth()) {
+  if (!settingsManager.hasOpenAIOAuth()) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Not currently connected to Claude via OAuth.\n\nUse /connect claude to authenticate.",
+      "Not currently connected to OpenAI Codex via OAuth.\n\nUse /connect codex to authenticate.",
       false,
     );
     return;
@@ -461,7 +444,7 @@ async function handleDisconnectClaude(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Disconnecting from Claude OAuth...",
+    "Disconnecting from OpenAI Codex OAuth...",
     true,
     "running",
   );
@@ -470,31 +453,31 @@ async function handleDisconnectClaude(
 
   try {
     // Remove provider from Letta
-    await removeAnthropicProvider();
+    await removeOpenAICodexProvider();
 
     // Clear local tokens
-    settingsManager.clearAnthropicOAuth();
+    settingsManager.clearOpenAIOAuth();
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Disconnected from Claude OAuth.\n\n` +
-        `Provider '${ANTHROPIC_PROVIDER_NAME}' removed from Letta.`,
+      `\u2713 Disconnected from OpenAI Codex OAuth.\n\n` +
+        `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from Letta.`,
       true,
       "finished",
     );
   } catch (error) {
     // Still clear local tokens even if provider removal fails
-    settingsManager.clearAnthropicOAuth();
+    settingsManager.clearOpenAIOAuth();
 
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Disconnected from Claude OAuth.\n\n` +
+      `\u2713 Disconnected from OpenAI Codex OAuth.\n\n` +
         `Warning: Failed to remove provider from Letta: ${getErrorMessage(error)}\n` +
         `Your local OAuth tokens have been removed.`,
       true,
@@ -546,7 +529,7 @@ async function handleDisconnectZai(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Disconnected from Zai.\n\n` +
+      `\u2713 Disconnected from Zai.\n\n` +
         `Provider '${ZAI_PROVIDER_NAME}' removed from Letta.`,
       true,
       "finished",
@@ -557,7 +540,7 @@ async function handleDisconnectZai(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to disconnect from Zai: ${getErrorMessage(error)}`,
+      `\u2717 Failed to disconnect from Zai: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
@@ -615,9 +598,9 @@ export async function handleConnectZai(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✓ Successfully connected to Zai!\n\n` +
+      `\u2713 Successfully connected to Zai!\n\n` +
         `Provider '${ZAI_PROVIDER_NAME}' created in Letta.\n\n` +
-        `The models are populated in /model → "All Available Models"`,
+        `The models are populated in /model \u2192 "All Available Models"`,
       true,
       "finished",
     );
@@ -627,7 +610,7 @@ export async function handleConnectZai(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `✗ Failed to create Zai provider: ${getErrorMessage(error)}`,
+      `\u2717 Failed to create Zai provider: ${getErrorMessage(error)}`,
       false,
       "finished",
     );
