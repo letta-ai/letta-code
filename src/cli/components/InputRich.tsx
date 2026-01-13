@@ -108,6 +108,31 @@ stdin.setMaxListeners(20);
 // from any EventEmitters that might not have their limit set properly
 EventEmitter.defaultMaxListeners = 20;
 
+export type InputProps = {
+  visible?: boolean;
+  streaming: boolean;
+  tokenCount: number;
+  thinkingMessage: string;
+  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
+  onBashSubmit?: (command: string) => Promise<void>;
+  permissionMode?: PermissionMode;
+  onPermissionModeChange?: (mode: PermissionMode) => void;
+  onExit?: () => void;
+  onInterrupt?: () => void;
+  interruptRequested?: boolean;
+  agentId?: string;
+  agentName?: string | null;
+  currentModel?: string | null;
+  currentModelProvider?: string | null;
+  messageQueue?: string[];
+  onEnterQueueEditMode?: () => void;
+  onEscapeCancel?: () => void;
+  ralphActive?: boolean;
+  ralphPending?: boolean;
+  ralphPendingYolo?: boolean;
+  onRalphExit?: () => void;
+};
+
 export function Input({
   visible = true,
   streaming,
@@ -131,30 +156,7 @@ export function Input({
   ralphPending = false,
   ralphPendingYolo = false,
   onRalphExit,
-}: {
-  visible?: boolean;
-  streaming: boolean;
-  tokenCount: number;
-  thinkingMessage: string;
-  onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
-  onBashSubmit?: (command: string) => Promise<void>;
-  permissionMode?: PermissionMode;
-  onPermissionModeChange?: (mode: PermissionMode) => void;
-  onExit?: () => void;
-  onInterrupt?: () => void;
-  interruptRequested?: boolean;
-  agentId?: string;
-  agentName?: string | null;
-  currentModel?: string | null;
-  currentModelProvider?: string | null;
-  messageQueue?: string[];
-  onEnterQueueEditMode?: () => void;
-  onEscapeCancel?: () => void;
-  ralphActive?: boolean;
-  ralphPending?: boolean;
-  ralphPendingYolo?: boolean;
-  onRalphExit?: () => void;
-}) {
+}: InputProps) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
   const escapeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
