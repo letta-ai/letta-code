@@ -54,6 +54,14 @@ export async function ensureCorrectMemoryTool(
     const currentTools = agentWithTools.tools || [];
     const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
 
+    // If agent has no memory tool at all, don't add one
+    // This preserves stateless agents (like Incognito) that intentionally have no memory
+    const hasAnyMemoryTool =
+      mapByName.has("memory") || mapByName.has("memory_apply_patch");
+    if (!hasAnyMemoryTool) {
+      return;
+    }
+
     // Determine which memory tool we want
     // Only OpenAI (Codex) uses memory_apply_patch; Claude and Gemini use memory
     const desiredMemoryTool = shouldUsePatch ? "memory_apply_patch" : "memory";

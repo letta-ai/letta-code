@@ -46,6 +46,8 @@ export interface CreateAgentResult {
 
 export interface CreateAgentOptions {
   name?: string;
+  /** Agent description shown in /agents selector */
+  description?: string;
   model?: string;
   embeddingModel?: string;
   updateArgs?: Record<string, unknown>;
@@ -318,11 +320,14 @@ export async function createAgent(
     tags.push("role:subagent");
   }
 
+  const agentDescription =
+    options.description ?? `Letta Code agent created in ${process.cwd()}`;
+
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPromptContent,
     name,
-    description: `Letta Code agent created in ${process.cwd()}`,
+    description: agentDescription,
     embedding: embeddingModelVal,
     model: modelHandle,
     context_window_limit: contextWindow,

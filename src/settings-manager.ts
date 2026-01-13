@@ -33,6 +33,7 @@ export interface Settings {
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
+  createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   env?: Record<string, string>;
   // Letta Cloud OAuth token management (stored separately in secrets)
@@ -896,6 +897,15 @@ class SettingsManager {
       { pinnedAgents: localAgents.filter((id) => id !== agentId) },
       workingDirectory,
     );
+  }
+
+  /**
+   * Check if default agents (Memo/Incognito) should be created on startup.
+   * Defaults to true if not explicitly set to false.
+   */
+  shouldCreateDefaultAgents(): boolean {
+    const settings = this.getSettings();
+    return settings.createDefaultAgents !== false;
   }
 
   /**

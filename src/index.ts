@@ -916,19 +916,46 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
+        let globalPinned = settingsManager.getGlobalPinnedAgents();
+
+        // Check if user would see selector (fresh dir, no bypass flags)
+        const wouldShowSelector =
+          !localSettings.lastAgent &&
+          !forceNew &&
+          !agentIdArg &&
+          !fromAfFile &&
+          !continueSession;
+
+        // Ensure default agents (Memo/Incognito) exist for all users
+        const client = await getClient();
+        const { ensureDefaultAgents } = await import("./agent/defaults");
+
+        if (wouldShowSelector && globalPinned.length === 0) {
+          // New user with no agents - block and show loading while creating defaults
+          setLoadingState("assembling");
+          try {
+            await ensureDefaultAgents(client);
+            // Refresh pinned list after defaults created
+            globalPinned = settingsManager.getGlobalPinnedAgents();
+          } catch (err) {
+            console.warn(
+              `Warning: Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        } else {
+          // Existing user - fire and forget, don't block startup
+          ensureDefaultAgents(client).catch((err) =>
+            console.warn(
+              `Warning: Failed to ensure default agents: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
 
         // Show selector if:
         // 1. No lastAgent in this project (fresh directory)
         // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
         // 3. Has global pinned agents available
-        const shouldShowSelector =
-          !localSettings.lastAgent &&
-          !forceNew &&
-          !agentIdArg &&
-          !fromAfFile &&
-          !continueSession &&
-          globalPinned.length > 0;
+        const shouldShowSelector = wouldShowSelector && globalPinned.length > 0;
 
         if (shouldShowSelector) {
           setLoadingState("selecting_global");
