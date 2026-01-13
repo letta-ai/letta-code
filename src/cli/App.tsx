@@ -6423,12 +6423,48 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     if (approval?.toolName === "ExitPlanMode") {
       // First check if plan mode is enabled
       if (permissionMode.getMode() !== "plan") {
-        handlePlanKeepPlanning(
-          `Plan mode is not currently enabled. Use EnterPlanMode to enter plan mode first, then write your plan and use ExitPlanMode to present it.`,
-        );
+        // Plan mode state was lost (e.g., CLI restart) - queue rejection with helpful message
+        // This is different from immediate rejection because we want the user to see what happened
+        // and be able to type their next message
+
+        // Add status message to explain what happened
+        const statusId = uid("status");
+        buffersRef.current.byId.set(statusId, {
+          kind: "status",
+          id: statusId,
+          lines: [
+            "⚠️ Plan mode session expired (CLI was restarted)",
+            "→ Use /plan or EnterPlanMode to re-enter plan mode",
+          ],
+        });
+        buffersRef.current.order.push(statusId);
+
+        // Queue denial to send with next message (same pattern as handleCancelApprovals)
+        const denialResults = [
+          {
+            type: "approval" as const,
+            tool_call_id: approval.toolCallId,
+            approve: false,
+            reason:
+              "Plan mode session expired after CLI restart. Use /plan or EnterPlanMode to enter plan mode again, then create your plan and call ExitPlanMode.",
+          },
+        ];
+        setQueuedApprovalResults(denialResults);
+
+        // Mark tool as cancelled in buffers
+        markIncompleteToolsAsCancelled(buffersRef.current);
+        refreshDerived();
+
+        // Clear all approval state (same as handleCancelApprovals)
+        setPendingApprovals([]);
+        setApprovalContexts([]);
+        setApprovalResults([]);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
         return;
       }
-      // Then check if plan file exists
+      // Then check if plan file exists (keep existing behavior - immediate rejection)
+      // This case means plan mode IS active, but agent forgot to write the plan file
       if (!planFileExists()) {
         const planFilePath = permissionMode.getPlanFilePath();
         const plansDir = join(homedir(), ".letta", "plans");
@@ -6439,7 +6475,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         );
       }
     }
-  }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
+  }, [
+    pendingApprovals,
+    approvalResults.length,
+    handlePlanKeepPlanning,
+    refreshDerived,
+  ]);
 
   const handleQuestionSubmit = useCallback(
     async (answers: Record<string, string>) => {
@@ -7024,6 +7065,7 @@ Plan file path: ${planFilePath}`;
                               handlePlanApprove(true)
                             }
                             onKeepPlanning={handlePlanKeepPlanning}
+                            onCancel={handleCancelApprovals}
                             isFocused={true}
                           />
                         ) : isFileEditApproval && fileEditInfo ? (
