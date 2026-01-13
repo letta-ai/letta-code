@@ -49,10 +49,10 @@ export function appendStreamingOutput(
     startTime,
   };
 
-  let tailLines = [...current.tailLines];
+  const tailLines = [...current.tailLines];
   let totalLineCount = current.totalLineCount;
   let partialLine = current.partialLine;
-  let partialIsStderr = current.partialIsStderr;
+  const partialIsStderr = current.partialIsStderr;
 
   // If stream type changed and we have a partial, flush it as a complete line
   if (partialLine && isStderr !== partialIsStderr) {

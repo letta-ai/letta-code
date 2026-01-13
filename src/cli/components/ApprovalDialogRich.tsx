@@ -559,45 +559,45 @@ export const ApprovalDialog = memo(function ApprovalDialog({
       }
 
       if (key.escape) {
-      // Shortcut: ESC immediately opens the deny reason prompt
-      setSelectedOption(options.length - 1);
-      setIsEnteringReason(true);
-      return;
-    }
+        // Shortcut: ESC immediately opens the deny reason prompt
+        setSelectedOption(options.length - 1);
+        setIsEnteringReason(true);
+        return;
+      }
 
-    // Navigate with arrow keys
-    if (key.upArrow) {
-      setSelectedOption((prev) => (prev > 0 ? prev - 1 : options.length - 1));
-    } else if (key.downArrow) {
-      setSelectedOption((prev) => (prev < options.length - 1 ? prev + 1 : 0));
-    } else if (key.return) {
-      // Handle selection
-      const selected = options[selectedOption];
-      if (selected) {
-        // Check if this is the deny option (last option)
-        if (selectedOption === options.length - 1) {
-          setIsEnteringReason(true);
-        } else {
-          selected.action();
+      // Navigate with arrow keys
+      if (key.upArrow) {
+        setSelectedOption((prev) => (prev > 0 ? prev - 1 : options.length - 1));
+      } else if (key.downArrow) {
+        setSelectedOption((prev) => (prev < options.length - 1 ? prev + 1 : 0));
+      } else if (key.return) {
+        // Handle selection
+        const selected = options[selectedOption];
+        if (selected) {
+          // Check if this is the deny option (last option)
+          if (selectedOption === options.length - 1) {
+            setIsEnteringReason(true);
+          } else {
+            selected.action();
+          }
         }
       }
-    }
 
-    // Number key shortcuts
-    const num = parseInt(_input, 10);
-    if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
-      const selected = options[num - 1];
-      if (selected) {
-        // Check if this is the deny option (last option)
-        if (num === options.length) {
-          setIsEnteringReason(true);
-        } else {
-          selected.action();
+      // Number key shortcuts
+      const num = parseInt(_input, 10);
+      if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
+        const selected = options[num - 1];
+        if (selected) {
+          // Check if this is the deny option (last option)
+          if (num === options.length) {
+            setIsEnteringReason(true);
+          } else {
+            selected.action();
+          }
         }
       }
-    }
-  },
-  { isActive: !isEnteringReason },
+    },
+    { isActive: !isEnteringReason },
   );
 
   // Handle escape when entering denial reason - minimal handler to avoid interfering with paste
