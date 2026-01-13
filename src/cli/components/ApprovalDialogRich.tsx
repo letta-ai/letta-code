@@ -545,31 +545,20 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     setDenyReason("");
   }, [progress?.current]);
 
-  useInput((_input, key) => {
-    if (isExecuting) return;
+  // Main input handler - disabled when entering denial reason to let PasteAwareTextInput handle input
+  useInput(
+    (_input, key) => {
+      if (isExecuting) return;
 
-    // Handle CTRL-C to cancel all approvals
-    if (key.ctrl && _input === "c") {
-      if (onCancel) {
-        onCancel();
+      // Handle CTRL-C to cancel all approvals
+      if (key.ctrl && _input === "c") {
+        if (onCancel) {
+          onCancel();
+        }
+        return;
       }
-      return;
-    }
 
-    if (isEnteringReason) {
-      // When entering reason, only handle enter/escape
-      if (key.return) {
-        // Resolve placeholders before sending denial reason
-        const resolvedReason = resolvePlaceholders(denyReason);
-        onDenyAll(resolvedReason);
-      } else if (key.escape) {
-        setIsEnteringReason(false);
-        setDenyReason("");
-      }
-      return;
-    }
-
-    if (key.escape) {
+      if (key.escape) {
       // Shortcut: ESC immediately opens the deny reason prompt
       setSelectedOption(options.length - 1);
       setIsEnteringReason(true);
@@ -607,7 +596,21 @@ export const ApprovalDialog = memo(function ApprovalDialog({
         }
       }
     }
-  });
+  },
+  { isActive: !isEnteringReason },
+  );
+
+  // Handle escape when entering denial reason - minimal handler to avoid interfering with paste
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        setIsEnteringReason(false);
+        setDenyReason("");
+      }
+      // Don't handle any other keys - let PasteAwareTextInput handle them
+    },
+    { isActive: isEnteringReason },
+  );
 
   // Parse JSON args
   let parsedArgs: Record<string, unknown> | null = null;
@@ -858,7 +861,14 @@ export const ApprovalDialog = memo(function ApprovalDialog({
           <Box height={1} />
           <Box>
             <Text dimColor>{"> "}</Text>
-            <PasteAwareTextInput value={denyReason} onChange={setDenyReason} />
+            <PasteAwareTextInput
+              value={denyReason}
+              onChange={setDenyReason}
+              onSubmit={(value) => {
+                const resolvedReason = resolvePlaceholders(value);
+                onDenyAll(resolvedReason);
+              }}
+            />
           </Box>
         </Box>
         <Box height={1} />
