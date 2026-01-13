@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { MarkdownDisplay } from "./MarkdownDisplay";
 
 const COLLAPSED_LINES = 3;
 const PREFIX_WIDTH = 5; // "  ⎿  " or "     "
@@ -42,7 +43,7 @@ export const CollapsedOutputDisplay = memo(
             <Text>{"  ⎿  "}</Text>
           </Box>
           <Box flexGrow={1} width={contentWidth}>
-            <Text wrap="wrap">{visibleLines[0]}</Text>
+            <MarkdownDisplay text={visibleLines[0] ?? ""} />
           </Box>
         </Box>
         {/* Remaining visible lines with indent (5 spaces to align with content after bracket) */}
@@ -53,7 +54,7 @@ export const CollapsedOutputDisplay = memo(
               <Text>{"     "}</Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
-              <Text wrap="wrap">{line}</Text>
+              <MarkdownDisplay text={line} />
             </Box>
           </Box>
         ))}

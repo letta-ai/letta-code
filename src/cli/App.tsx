@@ -6407,18 +6407,28 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     [pendingApprovals, approvalResults, sendAllResults],
   );
 
-  // Auto-reject ExitPlanMode if plan file doesn't exist
+  // Auto-reject ExitPlanMode if plan mode is not enabled or plan file doesn't exist
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "ExitPlanMode" && !planFileExists()) {
-      const planFilePath = permissionMode.getPlanFilePath();
-      const plansDir = join(homedir(), ".letta", "plans");
-      handlePlanKeepPlanning(
-        `You must write your plan to a plan file before exiting plan mode.\n` +
-          (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
-          `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
-      );
+    if (approval?.toolName === "ExitPlanMode") {
+      // First check if plan mode is enabled
+      if (permissionMode.getMode() !== "plan") {
+        handlePlanKeepPlanning(
+          `Plan mode is not currently enabled. Use EnterPlanMode to enter plan mode first, then write your plan and use ExitPlanMode to present it.`,
+        );
+        return;
+      }
+      // Then check if plan file exists
+      if (!planFileExists()) {
+        const planFilePath = permissionMode.getPlanFilePath();
+        const plansDir = join(homedir(), ".letta", "plans");
+        handlePlanKeepPlanning(
+          `You must write your plan to a plan file before exiting plan mode.\n` +
+            (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+            `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+        );
+      }
     }
   }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
 
@@ -6462,6 +6472,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
       setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
+
+      // Mark as eagerly committed to prevent duplicate rendering
+      // (sendAllResults will call setToolCallsRunning which resets phase to "running")
+      if (approval.toolCallId) {
+        eagerCommittedPreviewsRef.current.add(approval.toolCallId);
+      }
 
       const decision = {
         type: "approve" as const,
