@@ -2862,7 +2862,7 @@ export default function App({
         buffersRef.current.byId.set(cmdId, {
           kind: "command",
           id: cmdId,
-          input: "/pinned",
+          input: "/agents",
           output: `Already on "${label}"`,
           phase: "finished",
           success: true,
@@ -2875,7 +2875,7 @@ export default function App({
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
 
-      const inputCmd = "/pinned";
+      const inputCmd = "/agents";
       const cmdId = uid("cmd");
 
       // Show loading indicator while switching
@@ -2894,30 +2894,12 @@ export default function App({
         // Fetch new agent
         const agent = await client.agents.retrieve(targetAgentId);
 
-        // Get the most recent conversation for this agent, or create one
-        const conversations = await client.conversations.list({
+        // Always create a new conversation when switching agents
+        // User can /resume to get back to a previous conversation if needed
+        const newConversation = await client.conversations.create({
           agent_id: targetAgentId,
-          limit: 1,
         });
-
-        let targetConversationId: string;
-        let createdNewConversation = false;
-        let messages: Message[] = [];
-
-        if (conversations.length > 0 && conversations[0]) {
-          // Use the most recent conversation
-          targetConversationId = conversations[0].id;
-          // Fetch messages from the conversation
-          messages =
-            await client.conversations.messages.list(targetConversationId);
-        } else {
-          // No conversations exist - create a new one
-          const newConversation = await client.conversations.create({
-            agent_id: targetAgentId,
-          });
-          targetConversationId = newConversation.id;
-          createdNewConversation = true;
-        }
+        const targetConversationId = newConversation.id;
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
@@ -2951,30 +2933,12 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
-        // Build success command with agent + conversation info
+        // Build success message - always a new conversation
         const agentLabel = agent.name || targetAgentId;
-        const shortConvId = targetConversationId.slice(0, 20);
-        const successLines = createdNewConversation
-          ? [
-              `Switched to "${agentLabel}"`,
-              `⎿  Agent: ${targetAgentId}`,
-              `⎿  Conversation: ${shortConvId}... (new)`,
-              `⎿  Type /resume to resume a different conversation`,
-            ]
-          : messages.length > 0
-            ? [
-                `Resumed "${agentLabel}"`,
-                `⎿  Agent: ${targetAgentId}`,
-                `⎿  Conversation: ${shortConvId}...`,
-                `⎿  Type /resume to switch conversations`,
-              ]
-            : [
-                `Switched to "${agentLabel}"`,
-                `⎿  Agent: ${targetAgentId}`,
-                `⎿  Conversation: ${shortConvId}... (empty)`,
-                `⎿  Type /resume to resume a different conversation`,
-              ];
-        const successOutput = successLines.join("\n");
+        const successOutput = [
+          `Started a new conversation with **${agentLabel}**.`,
+          `⎿  Type /resume to resume a previous conversation`,
+        ].join("\n");
         const successItem: StaticItem = {
           kind: "command",
           id: uid("cmd"),
@@ -2984,35 +2948,13 @@ export default function App({
           success: true,
         };
 
-        // Backfill message history with visual separator, then success command at end
-        if (messages.length > 0) {
-          hasBackfilledRef.current = false;
-          backfillBuffers(buffersRef.current, messages);
-          // Collect backfilled items
-          const backfilledItems: StaticItem[] = [];
-          for (const id of buffersRef.current.order) {
-            const ln = buffersRef.current.byId.get(id);
-            if (!ln) continue;
-            emittedIdsRef.current.add(id);
-            backfilledItems.push({ ...ln } as StaticItem);
-          }
-          // Add separator before backfilled messages, then success at end
-          const separator = {
-            kind: "separator" as const,
-            id: uid("sep"),
-          };
-          setStaticItems([separator, ...backfilledItems, successItem]);
-          setLines(toLines(buffersRef.current));
-          hasBackfilledRef.current = true;
-        } else {
-          // Add separator for visual spacing even without backfill
-          const separator = {
-            kind: "separator" as const,
-            id: uid("sep"),
-          };
-          setStaticItems([separator, successItem]);
-          setLines(toLines(buffersRef.current));
-        }
+        // Add separator for visual spacing, then success message
+        const separator = {
+          kind: "separator" as const,
+          id: uid("sep"),
+        };
+        setStaticItems([separator, successItem]);
+        setLines(toLines(buffersRef.current));
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
         const errorCmdId = uid("cmd");
