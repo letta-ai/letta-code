@@ -216,11 +216,23 @@ async function isRetriableError(
   // Primary check: backend sets stop_reason=llm_api_error for LLMError exceptions
   if (stopReason === "llm_api_error") return true;
 
-  // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
-  // This could happen if there's a backend edge case where LLMError is raised but
-  // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
-  // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
-  if (stopReason === "error" && lastRunId) {
+  // Early exit for stop reasons that should never be retried
+  const nonRetriableReasons: StopReasonType[] = [
+    "cancelled",
+    "requires_approval",
+    "max_steps",
+    "max_tokens_exceeded",
+    "context_window_overflow_in_system_prompt",
+    "end_turn",
+    "tool_rule",
+    "no_tool_call",
+  ];
+  if (nonRetriableReasons.includes(stopReason)) return false;
+
+  // Fallback check: for error-like stop_reasons, check metadata for retriable patterns
+  // This handles cases where the backend sends a generic error stop_reason but the
+  // underlying cause is a transient LLM/network issue that should be retried
+  if (lastRunId) {
     try {
       const client = await getClient();
       const run = await client.runs.retrieve(lastRunId);
@@ -237,7 +249,7 @@ async function isRetriableError(
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
       if (errorType === "llm_error") return true;
 
-      // Fallback: detect LLM provider errors from detail even if misclassified as internal_error
+      // Fallback: detect LLM provider errors from detail even if misclassified
       // This handles edge cases where streaming errors weren't properly converted to LLMError
       // Patterns are derived from handle_llm_error() message formats in the backend
       const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
@@ -249,10 +261,7 @@ async function isRetriableError(
         "api_error", // Anthropic SDK error type field
         "Network error", // Transient network failures during streaming
       ];
-      if (
-        errorType === "internal_error" &&
-        llmProviderPatterns.some((pattern) => detail.includes(pattern))
-      ) {
+      if (llmProviderPatterns.some((pattern) => detail.includes(pattern))) {
         return true;
       }
 
@@ -6407,18 +6416,28 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     [pendingApprovals, approvalResults, sendAllResults],
   );
 
-  // Auto-reject ExitPlanMode if plan file doesn't exist
+  // Auto-reject ExitPlanMode if plan mode is not enabled or plan file doesn't exist
   useEffect(() => {
     const currentIndex = approvalResults.length;
     const approval = pendingApprovals[currentIndex];
-    if (approval?.toolName === "ExitPlanMode" && !planFileExists()) {
-      const planFilePath = permissionMode.getPlanFilePath();
-      const plansDir = join(homedir(), ".letta", "plans");
-      handlePlanKeepPlanning(
-        `You must write your plan to a plan file before exiting plan mode.\n` +
-          (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
-          `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
-      );
+    if (approval?.toolName === "ExitPlanMode") {
+      // First check if plan mode is enabled
+      if (permissionMode.getMode() !== "plan") {
+        handlePlanKeepPlanning(
+          `Plan mode is not currently enabled. Use EnterPlanMode to enter plan mode first, then write your plan and use ExitPlanMode to present it.`,
+        );
+        return;
+      }
+      // Then check if plan file exists
+      if (!planFileExists()) {
+        const planFilePath = permissionMode.getPlanFilePath();
+        const plansDir = join(homedir(), ".letta", "plans");
+        handlePlanKeepPlanning(
+          `You must write your plan to a plan file before exiting plan mode.\n` +
+            (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+            `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+        );
+      }
     }
   }, [pendingApprovals, approvalResults.length, handlePlanKeepPlanning]);
 
@@ -6462,6 +6481,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
       setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
+
+      // Mark as eagerly committed to prevent duplicate rendering
+      // (sendAllResults will call setToolCallsRunning which resets phase to "running")
+      if (approval.toolCallId) {
+        eagerCommittedPreviewsRef.current.add(approval.toolCallId);
+      }
 
       const decision = {
         type: "approve" as const,

@@ -1233,16 +1233,24 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
-      // Before failing, check run metadata to see if this is a retriable llm_api_error
-      // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
-      // This could happen if there's a backend edge case where LLMError is raised but
-      // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
-      // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
-      if (
-        stopReason === "error" &&
-        lastRunId &&
-        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-      ) {
+      // Before failing, check run metadata to see if this is a retriable error
+      // This handles cases where the backend sends a generic error stop_reason but the
+      // underlying cause is a transient LLM/network issue that should be retried
+
+      // Early exit for stop reasons that should never be retried
+      const nonRetriableReasons: StopReasonType[] = [
+        "cancelled",
+        "requires_approval",
+        "max_steps",
+        "max_tokens_exceeded",
+        "context_window_overflow_in_system_prompt",
+        "end_turn",
+        "tool_rule",
+        "no_tool_call",
+      ];
+      if (nonRetriableReasons.includes(stopReason)) {
+        // Fall through to error display
+      } else if (lastRunId && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         try {
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
@@ -1259,7 +1267,7 @@ export async function handleHeadlessCommand(
           const errorType =
             metaError?.error_type ?? metaError?.error?.error_type;
 
-          // Fallback: detect LLM provider errors from detail even if misclassified as internal_error
+          // Fallback: detect LLM provider errors from detail even if misclassified
           // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
           const llmProviderPatterns = [
@@ -1270,9 +1278,9 @@ export async function handleHeadlessCommand(
             "api_error", // Anthropic SDK error type field
             "Network error", // Transient network failures during streaming
           ];
-          const isLlmErrorFromDetail =
-            errorType === "internal_error" &&
-            llmProviderPatterns.some((pattern) => detail.includes(pattern));
+          const isLlmErrorFromDetail = llmProviderPatterns.some((pattern) =>
+            detail.includes(pattern),
+          );
 
           if (errorType === "llm_error" || isLlmErrorFromDetail) {
             const attempt = llmApiErrorRetries + 1;
