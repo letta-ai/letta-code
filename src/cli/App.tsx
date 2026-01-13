@@ -6432,10 +6432,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         buffersRef.current.byId.set(statusId, {
           kind: "status",
           id: statusId,
-          lines: [
-            "⚠️ Plan mode session expired (CLI was restarted)",
-            "→ Use /plan or EnterPlanMode to re-enter plan mode",
-          ],
+          lines: ["⚠️ Plan mode session expired (use /plan to re-enter)"],
         });
         buffersRef.current.order.push(statusId);
 
@@ -6446,7 +6443,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             tool_call_id: approval.toolCallId,
             approve: false,
             reason:
-              "Plan mode session expired after CLI restart. Use /plan or EnterPlanMode to enter plan mode again, then create your plan and call ExitPlanMode.",
+              "Plan mode session expired (CLI restarted). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
           },
         ];
         setQueuedApprovalResults(denialResults);
