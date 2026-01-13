@@ -43,6 +43,6 @@ export function getTreeChars(isLast: boolean): {
 } {
   return {
     treeChar: isLast ? "└─" : "├─",
-    continueChar: isLast ? "   " : "│  ",
+    continueChar: isLast ? "  " : "│ ",
   };
 }

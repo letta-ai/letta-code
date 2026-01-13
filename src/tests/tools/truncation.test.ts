@@ -21,9 +21,11 @@ describe("truncation utilities", () => {
       const result = truncateByChars(text, 500, "Test");
 
       expect(result.wasTruncated).toBe(true);
-      expect(result.content).toContain("a".repeat(500));
+      // With middle truncation, we should see beginning and end
+      expect(result.content).toContain("a".repeat(250)); // beginning
+      expect(result.content).toContain("characters omitted");
       expect(result.content).toContain(
-        "[Output truncated after 500 characters: exceeded limit.]",
+        "[Output truncated: showing 500 of 1,000 characters.]",
       );
       expect(result.content.length).toBeGreaterThan(500); // Due to notice
     });
@@ -62,10 +64,13 @@ describe("truncation utilities", () => {
 
       expect(result.wasTruncated).toBe(true);
       expect(result.originalLineCount).toBe(100);
-      expect(result.linesShown).toBe(50);
+      // With middle truncation, we get beginning + marker + end = 51 lines shown
+      expect(result.linesShown).toBe(51);
       expect(result.content).toContain("Line 1");
-      expect(result.content).toContain("Line 50");
-      expect(result.content).not.toContain("Line 51");
+      expect(result.content).toContain("Line 25"); // end of first half
+      expect(result.content).toContain("lines omitted");
+      expect(result.content).toContain("Line 76"); // beginning of second half
+      expect(result.content).toContain("Line 100");
       expect(result.content).toContain("showing 50 of 100 lines");
     });
 
@@ -92,7 +97,8 @@ describe("truncation utilities", () => {
 
       expect(result.wasTruncated).toBe(true);
       expect(result.originalLineCount).toBe(100);
-      expect(result.linesShown).toBe(50);
+      // With middle truncation, we get beginning + marker + end = 51 lines shown
+      expect(result.linesShown).toBe(51);
       expect(result.content).toContain("showing 50 of 100 lines");
       expect(result.content).toContain(
         "Some lines exceeded 1,000 characters and were truncated",
@@ -125,9 +131,12 @@ describe("truncation utilities", () => {
 
       expect(result.wasTruncated).toBe(true);
       expect(result.content).toContain("item1");
-      expect(result.content).toContain("item50");
-      expect(result.content).not.toContain("item51");
+      // With middle truncation, we show first 25 and last 25
+      expect(result.content).toContain("item25");
+      expect(result.content).toContain("item76");
+      expect(result.content).toContain("item100");
       expect(result.content).toContain("showing 50 of 100 items");
+      expect(result.content).toContain("omitted from middle");
     });
 
     test("exactly at limit does not truncate", () => {

@@ -1,6 +1,9 @@
 // src/permissions/mode.ts
 // Permission mode management (default, acceptEdits, plan, bypassPermissions)
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { isReadOnlyShellCommand } from "./readOnlyShell";
 
 export type PermissionMode =
@@ -171,9 +174,12 @@ class PermissionModeManager {
           return "allow";
         }
 
-        // Special case: allow writes to the plan file only
+        // Special case: allow writes to any plan file in ~/.letta/plans/
+        // NOTE: We allow writing to ANY plan file, not just the assigned one.
+        // This is intentional - it allows the agent to "resume" planning after
+        // plan mode was exited/reset by simply writing to any plan file.
         if (writeTools.includes(toolName)) {
-          const planFilePath = this.getPlanFilePath();
+          const plansDir = join(homedir(), ".letta", "plans");
           let targetPath =
             (toolArgs?.file_path as string) || (toolArgs?.path as string);
 
@@ -192,7 +198,34 @@ class PermissionModeManager {
             }
           }
 
-          if (planFilePath && targetPath && targetPath === planFilePath) {
+          // Allow if target is any .md file in the plans directory
+          if (targetPath?.startsWith(plansDir) && targetPath.endsWith(".md")) {
+            return "allow";
+          }
+        }
+
+        // Allow Task tool with read-only subagent types
+        // These subagents only have access to read-only tools (Glob, Grep, Read, LS, BashOutput)
+        const readOnlySubagentTypes = new Set([
+          "explore",
+          "Explore",
+          "plan",
+          "Plan",
+          "recall",
+          "Recall",
+        ]);
+        if (toolName === "Task" || toolName === "task") {
+          const subagentType = toolArgs?.subagent_type as string | undefined;
+          if (subagentType && readOnlySubagentTypes.has(subagentType)) {
+            return "allow";
+          }
+        }
+
+        // Allow Skill tool with read-only commands (load, unload, refresh)
+        // These commands only modify memory blocks, not files
+        if (toolName === "Skill" || toolName === "skill") {
+          const command = toolArgs?.command as string | undefined;
+          if (command && ["load", "unload", "refresh"].includes(command)) {
             return "allow";
           }
         }

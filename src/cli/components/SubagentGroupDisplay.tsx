@@ -7,7 +7,7 @@
  *
  * Features:
  * - Real-time updates via useSyncExternalStore
- * - Blinking dots for running agents
+ * - Single blinking dot in header while running
  * - Expand/collapse tool calls (ctrl+o)
  * - Shows "Running N subagents..." while active
  *
@@ -17,6 +17,7 @@
 
 import { Box, Text, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
+import { useAnimation } from "../contexts/AnimationContext.js";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
@@ -59,120 +60,167 @@ interface AgentRowProps {
   agent: SubagentState;
   isLast: boolean;
   expanded: boolean;
+  condensed?: boolean;
 }
 
-const AgentRow = memo(({ agent, isLast, expanded }: AgentRowProps) => {
-  const { treeChar, continueChar } = getTreeChars(isLast);
-  const columns = useTerminalWidth();
-  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
-  const contentWidth = Math.max(0, columns - gutterWidth);
+const AgentRow = memo(
+  ({ agent, isLast, expanded, condensed = false }: AgentRowProps) => {
+    const { treeChar, continueChar } = getTreeChars(isLast);
+    const columns = useTerminalWidth();
+    const gutterWidth = 8; // indent (3) + continueChar (2) + status indent (3)
+    const contentWidth = Math.max(0, columns - gutterWidth);
 
-  const getDotElement = () => {
-    switch (agent.status) {
-      case "pending":
-        return <BlinkDot color={colors.subagent.running} />;
-      case "running":
-        return <BlinkDot color={colors.subagent.running} />;
-      case "completed":
-        return <Text color={colors.subagent.completed}>●</Text>;
-      case "error":
-        return <Text color={colors.subagent.error}>●</Text>;
-      default:
-        return <Text>●</Text>;
-    }
-  };
+    const isRunning = agent.status === "pending" || agent.status === "running";
+    const stats = formatStats(
+      agent.toolCalls.length,
+      agent.totalTokens,
+      isRunning,
+    );
+    const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
-  const isRunning = agent.status === "pending" || agent.status === "running";
-  const stats = formatStats(
-    agent.toolCalls.length,
-    agent.totalTokens,
-    isRunning,
-  );
-  const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
-
-  return (
-    <Box flexDirection="column">
-      {/* Main row: tree char + description + type + model + stats */}
-      <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{treeChar} </Text>
-        {getDotElement()}
-        <Text> {agent.description}</Text>
-        <Text dimColor> · {agent.type.toLowerCase()}</Text>
-        {agent.model && <Text dimColor> · {agent.model}</Text>}
-        <Text dimColor> · {stats}</Text>
-      </Box>
-
-      {/* Subagent URL */}
-      {agent.agentURL && (
-        <Box flexDirection="row">
-          <Box width={gutterWidth} flexShrink={0}>
+    // Condensed mode: simplified view to reduce re-renders when overflowing
+    // Shows: "Description · type · model" + "Running..." or "Done"
+    // Full details are shown in SubagentGroupStatic when flushed to static area
+    if (condensed) {
+      const isComplete =
+        agent.status === "completed" || agent.status === "error";
+      return (
+        <Box flexDirection="column">
+          {/* Main row: tree char + description + type + model (no stats) */}
+          <Box flexDirection="row">
             <Text>
-              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-              <Text dimColor>{" ⎿  "}</Text>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {treeChar}{" "}
+              </Text>
+              <Text bold>{agent.description}</Text>
+              <Text dimColor>
+                {" · "}
+                {agent.type.toLowerCase()}
+                {agent.model ? ` · ${agent.model}` : ""}
+              </Text>
             </Text>
           </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <Text wrap="wrap" dimColor>
-              Subagent: {agent.agentURL}
+          {/* Simple status line */}
+          <Box flexDirection="row">
+            <Text color={colors.subagent.treeChar}>
+              {"   "}
+              {continueChar}
             </Text>
+            <Text dimColor>{"   "}</Text>
+            {agent.status === "error" ? (
+              <Text color={colors.subagent.error}>Error</Text>
+            ) : (
+              <Text dimColor>{isComplete ? "Done" : "Running..."}</Text>
+            )}
           </Box>
         </Box>
-      )}
+      );
+    }
 
-      {/* Expanded: show all tool calls */}
-      {expanded &&
-        agent.toolCalls.map((tc) => {
-          const formattedArgs = formatToolArgs(tc.args);
-          return (
-            <Box key={tc.id} flexDirection="row">
-              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-              <Text dimColor>
-                {"     "}
-                {tc.name}({formattedArgs})
-              </Text>
-            </Box>
-          );
-        })}
-
-      {/* Status line */}
-      <Box flexDirection="row">
-        {agent.status === "completed" ? (
-          <>
-            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-            <Text dimColor>{" ⎿  Done"}</Text>
-          </>
-        ) : agent.status === "error" ? (
-          <>
-            <Box width={gutterWidth} flexShrink={0}>
-              <Text>
-                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-                <Text dimColor>{" ⎿  "}</Text>
-              </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <Text wrap="wrap" color={colors.subagent.error}>
-                {agent.error}
-              </Text>
-            </Box>
-          </>
-        ) : lastTool ? (
-          <>
-            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-            <Text dimColor>
-              {" ⎿  "}
-              {lastTool.name}
+    // Full mode: all details including live tool calls
+    return (
+      <Box flexDirection="column">
+        {/* Main row: tree char + description + type + model + stats */}
+        <Box flexDirection="row">
+          <Text>
+            <Text color={colors.subagent.treeChar}>
+              {"   "}
+              {treeChar}{" "}
             </Text>
-          </>
-        ) : (
-          <>
-            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-            <Text dimColor>{" ⎿  Starting..."}</Text>
-          </>
+            <Text bold>{agent.description}</Text>
+            <Text dimColor>
+              {" · "}
+              {agent.type.toLowerCase()}
+              {agent.model ? ` · ${agent.model}` : ""}
+              {" · "}
+              {stats}
+            </Text>
+          </Text>
+        </Box>
+
+        {/* Subagent URL */}
+        {agent.agentURL && (
+          <Box flexDirection="row">
+            <Text color={colors.subagent.treeChar}>
+              {"   "}
+              {continueChar} ⎿{" "}
+            </Text>
+            <Text dimColor>{"Subagent: "}</Text>
+            <Text dimColor>{agent.agentURL}</Text>
+          </Box>
         )}
+
+        {/* Expanded: show all tool calls */}
+        {expanded &&
+          agent.toolCalls.map((tc) => {
+            const formattedArgs = formatToolArgs(tc.args);
+            return (
+              <Box key={tc.id} flexDirection="row">
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
+                </Text>
+                <Text dimColor>
+                  {"     "}
+                  {tc.name}({formattedArgs})
+                </Text>
+              </Box>
+            );
+          })}
+
+        {/* Status line */}
+        <Box flexDirection="row">
+          {agent.status === "completed" ? (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   Done"}</Text>
+            </>
+          ) : agent.status === "error" ? (
+            <>
+              <Box width={gutterWidth} flexShrink={0}>
+                <Text>
+                  <Text color={colors.subagent.treeChar}>
+                    {"   "}
+                    {continueChar}
+                  </Text>
+                  <Text dimColor>{"   "}</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" color={colors.subagent.error}>
+                  {agent.error}
+                </Text>
+              </Box>
+            </>
+          ) : lastTool ? (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>
+                {"   "}
+                {lastTool.name}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   Starting..."}</Text>
+            </>
+          )}
+        </Box>
       </Box>
-    </Box>
-  );
-});
+    );
+  },
+);
 AgentRow.displayName = "AgentRow";
 
 interface GroupHeaderProps {
@@ -198,8 +246,9 @@ const GroupHeader = memo(
     return (
       <Box flexDirection="row">
         {allCompleted ? (
-          <Text color={dotColor}>⏺</Text>
+          <Text color={dotColor}>●</Text>
         ) : (
+          // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={colors.subagent.header} />
         )}
         <Text color={colors.subagent.header}> {statusText} </Text>
@@ -217,6 +266,7 @@ GroupHeader.displayName = "GroupHeader";
 
 export const SubagentGroupDisplay = memo(() => {
   const { agents, expanded } = useSyncExternalStore(subscribe, getSnapshot);
+  const { shouldAnimate } = useAnimation();
 
   // Handle ctrl+o for expand/collapse
   useInput((input, key) => {
@@ -229,6 +279,10 @@ export const SubagentGroupDisplay = memo(() => {
   if (agents.length === 0) {
     return null;
   }
+
+  // Use condensed mode when animation is disabled (overflow detected by AnimationContext)
+  // This ensures consistent behavior - when we disable animation, we also simplify the view
+  const condensed = !shouldAnimate;
 
   const allCompleted = agents.every(
     (a) => a.status === "completed" || a.status === "error",
@@ -249,6 +303,7 @@ export const SubagentGroupDisplay = memo(() => {
           agent={agent}
           isLast={index === agents.length - 1}
           expanded={expanded}
+          condensed={condensed}
         />
       ))}
     </Box>

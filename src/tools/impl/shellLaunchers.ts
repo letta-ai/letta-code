@@ -45,22 +45,47 @@ function unixLaunchers(command: string): string[][] {
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
+
+  // On macOS, ALWAYS prefer zsh first due to bash 3.2's HEREDOC parsing bug
+  // with odd numbers of apostrophes. This takes precedence over $SHELL.
+  if (process.platform === "darwin") {
+    pushUnique(launchers, seen, ["/bin/zsh", "-c", trimmed]);
+  }
+
+  // Try user's preferred shell from $SHELL environment variable
+  // Use -c (non-login) to avoid profile sourcing that can hang on CI
   const envShell = process.env.SHELL?.trim();
   if (envShell) {
-    pushUnique(launchers, seen, [envShell, "-lc", trimmed]);
     pushUnique(launchers, seen, [envShell, "-c", trimmed]);
   }
-  const defaults: string[][] = [
-    ["/bin/bash", "-lc", trimmed],
-    ["/usr/bin/bash", "-lc", trimmed],
-    ["/bin/zsh", "-lc", trimmed],
-    ["/bin/sh", "-c", trimmed],
-    ["/bin/ash", "-c", trimmed],
-    ["/usr/bin/env", "bash", "-lc", trimmed],
-    ["/usr/bin/env", "zsh", "-lc", trimmed],
-    ["/usr/bin/env", "sh", "-c", trimmed],
-    ["/usr/bin/env", "ash", "-c", trimmed],
-  ];
+
+  // Fallback defaults - prefer simple "bash" PATH lookup first (like original code)
+  // then absolute paths. Use -c (non-login shell) to avoid profile sourcing.
+  const defaults: string[][] =
+    process.platform === "darwin"
+      ? [
+          ["/bin/zsh", "-c", trimmed],
+          ["bash", "-c", trimmed], // PATH lookup, like original
+          ["/bin/bash", "-c", trimmed],
+          ["/usr/bin/bash", "-c", trimmed],
+          ["/bin/sh", "-c", trimmed],
+          ["/bin/ash", "-c", trimmed],
+          ["/usr/bin/env", "zsh", "-c", trimmed],
+          ["/usr/bin/env", "bash", "-c", trimmed],
+          ["/usr/bin/env", "sh", "-c", trimmed],
+          ["/usr/bin/env", "ash", "-c", trimmed],
+        ]
+      : [
+          ["/bin/bash", "-c", trimmed],
+          ["/usr/bin/bash", "-c", trimmed],
+          ["/bin/zsh", "-c", trimmed],
+          ["/bin/sh", "-c", trimmed],
+          ["/bin/ash", "-c", trimmed],
+          ["/usr/bin/env", "bash", "-c", trimmed],
+          ["/usr/bin/env", "zsh", "-c", trimmed],
+          ["/usr/bin/env", "sh", "-c", trimmed],
+          ["/usr/bin/env", "ash", "-c", trimmed],
+        ];
   for (const entry of defaults) {
     pushUnique(launchers, seen, entry);
   }

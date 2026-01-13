@@ -3,7 +3,9 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getClient } from "../../agent/client";
+import { STREAM_REQUEST_START_TIME } from "../../agent/message";
 import { debugWarn } from "../../utils/debug";
+import { formatDuration, logTiming } from "../../utils/timing";
 
 import {
   type createBuffers,
@@ -36,6 +38,12 @@ export async function drainStream(
   onFirstMessage?: () => void,
 ): Promise<DrainResult> {
   const startTime = performance.now();
+
+  // Extract request start time for TTFT logging (attached by sendMessageStream)
+  const requestStartTime = (
+    stream as unknown as Record<symbol, number | undefined>
+  )[STREAM_REQUEST_START_TIME];
+  let hasLoggedTTFT = false;
 
   let _approvalRequestId: string | null = null;
   const pendingApprovals = new Map<
@@ -129,6 +137,18 @@ export async function drainStream(
         queueMicrotask(() => onFirstMessage());
       }
 
+      // Log TTFT (time-to-first-token) when first content chunk arrives
+      if (
+        !hasLoggedTTFT &&
+        requestStartTime !== undefined &&
+        (chunk.message_type === "reasoning_message" ||
+          chunk.message_type === "assistant_message")
+      ) {
+        hasLoggedTTFT = true;
+        const ttft = performance.now() - requestStartTime;
+        logTiming(`TTFT: ${formatDuration(ttft)} (from POST to first content)`);
+      }
+
       // Remove tool from pending approvals when it completes (server-side execution finished)
       // This means the tool was executed server-side and doesn't need approval
       if (chunk.message_type === "tool_return_message") {
@@ -191,6 +211,18 @@ export async function drainStream(
         markIncompleteToolsAsCancelled(buffers);
         queueMicrotask(refresh);
         break;
+      }
+
+      // Suppress mid-stream desync errors (match headless behavior)
+      // These are transient and will be handled by end-of-turn desync recovery
+      const errObj = (chunk as unknown as { error?: { detail?: string } })
+        .error;
+      if (
+        errObj?.detail?.includes("No tool call is currently awaiting approval")
+      ) {
+        // Server isn't ready for approval yet; let the stream continue
+        // Suppress the error frame from output
+        continue;
       }
 
       onChunk(buffers, chunk);
@@ -364,10 +396,16 @@ export async function drainStreamWithResume(
       buffers.interrupted = false;
 
       // Resume from Redis where we left off
-      const resumeStream = await client.runs.messages.stream(result.lastRunId, {
-        starting_after: result.lastSeqId,
-        batch_size: 1000, // Fetch buffered chunks quickly
-      });
+      // TODO: Re-enable once issues are resolved - disabled retries were causing problems
+      // Disable SDK retries - state management happens outside, retries would create race conditions
+      const resumeStream = await client.runs.messages.stream(
+        result.lastRunId,
+        {
+          starting_after: result.lastSeqId,
+          batch_size: 1000, // Fetch buffered chunks quickly
+        },
+        // { maxRetries: 0 },
+      );
 
       // Continue draining from where we left off
       // Note: Don't pass onFirstMessage again - already called in initial drain

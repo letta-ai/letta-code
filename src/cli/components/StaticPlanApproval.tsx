@@ -1,12 +1,15 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 
 type Props = {
   onApprove: () => void;
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
+  onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
   isFocused?: boolean;
 };
 
@@ -26,11 +29,18 @@ export const StaticPlanApproval = memo(
     onApprove,
     onApproveAndAcceptEdits,
     onKeepPlanning,
+    onCancel,
     isFocused = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customReason, setCustomReason] = useState("");
+    const {
+      text: customReason,
+      cursorPos,
+      handleKey,
+      clear,
+    } = useTextInputCursor();
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     const customOptionIndex = 2;
     const maxOptionIndex = customOptionIndex;
@@ -42,9 +52,9 @@ export const StaticPlanApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: keep planning with cancel message
+        // CTRL-C: cancel and queue denial (like other approval screens)
         if (key.ctrl && input === "c") {
-          onKeepPlanning("User pressed CTRL-C to cancel");
+          onCancel();
           return;
         }
 
@@ -68,20 +78,14 @@ export const StaticPlanApproval = memo(
           }
           if (key.escape) {
             if (customReason) {
-              setCustomReason("");
+              clear();
             } else {
               onKeepPlanning("User cancelled");
             }
             return;
           }
-          if (key.backspace || key.delete) {
-            setCustomReason((prev) => prev.slice(0, -1));
-            return;
-          }
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomReason((prev) => prev + input);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on regular options
@@ -174,8 +178,9 @@ export const StaticPlanApproval = memo(
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               {customReason ? (
                 <Text wrap="wrap">
-                  {customReason}
+                  {customReason.slice(0, cursorPos)}
                   {isOnCustomOption && "█"}
+                  {customReason.slice(cursorPos)}
                 </Text>
               ) : (
                 <Text wrap="wrap" dimColor>

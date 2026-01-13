@@ -401,7 +401,7 @@ export function AdvancedDiffRenderer(
                 <Text dimColor>⎿</Text>
               </Text>
             </Box>
-            <Box flexGrow={1}>
+            <Box flexGrow={1} width={Math.max(0, columns - noChangesGutter)}>
               <Text wrap="wrap">{header}</Text>
             </Box>
           </Box>
@@ -410,7 +410,7 @@ export function AdvancedDiffRenderer(
           <Box width={noChangesGutter} flexShrink={0}>
             <Text>{"    "}</Text>
           </Box>
-          <Box flexGrow={1}>
+          <Box flexGrow={1} width={Math.max(0, columns - noChangesGutter)}>
             <Text dimColor>
               No changes to <Text bold>{relative}</Text> (file content
               identical)
@@ -435,7 +435,7 @@ export function AdvancedDiffRenderer(
                 <Text dimColor>⎿</Text>
               </Text>
             </Box>
-            <Box flexGrow={1}>
+            <Box flexGrow={1} width={Math.max(0, columns - toolResultGutter)}>
               <Text wrap="wrap">{header}</Text>
             </Box>
           </Box>
@@ -443,7 +443,7 @@ export function AdvancedDiffRenderer(
             <Box width={toolResultGutter} flexShrink={0}>
               <Text>{"    "}</Text>
             </Box>
-            <Box flexGrow={1}>
+            <Box flexGrow={1} width={Math.max(0, columns - toolResultGutter)}>
               <Text
                 dimColor
               >{`Showing ~${ADV_DIFF_CONTEXT_LINES} context line${ADV_DIFF_CONTEXT_LINES === 1 ? "" : "s"}`}</Text>

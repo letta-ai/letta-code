@@ -140,6 +140,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
   TodoWrite: { requiresApproval: false },
@@ -478,6 +479,22 @@ export async function loadTools(modelIdentifier?: string): Promise<void> {
       );
     }
   }
+
+  // If LSP is enabled, swap Read with LSP-enhanced version
+  if (process.env.LETTA_ENABLE_LSP && toolRegistry.has("Read")) {
+    const lspDefinition = TOOL_DEFINITIONS.ReadLSP;
+    if (lspDefinition) {
+      // Replace Read with ReadLSP (but keep the name "Read" for the agent)
+      toolRegistry.set("Read", {
+        schema: {
+          name: "Read", // Keep the tool name as "Read" for the agent
+          description: lspDefinition.description,
+          input_schema: lspDefinition.schema,
+        },
+        fn: lspDefinition.impl,
+      });
+    }
+  }
 }
 
 export function isOpenAIModel(modelIdentifier: string): boolean {
@@ -553,6 +570,12 @@ export function clipToolReturn(
   maxChars: number = 300,
 ): string {
   if (!text) return text;
+
+  // Don't clip user rejection reasons - they contain important feedback
+  // All denials use format: "Error: request to call tool denied. User reason: ..."
+  if (text.includes("request to call tool denied")) {
+    return text;
+  }
 
   // First apply character limit to avoid extremely long text
   let clipped = text;
@@ -669,13 +692,17 @@ function flattenToolResponse(result: unknown): string {
  *
  * @param name - The name of the tool to execute
  * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID)
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
 export async function executeTool(
   name: string,
   args: ToolArgs,
-  options?: { signal?: AbortSignal; toolCallId?: string },
+  options?: {
+    signal?: AbortSignal;
+    toolCallId?: string;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  },
 ): Promise<ToolExecutionResult> {
   const internalName = resolveInternalToolName(name);
   if (!internalName) {
@@ -699,9 +726,14 @@ export async function executeTool(
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
 
-    // Inject abort signal for Bash tool
-    if (internalName === "Bash" && options?.signal) {
-      enhancedArgs = { ...enhancedArgs, signal: options.signal };
+    // Inject abort signal and streaming callback for Bash tool
+    if (internalName === "Bash") {
+      if (options?.signal) {
+        enhancedArgs = { ...enhancedArgs, signal: options.signal };
+      }
+      if (options?.onOutput) {
+        enhancedArgs = { ...enhancedArgs, onOutput: options.onOutput };
+      }
     }
 
     // Inject toolCallId and abort signal for Task tool

@@ -51,13 +51,8 @@ interface AgentRowProps {
 const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const { treeChar, continueChar } = getTreeChars(isLast);
   const columns = useTerminalWidth();
-  const gutterWidth = 6; // tree char (1) + " ⎿  " (5)
+  const gutterWidth = 8; // indent (3) + continueChar (2) + status indent (3)
   const contentWidth = Math.max(0, columns - gutterWidth);
-
-  const dotColor =
-    agent.status === "completed"
-      ? colors.subagent.completed
-      : colors.subagent.error;
 
   const stats = formatStats(agent.toolCount, agent.totalTokens);
 
@@ -65,28 +60,31 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
     <Box flexDirection="column">
       {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
-        <Text color={colors.subagent.treeChar}>{treeChar} </Text>
-        <Text color={dotColor}>●</Text>
-        <Text> {agent.description}</Text>
-        <Text dimColor> · {agent.type.toLowerCase()}</Text>
-        {agent.model && <Text dimColor> · {agent.model}</Text>}
-        <Text dimColor> · {stats}</Text>
+        <Text>
+          <Text color={colors.subagent.treeChar}>
+            {"   "}
+            {treeChar}{" "}
+          </Text>
+          <Text bold>{agent.description}</Text>
+          <Text dimColor>
+            {" · "}
+            {agent.type.toLowerCase()}
+            {agent.model ? ` · ${agent.model}` : ""}
+            {" · "}
+            {stats}
+          </Text>
+        </Text>
       </Box>
 
       {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
-          <Box width={gutterWidth} flexShrink={0}>
-            <Text>
-              <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-              <Text dimColor>{" ⎿  "}</Text>
-            </Text>
-          </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <Text wrap="wrap" dimColor>
-              Subagent: {agent.agentURL}
-            </Text>
-          </Box>
+          <Text color={colors.subagent.treeChar}>
+            {"   "}
+            {continueChar} ⎿{" "}
+          </Text>
+          <Text dimColor>{"Subagent: "}</Text>
+          <Text dimColor>{agent.agentURL}</Text>
         </Box>
       )}
 
@@ -94,15 +92,21 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       <Box flexDirection="row">
         {agent.status === "completed" ? (
           <>
-            <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-            <Text dimColor>{" ⎿  Done"}</Text>
+            <Text color={colors.subagent.treeChar}>
+              {"   "}
+              {continueChar}
+            </Text>
+            <Text dimColor>{"   Done"}</Text>
           </>
         ) : (
           <>
             <Box width={gutterWidth} flexShrink={0}>
               <Text>
-                <Text color={colors.subagent.treeChar}>{continueChar}</Text>
-                <Text dimColor>{" ⎿  "}</Text>
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
+                </Text>
+                <Text dimColor>{"   "}</Text>
               </Text>
             </Box>
             <Box flexGrow={1} width={contentWidth}>
@@ -141,7 +145,7 @@ export const SubagentGroupStatic = memo(
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
-          <Text color={dotColor}>⏺</Text>
+          <Text color={dotColor}>●</Text>
           <Text color={colors.subagent.header}> {statusText}</Text>
         </Box>
 

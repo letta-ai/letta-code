@@ -1,6 +1,8 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
+import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
 
 type Props = {
@@ -47,8 +49,14 @@ export const InlineTaskApproval = memo(
     allowPersistence = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
-    const [customReason, setCustomReason] = useState("");
+    const {
+      text: customReason,
+      cursorPos,
+      handleKey,
+      clear,
+    } = useTextInputCursor();
     const columns = useTerminalWidth();
+    useProgressIndicator();
 
     // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
@@ -87,20 +95,14 @@ export const InlineTaskApproval = memo(
           }
           if (key.escape) {
             if (customReason) {
-              setCustomReason("");
+              clear();
             } else {
               onCancel?.();
             }
             return;
           }
-          if (key.backspace || key.delete) {
-            setCustomReason((prev) => prev.slice(0, -1));
-            return;
-          }
-          if (input && !key.ctrl && !key.meta && input.length === 1) {
-            setCustomReason((prev) => prev + input);
-          }
-          return;
+          // Handle text input (arrows, backspace, typing)
+          if (handleKey(input, key)) return;
         }
 
         // When on regular options
@@ -272,8 +274,9 @@ export const InlineTaskApproval = memo(
             <Box flexGrow={1} width={Math.max(0, columns - 5)}>
               {customReason ? (
                 <Text wrap="wrap">
-                  {customReason}
+                  {customReason.slice(0, cursorPos)}
                   {isOnCustomOption && "█"}
+                  {customReason.slice(cursorPos)}
                 </Text>
               ) : (
                 <Text wrap="wrap" dimColor>

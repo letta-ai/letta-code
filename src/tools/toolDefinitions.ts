@@ -18,6 +18,7 @@ import MultiEditDescription from "./descriptions/MultiEdit.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadFileCodexDescription from "./descriptions/ReadFileCodex.md";
 import ReadFileGeminiDescription from "./descriptions/ReadFileGemini.md";
+import ReadLSPDescription from "./descriptions/ReadLSP.md";
 import ReadManyFilesGeminiDescription from "./descriptions/ReadManyFilesGemini.md";
 import ReplaceGeminiDescription from "./descriptions/ReplaceGemini.md";
 import RunShellCommandGeminiDescription from "./descriptions/RunShellCommandGemini.md";
@@ -51,6 +52,7 @@ import { multi_edit } from "./impl/MultiEdit";
 import { read } from "./impl/Read";
 import { read_file } from "./impl/ReadFileCodex";
 import { read_file_gemini } from "./impl/ReadFileGemini";
+import { read_lsp } from "./impl/ReadLSP";
 import { read_many_files } from "./impl/ReadManyFilesGemini";
 import { replace } from "./impl/ReplaceGemini";
 import { run_shell_command } from "./impl/RunShellCommandGemini";
@@ -84,6 +86,7 @@ import MultiEditSchema from "./schemas/MultiEdit.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadFileCodexSchema from "./schemas/ReadFileCodex.json";
 import ReadFileGeminiSchema from "./schemas/ReadFileGemini.json";
+import ReadLSPSchema from "./schemas/ReadLSP.json";
 import ReadManyFilesGeminiSchema from "./schemas/ReadManyFilesGemini.json";
 import ReplaceGeminiSchema from "./schemas/ReplaceGemini.json";
 import RunShellCommandGeminiSchema from "./schemas/RunShellCommandGemini.json";
@@ -166,6 +169,12 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read as unknown as ToolImplementation,
+  },
+  // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
+  ReadLSP: {
+    schema: ReadLSPSchema,
+    description: ReadLSPDescription.trim(),
+    impl: read_lsp as unknown as ToolImplementation,
   },
   Skill: {
     schema: SkillSchema,

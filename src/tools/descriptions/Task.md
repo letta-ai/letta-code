@@ -6,11 +6,21 @@ The Task tool launches specialized agents (subprocesses) that autonomously handl
 
 ## Usage
 
-When using the Task tool, you must specify:
+The Task tool supports two commands:
+
+### Run (default)
+Launch a subagent to perform a task. Parameters:
 - **subagent_type**: Which specialized agent to use (see Available Agents section)
 - **prompt**: Detailed, self-contained instructions for the agent (agents cannot ask questions mid-execution)
 - **description**: Short 3-5 word summary for tracking
 - **model** (optional): Override the model for this agent
+
+### Refresh
+Re-scan the `.letta/agents/` directories to discover new or updated custom subagents:
+```typescript
+Task({ command: "refresh" })
+```
+Use this after creating or modifying custom subagent definitions.
 
 ## When to use this tool:
 

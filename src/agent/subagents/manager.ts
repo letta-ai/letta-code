@@ -149,16 +149,20 @@ function handleApprovalRequestEvent(
  * Handle an auto_approval event
  */
 function handleAutoApprovalEvent(
-  event: { tool_call_id?: string; tool_name?: string; tool_args?: string },
+  event: {
+    tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
+  },
   state: ExecutionState,
   subagentId: string,
 ): void {
-  const { tool_call_id, tool_name, tool_args = "{}" } = event;
-  if (tool_call_id && tool_name) {
+  const tc = event.tool_call;
+  if (!tc) return;
+  const { tool_call_id, name, arguments: tool_args = "{}" } = tc;
+  if (tool_call_id && name) {
     recordToolCall(
       subagentId,
       tool_call_id,
-      tool_name,
+      name,
       tool_args,
       state.displayedToolCalls,
     );
@@ -222,7 +226,11 @@ function processStreamEvent(
 
     switch (event.type) {
       case "init":
-        handleInitEvent(event, state, baseURL, subagentId);
+      case "system":
+        // Handle both legacy "init" type and new "system" type with subtype "init"
+        if (event.type === "init" || event.subtype === "init") {
+          handleInitEvent(event, state, baseURL, subagentId);
+        }
         break;
 
       case "message":
@@ -311,10 +319,12 @@ function buildSubagentArgs(
     "stream-json",
   ];
 
-  // Inherit permission mode from parent
-  const currentMode = permissionMode.getMode();
-  if (currentMode !== "default") {
-    args.push("--permission-mode", currentMode);
+  // Use subagent's configured permission mode, or inherit from parent
+  const subagentMode = config.permissionMode;
+  const parentMode = permissionMode.getMode();
+  const modeToUse = subagentMode || parentMode;
+  if (modeToUse !== "default") {
+    args.push("--permission-mode", modeToUse);
   }
 
   // Inherit permission rules from parent (CLI + session rules)

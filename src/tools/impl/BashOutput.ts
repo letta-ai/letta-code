@@ -29,11 +29,14 @@ export async function bash_output(
       .join("\n");
   }
 
+  const userCwd = process.env.USER_CWD || process.cwd();
+
   // Apply character limit to prevent excessive token usage (same as Bash)
   const { content: truncatedOutput } = truncateByChars(
     text || "(no output yet)",
     LIMITS.BASH_OUTPUT_CHARS,
     "BashOutput",
+    { workingDirectory: userCwd, toolName: "BashOutput" },
   );
 
   return { message: truncatedOutput };

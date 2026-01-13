@@ -258,9 +258,9 @@ export function formatArgsDisplay(
               if (k === "file_path") continue;
               if (v === undefined || v === null) continue;
               if (typeof v === "boolean" || typeof v === "number") {
-                otherArgs.push(`${k}=${v}`);
+                otherArgs.push(`${k}: ${v}`);
               } else if (typeof v === "string" && v.length <= 30) {
-                otherArgs.push(`${k}="${v}"`);
+                otherArgs.push(`${k}: "${v}"`);
               }
             }
 
@@ -316,16 +316,16 @@ export function formatArgsDisplay(
         } else {
           display = Object.entries(parsed)
             .map(([k, v]) => {
-              if (v === undefined || v === null) return `${k}=${v}`;
+              if (v === undefined || v === null) return `${k}: ${v}`;
               if (typeof v === "boolean" || typeof v === "number")
-                return `${k}=${v}`;
+                return `${k}: ${v}`;
               if (typeof v === "string")
-                return v.length > 50 ? `${k}=…` : `${k}="${v}"`;
-              if (Array.isArray(v)) return `${k}=[${v.length} items]`;
+                return v.length > 50 ? `${k}: …` : `${k}: "${v}"`;
+              if (Array.isArray(v)) return `${k}: [${v.length} items]`;
               if (typeof v === "object")
-                return `${k}={${Object.keys(v as Record<string, unknown>).length} props}`;
+                return `${k}: {${Object.keys(v as Record<string, unknown>).length} props}`;
               const str = JSON.stringify(v);
-              return str.length > 50 ? `${k}=…` : `${k}=${str}`;
+              return str.length > 50 ? `${k}: …` : `${k}: ${str}`;
             })
             .join(", ");
         }
@@ -340,10 +340,10 @@ export function formatArgsDisplay(
       const neu = /"new_string"\s*:\s*"([\s\S]*?)"\s*(,|\})/.exec(s);
       const cont = /"content"\s*:\s*"([\s\S]*?)"\s*(,|\})/.exec(s);
       const parts: string[] = [];
-      if (fp) parts.push(`file_path="${fp[1]}"`);
-      if (old) parts.push(`old_string=…`);
-      if (neu) parts.push(`new_string=…`);
-      if (cont) parts.push(`content=…`);
+      if (fp) parts.push(`file_path: "${fp[1]}"`);
+      if (old) parts.push(`old_string: …`);
+      if (neu) parts.push(`new_string: …`);
+      if (cont) parts.push(`content: …`);
       if (parts.length) display = parts.join(", ");
     } catch {
       // If all else fails, use the ellipsis

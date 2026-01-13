@@ -13,6 +13,7 @@ import {
 import {
   getDisplayToolName,
   isFileEditTool,
+  isFileReadTool,
   isFileWriteTool,
   isMemoryTool,
   isPatchTool,
@@ -28,9 +29,11 @@ function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
 }
 
+import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
+import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -40,6 +43,7 @@ import {
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
+import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 type ToolCallLine = {
@@ -51,7 +55,24 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
+  streaming?: StreamingState;
 };
+
+/**
+ * Check if tool is a shell/bash tool that supports streaming output
+ */
+function isShellTool(name: string): boolean {
+  const shellTools = [
+    "Bash",
+    "Shell",
+    "shell",
+    "shell_command",
+    "run_shell_command",
+    "RunShellCommand",
+    "ShellCommand",
+  ];
+  return shellTools.includes(name);
+}
 
 /**
  * ToolCallMessageRich - Rich formatting version with old layout logic
@@ -68,10 +89,12 @@ export const ToolCallMessage = memo(
     line,
     precomputedDiffs,
     lastPlanFilePath,
+    isStreaming,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
+    isStreaming?: boolean;
   }) => {
     const columns = useTerminalWidth();
 
@@ -123,13 +146,35 @@ export const ToolCallMessage = memo(
       }
     }
 
-    // Format arguments for display using the old formatting logic
-    // Pass rawName to enable special formatting for file tools
-    const formatted = formatArgsDisplay(argsText, rawName);
-    // Hide args for question tool (shown in result instead)
-    const args = isQuestionTool(rawName) ? "" : `(${formatted.display})`;
-
     const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
+
+    // Determine args display:
+    // - Question tool: hide args (shown in result instead)
+    // - Still streaming + phase "ready": args may be incomplete, show ellipsis
+    // - Phase "running"/"finished" or stream done: args complete, show formatted
+    let args = "";
+    if (!isQuestionTool(rawName)) {
+      // Args are complete once running, finished, or stream is done
+      const argsComplete =
+        line.phase === "running" || line.phase === "finished" || !isStreaming;
+
+      if (!argsComplete) {
+        args = "(…)";
+      } else {
+        const formatted = formatArgsDisplay(argsText, rawName);
+        // Normalize newlines to spaces to prevent forced line breaks
+        const normalizedDisplay = formatted.display.replace(/\n/g, " ");
+        // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
+        const argsBoxWidth = rightWidth - displayName.length;
+        const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
+
+        const needsTruncation = normalizedDisplay.length > maxArgsChars;
+        const truncatedDisplay = needsTruncation
+          ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
+          : normalizedDisplay;
+        args = `(${truncatedDisplay})`;
+      }
+    }
 
     // If name exceeds available width, fall back to simple wrapped rendering
     const fallback = displayName.length >= rightWidth;
@@ -547,6 +592,28 @@ export const ToolCallMessage = memo(
         }
       }
 
+      // Check if this is a file read tool - show line count summary
+      if (
+        isFileReadTool(rawName) &&
+        line.resultOk !== false &&
+        line.resultText
+      ) {
+        // Count lines in the result (the content returned by Read tool)
+        const lineCount = line.resultText.split("\n").length;
+        return (
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>{prefix}</Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text>
+                Read <Text bold>{lineCount}</Text> lines
+              </Text>
+            </Box>
+          </Box>
+        );
+      }
+
       // Regular result handling
       const isError = line.resultOk === false;
 
@@ -633,8 +700,31 @@ export const ToolCallMessage = memo(
           </Box>
         </Box>
 
-        {/* Tool result (if present) */}
-        {getResultElement()}
+        {/* Streaming output for shell tools during execution */}
+        {isShellTool(rawName) && line.phase === "running" && line.streaming && (
+          <StreamingOutputDisplay streaming={line.streaming} />
+        )}
+
+        {/* Collapsed output for shell tools after completion */}
+        {isShellTool(rawName) &&
+          line.phase === "finished" &&
+          line.resultText &&
+          line.resultOk !== false && (
+            <CollapsedOutputDisplay output={line.resultText} />
+          )}
+
+        {/* Tool result for non-shell tools or shell tool errors */}
+        {(() => {
+          // Show default result element when:
+          // - Not a shell tool (always show result)
+          // - Shell tool with error (show error message)
+          // - Shell tool in streaming/ready phase (show default "Running..." etc)
+          const showDefaultResult =
+            !isShellTool(rawName) ||
+            (line.phase === "finished" && line.resultOk === false) ||
+            (line.phase !== "running" && line.phase !== "finished");
+          return showDefaultResult ? getResultElement() : null;
+        })()}
       </Box>
     );
   },

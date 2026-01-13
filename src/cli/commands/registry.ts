@@ -257,15 +257,15 @@ export const commands: Record<string, Command> = {
 
   // === Session management (order 40-49) ===
   "/connect": {
-    desc: "Connect an existing Claude account (/connect claude)",
+    desc: "Connect an existing account (/connect zai <api-key>)",
     order: 40,
     handler: () => {
       // Handled specially in App.tsx
-      return "Initiating OAuth connection...";
+      return "Initiating account connection...";
     },
   },
   "/disconnect": {
-    desc: "Disconnect from Claude OAuth",
+    desc: "Disconnect an existing account (/disconnect zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx
@@ -294,6 +294,24 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to access settings manager
       return "Clearing credentials...";
+    },
+  },
+
+  // === Ralph Wiggum mode (order 45-46) ===
+  "/ralph": {
+    desc: 'Start Ralph Wiggum loop (/ralph [prompt] [--completion-promise "X"] [--max-iterations N])',
+    order: 45,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating ralph mode...";
+    },
+  },
+  "/yolo-ralph": {
+    desc: "Start Ralph loop with bypass permissions (yolo + ralph)",
+    order: 46,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating yolo-ralph mode...";
     },
   },
 

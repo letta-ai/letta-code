@@ -10,6 +10,16 @@ import { debugWarn } from "../utils/debug";
 // Number of recent messages to backfill when resuming a session
 const MESSAGE_HISTORY_LIMIT = 15;
 
+/**
+ * Check if message backfilling is enabled via LETTA_BACKFILL env var.
+ * Defaults to true. Set LETTA_BACKFILL=0 or LETTA_BACKFILL=false to disable.
+ */
+function isBackfillEnabled(): boolean {
+  const val = process.env.LETTA_BACKFILL;
+  // Default to enabled (true) - only disable if explicitly set to "0" or "false"
+  return val !== "0" && val !== "false";
+}
+
 export interface ResumeData {
   pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
   pendingApprovals: ApprovalRequest[];
@@ -74,6 +84,14 @@ export async function getResumeData(
         "check-approval",
         `No in-context messages (message_ids empty/null) - no pending approvals`,
       );
+      // Skip backfill if disabled via LETTA_BACKFILL=false
+      if (!isBackfillEnabled()) {
+        return {
+          pendingApproval: null,
+          pendingApprovals: [],
+          messageHistory: [],
+        };
+      }
       const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
       let messageHistory = messages.slice(-historyCount);
       if (messageHistory[0]?.message_type === "tool_return_message") {
@@ -209,6 +227,11 @@ export async function getResumeData(
     }
 
     // Get last N messages for backfill (always use cursor messages for history)
+    // Skip backfill if disabled via LETTA_BACKFILL=false
+    if (!isBackfillEnabled()) {
+      return { pendingApproval, pendingApprovals, messageHistory: [] };
+    }
+
     const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
     let messageHistory = messages.slice(-historyCount);
 
