@@ -170,7 +170,7 @@
     "updateArgs": {
       "reasoning_effort": "none",
       "verbosity": "medium",
-      "context_window": 400000,
+      "context_window": 272000,
       "max_output_tokens": 128000
     }
   },
@@ -182,7 +182,7 @@
     "updateArgs": {
       "reasoning_effort": "low",
       "verbosity": "medium",
-      "context_window": 400000,
+      "context_window": 272000,
       "max_output_tokens": 128000
     }
   },
@@ -195,7 +195,7 @@
     "updateArgs": {
       "reasoning_effort": "medium",
       "verbosity": "medium",
-      "context_window": 400000,
+      "context_window": 272000,
       "max_output_tokens": 128000
     }
   },
@@ -207,7 +207,7 @@
     "updateArgs": {
       "reasoning_effort": "high",
       "verbosity": "medium",
-      "context_window": 400000,
+      "context_window": 272000,
       "max_output_tokens": 128000
     }
   },
@@ -219,7 +219,7 @@
     "updateArgs": {
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
-      "context_window": 400000,
+      "context_window": 272000,
       "max_output_tokens": 128000
     }
   },
