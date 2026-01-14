@@ -1314,7 +1314,7 @@ export default function App({
             const { executeApprovalBatch } = await import(
               "../agent/approval-execution"
             );
-            const { isProxyToolApproval } = await import(
+            const { isProxyToolApproval, parseProxyToolArgs } = await import(
               "../agent/remote-execution"
             );
 
@@ -1333,15 +1333,25 @@ export default function App({
 
             for (const approval of resumeData.pendingApprovals) {
               if (isProxyToolApproval(approval.toolName)) {
-                // Skip proxy tool in polling - let normal approval flow handle it
-                // The proxy tool is for remote callers; polling shouldn't auto-approve it
-                continue;
+                // Unwrap proxy tool to get actual tool and execute locally
+                const parsed = parseProxyToolArgs(approval.toolArgs);
+                if (parsed) {
+                  decisions.push({
+                    type: "approve" as const,
+                    approval: {
+                      toolCallId: approval.toolCallId,
+                      toolName: parsed.toolName,
+                      toolArgs: JSON.stringify(parsed.arguments),
+                    },
+                  });
+                }
+              } else {
+                // Regular tool call - auto-approve
+                decisions.push({
+                  type: "approve" as const,
+                  approval,
+                });
               }
-              // Regular tool call - auto-approve
-              decisions.push({
-                type: "approve" as const,
-                approval,
-              });
             }
 
             if (decisions.length === 0) {
