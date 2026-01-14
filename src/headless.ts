@@ -444,10 +444,23 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Save agent ID to both project and global settings
+  // Always create a new conversation on startup for headless mode too
+  // This ensures isolated message history per CLI invocation
+  const conversation = await client.conversations.create({
+    agent_id: agent.id,
+  });
+  const conversationId = conversation.id;
+
+  // Save session (agent + conversation) to both project and global settings
   await settingsManager.loadLocalProjectSettings();
-  settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-  settingsManager.updateSettings({ lastAgent: agent.id });
+  settingsManager.setLocalLastSession(
+    { agentId: agent.id, conversationId },
+    process.cwd(),
+  );
+  settingsManager.setGlobalLastSession({
+    agentId: agent.id,
+    conversationId,
+  });
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
@@ -508,6 +521,7 @@ export async function handleHeadlessCommand(
   if (isBidirectionalMode) {
     await runBidirectionalMode(
       agent,
+      conversationId,
       client,
       outputFormat,
       includePartialMessages,
@@ -661,7 +675,9 @@ export async function handleHeadlessCommand(
       };
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendMessageStream(agent.id, [approvalInput]);
+      const approvalStream = await sendMessageStream(conversationId, [
+        approvalInput,
+      ]);
       if (outputFormat === "stream-json") {
         // Consume quickly but don't emit message frames to stdout
         for await (const _ of approvalStream) {
@@ -710,7 +726,7 @@ export async function handleHeadlessCommand(
 
   try {
     while (true) {
-      const stream = await sendMessageStream(agent.id, currentInput);
+      const stream = await sendMessageStream(conversationId, currentInput);
 
       // For stream-json, output each chunk as it arrives
       let stopReason: StopReasonType;
@@ -1508,6 +1524,7 @@ export async function handleHeadlessCommand(
  */
 async function runBidirectionalMode(
   agent: AgentState,
+  conversationId: string,
   _client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
@@ -1749,7 +1766,7 @@ async function runBidirectionalMode(
           }
 
           // Send message to agent
-          const stream = await sendMessageStream(agent.id, currentInput);
+          const stream = await sendMessageStream(conversationId, currentInput);
 
           // Track stop reason and approvals during this stream
           let stopReason: StopReasonType = "error";

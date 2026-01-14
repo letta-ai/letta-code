@@ -431,12 +431,17 @@ export function ResumeSelector({
 
     if (currentLoading) return;
 
+    // For pinned tab, use pinnedPageAgents.length to include "not found" entries
+    // For other tabs, use currentAgents.length
+    const maxIndex =
+      activeTab === "pinned"
+        ? pinnedPageAgents.length - 1
+        : (currentAgents as AgentState[]).length - 1;
+
     if (key.upArrow) {
       setCurrentSelectedIndex((prev: number) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
-      setCurrentSelectedIndex((prev: number) =>
-        Math.min((currentAgents as AgentState[]).length - 1, prev + 1),
-      );
+      setCurrentSelectedIndex((prev: number) => Math.min(maxIndex, prev + 1));
     } else if (key.return) {
       // If typing a search query (list tabs only), submit it
       if (
@@ -526,13 +531,14 @@ export function ResumeSelector({
           setAllSelectedIndex(0);
         }
       }
-    } else if (activeTab === "pinned" && (input === "d" || input === "D")) {
-      // Unpin from all (pinned tab only)
-      const selected = pinnedPageAgents[pinnedSelectedIndex];
-      if (selected) {
-        settingsManager.unpinBoth(selected.agentId);
-        loadPinnedAgents();
-      }
+      // NOTE: "D" for unpin all disabled - too destructive without confirmation
+      // } else if (activeTab === "pinned" && (input === "d" || input === "D")) {
+      //   const selected = pinnedPageAgents[pinnedSelectedIndex];
+      //   if (selected) {
+      //     settingsManager.unpinBoth(selected.agentId);
+      //     loadPinnedAgents();
+      //   }
+      // }
     } else if (activeTab === "pinned" && (input === "p" || input === "P")) {
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
@@ -773,9 +779,7 @@ export function ResumeSelector({
             <Box>
               <Text dimColor>
                 Tab switch · ↑↓ navigate · Enter select · J/K page
-                {activeTab === "pinned"
-                  ? " · P unpin · D unpin all"
-                  : " · Type to search"}
+                {activeTab === "pinned" ? " · P unpin" : " · Type to search"}
               </Text>
             </Box>
           </Box>

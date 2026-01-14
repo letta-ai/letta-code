@@ -14,8 +14,18 @@ import {
   setSecureTokens,
 } from "./utils/secrets.js";
 
+/**
+ * Reference to a session (agent + conversation pair).
+ * Always tracked together since a conversation belongs to exactly one agent.
+ */
+export interface SessionRef {
+  agentId: string;
+  conversationId: string;
+}
+
 export interface Settings {
-  lastAgent: string | null;
+  lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
+  lastSession?: SessionRef; // Current session (agent + conversation)
   tokenStreaming: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
@@ -23,6 +33,7 @@ export interface Settings {
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
+  createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   env?: Record<string, string>;
   // Letta Cloud OAuth token management (stored separately in secrets)
@@ -50,7 +61,8 @@ export interface ProjectSettings {
 }
 
 export interface LocalProjectSettings {
-  lastAgent: string | null;
+  lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
+  lastSession?: SessionRef; // Current session (agent + conversation)
   permissions?: PermissionRules;
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned locally
@@ -631,6 +643,118 @@ class SettingsManager {
   }
 
   // =====================================================================
+  // Session Management Helpers
+  // =====================================================================
+
+  /**
+   * Get the last session from global settings.
+   * Migrates from lastAgent if lastSession is not set.
+   * Returns null if no session is available.
+   */
+  getGlobalLastSession(): SessionRef | null {
+    const settings = this.getSettings();
+    if (settings.lastSession) {
+      return settings.lastSession;
+    }
+    // Migration: if lastAgent exists but lastSession doesn't, return null
+    // (caller will need to create a new conversation for this agent)
+    return null;
+  }
+
+  /**
+   * Get the last agent ID from global settings (for migration purposes).
+   * Returns the agentId from lastSession if available, otherwise falls back to lastAgent.
+   */
+  getGlobalLastAgentId(): string | null {
+    const settings = this.getSettings();
+    if (settings.lastSession) {
+      return settings.lastSession.agentId;
+    }
+    return settings.lastAgent;
+  }
+
+  /**
+   * Set the last session in global settings.
+   */
+  setGlobalLastSession(session: SessionRef): void {
+    this.updateSettings({ lastSession: session, lastAgent: session.agentId });
+  }
+
+  /**
+   * Get the last session from local project settings.
+   * Migrates from lastAgent if lastSession is not set.
+   * Returns null if no session is available.
+   */
+  getLocalLastSession(
+    workingDirectory: string = process.cwd(),
+  ): SessionRef | null {
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    if (localSettings.lastSession) {
+      return localSettings.lastSession;
+    }
+    // Migration: if lastAgent exists but lastSession doesn't, return null
+    // (caller will need to create a new conversation for this agent)
+    return null;
+  }
+
+  /**
+   * Get the last agent ID from local project settings (for migration purposes).
+   * Returns the agentId from lastSession if available, otherwise falls back to lastAgent.
+   */
+  getLocalLastAgentId(workingDirectory: string = process.cwd()): string | null {
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+    if (localSettings.lastSession) {
+      return localSettings.lastSession.agentId;
+    }
+    return localSettings.lastAgent;
+  }
+
+  /**
+   * Set the last session in local project settings.
+   */
+  setLocalLastSession(
+    session: SessionRef,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    this.updateLocalProjectSettings(
+      { lastSession: session, lastAgent: session.agentId },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Get the effective last session (local overrides global).
+   * Returns null if no session is available anywhere.
+   */
+  getEffectiveLastSession(
+    workingDirectory: string = process.cwd(),
+  ): SessionRef | null {
+    // Check local first
+    const localSession = this.getLocalLastSession(workingDirectory);
+    if (localSession) {
+      return localSession;
+    }
+    // Fall back to global
+    return this.getGlobalLastSession();
+  }
+
+  /**
+   * Get the effective last agent ID (local overrides global).
+   * Useful for migration when we need an agent but don't have a conversation yet.
+   */
+  getEffectiveLastAgentId(
+    workingDirectory: string = process.cwd(),
+  ): string | null {
+    // Check local first
+    const localAgentId = this.getLocalLastAgentId(workingDirectory);
+    if (localAgentId) {
+      return localAgentId;
+    }
+    // Fall back to global
+    return this.getGlobalLastAgentId();
+  }
+
+  // =====================================================================
   // Profile Management Helpers
   // =====================================================================
 
@@ -773,6 +897,15 @@ class SettingsManager {
       { pinnedAgents: localAgents.filter((id) => id !== agentId) },
       workingDirectory,
     );
+  }
+
+  /**
+   * Check if default agents (Memo/Incognito) should be created on startup.
+   * Defaults to true if not explicitly set to false.
+   */
+  shouldCreateDefaultAgents(): boolean {
+    const settings = this.getSettings();
+    return settings.createDefaultAgents !== false;
   }
 
   /**
