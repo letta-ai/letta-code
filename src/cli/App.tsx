@@ -40,7 +40,7 @@ import { type AgentProvenance, createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
-import { INTERRUPTED_BY_USER } from "../constants";
+import { DEFAULT_POLL_INTERVAL_MS, INTERRUPTED_BY_USER } from "../constants";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import {
@@ -128,7 +128,7 @@ import {
   setToolCallsRunning,
   toLines,
 } from "./helpers/accumulator";
-import { backfillBuffers } from "./helpers/backfill";
+import { backfillBuffers, incrementalBackfill } from "./helpers/backfill";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
@@ -537,6 +537,7 @@ export default function App({
   messageHistory = [],
   tokenStreaming = false,
   agentProvenance = null,
+  unsafeRemoteExecution = false,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -552,6 +553,7 @@ export default function App({
   messageHistory?: Message[];
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
+  unsafeRemoteExecution?: boolean;
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -908,6 +910,10 @@ export default function App({
   // Queue cancellation: when any message is queued, we send cancel and wait for stream to end
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<string[]>([]);
+  // Track last checked message ID for remote polling (persists across effect re-runs)
+  const lastPolledMessageIdRef = useRef<string | null>(null);
+  // Track displayed message IDs to avoid duplicates during incremental backfill
+  const displayedMessageIdsRef = useRef<Set<string>>(new Set());
   const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
   const restoreQueueOnCancelRef = useRef(restoreQueueOnCancel);
   useEffect(() => {
@@ -1226,6 +1232,193 @@ export default function App({
     }
   }, [loadingState, startupApproval, startupApprovals]);
 
+  // Background polling for remote-triggered approvals (e.g., from iMessage via API)
+  // When idle, poll the agent state to detect pending approvals from external messages
+  useEffect(() => {
+    // Only poll when idle and ready
+    if (streaming || pendingApprovals.length > 0 || loadingState !== "ready") {
+      return;
+    }
+
+    // Don't poll for loading state
+    if (agentId === "loading") {
+      return;
+    }
+
+    // Get poll interval from env or default
+    const pollIntervalMs = parseInt(
+      process.env.LETTA_POLL_INTERVAL || String(DEFAULT_POLL_INTERVAL_MS),
+    );
+
+    // Skip polling if explicitly disabled
+    if (process.env.LETTA_POLL_ENABLED === "0") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollForRemoteApprovals = async () => {
+      if (cancelled) return;
+
+      try {
+        const client = await getClient();
+        const agent = await client.agents.retrieve(agentIdRef.current);
+
+        if (cancelled) return;
+
+        // Get the last message ID to detect new activity
+        const lastMessageId =
+          agent.message_ids && agent.message_ids.length > 0
+            ? agent.message_ids[agent.message_ids.length - 1]
+            : null;
+
+        const lastStopReason = (agent as { last_stop_reason?: string })
+          .last_stop_reason;
+
+        // Skip if we already processed this message
+        if (lastMessageId === lastPolledMessageIdRef.current) {
+          return;
+        }
+
+        // New activity detected - fetch message history
+        const resumeData = await getResumeData(client, agent);
+
+        if (cancelled) return;
+
+        // Always update lastPolledMessageIdRef when we detect new activity
+        lastPolledMessageIdRef.current = lastMessageId ?? null;
+
+        // Incrementally add new messages without clearing existing content
+        if (resumeData.messageHistory.length > 0) {
+          const newIds = incrementalBackfill(
+            buffersRef.current,
+            resumeData.messageHistory,
+            displayedMessageIdsRef.current,
+          );
+          // Track newly added IDs to avoid future duplicates
+          for (const id of newIds) {
+            displayedMessageIdsRef.current.add(id);
+          }
+          if (newIds.size > 0) {
+            refreshDerived();
+          }
+        }
+
+        // Handle pending approvals if any
+        if (
+          lastStopReason === "requires_approval" &&
+          resumeData.pendingApprovals.length > 0
+        ) {
+          // Handle unsafe remote execution mode: auto-approve and execute
+          if (unsafeRemoteExecution) {
+            const { executeApprovalBatch } = await import(
+              "../agent/approval-execution"
+            );
+            const { isProxyToolApproval } = await import(
+              "../agent/remote-execution"
+            );
+
+            // Build approve decisions for all tools
+            // For proxy tool calls, unwrap to get the actual tool
+            type ApprovalDecision = {
+              type: "approve";
+              approval: {
+                toolCallId: string;
+                toolName: string;
+                toolArgs: string;
+              };
+            };
+
+            const decisions: ApprovalDecision[] = [];
+
+            for (const approval of resumeData.pendingApprovals) {
+              if (isProxyToolApproval(approval.toolName)) {
+                // Skip proxy tool in polling - let normal approval flow handle it
+                // The proxy tool is for remote callers; polling shouldn't auto-approve it
+                continue;
+              }
+              // Regular tool call - auto-approve
+              decisions.push({
+                type: "approve" as const,
+                approval,
+              });
+            }
+
+            if (decisions.length === 0) {
+              return;
+            }
+
+            // Execute all approved tools
+            const executedResults = await executeApprovalBatch(
+              decisions,
+              (chunk) => {
+                // Update UI with tool results
+                onChunk(buffersRef.current, chunk);
+                refreshDerived();
+              },
+            );
+
+            // Send results back to server
+            const approvalInput: ApprovalCreate = {
+              type: "approval",
+              approvals: executedResults as ApprovalResult[],
+            };
+
+            await sendMessageStream(agentIdRef.current, [approvalInput]);
+
+            // Log that we auto-approved
+            console.error(
+              `[unsafe-remote-execution] Auto-approved ${decisions.length} remote-triggered tool(s): ${decisions.map((d) => d.approval.toolName).join(", ")}`,
+            );
+          } else {
+            // Normal mode: surface to user for approval
+            setPendingApprovals(resumeData.pendingApprovals);
+
+            // Analyze approval contexts
+            try {
+              const contexts = await Promise.all(
+                resumeData.pendingApprovals.map(async (approval) => {
+                  const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                    approval.toolArgs,
+                    {},
+                  );
+                  return await analyzeToolApproval(
+                    approval.toolName,
+                    parsedArgs,
+                  );
+                }),
+              );
+              setApprovalContexts(contexts);
+            } catch {
+              // If analysis fails, leave context as null
+            }
+
+            // Send desktop notification
+            sendDesktopNotification();
+          }
+        }
+      } catch {
+        // Silently ignore polling errors (network issues, etc.)
+      }
+    };
+
+    // Poll immediately on becoming idle, then on interval
+    pollForRemoteApprovals();
+    const intervalId = setInterval(pollForRemoteApprovals, pollIntervalMs);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    streaming,
+    pendingApprovals.length,
+    loadingState,
+    agentId,
+    unsafeRemoteExecution,
+    refreshDerived,
+  ]);
+
   // Eager commit for ExitPlanMode: Always commit plan preview to staticItems
   // This keeps the dynamic area small (just approval options) to avoid flicker
   useEffect(() => {
@@ -1296,6 +1489,19 @@ export default function App({
       }
       // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
+
+      // Initialize the polling ref with the last message from history to avoid re-backfilling
+      if (messageHistory.length > 0) {
+        const lastHistoryMessage = messageHistory[messageHistory.length - 1];
+        if (lastHistoryMessage?.id) {
+          lastPolledMessageIdRef.current = lastHistoryMessage.id;
+        }
+        // Track all displayed message IDs to avoid duplicates during polling
+        for (const msg of messageHistory) {
+          const lineId = "otid" in msg && msg.otid ? msg.otid : msg.id;
+          displayedMessageIdsRef.current.add(lineId);
+        }
+      }
 
       // Add combined status at the END so user sees it without scrolling
       const statusId = `status-resumed-${Date.now().toString(36)}`;

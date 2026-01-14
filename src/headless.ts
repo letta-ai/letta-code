@@ -56,6 +56,7 @@ export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
   skillsDirectory?: string,
+  unsafeRemoteExecution?: boolean,
 ) {
   const settings = settingsManager.getSettings();
 
@@ -511,6 +512,7 @@ export async function handleHeadlessCommand(
       client,
       outputFormat,
       includePartialMessages,
+      unsafeRemoteExecution ?? false,
     );
     return;
   }
@@ -1511,6 +1513,7 @@ async function runBidirectionalMode(
   _client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
+  unsafeRemoteExecution: boolean,
 ): Promise<void> {
   const sessionId = agent.id;
   const readline = await import("node:readline");
@@ -1906,21 +1909,16 @@ async function runBidirectionalMode(
                   reason: `Permission denied: ${permission.matchedRule || permission.reason}`,
                 });
               } else {
-                // permission.decision === "ask" - request permission from SDK
-                const permResponse = await requestPermission(
-                  approval.toolCallId,
-                  approval.toolName,
-                  parsedArgs,
-                );
-
-                if (permResponse.decision === "allow") {
+                // permission.decision === "ask"
+                if (unsafeRemoteExecution) {
+                  // Auto-approve in unsafe mode
                   decisions.push({
                     type: "approve",
                     approval,
-                    matchedRule: "SDK callback approved",
+                    matchedRule: "unsafe-remote-execution",
                   });
 
-                  // Emit auto_approval event for SDK-approved tool
+                  // Emit auto_approval event
                   const autoApprovalMsg: AutoApprovalMessage = {
                     type: "auto_approval",
                     tool_call: {
@@ -1928,18 +1926,48 @@ async function runBidirectionalMode(
                       tool_call_id: approval.toolCallId,
                       arguments: approval.toolArgs,
                     },
-                    reason: permResponse.reason || "SDK callback approved",
-                    matched_rule: "canUseTool callback",
+                    reason: "Auto-approved via --unsafe-remote-execution",
+                    matched_rule: "unsafe-remote-execution",
                     session_id: sessionId,
                     uuid: `auto-approval-${approval.toolCallId}`,
                   };
                   console.log(JSON.stringify(autoApprovalMsg));
                 } else {
-                  decisions.push({
-                    type: "deny",
-                    approval,
-                    reason: permResponse.reason || "Denied by SDK callback",
-                  });
+                  // Request permission from SDK
+                  const permResponse = await requestPermission(
+                    approval.toolCallId,
+                    approval.toolName,
+                    parsedArgs,
+                  );
+
+                  if (permResponse.decision === "allow") {
+                    decisions.push({
+                      type: "approve",
+                      approval,
+                      matchedRule: "SDK callback approved",
+                    });
+
+                    // Emit auto_approval event for SDK-approved tool
+                    const autoApprovalMsg: AutoApprovalMessage = {
+                      type: "auto_approval",
+                      tool_call: {
+                        name: approval.toolName,
+                        tool_call_id: approval.toolCallId,
+                        arguments: approval.toolArgs,
+                      },
+                      reason: permResponse.reason || "SDK callback approved",
+                      matched_rule: "canUseTool callback",
+                      session_id: sessionId,
+                      uuid: `auto-approval-${approval.toolCallId}`,
+                    };
+                    console.log(JSON.stringify(autoApprovalMsg));
+                  } else {
+                    decisions.push({
+                      type: "deny",
+                      approval,
+                      reason: permResponse.reason || "Denied by SDK callback",
+                    });
+                  }
                 }
               }
             }

@@ -156,8 +156,9 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       }
 
       // tool call message OR approval request (they're the same in history)
-      case "tool_call_message":
-      case "approval_request_message": {
+      case "tool_call_message": {
+        // Note: We skip approval_request_message in incremental backfill
+        // Those are handled by the polling loop's auto-approval mechanism
         // Use tool_calls array (new) or fallback to tool_call (deprecated)
         const toolCalls = Array.isArray(msg.tool_calls)
           ? msg.tool_calls
@@ -285,4 +286,112 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       foundTransition = true;
     }
   }
+}
+
+/**
+ * Incrementally add new messages to buffers without clearing existing content.
+ * Used by polling to add remote messages without duplicating.
+ * 
+ * @param buffers - The buffers to update
+ * @param history - The message history to add from
+ * @param existingIds - Set of message IDs already displayed (to skip)
+ * @returns Set of newly added message IDs
+ */
+export function incrementalBackfill(
+  buffers: Buffers,
+  history: Message[],
+  existingIds: Set<string>,
+): Set<string> {
+  const newIds = new Set<string>();
+
+  for (const msg of history) {
+    const lineId = "otid" in msg && msg.otid ? msg.otid : msg.id;
+    
+    // Skip if already exists
+    if (existingIds.has(lineId) || buffers.byId.has(lineId)) {
+      continue;
+    }
+
+    switch (msg.message_type) {
+      case "user_message": {
+        const rawText = renderUserContentParts(msg.content);
+        buffers.byId.set(lineId, {
+          kind: "user",
+          id: lineId,
+          text: rawText,
+        });
+        buffers.order.push(lineId);
+        newIds.add(lineId);
+        break;
+      }
+
+      case "reasoning_message": {
+        buffers.byId.set(lineId, {
+          kind: "reasoning",
+          id: lineId,
+          text: msg.reasoning,
+          phase: "finished",
+        });
+        buffers.order.push(lineId);
+        newIds.add(lineId);
+        break;
+      }
+
+      case "assistant_message": {
+        const content = renderAssistantContentParts(msg.content);
+        if (content) {
+          buffers.byId.set(lineId, {
+            kind: "assistant",
+            id: lineId,
+            text: content,
+            phase: "finished",
+          });
+          buffers.order.push(lineId);
+          newIds.add(lineId);
+        }
+        break;
+      }
+
+      case "tool_call_message":
+      case "approval_request_message": {
+        const toolCalls = Array.isArray(msg.tool_calls)
+          ? msg.tool_calls
+          : msg.tool_call
+            ? [msg.tool_call]
+            : [];
+
+        for (const tc of toolCalls) {
+          if (!tc?.tool_call_id) continue;
+          const toolCallId = tc.tool_call_id;
+          if (!toolCallId || !tc.name || !tc.arguments) continue;
+
+          const uniqueLineId =
+            toolCalls.length > 1 ? `${lineId}-${toolCallId.slice(-8)}` : lineId;
+
+          if (buffers.byId.has(uniqueLineId)) continue;
+
+          buffers.byId.set(uniqueLineId, {
+            kind: "tool_call",
+            id: uniqueLineId,
+            toolCallId,
+            name: tc.name,
+            argsText: tc.arguments,
+            resultText: undefined,
+            resultOk: undefined,
+            phase: "ready",
+          });
+          buffers.order.push(uniqueLineId);
+          buffers.toolCallIdToLineId.set(toolCallId, uniqueLineId);
+          newIds.add(uniqueLineId);
+        }
+        break;
+      }
+
+      // Skip tool_return_message - handled via tool_call updates
+      default:
+        break;
+    }
+  }
+
+  return newIds;
 }
