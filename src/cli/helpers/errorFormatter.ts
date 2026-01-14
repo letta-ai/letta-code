@@ -42,8 +42,13 @@ function isCreditExhaustedError(e: APIError): boolean {
  * Handles APIError, Error, and other error types consistently
  * @param e The error object to format
  * @param agentId Optional agent ID to create hyperlinks to the Letta dashboard
+ * @param conversationId Optional conversation ID to include in agent links
  */
-export function formatErrorDetails(e: unknown, agentId?: string): string {
+export function formatErrorDetails(
+  e: unknown,
+  agentId?: string,
+  conversationId?: string,
+): string {
   let runId: string | undefined;
 
   // Handle APIError from streaming (event: error)
@@ -71,7 +76,7 @@ export function formatErrorDetails(e: unknown, agentId?: string): string {
 
         const baseError = `${errorType}${message}${errorDetail}`;
         return runId && agentId
-          ? `${baseError}\n${createAgentLink(runId, agentId)}`
+          ? `${baseError}\n${createAgentLink(runId, agentId, conversationId)}`
           : baseError;
       }
     }
@@ -85,7 +90,7 @@ export function formatErrorDetails(e: unknown, agentId?: string): string {
 
       const baseError = detail ? `${e.message}\nDetail: ${detail}` : e.message;
       return runId && agentId
-        ? `${baseError}\n${createAgentLink(runId, agentId)}`
+        ? `${baseError}\n${createAgentLink(runId, agentId, conversationId)}`
         : baseError;
     }
 
@@ -127,7 +132,11 @@ export function formatErrorDetails(e: unknown, agentId?: string): string {
 /**
  * Create a terminal hyperlink to the agent with run ID displayed
  */
-function createAgentLink(runId: string, agentId: string): string {
-  const url = `https://app.letta.com/agents/${agentId}`;
+function createAgentLink(
+  runId: string,
+  agentId: string,
+  conversationId?: string,
+): string {
+  const url = `https://app.letta.com/agents/${agentId}${conversationId ? `?conversation=${conversationId}` : ""}`;
   return `View agent: \x1b]8;;${url}\x1b\\${agentId}\x1b]8;;\x1b\\ (run: ${runId})`;
 }

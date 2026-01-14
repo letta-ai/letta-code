@@ -131,6 +131,7 @@ export function Input({
   ralphPending = false,
   ralphPendingYolo = false,
   onRalphExit,
+  conversationId,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -154,6 +155,7 @@ export function Input({
   ralphPending?: boolean;
   ralphPendingYolo?: boolean;
   onRalphExit?: () => void;
+  conversationId?: string;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -824,6 +826,7 @@ export function Input({
           agentName={agentName}
           serverUrl={serverUrl}
           workingDirectory={process.cwd()}
+          conversationId={conversationId}
         />
 
         <InputFooter

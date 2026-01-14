@@ -3480,7 +3480,7 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
-          const adeUrl = `https://app.letta.com/agents/${agentId}`;
+          const adeUrl = `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
           const cmdId = uid("cmd");
 
           // Fire-and-forget browser open
@@ -7537,6 +7537,7 @@ Plan file path: ${planFilePath}`;
                 ralphPending={pendingRalphConfig !== null}
                 ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
                 onRalphExit={handleRalphExit}
+                conversationId={conversationId}
               />
             </Box>
 
@@ -7845,6 +7846,7 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName}
                 onClose={closeOverlay}
+                conversationId={conversationId}
               />
             )}
 
