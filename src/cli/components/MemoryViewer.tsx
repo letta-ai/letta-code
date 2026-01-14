@@ -14,6 +14,7 @@ interface MemoryViewerProps {
   agentId: string;
   agentName: string | null;
   onClose: () => void;
+  conversationId?: string;
 }
 
 /**
@@ -39,9 +40,10 @@ export function MemoryViewer({
   agentId,
   agentName,
   onClose,
+  conversationId,
 }: MemoryViewerProps) {
   // Construct ADE URL for this agent's memory
-  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory`;
+  const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId ? `&conversation=${conversationId}` : ""}`;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
 

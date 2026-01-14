@@ -1292,10 +1292,12 @@ async function main(): Promise<void> {
           setResumedExistingConversation(true);
 
           // Load message history and pending approvals from the conversation
+          // Re-fetch agent to get fresh message_ids for accurate pending approval detection
           setLoadingState("checking");
+          const freshAgent = await client.agents.retrieve(agent.id);
           const data = await getResumeData(
             client,
-            agent,
+            freshAgent,
             specifiedConversationId,
           );
           setResumeData(data);
@@ -1316,10 +1318,12 @@ async function main(): Promise<void> {
             setResumedExistingConversation(true);
 
             // Load message history and pending approvals from the conversation
+            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
             setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
             const data = await getResumeData(
               client,
-              agent,
+              freshAgent,
               lastSession.conversationId,
             );
             setResumeData(data);
