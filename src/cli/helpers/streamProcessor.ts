@@ -1,16 +1,3 @@
-/**
- * StreamProcessor - Minimal extraction of shared stream processing logic
- *
- * Status: INCREMENTAL REFACTOR - First pass, minimal changes
- *
- * This extracts ONLY the duplicated logic from:
- * - drainStream (stream.ts:100-235)
- * - stream-json (headless.ts:740-976)
- *
- * Goal: Drop-in replacement with minimal LOC changes
- * Future: Extract helper methods for error detection, etc.
- */
-
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
@@ -28,7 +15,7 @@ export interface ChunkProcessingResult {
   /** Whether this chunk should be output to the user */
   shouldOutput: boolean;
 
-  /** If this is an error chunk, formatted error info */
+  /** If this is an error chunk, formatted error message */
   errorMessage?: string;
 
   /** If this chunk updated an approval, the current state */
@@ -39,12 +26,6 @@ export interface ChunkProcessingResult {
 // STREAM PROCESSOR
 // ============================================================================
 
-/**
- * Minimal stream processor - tracks state across chunks
- *
- * This is intentionally low-level and close to the original drainStream logic.
- * Future refactors can extract helper methods.
- */
 export class StreamProcessor {
   // State tracking (public for easy access - wrapper decides usage)
   public pendingApprovals = new Map<string, ApprovalRequest>();
@@ -56,16 +37,6 @@ export class StreamProcessor {
   // Approval ID fallback (for backends that don't include tool_call_id in every chunk)
   private lastApprovalId: string | null = null;
 
-  /**
-   * Process a single chunk - directly mirrors drainStream loop body
-   *
-   * This is intentionally inline logic (not extracted to helpers) to:
-   * 1. Minimize LOC changes from original
-   * 2. Make it easy to verify equivalence
-   * 3. Keep first pass incremental
-   *
-   * @returns true if chunk should be output, false if suppressed
-   */
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
     let errorMessage: string | undefined;
     let updatedApproval: ApprovalRequest | undefined;
@@ -195,18 +166,10 @@ export class StreamProcessor {
    * Get accumulated approvals as array
    */
   getApprovals(): ApprovalRequest[] {
-    return Array.from(this.pendingApprovals.values());
-  }
-
-  /**
-   * Reset state for new stream (if reusing processor)
-   */
-  reset(): void {
-    this.pendingApprovals.clear();
-    this.runIds.clear();
-    this.lastRunId = null;
-    this.lastSeqId = null;
-    this.stopReason = null;
-    this.lastApprovalId = null;
+    return Array.from(this.pendingApprovals.values()).map((a) => ({
+      toolCallId: a.toolCallId,
+      toolName: a.toolName,
+      toolArgs: a.toolArgs,
+    }));
   }
 }

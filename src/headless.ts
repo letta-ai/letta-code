@@ -862,13 +862,7 @@ export async function handleHeadlessCommand(
 
         stopReason = stopReason || streamProcessor.stopReason || "error";
         apiDurationMs = performance.now() - startTime;
-        approvals = Array.from(streamProcessor.pendingApprovals.values()).map(
-          (a) => ({
-            toolCallId: a.toolCallId,
-            toolName: a.toolName || "",
-            toolArgs: a.toolArgs || "{}",
-          }),
-        );
+        approvals = streamProcessor.getApprovals();
         // Use the last run_id we saw (if any)
         lastRunId = streamProcessor.lastRunId;
         if (lastRunId) lastKnownRunId = lastRunId;
