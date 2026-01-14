@@ -155,8 +155,9 @@ export async function getResumeData(
       }
     }
 
-    // Find the last in-context message - source of truth for approval state
-    // NOTE: There can be multiple messages with the same ID but different types (duplicates).
+    // Find the last in-context message - source of truth for approval state.
+    // NOTE: A single DB message can contain multiple content types (e.g., reasoning + tool_calls).
+    // The API splits these into separate LettaMessage objects with the SAME ID but different types.
     // We prefer approval_request_message if it exists, since that's what we're checking for.
     const lastInContextId = inContextMessageIds[inContextMessageIds.length - 1];
     const matchingMessages = messages.filter(
