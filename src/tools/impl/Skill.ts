@@ -284,7 +284,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
             await readSkillContent(skillId, skillsDir);
 
           // Replace placeholder if this is the first skill
-          if (currentValue === "[CURRENTLY EMPTY]") {
+          if (currentValue === "No skills currently loaded.") {
             currentValue = "";
           }
 
@@ -378,7 +378,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       // Clean up the value
       currentValue = currentValue.trim();
       if (currentValue === "") {
-        currentValue = "[CURRENTLY EMPTY]";
+        currentValue = "No skills currently loaded.";
       }
 
       // Update the block

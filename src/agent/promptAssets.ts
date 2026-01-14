@@ -14,6 +14,7 @@ import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
+import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
@@ -35,6 +36,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
   "persona_claude.mdx": personaClaudePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
+  "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,

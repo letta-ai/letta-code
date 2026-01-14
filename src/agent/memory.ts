@@ -49,7 +49,7 @@ export function isProjectBlock(label: string): boolean {
 /**
  * Parse frontmatter and content from an .mdx file
  */
-function parseMdxFrontmatter(content: string): {
+export function parseMdxFrontmatter(content: string): {
   frontmatter: Record<string, string>;
   body: string;
 } {

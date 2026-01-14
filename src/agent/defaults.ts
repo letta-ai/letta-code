@@ -9,15 +9,17 @@ import type { Letta } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { settingsManager } from "../settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
+import { parseMdxFrontmatter } from "./memory";
+import { MEMORY_PROMPTS } from "./promptAssets";
 
 // Tags used to identify default agents
 const MEMO_TAG = "default:memo";
 const INCOGNITO_TAG = "default:incognito";
 
-// Memo's persona - minimal soul document emphasizing proactive learning
-const MEMO_PERSONA = `My name is Memo. I'm a stateful coding assistant.
-
-I proactively update my memory to remember preferences, project patterns, and working style. I learn and grow over time through our interactions.`;
+// Memo's persona - loaded from persona_memo.mdx
+const MEMO_PERSONA = parseMdxFrontmatter(
+  MEMORY_PROMPTS["persona_memo.mdx"] ?? "",
+).body;
 
 // Agent descriptions shown in /agents selector
 const MEMO_DESCRIPTION = "A stateful coding agent with persistent memory";
@@ -40,8 +42,8 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   incognito: {
     name: "Incognito",
     description: INCOGNITO_DESCRIPTION,
-    initBlocks: [], // Empty array = no memory blocks created
-    baseTools: ["web_search", "conversation_search", "fetch_webpage"], // No memory/memory_apply_patch
+    initBlocks: ["skills", "loaded_skills"], // Only skills blocks, no personal memory
+    baseTools: ["web_search", "conversation_search", "fetch_webpage", "Skill"], // No memory tool
   },
 };
 

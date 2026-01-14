@@ -987,8 +987,21 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 2: LRU from local settings (if not --new or user explicitly requested new from selector)
+        // Priority 2: Use agent selected from global selector (user just picked one)
+        // This takes precedence over stale LRU since user explicitly chose it
         const shouldCreateNew = forceNew || userRequestedNewAgent;
+        if (!resumingAgentId && !shouldCreateNew && selectedGlobalAgentId) {
+          try {
+            await client.agents.retrieve(selectedGlobalAgentId);
+            resumingAgentId = selectedGlobalAgentId;
+          } catch {
+            // Selected agent doesn't exist - show selector again
+            setLoadingState("selecting_global");
+            return;
+          }
+        }
+
+        // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
@@ -1004,7 +1017,7 @@ async function main(): Promise<void> {
             }
           }
 
-          // Priority 3: Try global settings if --continue flag
+          // Priority 4: Try global settings if --continue flag
           if (!resumingAgentId && continueSession && settings.lastAgent) {
             try {
               await client.agents.retrieve(settings.lastAgent);
@@ -1013,16 +1026,6 @@ async function main(): Promise<void> {
               // Global agent doesn't exist - show selector
               setLoadingState("selecting_global");
               return;
-            }
-          }
-
-          // Priority 4: Use agent selected from global selector
-          if (!resumingAgentId && selectedGlobalAgentId) {
-            try {
-              await client.agents.retrieve(selectedGlobalAgentId);
-              resumingAgentId = selectedGlobalAgentId;
-            } catch {
-              // Agent doesn't exist, will create new
             }
           }
         }
@@ -1392,9 +1395,6 @@ async function main(): Promise<void> {
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         onSelect: (agentId: string) => {
-          // Auto-pin the selected global agent to this project
-          settingsManager.pinLocal(agentId);
-
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");
         },
