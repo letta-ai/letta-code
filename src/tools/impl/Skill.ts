@@ -283,8 +283,11 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
           const { content: skillContent, path: skillPath } =
             await readSkillContent(skillId, skillsDir);
 
-          // Replace placeholder if this is the first skill
-          if (currentValue === "No skills currently loaded.") {
+          // Replace placeholder if this is the first skill (support old and new formats)
+          if (
+            currentValue === "No skills currently loaded." ||
+            currentValue === "[CURRENTLY EMPTY]"
+          ) {
             currentValue = "";
           }
 
