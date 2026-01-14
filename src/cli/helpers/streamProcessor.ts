@@ -11,12 +11,19 @@ export interface ApprovalRequest {
   toolArgs: string;
 }
 
+export interface ErrorInfo {
+  message: string;
+  error_type?: string;
+  detail?: string;
+  run_id?: string;
+}
+
 export interface ChunkProcessingResult {
   /** Whether this chunk should be output to the user */
   shouldOutput: boolean;
 
   /** If this is an error chunk, formatted error message */
-  errorMessage?: string;
+  errorInfo?: ErrorInfo;
 
   /** If this chunk updated an approval, the current state */
   updatedApproval?: ApprovalRequest;
@@ -38,7 +45,7 @@ export class StreamProcessor {
   private lastApprovalId: string | null = null;
 
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
-    let errorMessage: string | undefined;
+    let errorInfo: ErrorInfo | undefined;
     let updatedApproval: ApprovalRequest | undefined;
     // Store the run_id (for error reporting) and seq_id (for stream resumption)
     // Capture run_id even if seq_id is missing - we need it for error details
@@ -62,7 +69,12 @@ export class StreamProcessor {
     if ("message_type" in chunk && chunk.message_type === "error_message") {
       // This is a LettaErrorMessage
       const apiError = chunk as LettaStreamingResponse.LettaErrorMessage;
-      errorMessage = apiError.message;
+      errorInfo = {
+        message: apiError.message,
+        error_type: apiError.error_type,
+        detail: apiError.detail,
+        run_id: this.lastRunId || undefined,
+      };
     }
     // Case 2: Generic error object without message_type
     const chunkWithError = chunk as typeof chunk & {
@@ -71,15 +83,22 @@ export class StreamProcessor {
     if (chunkWithError.error && !("message_type" in chunk)) {
       const errorText = chunkWithError.error.message || "An error occurred";
       const errorDetail = chunkWithError.error.detail || "";
-      errorMessage = errorDetail ? `${errorText}: ${errorDetail}` : errorText;
+      errorInfo = {
+        message: errorDetail ? `${errorText}: ${errorDetail}` : errorText,
+        run_id: this.lastRunId || undefined,
+      };
     }
 
     // Suppress mid-stream desync errors (match headless behavior)
     // These are transient and will be handled by end-of-turn desync recovery
-    if (errorMessage?.includes("No tool call is currently awaiting approval")) {
+    if (
+      errorInfo?.message?.includes(
+        "No tool call is currently awaiting approval",
+      )
+    ) {
       // Server isn't ready for approval yet; let the stream continue until it is
       // Suppress the error frame from output
-      return { shouldOutput: false, errorMessage };
+      return { shouldOutput: false, errorInfo };
     }
 
     // Remove tool from pending approvals when it completes (server-side execution finished)
@@ -159,7 +178,7 @@ export class StreamProcessor {
     }
 
     // Default: output this chunk
-    return { shouldOutput: true, errorMessage, updatedApproval };
+    return { shouldOutput: true, errorInfo, updatedApproval };
   }
 
   /**

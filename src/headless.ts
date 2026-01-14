@@ -745,18 +745,28 @@ export async function handleHeadlessCommand(
         const streamProcessor = new StreamProcessor();
 
         for await (const chunk of stream) {
-          const { shouldOutput, errorMessage, updatedApproval } =
+          const { shouldOutput, errorInfo, updatedApproval } =
             streamProcessor.processChunk(chunk);
 
           // Detect mid-stream errors
-          if (errorMessage && shouldOutput) {
+          if (errorInfo && shouldOutput) {
             const errorEvent: ErrorMessage = {
               type: "error",
-              message: errorMessage,
+              message: errorInfo.message,
               stop_reason: "error",
-              run_id: streamProcessor.lastRunId || undefined,
+              run_id: errorInfo.run_id,
               session_id: sessionId,
               uuid: crypto.randomUUID(),
+              ...(errorInfo.error_type &&
+                errorInfo.run_id && {
+                  api_error: {
+                    message_type: "error_message",
+                    message: errorInfo.message,
+                    error_type: errorInfo.error_type,
+                    detail: errorInfo.detail,
+                    run_id: errorInfo.run_id,
+                  },
+                }),
             };
             console.log(JSON.stringify(errorEvent));
 
@@ -769,7 +779,7 @@ export async function handleHeadlessCommand(
           }
 
           // Detect server conflict due to pending approval; handle it and retry
-          if (errorMessage?.includes("Cannot send a new message")) {
+          if (errorInfo?.message?.includes("Cannot send a new message")) {
             // Don't emit this error; clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
