@@ -201,7 +201,8 @@ class SettingsManager {
             console.warn("Tokens will remain in settings file for persistence");
           }
         } else {
-          console.warn(
+          debugWarn(
+            "settings",
             "Secrets not available - tokens will remain in settings file for persistence",
           );
         }
@@ -356,7 +357,8 @@ class SettingsManager {
 
     if (Object.keys(secureTokens).length > 0) {
       // Fallback: store tokens in settings file
-      console.warn(
+      debugWarn(
+        "settings",
         "Secrets not available, storing tokens in settings file for persistence",
       );
 
@@ -1109,7 +1111,8 @@ class SettingsManager {
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
     const available = await this.isKeychainAvailable();
     if (!available) {
-      console.warn(
+      debugWarn(
+        "settings",
         "Secrets not available, tokens will use fallback storage (not persistent across restarts)",
       );
       return;
