@@ -255,6 +255,7 @@ async function isRetriableError(
         "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
         "api_error", // Anthropic SDK error type field
         "Network error", // Transient network failures during streaming
+        "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
       ];
       if (llmProviderPatterns.some((pattern) => detail.includes(pattern))) {
         return true;
