@@ -3183,6 +3183,7 @@ export default function App({
       const { pendingApprovals: existingApprovals } = await getResumeData(
         client,
         agent,
+        conversationIdRef.current,
       );
 
       if (!existingApprovals || existingApprovals.length === 0) {
@@ -5206,6 +5207,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           const { pendingApprovals: existingApprovals } = await getResumeData(
             client,
             agent,
+            conversationIdRef.current,
           );
 
           // Check if user cancelled while we were fetching approval state
