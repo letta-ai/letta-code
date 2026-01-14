@@ -7113,12 +7113,15 @@ Plan file path: ${planFilePath}`;
                     // Skip Task tools that don't have a pending approval
                     // They render as empty Boxes (ToolCallMessage returns null for non-finished Task tools)
                     // which causes N blank lines when N Task tools are called in parallel
+                    // Note: pendingIds doesn't include the ACTIVE approval (currentApproval),
+                    // so we must also check if this is the active approval
                     if (
                       ln.kind === "tool_call" &&
                       ln.name &&
                       isTaskTool(ln.name) &&
                       ln.toolCallId &&
-                      !pendingIds.has(ln.toolCallId)
+                      !pendingIds.has(ln.toolCallId) &&
+                      ln.toolCallId !== currentApproval?.toolCallId
                     ) {
                       return null;
                     }
@@ -7462,21 +7465,68 @@ Plan file path: ${planFilePath}`;
               {/* Fallback approval UI when backfill is disabled (no liveItems) */}
               {liveItems.length === 0 && currentApproval && (
                 <Box flexDirection="column">
-                  <InlineGenericApproval
-                    toolName={currentApproval.toolName}
-                    toolArgs={currentApproval.toolArgs}
-                    onApprove={() => handleApproveCurrent()}
-                    onApproveAlways={(scope) => handleApproveAlways(scope)}
-                    onDeny={(reason) => handleDenyCurrent(reason)}
-                    onCancel={handleCancelApprovals}
-                    isFocused={true}
-                    approveAlwaysText={
-                      currentApprovalContext?.approveAlwaysText
-                    }
-                    allowPersistence={
-                      currentApprovalContext?.allowPersistence ?? true
-                    }
-                  />
+                  {isTaskTool(currentApproval.toolName) ? (
+                    <InlineTaskApproval
+                      taskInfo={(() => {
+                        try {
+                          const args = JSON.parse(
+                            currentApproval.toolArgs || "{}",
+                          );
+                          return {
+                            subagentType:
+                              typeof args.subagent_type === "string"
+                                ? args.subagent_type
+                                : "unknown",
+                            description:
+                              typeof args.description === "string"
+                                ? args.description
+                                : "(no description)",
+                            prompt:
+                              typeof args.prompt === "string"
+                                ? args.prompt
+                                : "(no prompt)",
+                            model:
+                              typeof args.model === "string"
+                                ? args.model
+                                : undefined,
+                          };
+                        } catch {
+                          return {
+                            subagentType: "unknown",
+                            description: "(parse error)",
+                            prompt: "(parse error)",
+                          };
+                        }
+                      })()}
+                      onApprove={() => handleApproveCurrent()}
+                      onApproveAlways={(scope) => handleApproveAlways(scope)}
+                      onDeny={(reason) => handleDenyCurrent(reason)}
+                      onCancel={handleCancelApprovals}
+                      isFocused={true}
+                      approveAlwaysText={
+                        currentApprovalContext?.approveAlwaysText
+                      }
+                      allowPersistence={
+                        currentApprovalContext?.allowPersistence ?? true
+                      }
+                    />
+                  ) : (
+                    <InlineGenericApproval
+                      toolName={currentApproval.toolName}
+                      toolArgs={currentApproval.toolArgs}
+                      onApprove={() => handleApproveCurrent()}
+                      onApproveAlways={(scope) => handleApproveAlways(scope)}
+                      onDeny={(reason) => handleDenyCurrent(reason)}
+                      onCancel={handleCancelApprovals}
+                      isFocused={true}
+                      approveAlwaysText={
+                        currentApprovalContext?.approveAlwaysText
+                      }
+                      allowPersistence={
+                        currentApprovalContext?.allowPersistence ?? true
+                      }
+                    />
+                  )}
                 </Box>
               )}
 

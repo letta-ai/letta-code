@@ -43,13 +43,25 @@ export async function getResumeData(
   try {
     // Fetch messages from conversation or agent depending on what's provided
     let messages: Message[];
+    // The source of truth for in-context message IDs:
+    // - For conversations: conversation.in_context_message_ids
+    // - For legacy agent-only: agent.message_ids
+    let inContextMessageIds: string[] | null | undefined;
+
     if (conversationId) {
       // Use conversations API for conversation-specific history
-      messages = await client.conversations.messages.list(conversationId);
+      // Fetch both messages and conversation state in parallel
+      const [messagesResult, conversation] = await Promise.all([
+        client.conversations.messages.list(conversationId),
+        client.conversations.retrieve(conversationId),
+      ]);
+      messages = messagesResult;
+      inContextMessageIds = conversation.in_context_message_ids;
     } else {
       // Fall back to agent messages (legacy behavior)
       const messagesPage = await client.agents.messages.list(agent.id);
       messages = messagesPage.items;
+      inContextMessageIds = agent.message_ids;
     }
 
     if (!messages || messages.length === 0) {
@@ -61,8 +73,7 @@ export async function getResumeData(
     }
 
     // Compare cursor last message with in-context last message ID
-    // The backend uses in-context messages for CONFLICT validation, so if they're
-    // desynced, we need to check the in-context message for pending approvals
+    // The source of truth is the conversation's (or agent's) in_context_message_ids
     const cursorLastMessage = messages[messages.length - 1];
     if (!cursorLastMessage) {
       return {
@@ -73,8 +84,8 @@ export async function getResumeData(
     }
 
     const inContextLastMessageId =
-      agent.message_ids && agent.message_ids.length > 0
-        ? agent.message_ids[agent.message_ids.length - 1]
+      inContextMessageIds && inContextMessageIds.length > 0
+        ? inContextMessageIds[inContextMessageIds.length - 1]
         : null;
 
     // If there are no in-context messages, there can be no pending approval
