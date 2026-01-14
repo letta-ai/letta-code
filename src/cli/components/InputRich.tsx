@@ -51,6 +51,7 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   isAnthropicProvider,
+  sandboxProvider,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -61,6 +62,7 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   isAnthropicProvider: boolean;
+  sandboxProvider: string | null | undefined;
 }) {
   return (
     <Box justifyContent="space-between" marginBottom={1}>
@@ -95,6 +97,9 @@ const InputFooter = memo(function InputFooter({
         >
           {` [${currentModel ?? "unknown"}]`}
         </Text>
+        {sandboxProvider && (
+          <Text color="#22C55E">{` [${sandboxProvider.toUpperCase()}]`}</Text>
+        )}
       </Text>
     </Box>
   );
@@ -124,6 +129,7 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
+  sandboxProvider,
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
@@ -148,6 +154,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
+  sandboxProvider?: string | null;
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
@@ -839,6 +846,7 @@ export function Input({
           agentName={agentName}
           currentModel={currentModel}
           isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+          sandboxProvider={sandboxProvider}
         />
       </Box>
     </Box>

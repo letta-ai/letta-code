@@ -254,6 +254,14 @@ export const commands: Record<string, Command> = {
       return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
     },
   },
+  "/sandbox": {
+    desc: "Connect remote sandbox (E2B/Daytona)",
+    order: 37,
+    handler: () => {
+      // Handled specially in App.tsx to open SandboxSelector component
+      return "Opening sandbox selector...";
+    },
+  },
 
   // === Session management (order 40-49) ===
   "/connect": {
