@@ -4818,6 +4818,27 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /plan command - enter plan mode
+        if (trimmed === "/plan") {
+          // Generate plan file path and enter plan mode
+          const planPath = generatePlanFilePath();
+          permissionMode.setPlanFilePath(planPath);
+          permissionMode.setMode("plan");
+          setUiPermissionMode("plan");
+
+          // Add status message to transcript
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [`Plan mode enabled. Plan file: ${planPath}`],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+
+          return { submitted: true };
+        }
+
         // Special handling for /init command - initialize agent memory
         if (trimmed === "/init") {
           // Check for pending approvals before sending

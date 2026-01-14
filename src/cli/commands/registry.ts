@@ -68,9 +68,17 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
+  "/plan": {
+    desc: "Enter plan mode",
+    order: 17,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Entering plan mode...";
+    },
+  },
   "/clear": {
     desc: "Start a new conversation (keep agent memory)",
-    order: 17,
+    order: 18,
     handler: () => {
       // Handled specially in App.tsx to create new conversation
       return "Starting new conversation...";
@@ -78,7 +86,7 @@ export const commands: Record<string, Command> = {
   },
   "/clear-messages": {
     desc: "Reset all agent messages (destructive)",
-    order: 18,
+    order: 19,
     hidden: true, // Advanced command, not shown in autocomplete
     handler: () => {
       // Handled specially in App.tsx to reset agent messages
