@@ -291,7 +291,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 /**
  * Incrementally add new messages to buffers without clearing existing content.
  * Used by polling to add remote messages without duplicating.
- * 
+ *
  * @param buffers - The buffers to update
  * @param history - The message history to add from
  * @param existingIds - Set of message IDs already displayed (to skip)
@@ -306,7 +306,7 @@ export function incrementalBackfill(
 
   for (const msg of history) {
     const lineId = "otid" in msg && msg.otid ? msg.otid : msg.id;
-    
+
     // Skip if already exists
     if (existingIds.has(lineId) || buffers.byId.has(lineId)) {
       continue;

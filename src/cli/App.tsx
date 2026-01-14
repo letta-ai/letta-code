@@ -1248,6 +1248,7 @@ export default function App({
     // Get poll interval from env or default
     const pollIntervalMs = parseInt(
       process.env.LETTA_POLL_INTERVAL || String(DEFAULT_POLL_INTERVAL_MS),
+      10,
     );
 
     // Skip polling if explicitly disabled

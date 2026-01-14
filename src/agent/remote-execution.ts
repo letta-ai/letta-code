@@ -111,7 +111,9 @@ async function isProxyToolAttached(
  * @param agentId - The agent to attach the proxy tool to
  * @returns The tool ID if successful, null otherwise
  */
-export async function registerProxyTool(agentId: string): Promise<string | null> {
+export async function registerProxyTool(
+  agentId: string,
+): Promise<string | null> {
   try {
     const client = await getClient();
 
@@ -146,9 +148,7 @@ export async function registerProxyTool(agentId: string): Promise<string | null>
 
     // Check if already attached
     if (await isProxyToolAttached(client, agentId, tool.id)) {
-      console.error(
-        `[remote-execution] Proxy tool already attached to agent`,
-      );
+      console.error(`[remote-execution] Proxy tool already attached to agent`);
       // Still ensure agent-level approval is set
       await client.agents.tools.updateApproval(PROXY_TOOL_NAME, {
         agent_id: agentId,
