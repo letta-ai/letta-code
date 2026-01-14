@@ -151,15 +151,73 @@ export async function getResumeData(
           );
         }
       } else {
-        // In-context message not found in cursor - do NOT fall back to cursor
-        // The in-context message is the source of truth, and if we can't find it,
-        // we should not assume there's a pending approval
-        debugWarn(
-          "check-approval",
-          `In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
-            `  This likely means the in-context message is older than the cursor window.\n` +
-            `  Not falling back to cursor - returning no pending approvals.`,
-        );
+        // In-context message not found in initial cursor fetch.
+        // This can happen when the cursor window doesn't include older in-context messages.
+        // We need to fetch specifically around the in-context message.
+        //
+        // TODO: Once client.conversations.messages.retrieve(conversationId, messageId) is added
+        // to the SDK, replace this workaround with a single direct fetch:
+        //   messageToCheck = await client.conversations.messages.retrieve(conversationId, inContextLastMessageId);
+        //
+        // WORKAROUND: Use pagination to fetch messages that include the last in-context message.
+        // By using `after` with the second-to-last in-context message ID, we get messages
+        // after that point, which guarantees the last in-context message is included.
+        if (
+          conversationId &&
+          inContextMessageIds &&
+          inContextMessageIds.length >= 2
+        ) {
+          const secondToLastId =
+            inContextMessageIds[inContextMessageIds.length - 2];
+          debugWarn(
+            "check-approval",
+            `Fetching with after=${secondToLastId} to find in-context message`,
+          );
+
+          try {
+            const targetedFetch = await client.conversations.messages.list(
+              conversationId,
+              { after: secondToLastId, limit: MESSAGE_HISTORY_LIMIT },
+            );
+
+            const matchingInTargeted = targetedFetch.filter(
+              (msg) => msg.id === inContextLastMessageId,
+            );
+
+            if (matchingInTargeted.length > 0) {
+              const approvalMessage = matchingInTargeted.find(
+                (msg) => msg.message_type === "approval_request_message",
+              );
+              messageToCheck =
+                approvalMessage ??
+                matchingInTargeted[matchingInTargeted.length - 1] ??
+                null;
+
+              if (messageToCheck) {
+                debugWarn(
+                  "check-approval",
+                  `Found in-context message via targeted fetch (type: ${messageToCheck.message_type})`,
+                );
+                // Update messages array for backfill
+                messages = targetedFetch;
+              }
+            } else {
+              debugWarn(
+                "check-approval",
+                `In-context message still not found after targeted fetch`,
+              );
+            }
+          } catch (fetchError) {
+            debugWarn("check-approval", `Targeted fetch failed: ${fetchError}`);
+          }
+        } else {
+          debugWarn(
+            "check-approval",
+            `In-context message ${inContextLastMessageId} not found in cursor fetch.\n` +
+              `  Cannot use targeted fetch (need conversationId and >= 2 in-context messages).\n` +
+              `  in-context count: ${inContextMessageIds?.length ?? 0}`,
+          );
+        }
       }
     }
 
