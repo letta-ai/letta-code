@@ -120,7 +120,9 @@ export function ModelSelector({
         : typedModels.filter((m) => availableHandles.has(m.handle));
     // Apply provider filter if specified
     if (filterProvider) {
-      available = available.filter((m) => m.handle.startsWith(`${filterProvider}/`));
+      available = available.filter((m) =>
+        m.handle.startsWith(`${filterProvider}/`),
+      );
     }
     const featured = available.filter((m) => m.isFeatured);
     const nonFeatured = available.filter((m) => !m.isFeatured);
