@@ -376,14 +376,19 @@ export function ConversationSelector({
     const createdTime = formatRelativeTime(conv.created_at);
 
     // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
+    // Uses L-bracket indentation style for visual hierarchy
     const renderPreview = () => {
+      const bracket = <Text dimColor>{"⎿  "}</Text>;
+      const indent = "   "; // Same width as "⎿  " for alignment
+
       // Priority 1: Summary
       if (conv.summary) {
         return (
           <Box flexDirection="row" marginLeft={2}>
+            {bracket}
             <Text dimColor italic>
-              {conv.summary.length > 60
-                ? `${conv.summary.slice(0, 57)}...`
+              {conv.summary.length > 57
+                ? `${conv.summary.slice(0, 54)}...`
                 : conv.summary}
             </Text>
           </Box>
@@ -400,6 +405,7 @@ export function ConversationSelector({
                 flexDirection="row"
                 marginLeft={2}
               >
+                {idx === 0 ? bracket : <Text>{indent}</Text>}
                 <Text dimColor>
                   {line.role === "assistant" ? "👾 " : "👤 "}
                 </Text>
@@ -416,6 +422,7 @@ export function ConversationSelector({
       if (messageCount > 0) {
         return (
           <Box flexDirection="row" marginLeft={2}>
+            {bracket}
             <Text dimColor italic>
               {messageCount} message{messageCount === 1 ? "" : "s"} (no
               in-context user/agent messages)
@@ -426,6 +433,7 @@ export function ConversationSelector({
 
       return (
         <Box flexDirection="row" marginLeft={2}>
+          {bracket}
           <Text dimColor italic>
             No in-context messages
           </Text>
