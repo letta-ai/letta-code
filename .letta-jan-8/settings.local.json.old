@@ -1,0 +1,9 @@
+{
+  "lastAgent": "agent-f54d191d-13e8-43f8-8d0c-dd83ead220ce",
+  "profiles": {
+    "TestProfile": "agent-9a3e9f9c-a41f-4196-ad5b-95df512115a9",
+    "bananagrams": "agent-2cb2d882-547d-4acf-b337-5f2a1f4bf089",
+    "anotherone": "agent-7efb7fef-71fe-42cf-9efb-99916a4e5824",
+    "another-one-part-2": "agent-b2b14d22-e378-4a4a-9f98-151cb5e1be22"
+  }
+}

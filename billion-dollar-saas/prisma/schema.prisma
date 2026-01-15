@@ -1,0 +1,66 @@
+// Database schema for ContentForge AI
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  password          String
+  name              String
+  company           String?
+  stripeCustomerId  String?  @unique
+  subscriptionId    String?  @unique
+  subscriptionStatus String?
+  plan              String   @default("free") // free, pro, enterprise
+  credits           Int      @default(10)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  contents          Content[]
+  apiKeys           ApiKey[]
+}
+
+model Content {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // blog, social, email, ad-copy
+  prompt      String   @db.Text
+  generated   String   @db.Text
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String   @unique
+  name      String
+  lastUsed  DateTime?
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+}
+
+model Usage {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // content-generation, api-call
+  credits     Int
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+}

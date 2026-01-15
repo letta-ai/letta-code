@@ -8,7 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -25,11 +25,14 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  const isOpenAI = modelHandle.startsWith("openai/");
-  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  // Include our custom OpenAI Codex OAuth provider (chatgpt-plus-pro)
+  const isOpenAI =
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+    modelHandle.startsWith("claude-pro-max/");
   const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");

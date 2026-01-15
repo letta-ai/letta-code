@@ -1,0 +1,6 @@
+This is a test file to verify the UI changes.
+
+Line 1: Testing the tool call display - EDITED AGAIN!
+Line 2: Checking the 2-line truncation
+Line 3: Verifying the width constraints
+Line 4: Making sure everything looks good

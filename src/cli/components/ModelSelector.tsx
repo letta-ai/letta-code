@@ -32,12 +32,18 @@ interface ModelSelectorProps {
   currentModelId?: string;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
+  /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
+  filterProvider?: string;
+  /** Force refresh the models list on mount */
+  forceRefresh?: boolean;
 }
 
 export function ModelSelector({
   currentModelId,
   onSelect,
   onCancel,
+  filterProvider,
+  forceRefresh: forceRefreshOnMount,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
@@ -99,8 +105,8 @@ export function ModelSelector({
   });
 
   useEffect(() => {
-    loadModels.current(false);
-  }, []);
+    loadModels.current(forceRefreshOnMount ?? false);
+  }, [forceRefreshOnMount]);
 
   // Handles from models.json (for filtering "all" category)
   const staticModelHandles = useMemo(
@@ -110,16 +116,23 @@ export function ModelSelector({
 
   // Supported models: models.json entries that are available
   // Featured models first, then non-featured, preserving JSON order within each group
+  // If filterProvider is set, only show models from that provider
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
-    const available =
+    let available =
       availableHandles === null
         ? typedModels // fallback
         : typedModels.filter((m) => availableHandles.has(m.handle));
+    // Apply provider filter if specified
+    if (filterProvider) {
+      available = available.filter((m) =>
+        m.handle.startsWith(`${filterProvider}/`),
+      );
+    }
     const featured = available.filter((m) => m.isFeatured);
     const nonFeatured = available.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
-  }, [typedModels, availableHandles]);
+  }, [typedModels, availableHandles, filterProvider]);
 
   // All other models: API handles not in models.json
   const otherModelHandles = useMemo(() => {

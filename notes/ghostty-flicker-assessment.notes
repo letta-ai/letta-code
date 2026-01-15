@@ -1,0 +1,22 @@
+Ghostty bottom bar flicker – assessment
+
+Observed behavior
+- Flicker only visible while the status line (“{agent_name} is …”) shimmer animates during streaming.
+- Footer content itself is stable; blink coincides with redraws of the entire input/footer area.
+
+Likely causes (from letta-code-prod)
+- App.tsx:930-951 force-clears the terminal on any column decrease (`CSI 2J;H`). Ghostty emits transient resize bounces (focus/tab bar), so the screen (including footer) is wiped mid-stream.
+- Ink renderer still hits its clearTerminal/offscreen fallback during streaming; that causes a full redraw that Ghostty shows as flicker.
+  - Overflow guard undercounts height (ignores footer/assist/queue, caps tool args, ignores real wrapping), so animations stay on while Ink thinks output is too tall.
+- Shimmer/timer state lives in InputRich; every 120 ms tick re-renders the whole Input tree (including footer). In Ghostty, paired with the above clears, this makes the bottom bar blink even though its text doesn’t change.
+- `shouldAnimate` does not gate shimmer, so the status animation keeps firing even when we’d want animations off near overflow.
+
+Comparative notes (other CLIs)
+- gemini-cli avoids shimmer; uses small spinners, a flicker detector (measureElement vs terminal height), overflow hidden, and no manual resize clear. Animated components are counted to reason about redraw pressure.
+- claude-code repo here is docs-only, but changelog hints spinner/shimmer fixes (likely tightened animation rather than redrawing footer).
+
+Proposed remediation (not implemented yet)
+- Drop/debounce the manual clear on minor width drops; rely on Ink resize handling.
+- Make overflow detection accurate (include footer/assist/queue + wrapped widths) and disable animations when near row limit to avoid offscreen clears.
+- Gate shimmer/elapsed timers on the animation flag or isolate the status line in a memoized subtree so footer doesn’t re-render every 120 ms.
+- If still noisy, swap shimmer for a lightweight spinner or slow it down specifically for Ghostty.
