@@ -51,6 +51,7 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   isOpenAICodexProvider,
+  isAutocompleteActive,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -61,7 +62,13 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   isOpenAICodexProvider: boolean;
+  isAutocompleteActive: boolean;
 }) {
+  // Hide footer when autocomplete is showing
+  if (isAutocompleteActive) {
+    return null;
+  }
+
   return (
     <Box justifyContent="space-between" marginBottom={1}>
       {ctrlCPressed ? (
@@ -841,6 +848,7 @@ export function Input({
           isOpenAICodexProvider={
             currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
           }
+          isAutocompleteActive={isAutocompleteActive}
         />
       </Box>
     </Box>

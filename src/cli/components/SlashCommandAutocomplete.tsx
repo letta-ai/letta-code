@@ -1,12 +1,9 @@
 import { Text } from "ink";
-import Link from "ink-link";
 import { useEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
-import { colors } from "./colors";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 8; // Number of commands visible at once
@@ -179,12 +176,10 @@ export function SlashCommandAutocomplete({
     startIndex,
     startIndex + VISIBLE_COMMANDS,
   );
-  const showScrollUp = startIndex > 0;
   const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
 
   return (
-    <AutocompleteBox header="↑↓ navigate, Tab to autocomplete, Enter to execute">
-      {showScrollUp && <Text dimColor> ↑ {startIndex} more above</Text>}
+    <AutocompleteBox>
       {visibleMatches.map((item, idx) => {
         const actualIndex = startIndex + idx;
         return (
@@ -197,20 +192,13 @@ export function SlashCommandAutocomplete({
           </AutocompleteItem>
         );
       })}
-      {showScrollDown && (
+      {showScrollDown ? (
         <Text dimColor>
-          {" "}
-          ↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+          {"  "}↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
         </Text>
-      )}
-      <Text> </Text>
-      <Text dimColor>
-        Having issues? Report bugs with /feedback or{" "}
-        <Link url="https://discord.gg/letta">
-          <Text color={colors.link.text}>join our Discord ↗</Text>
-        </Link>
-      </Text>
-      <Text dimColor>Version: Letta Code v{getVersion()}</Text>
+      ) : needsScrolling ? (
+        <Text> </Text>
+      ) : null}
     </AutocompleteBox>
   );
 }

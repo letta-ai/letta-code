@@ -91,7 +91,7 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
 import { McpSelector } from "./components/McpSelector";
-import { MemoryViewer } from "./components/MemoryViewer";
+import { MemoryTabViewer } from "./components/MemoryTabViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
@@ -99,7 +99,7 @@ import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
-import { ResumeSelector } from "./components/ResumeSelector";
+
 import { formatUsageStats } from "./components/SessionStats";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -7393,23 +7393,14 @@ Plan file path: ${planFilePath}`;
               />
             )}
 
-            {/* Agent Selector - conditionally mounted as overlay */}
-            {activeOverlay === "agent" && (
-              <AgentSelector
-                currentAgentId={agentId}
-                onSelect={handleAgentSelect}
-                onCancel={closeOverlay}
-              />
-            )}
-
             {/* Subagent Manager - for managing custom subagents */}
             {activeOverlay === "subagent" && (
               <SubagentManager onClose={closeOverlay} />
             )}
 
-            {/* Resume Selector - conditionally mounted as overlay */}
+            {/* Agent Selector - for browsing/selecting agents */}
             {activeOverlay === "resume" && (
-              <ResumeSelector
+              <AgentSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
                   closeOverlay();
@@ -7709,10 +7700,9 @@ Plan file path: ${planFilePath}`;
 
             {/* Memory Viewer - conditionally mounted as overlay */}
             {activeOverlay === "memory" && (
-              <MemoryViewer
+              <MemoryTabViewer
                 blocks={agentState?.memory?.blocks || []}
                 agentId={agentId}
-                agentName={agentName}
                 onClose={closeOverlay}
                 conversationId={conversationId}
               />

@@ -4,7 +4,12 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { MarkdownDisplay } from "./MarkdownDisplay";
+
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
 
 interface ConversationSelectorProps {
   agentId: string;
@@ -333,13 +338,13 @@ export function ConversationSelector({
     } else if (input === "n" || input === "N") {
       // New conversation
       onNewConversation();
-    } else if (input === "j" || input === "J") {
+    } else if (key.leftArrow) {
       // Previous page
       if (page > 0) {
         setPage((prev) => prev - 1);
         setSelectedIndex(0);
       }
-    } else if (input === "k" || input === "K") {
+    } else if (key.rightArrow) {
       // Next page
       if (canGoNext) {
         const nextPageIndex = page + 1;
@@ -376,14 +381,19 @@ export function ConversationSelector({
     const createdTime = formatRelativeTime(conv.created_at);
 
     // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
+    // Uses L-bracket indentation style for visual hierarchy
     const renderPreview = () => {
+      const bracket = <Text dimColor>{"⎿  "}</Text>;
+      const indent = "   "; // Same width as "⎿  " for alignment
+
       // Priority 1: Summary
       if (conv.summary) {
         return (
           <Box flexDirection="row" marginLeft={2}>
+            {bracket}
             <Text dimColor italic>
-              {conv.summary.length > 60
-                ? `${conv.summary.slice(0, 57)}...`
+              {conv.summary.length > 57
+                ? `${conv.summary.slice(0, 54)}...`
                 : conv.summary}
             </Text>
           </Box>
@@ -400,6 +410,7 @@ export function ConversationSelector({
                 flexDirection="row"
                 marginLeft={2}
               >
+                {idx === 0 ? bracket : <Text>{indent}</Text>}
                 <Text dimColor>
                   {line.role === "assistant" ? "👾 " : "👤 "}
                 </Text>
@@ -416,6 +427,7 @@ export function ConversationSelector({
       if (messageCount > 0) {
         return (
           <Box flexDirection="row" marginLeft={2}>
+            {bracket}
             <Text dimColor italic>
               {messageCount} message{messageCount === 1 ? "" : "s"} (no
               in-context user/agent messages)
@@ -426,6 +438,7 @@ export function ConversationSelector({
 
       return (
         <Box flexDirection="row" marginLeft={2}>
+          {bracket}
           <Text dimColor italic>
             No in-context messages
           </Text>
@@ -462,14 +475,22 @@ export function ConversationSelector({
     );
   };
 
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+
   return (
     <Box flexDirection="column">
-      {/* Header */}
-      <Box flexDirection="column" gap={1} marginBottom={1}>
+      {/* Command header */}
+      <Text dimColor>{"> /resume"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title */}
+      <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Resume Conversation
+          Resume a previous conversation
         </Text>
-        <Text dimColor>Select a conversation to resume or start a new one</Text>
       </Box>
 
       {/* Error state */}
@@ -505,22 +526,32 @@ export function ConversationSelector({
       )}
 
       {/* Footer */}
-      {!loading && !error && conversations.length > 0 && (
-        <Box flexDirection="column">
-          <Box>
-            <Text dimColor>
-              Page {page + 1}
-              {hasMore ? "+" : `/${totalPages || 1}`}
-              {loadingMore ? " (loading...)" : ""}
-            </Text>
-          </Box>
-          <Box>
-            <Text dimColor>
-              ↑↓ navigate · Enter select · J/K page · N new · ESC cancel
-            </Text>
-          </Box>
-        </Box>
-      )}
+      {!loading &&
+        !error &&
+        conversations.length > 0 &&
+        (() => {
+          const footerWidth = Math.max(0, terminalWidth - 2);
+          const pageText = `Page ${page + 1}${hasMore ? "+" : `/${totalPages || 1}`}${loadingMore ? " (loading...)" : ""}`;
+          const hintsText =
+            "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
+
+          return (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={pageText} dimColor />
+                </Box>
+              </Box>
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={hintsText} dimColor />
+                </Box>
+              </Box>
+            </Box>
+          );
+        })()}
     </Box>
   );
 }
