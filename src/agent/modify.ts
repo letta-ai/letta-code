@@ -25,7 +25,7 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  // Include our custom OpenAI Codex OAuth provider (chatgpt-plus-pro)
+  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);

@@ -75,7 +75,7 @@ export async function getClient() {
     process.exit(1);
   }
 
-  // Note: OpenAI Codex OAuth token refresh is handled by the Letta backend
+  // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
 
   return new Letta({

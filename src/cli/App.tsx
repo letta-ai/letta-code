@@ -3561,7 +3561,7 @@ export default function App({
         // Special handling for /connect command - OAuth connection
         if (msg.trim().startsWith("/connect")) {
           // Handle all /connect commands through the unified handler
-          // For codex: uses local OAuth server (no dialog needed)
+          // For codex: uses local ChatGPT OAuth server (no dialog needed)
           // For zai: requires API key as argument
           const { handleConnect } = await import("./commands/connect");
           await handleConnect(

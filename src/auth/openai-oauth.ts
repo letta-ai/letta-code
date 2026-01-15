@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 utilities for OpenAI Codex authentication
+ * OAuth 2.0 utilities for ChatGPT OAuth authentication
  * Uses Authorization Code Flow with PKCE and local callback server
  * Compatible with Codex CLI authentication flow
  */
