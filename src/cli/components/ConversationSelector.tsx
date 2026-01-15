@@ -185,11 +185,16 @@ export function ConversationSelector({
         const enrichedConversations = await Promise.all(
           result.map(async (conv) => {
             try {
-              // Fetch messages to get stats
+              // Fetch recent messages to get stats (desc order = newest first)
               const messages = await client.conversations.messages.list(
                 conv.id,
+                { limit: 20, order: "desc" },
               );
-              const stats = getMessageStats(messages.getPaginatedItems());
+              // Reverse to chronological for getMessageStats (expects oldest-first)
+              const chronologicalMessages = [
+                ...messages.getPaginatedItems(),
+              ].reverse();
+              const stats = getMessageStats(chronologicalMessages);
               return {
                 conversation: conv,
                 lastUserMessage: stats.lastUserMessage,
