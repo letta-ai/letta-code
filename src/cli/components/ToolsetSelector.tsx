@@ -1,7 +1,11 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
 
 type ToolsetId =
   | "codex"
@@ -120,6 +124,8 @@ export function ToolsetSelector({
   onSelect,
   onCancel,
 }: ToolsetSelectorProps) {
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const [showAll, setShowAll] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -166,10 +172,17 @@ export function ToolsetSelector({
   });
 
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box>
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /toolset"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title */}
+      <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Select Toolset (↑↓ to navigate, Enter to select, ESC to cancel)
+          Swap your agent's toolset
         </Text>
       </Box>
 
@@ -179,40 +192,36 @@ export function ToolsetSelector({
           const isCurrent = toolset.id === currentToolset;
 
           return (
-            <Box key={toolset.id} flexDirection="column">
-              <Box flexDirection="row" gap={1}>
+            <Box key={toolset.id} flexDirection="column" marginBottom={1}>
+              <Box flexDirection="row">
                 <Text
                   color={
                     isSelected ? colors.selector.itemHighlighted : undefined
                   }
                 >
-                  {isSelected ? "›" : " "}
+                  {isSelected ? "> " : "  "}
                 </Text>
-                <Box flexDirection="column">
-                  <Box flexDirection="row">
-                    <Text
-                      bold={isSelected}
-                      color={
-                        isSelected ? colors.selector.itemHighlighted : undefined
-                      }
-                    >
-                      {toolset.label}
-                      {isCurrent && (
-                        <Text color={colors.selector.itemCurrent}>
-                          {" "}
-                          (current)
-                        </Text>
-                      )}
-                    </Text>
-                  </Box>
-                  <Text dimColor> {toolset.description}</Text>
-                </Box>
+                <Text
+                  bold={isSelected}
+                  color={
+                    isSelected ? colors.selector.itemHighlighted : undefined
+                  }
+                >
+                  {toolset.label}
+                  {isCurrent && (
+                    <Text color={colors.selector.itemCurrent}> (current)</Text>
+                  )}
+                </Text>
               </Box>
+              <Text dimColor>
+                {"  "}
+                {toolset.description}
+              </Text>
             </Box>
           );
         })}
         {hasShowAllOption && (
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row">
             <Text
               color={
                 selectedIndex === visibleToolsets.length
@@ -220,11 +229,16 @@ export function ToolsetSelector({
                   : undefined
               }
             >
-              {selectedIndex === visibleToolsets.length ? "›" : " "}
+              {selectedIndex === visibleToolsets.length ? "> " : "  "}
             </Text>
             <Text dimColor>Show all toolsets</Text>
           </Box>
         )}
+      </Box>
+
+      {/* Footer */}
+      <Box marginTop={1}>
+        <Text dimColor>{"  "}Enter select · ↑↓ navigate · Esc cancel</Text>
       </Box>
     </Box>
   );

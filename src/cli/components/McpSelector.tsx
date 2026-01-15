@@ -10,6 +10,9 @@ import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
+
 interface McpSelectorProps {
   agentId: string;
   onAdd: () => void;
@@ -67,6 +70,7 @@ export const McpSelector = memo(function McpSelector({
   onCancel,
 }: McpSelectorProps) {
   const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -444,8 +448,15 @@ export const McpSelector = memo(function McpSelector({
     );
 
     return (
-      <Box flexDirection="column" gap={1}>
-        <Box>
+      <Box flexDirection="column">
+        {/* Command header */}
+        <Text dimColor>{"> /mcp"}</Text>
+        <Text dimColor>{solidLine}</Text>
+
+        <Box height={1} />
+
+        {/* Title */}
+        <Box marginBottom={1}>
           <Text bold color={colors.selector.title}>
             Tools for {viewingServer.server_name}
           </Text>
@@ -455,12 +466,11 @@ export const McpSelector = memo(function McpSelector({
         {toolsLoading && (
           <Box flexDirection="column">
             <Text dimColor>
+              {"  "}
               {tools.length > 0 ? "Refreshing tools..." : "Loading tools..."}
             </Text>
             {tools.length === 0 && (
-              <Text dimColor italic>
-                This may take a moment on first load
-              </Text>
+              <Text dimColor>{"  "}This may take a moment on first load</Text>
             )}
           </Box>
         )}
@@ -468,9 +478,12 @@ export const McpSelector = memo(function McpSelector({
         {/* Error state */}
         {!toolsLoading && toolsError && (
           <Box flexDirection="column">
-            <Text color="yellow">{toolsError}</Text>
+            <Text color="yellow">
+              {"  "}
+              {toolsError}
+            </Text>
             <Box marginTop={1}>
-              <Text dimColor>R refresh from server · Esc back</Text>
+              <Text dimColor>{"  "}R refresh from server · Esc back</Text>
             </Box>
           </Box>
         )}
@@ -478,10 +491,12 @@ export const McpSelector = memo(function McpSelector({
         {/* Empty state */}
         {!toolsLoading && !toolsError && tools.length === 0 && (
           <Box flexDirection="column">
-            <Text dimColor>No tools available for this server.</Text>
-            <Text dimColor>Press R to sync tools from the MCP server.</Text>
+            <Text dimColor>{"  "}No tools available for this server.</Text>
+            <Text dimColor>
+              {"  "}Press R to sync tools from the MCP server.
+            </Text>
             <Box marginTop={1}>
-              <Text dimColor>R refresh · Esc back</Text>
+              <Text dimColor>{"  "}R refresh · Esc back</Text>
             </Box>
           </Box>
         )}
@@ -505,9 +520,8 @@ export const McpSelector = memo(function McpSelector({
                         isSelected ? colors.selector.itemHighlighted : undefined
                       }
                     >
-                      {isSelected ? ">" : " "}
+                      {isSelected ? "> " : "  "}
                     </Text>
-                    <Text> </Text>
                     <Text
                       color={isAttached ? "green" : "gray"}
                       bold={isAttached}
@@ -525,9 +539,10 @@ export const McpSelector = memo(function McpSelector({
                     </Text>
                   </Box>
                   {/* Row 2: Description */}
-                  <Box flexDirection="row" marginLeft={2}>
-                    <Text dimColor italic>
-                      {truncateText(toolDesc, terminalWidth - 4)}
+                  <Box flexDirection="row">
+                    <Text dimColor>
+                      {"      "}
+                      {truncateText(toolDesc, terminalWidth - 6)}
                     </Text>
                   </Box>
                 </Box>
@@ -546,20 +561,17 @@ export const McpSelector = memo(function McpSelector({
             ).length;
             return (
               <Box flexDirection="column" marginTop={1}>
-                <Box>
-                  <Text dimColor>
-                    {toolsTotalPages > 1 &&
-                      `Page ${toolsPage + 1}/${toolsTotalPages} · `}
-                    {attachedFromThisServer}/{tools.length} attached from server
-                    · {attachedToolIds.size} total on agent
-                  </Text>
-                </Box>
-                <Box>
-                  <Text dimColor>
-                    ↑↓ navigate · Space/Enter toggle · A attach all · D detach
-                    all · R refresh · Esc back
-                  </Text>
-                </Box>
+                <Text dimColor>
+                  {"  "}
+                  {toolsTotalPages > 1 &&
+                    `Page ${toolsPage + 1}/${toolsTotalPages} · `}
+                  {attachedFromThisServer}/{tools.length} attached from server ·{" "}
+                  {attachedToolIds.size} total on agent
+                </Text>
+                <Text dimColor>
+                  {"  "}Space/Enter toggle · ↑↓ navigate · A attach all · D
+                  detach all · R refresh · Esc back
+                </Text>
               </Box>
             );
           })()}
@@ -571,15 +583,24 @@ export const McpSelector = memo(function McpSelector({
   if (mode === "confirming-delete" && selectedServer) {
     const options = ["Yes, delete", "No, cancel"];
     return (
-      <Box flexDirection="column" gap={1}>
-        <Box>
+      <Box flexDirection="column">
+        {/* Command header */}
+        <Text dimColor>{"> /mcp"}</Text>
+        <Text dimColor>{solidLine}</Text>
+
+        <Box height={1} />
+
+        {/* Title */}
+        <Box marginBottom={1}>
           <Text bold color={colors.selector.title}>
-            Delete MCP Server
+            Delete MCP server?
           </Text>
         </Box>
-        <Box>
-          <Text>Delete "{selectedServer.server_name}"?</Text>
-        </Box>
+
+        <Text>
+          {"  "}Delete "{selectedServer.server_name}"?
+        </Text>
+
         <Box flexDirection="column" marginTop={1}>
           {options.map((option, index) => {
             const isSelected = index === deleteConfirmIndex;
@@ -591,7 +612,8 @@ export const McpSelector = memo(function McpSelector({
                   }
                   bold={isSelected}
                 >
-                  {isSelected ? ">" : " "} {option}
+                  {isSelected ? "> " : "  "}
+                  {option}
                 </Text>
               </Box>
             );
@@ -603,26 +625,35 @@ export const McpSelector = memo(function McpSelector({
 
   // Main browsing UI
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box>
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /mcp"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title */}
+      <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          MCP Servers
+          Manage MCP servers
         </Text>
       </Box>
 
       {/* Loading state */}
       {loading && (
         <Box>
-          <Text dimColor>Loading MCP servers...</Text>
+          <Text dimColor>{"  "}Loading MCP servers...</Text>
         </Box>
       )}
 
       {/* Error state */}
       {!loading && error && (
         <Box flexDirection="column">
-          <Text color="red">Error: {error}</Text>
+          <Text color="red">
+            {"  "}Error: {error}
+          </Text>
           <Box marginTop={1}>
-            <Text dimColor>R refresh · Esc close</Text>
+            <Text dimColor>{"  "}R refresh · Esc cancel</Text>
           </Box>
         </Box>
       )}
@@ -630,10 +661,10 @@ export const McpSelector = memo(function McpSelector({
       {/* Empty state */}
       {!loading && !error && servers.length === 0 && (
         <Box flexDirection="column">
-          <Text dimColor>No MCP servers configured.</Text>
-          <Text dimColor>Press A to add a new server.</Text>
+          <Text dimColor>{"  "}No MCP servers configured.</Text>
+          <Text dimColor>{"  "}Press A to add a new server.</Text>
           <Box marginTop={1}>
-            <Text dimColor>A add · Esc close</Text>
+            <Text dimColor>{"  "}A add · Esc cancel</Text>
           </Box>
         </Box>
       )}
@@ -649,7 +680,7 @@ export const McpSelector = memo(function McpSelector({
             // Calculate available width for target display
             const nameLen = server.server_name.length;
             const typeLen = serverType.length;
-            const fixedChars = 2 + 3 + 3 + typeLen; // "> " + " · " + " · " + type
+            const fixedChars = 4 + 3 + 3 + typeLen; // "  > " + " · " + " · " + type
             const availableForTarget = Math.max(
               20,
               terminalWidth - nameLen - fixedChars,
@@ -662,16 +693,15 @@ export const McpSelector = memo(function McpSelector({
                 flexDirection="column"
                 marginBottom={1}
               >
-                {/* Row 1: Selection indicator, name, type, and ID */}
+                {/* Row 1: Selection indicator, name, type, and target */}
                 <Box flexDirection="row">
                   <Text
                     color={
                       isSelected ? colors.selector.itemHighlighted : undefined
                     }
                   >
-                    {isSelected ? ">" : " "}
+                    {isSelected ? "> " : "  "}
                   </Text>
-                  <Text> </Text>
                   <Text
                     bold={isSelected}
                     color={
@@ -687,9 +717,9 @@ export const McpSelector = memo(function McpSelector({
                 </Box>
                 {/* Row 2: Server ID if available */}
                 {server.id && (
-                  <Box flexDirection="row" marginLeft={2}>
-                    <Text dimColor italic>
-                      ID: {server.id}
+                  <Box flexDirection="row">
+                    <Text dimColor>
+                      {"  "}ID: {server.id}
                     </Text>
                   </Box>
                 )}
@@ -703,18 +733,14 @@ export const McpSelector = memo(function McpSelector({
       {!loading && !error && servers.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           {totalPages > 1 && (
-            <Box>
-              <Text dimColor>
-                Page {currentPage + 1}/{totalPages}
-              </Text>
-            </Box>
-          )}
-          <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter view tools · A add · D delete · R refresh ·
-              Esc close
+              {"  "}Page {currentPage + 1}/{totalPages}
             </Text>
-          </Box>
+          )}
+          <Text dimColor>
+            {"  "}Enter view tools · ↑↓ navigate · A add · D delete · R refresh
+            · Esc cancel
+          </Text>
         </Box>
       )}
     </Box>
