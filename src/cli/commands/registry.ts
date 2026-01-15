@@ -265,7 +265,7 @@ export const commands: Record<string, Command> = {
 
   // === Session management (order 40-49) ===
   "/connect": {
-    desc: "Connect an existing account (/connect zai <api-key>)",
+    desc: "Connect an existing account (/connect codex or /connect zai <api-key>)",
     order: 40,
     handler: () => {
       // Handled specially in App.tsx
@@ -273,7 +273,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/disconnect": {
-    desc: "Disconnect an existing account (/disconnect zai)",
+    desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx

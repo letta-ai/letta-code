@@ -95,7 +95,6 @@ import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
-import { OAuthCodeDialog } from "./components/OAuthCodeDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
@@ -821,13 +820,17 @@ export default function App({
     | "new"
     | "mcp"
     | "help"
-    | "oauth"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const [modelSelectorOptions, setModelSelectorOptions] = useState<{
+    filterProvider?: string;
+    forceRefresh?: boolean;
+  }>({});
   const closeOverlay = useCallback(() => {
     setActiveOverlay(null);
     setFeedbackPrefill("");
+    setModelSelectorOptions({});
   }, []);
 
   // Pin dialog state
@@ -3469,6 +3472,7 @@ export default function App({
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
+          setModelSelectorOptions({}); // Clear any filters from previous connection
           setActiveOverlay("model");
           return { submitted: true };
         }
@@ -3556,37 +3560,22 @@ export default function App({
 
         // Special handling for /connect command - OAuth connection
         if (msg.trim().startsWith("/connect")) {
-          const parts = msg.trim().split(/\s+/);
-          const provider = parts[1]?.toLowerCase();
-          const hasCode = parts.length > 2;
-
-          // Handle /connect zai - create zai-coding-plan provider
-          if (provider === "zai") {
-            const { handleConnectZai } = await import("./commands/connect");
-            await handleConnectZai(
-              {
-                buffersRef,
-                refreshDerived,
-                setCommandRunning,
-              },
-              msg,
-            );
-            return { submitted: true };
-          }
-
-          // If no code provided and provider is claude, show the OAuth dialog
-          if (provider === "claude" && !hasCode) {
-            setActiveOverlay("oauth");
-            return { submitted: true };
-          }
-
-          // Otherwise (with code or invalid provider), use existing handler
+          // Handle all /connect commands through the unified handler
+          // For codex: uses local OAuth server (no dialog needed)
+          // For zai: requires API key as argument
           const { handleConnect } = await import("./commands/connect");
           await handleConnect(
             {
               buffersRef,
               refreshDerived,
               setCommandRunning,
+              onCodexConnected: () => {
+                setModelSelectorOptions({
+                  filterProvider: "chatgpt-plus-pro",
+                  forceRefresh: true,
+                });
+                setActiveOverlay("model");
+              },
             },
             msg,
           );
@@ -6527,7 +6516,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           const {
             env: _env,
             refreshToken: _refreshToken,
-            anthropicOAuth: _anthropicOAuth,
             ...safeSettings
           } = settings;
 
@@ -7382,6 +7370,8 @@ Plan file path: ${planFilePath}`;
                 currentModelId={currentModelId ?? undefined}
                 onSelect={handleModelSelect}
                 onCancel={closeOverlay}
+                filterProvider={modelSelectorOptions.filterProvider}
+                forceRefresh={modelSelectorOptions.forceRefresh}
               />
             )}
 
@@ -7754,40 +7744,6 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
-
-            {/* OAuth Code Dialog - for Claude OAuth connection */}
-            {activeOverlay === "oauth" && (
-              <OAuthCodeDialog
-                onComplete={(success, message) => {
-                  closeOverlay();
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/connect claude",
-                    output: message,
-                    phase: "finished",
-                    success,
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
-                }}
-                onCancel={closeOverlay}
-                onModelSwitch={async (modelHandle: string) => {
-                  const { updateAgentLLMConfig } = await import(
-                    "../agent/modify"
-                  );
-                  const { getModelUpdateArgs, getModelInfo } = await import(
-                    "../agent/model"
-                  );
-                  const updateArgs = getModelUpdateArgs(modelHandle);
-                  await updateAgentLLMConfig(agentId, modelHandle, updateArgs);
-                  // Update current model display - use model id for correct "(current)" indicator
-                  const modelInfo = getModelInfo(modelHandle);
-                  setCurrentModelId(modelInfo?.id || modelHandle);
-                }}
-              />
-            )}
 
             {/* New Agent Dialog - for naming new agent before creation */}
             {activeOverlay === "new" && (
