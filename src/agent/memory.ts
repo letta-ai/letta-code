@@ -40,6 +40,13 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
 export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
 
 /**
+ * Block labels that should be isolated per-conversation.
+ * When creating a conversation, these blocks are copied from the agent's blocks
+ * to create conversation-specific versions, preventing cross-conversation state pollution.
+ */
+export const ISOLATED_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+
+/**
  * Check if a block label is a project-level block
  */
 export function isProjectBlock(label: string): boolean {

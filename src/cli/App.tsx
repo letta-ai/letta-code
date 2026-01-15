@@ -37,6 +37,7 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
 import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
@@ -2893,6 +2894,7 @@ export default function App({
         // User can /resume to get back to a previous conversation if needed
         const newConversation = await client.conversations.create({
           agent_id: targetAgentId,
+          isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
         });
         const targetConversationId = newConversation.id;
 
@@ -3936,6 +3938,7 @@ export default function App({
             // Create a new conversation for the current agent
             const conversation = await client.conversations.create({
               agent_id: agentId,
+              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
 
             // Update conversationId state
@@ -4008,6 +4011,7 @@ export default function App({
             // Also create a new conversation since messages were cleared
             const conversation = await client.conversations.create({
               agent_id: agentId,
+              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
             setConversationId(conversation.id);
             settingsManager.setLocalLastSession(
@@ -7554,6 +7558,7 @@ Plan file path: ${planFilePath}`;
                     const client = await getClient();
                     const conversation = await client.conversations.create({
                       agent_id: agentId,
+                      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
                     setConversationId(conversation.id);
                     settingsManager.setLocalLastSession(

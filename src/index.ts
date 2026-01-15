@@ -6,6 +6,7 @@ import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -1331,6 +1332,7 @@ async function main(): Promise<void> {
             // No valid session to resume for this agent, create new
             const conversation = await client.conversations.create({
               agent_id: agent.id,
+              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
             conversationIdToUse = conversation.id;
           }
@@ -1339,6 +1341,7 @@ async function main(): Promise<void> {
           // This ensures each CLI session has isolated message history
           const conversation = await client.conversations.create({
             agent_id: agent.id,
+            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
         }

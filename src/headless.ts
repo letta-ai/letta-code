@@ -15,6 +15,7 @@ import {
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -446,6 +447,7 @@ export async function handleHeadlessCommand(
   // This ensures isolated message history per CLI invocation
   const conversation = await client.conversations.create({
     agent_id: agent.id,
+    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
   });
   const conversationId = conversation.id;
 
