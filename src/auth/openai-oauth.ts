@@ -39,6 +39,83 @@ export interface OAuthCallbackResult {
 }
 
 /**
+ * Render a minimal OAuth callback page with ASCII art
+ */
+function renderOAuthPage(options: {
+  success: boolean;
+  title: string;
+  message: string;
+  detail?: string;
+  autoClose?: boolean;
+}): string {
+  const { title, message, autoClose } = options;
+
+  // ASCII art logo (escaped for HTML)
+  const asciiLogo = `  ██████     ██╗     ███████╗████████╗████████╗ █████╗ 
+██      ██   ██║     ██╔════╝╚══██╔══╝╚══██╔══╝██╔══██╗
+██  ▇▇  ██   ██║     █████╗     ██║      ██║   ███████║
+██      ██   ██║     ██╔══╝     ██║      ██║   ██╔══██║
+  ██████     ███████╗███████╗   ██║      ██║   ██║  ██║
+  ╚═════╝    ╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} - Letta Code</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #161616;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      gap: 64px;
+      padding: 64px;
+    }
+    .content {
+      max-width: 400px;
+      flex-shrink: 0;
+    }
+    .title {
+      font-size: 32px;
+      font-weight: 600;
+      color: #e5e5e5;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+    .message {
+      font-size: 16px;
+      color: #737373;
+      line-height: 1.5;
+    }
+    .ascii-art {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+      font-size: 14px;
+      line-height: 1.2;
+      color: #404040;
+      white-space: pre;
+      user-select: none;
+    }
+    @media (max-width: 900px) {
+      .ascii-art { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <h1 class="title">${title}</h1>
+    <p class="message">${message}</p>
+  </div>
+  <div class="ascii-art">${asciiLogo}</div>
+  ${autoClose ? `<script>setTimeout(() => window.close(), 2000);</script>` : ""}
+</body>
+</html>`;
+}
+
+/**
  * Generate PKCE code verifier (43-128 characters of unreserved URI characters)
  */
 export function generateCodeVerifier(): string {
@@ -145,16 +222,12 @@ export function startLocalOAuthServer(
 
         if (error) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <body>
-                <h1>Authentication Failed</h1>
-                <p>Error: ${error}</p>
-                <p>${errorDescription || ""}</p>
-                <p>You can close this window.</p>
-              </body>
-            </html>
-          `);
+          res.end(renderOAuthPage({
+            success: false,
+            title: "Authentication Failed",
+            message: `Error: ${error}`,
+            detail: errorDescription || undefined,
+          }));
           reject(
             new Error(`OAuth error: ${error} - ${errorDescription || ""}`),
           );
@@ -163,30 +236,22 @@ export function startLocalOAuthServer(
 
         if (!code || !state) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <body>
-                <h1>Authentication Failed</h1>
-                <p>Missing authorization code or state parameter.</p>
-                <p>You can close this window.</p>
-              </body>
-            </html>
-          `);
+          res.end(renderOAuthPage({
+            success: false,
+            title: "Authentication Failed",
+            message: "Missing authorization code or state parameter.",
+          }));
           reject(new Error("Missing authorization code or state parameter"));
           return;
         }
 
         if (state !== expectedState) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(`
-            <html>
-              <body>
-                <h1>Authentication Failed</h1>
-                <p>State mismatch - the authorization may have been tampered with.</p>
-                <p>You can close this window.</p>
-              </body>
-            </html>
-          `);
+          res.end(renderOAuthPage({
+            success: false,
+            title: "Authentication Failed",
+            message: "State mismatch - the authorization may have been tampered with.",
+          }));
           reject(
             new Error(
               "State mismatch - the authorization may have been tampered with",
@@ -197,16 +262,12 @@ export function startLocalOAuthServer(
 
         // Success!
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`
-          <html>
-            <body>
-              <h1>Authentication Successful!</h1>
-              <p>You have successfully connected to OpenAI Codex.</p>
-              <p>You can close this window and return to Letta Code.</p>
-              <script>setTimeout(() => window.close(), 2000);</script>
-            </body>
-          </html>
-        `);
+        res.end(renderOAuthPage({
+          success: true,
+          title: "Authorization Successful",
+          message: "You can close this window and return to Letta Code.",
+          autoClose: true,
+        }));
 
         resolve({ result: { code, state }, server });
       } else {

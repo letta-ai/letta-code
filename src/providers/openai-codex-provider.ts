@@ -141,42 +141,50 @@ export async function getOpenAICodexProvider(): Promise<ProviderResponse | null>
 
 /**
  * Create a new ChatGPT OAuth provider
- * Backend will use this config to authenticate and transform requests
+ * OAuth config is JSON-encoded in api_key field to avoid backend schema changes
+ * Backend parses api_key as JSON when provider_type is "chatgpt_oauth"
  */
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
+  // Encode OAuth config as JSON in api_key field
+  const apiKeyJson = JSON.stringify({
+    access_token: config.access_token,
+    id_token: config.id_token,
+    refresh_token: config.refresh_token,
+    account_id: config.account_id,
+    expires_at: config.expires_at,
+  });
+
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: OPENAI_CODEX_PROVIDER_NAME,
     provider_type: CHATGPT_OAUTH_PROVIDER_TYPE,
-    chatgpt_oauth_config: {
-      access_token: config.access_token,
-      id_token: config.id_token,
-      refresh_token: config.refresh_token,
-      account_id: config.account_id,
-      expires_at: config.expires_at,
-    },
+    api_key: apiKeyJson,
   });
 }
 
 /**
  * Update an existing ChatGPT OAuth provider with new OAuth config
+ * OAuth config is JSON-encoded in api_key field
  */
 export async function updateOpenAICodexProvider(
   providerId: string,
   config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
+  // Encode OAuth config as JSON in api_key field
+  const apiKeyJson = JSON.stringify({
+    access_token: config.access_token,
+    id_token: config.id_token,
+    refresh_token: config.refresh_token,
+    account_id: config.account_id,
+    expires_at: config.expires_at,
+  });
+
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
-      chatgpt_oauth_config: {
-        access_token: config.access_token,
-        id_token: config.id_token,
-        refresh_token: config.refresh_token,
-        account_id: config.account_id,
-        expires_at: config.expires_at,
-      },
+      api_key: apiKeyJson,
     },
   );
 }
