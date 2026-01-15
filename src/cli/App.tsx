@@ -95,7 +95,6 @@ import { MemoryViewer } from "./components/MemoryViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
-// OAuthCodeDialog removed - codex OAuth uses local server approach
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 // QuestionDialog removed - now using InlineQuestionApproval
@@ -6504,7 +6503,6 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           const {
             env: _env,
             refreshToken: _refreshToken,
-            openaiOAuth: _openaiOAuth,
             ...safeSettings
           } = settings;
 
@@ -7731,8 +7729,6 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
-
-            {/* OAuth Code Dialog removed - codex OAuth uses local server approach */}
 
             {/* New Agent Dialog - for naming new agent before creation */}
             {activeOverlay === "new" && (

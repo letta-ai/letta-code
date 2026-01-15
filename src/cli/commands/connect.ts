@@ -11,6 +11,7 @@ import {
 import {
   checkOpenAICodexEligibility,
   createOrUpdateOpenAICodexProvider,
+  getOpenAICodexProvider,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
 } from "../../providers/openai-codex-provider";
@@ -142,11 +143,9 @@ async function handleConnectCodex(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  // Check if already connected
-  if (
-    settingsManager.hasOpenAIOAuth() &&
-    !settingsManager.isOpenAITokenExpired()
-  ) {
+  // Check if already connected (provider exists on backend)
+  const existingProvider = await getOpenAICodexProvider();
+  if (existingProvider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -317,13 +316,10 @@ async function handleConnectCodex(
       expires_at: Date.now() + tokens.expires_in * 1000,
     });
 
-    // 10. Store tokens locally as backup
-    settingsManager.storeOpenAITokens(tokens);
-
-    // 11. Clear OAuth state
+    // 10. Clear OAuth state
     settingsManager.clearOAuthState();
 
-    // 12. Success!
+    // 11. Success!
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -428,8 +424,9 @@ async function handleDisconnectCodex(
   ctx: ConnectCommandContext,
   msg: string,
 ): Promise<void> {
-  // Check if connected
-  if (!settingsManager.hasOpenAIOAuth()) {
+  // Check if provider exists on backend
+  const existingProvider = await getOpenAICodexProvider();
+  if (!existingProvider) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -453,11 +450,8 @@ async function handleDisconnectCodex(
   ctx.setCommandRunning(true);
 
   try {
-    // Remove provider from Letta
+    // Remove provider from Letta backend
     await removeOpenAICodexProvider();
-
-    // Clear local tokens
-    settingsManager.clearOpenAIOAuth();
 
     updateCommandResult(
       ctx.buffersRef,
@@ -470,18 +464,13 @@ async function handleDisconnectCodex(
       "finished",
     );
   } catch (error) {
-    // Still clear local tokens even if provider removal fails
-    settingsManager.clearOpenAIOAuth();
-
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Disconnected from OpenAI Codex OAuth.\n\n` +
-        `Warning: Failed to remove provider from Letta: ${getErrorMessage(error)}\n` +
-        `Your local OAuth tokens have been removed.`,
-      true,
+      `\u2717 Failed to disconnect from OpenAI Codex: ${getErrorMessage(error)}`,
+      false,
       "finished",
     );
   } finally {

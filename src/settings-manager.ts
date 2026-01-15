@@ -40,14 +40,6 @@ export interface Settings {
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
-  // OpenAI Codex OAuth
-  openaiOAuth?: {
-    access_token: string;
-    id_token: string;
-    refresh_token?: string;
-    expires_at: number; // Unix timestamp in milliseconds
-    api_key?: string; // The exchanged API key
-  };
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
@@ -971,76 +963,6 @@ class SettingsManager {
   hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
     const dirPath = join(workingDirectory, ".letta");
     return exists(dirPath);
-  }
-
-  // =====================================================================
-  // OpenAI Codex OAuth Management
-  // =====================================================================
-
-  /**
-   * Store OpenAI OAuth tokens and API key
-   */
-  storeOpenAITokens(
-    tokens: {
-      access_token: string;
-      id_token: string;
-      refresh_token?: string;
-      expires_in: number;
-    },
-    apiKey?: string,
-  ): void {
-    this.updateSettings({
-      openaiOAuth: {
-        access_token: tokens.access_token,
-        id_token: tokens.id_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: Date.now() + tokens.expires_in * 1000,
-        api_key: apiKey,
-      },
-    });
-  }
-
-  /**
-   * Get OpenAI OAuth tokens (returns null if not set)
-   */
-  getOpenAITokens(): Settings["openaiOAuth"] | null {
-    const settings = this.getSettings();
-    if (!settings.openaiOAuth) return null;
-    return settings.openaiOAuth;
-  }
-
-  /**
-   * Check if OpenAI OAuth tokens are expired or about to expire
-   * Returns true if token expires within the next 5 minutes
-   */
-  isOpenAITokenExpired(): boolean {
-    const tokens = this.getOpenAITokens();
-    if (!tokens) return true;
-
-    const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
-    return tokens.expires_at < fiveMinutesFromNow;
-  }
-
-  /**
-   * Check if OpenAI OAuth is configured
-   */
-  hasOpenAIOAuth(): boolean {
-    return !!this.getOpenAITokens();
-  }
-
-  /**
-   * Clear OpenAI OAuth tokens and state
-   */
-  clearOpenAIOAuth(): void {
-    const settings = this.getSettings();
-    const { openaiOAuth: _, oauthState: __, ...rest } = settings;
-    this.settings = { ...DEFAULT_SETTINGS, ...rest };
-    this.persistSettings().catch((error) => {
-      console.error(
-        "Failed to persist settings after clearing OpenAI OAuth:",
-        error,
-      );
-    });
   }
 
   /**
