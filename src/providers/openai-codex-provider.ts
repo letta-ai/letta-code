@@ -1,6 +1,7 @@
 /**
  * Direct API calls to Letta for managing OpenAI Codex provider
- * Bypasses SDK since it doesn't expose providers API
+ * Uses the chatgpt_oauth provider type - backend handles request transformation
+ * (transforms OpenAI API format → ChatGPT backend API format)
  */
 
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
@@ -8,6 +9,21 @@ import { settingsManager } from "../settings-manager";
 
 // Provider name constant for letta-code's OpenAI Codex OAuth provider
 export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
+
+// Provider type for ChatGPT OAuth (backend handles transformation)
+export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
+
+/**
+ * ChatGPT OAuth configuration sent to Letta backend
+ * Backend uses this to authenticate with ChatGPT and transform requests
+ */
+export interface ChatGPTOAuthConfig {
+  access_token: string;
+  id_token: string;
+  refresh_token?: string;
+  account_id: string;
+  expires_at: number; // Unix timestamp in milliseconds
+}
 
 interface ProviderResponse {
   id: string;
@@ -124,30 +140,43 @@ export async function getOpenAICodexProvider(): Promise<ProviderResponse | null>
 }
 
 /**
- * Create a new OpenAI Codex provider with API key
+ * Create a new ChatGPT OAuth provider
+ * Backend will use this config to authenticate and transform requests
  */
 export async function createOpenAICodexProvider(
-  apiKey: string,
+  config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: OPENAI_CODEX_PROVIDER_NAME,
-    provider_type: "openai",
-    api_key: apiKey,
+    provider_type: CHATGPT_OAUTH_PROVIDER_TYPE,
+    chatgpt_oauth_config: {
+      access_token: config.access_token,
+      id_token: config.id_token,
+      refresh_token: config.refresh_token,
+      account_id: config.account_id,
+      expires_at: config.expires_at,
+    },
   });
 }
 
 /**
- * Update an existing OpenAI Codex provider with new API key
+ * Update an existing ChatGPT OAuth provider with new OAuth config
  */
 export async function updateOpenAICodexProvider(
   providerId: string,
-  apiKey: string,
+  config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
-      api_key: apiKey,
+      chatgpt_oauth_config: {
+        access_token: config.access_token,
+        id_token: config.id_token,
+        refresh_token: config.refresh_token,
+        account_id: config.account_id,
+        expires_at: config.expires_at,
+      },
     },
   );
 }
@@ -162,58 +191,27 @@ export async function deleteOpenAICodexProvider(
 }
 
 /**
- * Create or update the OpenAI Codex provider with API key
- * This is the main function called after successful /connect
+ * Create or update the ChatGPT OAuth provider
+ * This is the main function called after successful /connect codex
+ * 
+ * The Letta backend will:
+ * 1. Store the OAuth tokens securely
+ * 2. Handle token refresh when needed
+ * 3. Transform requests from OpenAI format to ChatGPT backend format
+ * 4. Add required headers (Authorization, ChatGPT-Account-Id, etc.)
+ * 5. Forward to chatgpt.com/backend-api/codex
  */
 export async function createOrUpdateOpenAICodexProvider(
-  apiKey: string,
+  config: ChatGPTOAuthConfig,
 ): Promise<ProviderResponse> {
   const existing = await getOpenAICodexProvider();
 
   if (existing) {
-    // Update existing provider with new API key
-    return updateOpenAICodexProvider(existing.id, apiKey);
+    // Update existing provider with new OAuth config
+    return updateOpenAICodexProvider(existing.id, config);
   } else {
     // Create new provider
-    return createOpenAICodexProvider(apiKey);
-  }
-}
-
-/**
- * Ensure the OpenAI Codex provider has a valid (non-expired) token
- * Call this before making requests that use the provider
- */
-export async function ensureOpenAICodexProviderToken(): Promise<void> {
-  const settings = settingsManager.getSettings();
-  const tokens = settings.openaiOAuth;
-
-  if (!tokens) {
-    // No OpenAI OAuth configured, nothing to do
-    return;
-  }
-
-  // Check if token is expired or about to expire (within 5 minutes)
-  const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
-  if (tokens.expires_at < fiveMinutesFromNow && tokens.refresh_token) {
-    // Token is expired or about to expire, refresh it
-    const { refreshOpenAIToken, exchangeTokenForApiKey } = await import(
-      "../auth/openai-oauth"
-    );
-
-    try {
-      const newTokens = await refreshOpenAIToken(tokens.refresh_token);
-      const apiKey = await exchangeTokenForApiKey(newTokens.id_token);
-      settingsManager.storeOpenAITokens(newTokens, apiKey);
-
-      // Update the provider with the new API key
-      const existing = await getOpenAICodexProvider();
-      if (existing) {
-        await updateOpenAICodexProvider(existing.id, apiKey);
-      }
-    } catch (error) {
-      console.error("Failed to refresh OpenAI access token:", error);
-      // Continue with existing token, it might still work
-    }
+    return createOpenAICodexProvider(config);
   }
 }
 

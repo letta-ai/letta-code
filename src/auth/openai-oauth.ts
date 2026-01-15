@@ -77,6 +77,43 @@ function base64UrlEncode(buffer: Uint8Array): string {
 }
 
 /**
+ * Decode JWT payload (no signature verification - for local extraction only)
+ */
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Invalid JWT format");
+  }
+  const payload = parts[1];
+  if (!payload) {
+    throw new Error("Missing JWT payload");
+  }
+  // Handle base64url encoding
+  const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  const decoded = atob(padded);
+  return JSON.parse(decoded);
+}
+
+/**
+ * Extract ChatGPT Account ID from access token JWT
+ * The account ID is in the custom claim: https://api.openai.com/auth.chatgpt_account_id
+ */
+export function extractAccountIdFromToken(accessToken: string): string {
+  try {
+    const payload = decodeJwtPayload(accessToken);
+    // The account ID is in the custom claim path
+    const authClaim = payload["https://api.openai.com/auth"] as Record<string, unknown> | undefined;
+    if (authClaim && typeof authClaim.chatgpt_account_id === "string") {
+      return authClaim.chatgpt_account_id;
+    }
+    throw new Error("chatgpt_account_id not found in token claims");
+  } catch (error) {
+    throw new Error(`Failed to extract account ID from token: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
  * Generate PKCE code verifier and challenge
  */
 export async function generatePKCE(): Promise<{

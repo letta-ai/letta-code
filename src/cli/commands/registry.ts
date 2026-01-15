@@ -255,7 +255,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/disconnect": {
-    desc: "Disconnect an existing account (/disconnect zai)",
+    desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx

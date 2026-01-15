@@ -3,11 +3,10 @@
 
 import {
   exchangeCodeForTokens,
-  exchangeTokenForApiKey,
+  extractAccountIdFromToken,
   OPENAI_OAUTH_CONFIG,
   startLocalOAuthServer,
   startOpenAIOAuth,
-  validateOpenAICredentials,
 } from "../../auth/openai-oauth";
 import {
   checkOpenAICodexEligibility,
@@ -278,41 +277,28 @@ async function handleConnectCodex(
       redirectUri,
     );
 
-    // 8. Exchange tokens for API key
+    // 8. Extract account ID from JWT
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      "Getting API key...",
+      "Extracting account information...",
       true,
       "running",
     );
 
-    const apiKey = await exchangeTokenForApiKey(tokens.id_token);
-
-    // 9. Validate the API key works
-    updateCommandResult(
-      ctx.buffersRef,
-      ctx.refreshDerived,
-      cmdId,
-      msg,
-      "Validating credentials...",
-      true,
-      "running",
-    );
-
-    const isValid = await validateOpenAICredentials(apiKey);
-    if (!isValid) {
+    let accountId: string;
+    try {
+      accountId = extractAccountIdFromToken(tokens.access_token);
+    } catch (error) {
       throw new Error(
-        "API key validation failed - the key may not have the required permissions.",
+        `Failed to extract account ID from token. This may indicate an incompatible account type. Error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
-    // 10. Store tokens and API key locally
-    settingsManager.storeOpenAITokens(tokens, apiKey);
-
-    // 11. Create or update provider in Letta
+    // 9. Create or update provider in Letta with OAuth config
+    // Backend handles request transformation to ChatGPT backend API
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -323,12 +309,21 @@ async function handleConnectCodex(
       "running",
     );
 
-    await createOrUpdateOpenAICodexProvider(apiKey);
+    await createOrUpdateOpenAICodexProvider({
+      access_token: tokens.access_token,
+      id_token: tokens.id_token,
+      refresh_token: tokens.refresh_token,
+      account_id: accountId,
+      expires_at: Date.now() + tokens.expires_in * 1000,
+    });
 
-    // 12. Clear OAuth state
+    // 10. Store tokens locally as backup
+    settingsManager.storeOpenAITokens(tokens);
+
+    // 11. Clear OAuth state
     settingsManager.clearOAuthState();
 
-    // 13. Success!
+    // 12. Success!
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -336,8 +331,8 @@ async function handleConnectCodex(
       msg,
       `\u2713 Successfully connected to OpenAI Codex!\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
-        `Your credentials are stored securely in ~/.letta/settings.json\n\n` +
-        `You can now use ChatGPT Plus/Pro models via /model`,
+        `Your ChatGPT Plus/Pro subscription is now linked.\n\n` +
+        `You can now use ChatGPT models via /model`,
       true,
       "finished",
     );
@@ -392,7 +387,7 @@ export async function handleDisconnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>\n\nAvailable providers: codex, zai",
+      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai",
       false,
     );
     return;
@@ -410,12 +405,18 @@ export async function handleDisconnect(
     return;
   }
 
+  // Handle /disconnect claude (legacy - for users who connected before)
+  if (provider === "claude") {
+    await handleDisconnectClaude(ctx, msg);
+    return;
+  }
+
   // Unknown provider
   addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai\nUsage: /disconnect <provider>`,
+    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai\nUsage: /disconnect <provider>`,
     false,
   );
 }
@@ -481,6 +482,92 @@ async function handleDisconnectCodex(
         `Warning: Failed to remove provider from Letta: ${getErrorMessage(error)}\n` +
         `Your local OAuth tokens have been removed.`,
       true,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /disconnect claude (legacy provider removal)
+ * This allows users who connected Claude before it was replaced with Codex
+ * to remove the old claude-pro-max provider
+ */
+async function handleDisconnectClaude(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  const CLAUDE_PROVIDER_NAME = "claude-pro-max";
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Checking for Claude provider...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Check if claude-pro-max provider exists
+    const { listProviders } = await import(
+      "../../providers/openai-codex-provider"
+    );
+    const providers = await listProviders();
+    const claudeProvider = providers.find((p) => p.name === CLAUDE_PROVIDER_NAME);
+
+    if (!claudeProvider) {
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `No Claude provider found.\n\nThe '${CLAUDE_PROVIDER_NAME}' provider does not exist in your Letta account.`,
+        false,
+        "finished",
+      );
+      return;
+    }
+
+    // Remove provider from Letta
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      "Removing Claude provider...",
+      true,
+      "running",
+    );
+
+    const { deleteOpenAICodexProvider } = await import(
+      "../../providers/openai-codex-provider"
+    );
+    await deleteOpenAICodexProvider(claudeProvider.id);
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✓ Disconnected from Claude.\n\n` +
+        `Provider '${CLAUDE_PROVIDER_NAME}' has been removed from Letta.\n\n` +
+        `Note: /connect claude has been replaced with /connect codex for OpenAI ChatGPT Plus/Pro.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `✗ Failed to disconnect from Claude: ${getErrorMessage(error)}`,
+      false,
       "finished",
     );
   } finally {
