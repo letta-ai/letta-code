@@ -2799,7 +2799,9 @@ export default function App({
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
-        .then((client) => client.agents.messages.cancel(agentId))
+        .then((client) =>
+          client.conversations.cancel(conversationIdRef.current),
+        )
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
@@ -2818,7 +2820,7 @@ export default function App({
       setInterruptRequested(true);
       try {
         const client = await getClient();
-        await client.agents.messages.cancel(agentId);
+        await client.conversations.cancel(conversationIdRef.current);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -3400,7 +3402,9 @@ export default function App({
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
-              .then((client) => client.agents.messages.cancel(agentId))
+              .then((client) =>
+                client.conversations.cancel(conversationIdRef.current),
+              )
               .then(() => {})
               .catch(() => {
                 // Reset flag if cancel fails
