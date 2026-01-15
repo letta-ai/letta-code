@@ -38,6 +38,7 @@ export interface ConnectCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
+  onCodexConnected?: () => void; // Callback to show model selector after successful connection
 }
 
 // Helper to add a command result to buffers
@@ -327,11 +328,16 @@ async function handleConnectCodex(
       msg,
       `\u2713 Successfully connected to OpenAI Codex!\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
-        `Your ChatGPT Plus/Pro subscription is now linked.\n\n` +
-        `You can now use ChatGPT models via /model`,
+        `Your ChatGPT Plus/Pro subscription is now linked.`,
       true,
       "finished",
     );
+
+    // 12. Show model selector to let user switch to a ChatGPT Plus/Pro model
+    if (ctx.onCodexConnected) {
+      // Small delay to let the success message render first
+      setTimeout(() => ctx.onCodexConnected?.(), 500);
+    }
   } catch (error) {
     // Clear any partial state
     settingsManager.clearOAuthState();

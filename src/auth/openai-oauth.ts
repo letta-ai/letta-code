@@ -67,12 +67,23 @@ function renderOAuthPage(options: {
       min-height: 100vh;
       display: flex;
       align-items: center;
-      gap: 64px;
+      justify-content: center;
       padding: 64px;
     }
-    .content {
-      max-width: 400px;
-      flex-shrink: 0;
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+    .ascii-art {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.2;
+      color: #404040;
+      white-space: pre;
+      user-select: none;
+      margin-bottom: 48px;
     }
     .title {
       font-size: 32px;
@@ -86,25 +97,19 @@ function renderOAuthPage(options: {
       color: #737373;
       line-height: 1.5;
     }
-    .ascii-art {
-      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
-      font-size: 14px;
-      line-height: 1.2;
-      color: #404040;
-      white-space: pre;
-      user-select: none;
-    }
-    @media (max-width: 900px) {
-      .ascii-art { display: none; }
+    @media (max-width: 600px) {
+      .ascii-art { font-size: 8px; }
+      .title { font-size: 24px; }
+      .message { font-size: 14px; }
     }
   </style>
 </head>
 <body>
-  <div class="content">
+  <div class="container">
+    <div class="ascii-art">${asciiLogo}</div>
     <h1 class="title">${title}</h1>
     <p class="message">${message}</p>
   </div>
-  <div class="ascii-art">${asciiLogo}</div>
   ${autoClose ? `<script>setTimeout(() => window.close(), 2000);</script>` : ""}
 </body>
 </html>`;

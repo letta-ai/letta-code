@@ -823,9 +823,14 @@ export default function App({
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const [modelSelectorOptions, setModelSelectorOptions] = useState<{
+    filterProvider?: string;
+    forceRefresh?: boolean;
+  }>({});
   const closeOverlay = useCallback(() => {
     setActiveOverlay(null);
     setFeedbackPrefill("");
+    setModelSelectorOptions({});
   }, []);
 
   // Pin dialog state
@@ -3467,6 +3472,7 @@ export default function App({
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
+          setModelSelectorOptions({}); // Clear any filters from previous connection
           setActiveOverlay("model");
           return { submitted: true };
         }
@@ -3563,6 +3569,13 @@ export default function App({
               buffersRef,
               refreshDerived,
               setCommandRunning,
+              onCodexConnected: () => {
+                setModelSelectorOptions({
+                  filterProvider: "chatgpt-plus-pro",
+                  forceRefresh: true,
+                });
+                setActiveOverlay("model");
+              },
             },
             msg,
           );
@@ -7357,6 +7370,8 @@ Plan file path: ${planFilePath}`;
                 currentModelId={currentModelId ?? undefined}
                 onSelect={handleModelSelect}
                 onCancel={closeOverlay}
+                filterProvider={modelSelectorOptions.filterProvider}
+                forceRefresh={modelSelectorOptions.forceRefresh}
               />
             )}
 
