@@ -189,7 +189,7 @@ export function ConversationSelector({
               const messages = await client.conversations.messages.list(
                 conv.id,
               );
-              const stats = getMessageStats(messages);
+              const stats = getMessageStats(messages.getPaginatedItems());
               return {
                 conversation: conv,
                 lastUserMessage: stats.lastUserMessage,
