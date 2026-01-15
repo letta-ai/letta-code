@@ -47,7 +47,7 @@
     }
   },
   {
-    "id": "gpt-5.2-codex-medium",
+    "id": "gpt-5.2-codex-plus-pro-medium",
     "handle": "chatgpt-plus-pro/gpt-5.2-codex",
     "label": "GPT-5.2 Codex",
     "description": "GPT-5.2 Codex (med reasoning) via ChatGPT Plus/Pro",
@@ -59,7 +59,7 @@
     }
   },
   {
-    "id": "gpt-5.2-codex-high",
+    "id": "gpt-5.2-codex-plus-pro-high",
     "handle": "chatgpt-plus-pro/gpt-5.2-codex",
     "label": "GPT-5.2 Codex",
     "description": "GPT-5.2 Codex (high reasoning) via ChatGPT Plus/Pro",
