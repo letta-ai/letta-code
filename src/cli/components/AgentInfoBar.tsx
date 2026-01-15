@@ -3,6 +3,7 @@ import Link from "ink-link";
 import { memo, useMemo } from "react";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
+import { getVersion } from "../../version";
 import { colors } from "./colors";
 
 interface AgentInfoBarProps {
@@ -37,14 +38,34 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-    >
+    <Box flexDirection="column">
+      {/* Blank line after commands */}
+      <Box height={1} />
+
+      {/* Discord/version info */}
       <Box>
-        <Text bold>{agentName || "Unnamed"}</Text>
+        <Text>
+          {"  "}Having issues? Report bugs with /feedback or{" "}
+          <Link url="https://discord.gg/letta">
+            <Text>join our Discord ↗</Text>
+          </Link>
+        </Text>
+      </Box>
+      <Box>
+        <Text>
+          {"  "}Version: Letta Code v{getVersion()}
+        </Text>
+      </Box>
+
+      {/* Blank line before agent info */}
+      <Box height={1} />
+
+      {/* Agent name and links */}
+      <Box>
+        <Text>{"  "}</Text>
+        <Text bold color={colors.footer.agentName}>
+          {agentName || "Unnamed"}
+        </Text>
         {isPinned ? (
           <Text color="green"> (pinned ✓)</Text>
         ) : agentName === DEFAULT_AGENT_NAME || !agentName ? (
@@ -55,21 +76,21 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         <Text dimColor> · {agentId}</Text>
       </Box>
       <Box>
+        <Text dimColor>{"  "}</Text>
         {isCloudUser && (
           <Link
             url={`https://app.letta.com/agents/${agentId}${conversationId ? `?conversation=${conversationId}` : ""}`}
           >
-            <Text>Open in ADE ↗ </Text>
+            <Text>Open in ADE ↗</Text>
           </Link>
         )}
-      </Box>
-      <Box>
+        {isCloudUser && <Text dimColor>{" · "}</Text>}
         {isCloudUser && (
           <Link url="https://app.letta.com/settings/organization/usage">
-            <Text>View usage ↗ </Text>
+            <Text>View usage ↗</Text>
           </Link>
         )}
-        {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
+        {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
     </Box>
   );

@@ -7,6 +7,10 @@ import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { MarkdownDisplay } from "./MarkdownDisplay";
+
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
 
 interface ResumeSelectorProps {
   currentAgentId: string;
@@ -671,8 +675,21 @@ export function ResumeSelector({
     );
   };
 
+  // Calculate horizontal line width
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth - 2, 10));
+
   return (
     <Box flexDirection="column">
+      {/* Command header */}
+      <Box flexDirection="row">
+        <Text bold>{"> "}</Text>
+        <Text bold>/resume</Text>
+        <Text dimColor>{"    Resume a previous conversation"}</Text>
+      </Box>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
       {/* Header */}
       <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
@@ -765,25 +782,34 @@ export function ResumeSelector({
           (activeTab === "letta-code" &&
             !lettaCodeError &&
             lettaCodeAgents.length > 0) ||
-          (activeTab === "all" && !allError && allAgents.length > 0)) && (
-          <Box flexDirection="column">
-            <Box>
-              <Text dimColor>
-                {activeTab === "pinned"
-                  ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
-                  : activeTab === "letta-code"
-                    ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
-                    : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`}
-              </Text>
+          (activeTab === "all" && !allError && allAgents.length > 0)) &&
+        (() => {
+          const footerWidth = Math.max(0, terminalWidth - 2);
+          const pageText =
+            activeTab === "pinned"
+              ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
+              : activeTab === "letta-code"
+                ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
+                : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
+          const hintsText = `Tab switch · ↑↓ navigate · Enter select · J/K page${activeTab === "pinned" ? " · P unpin" : " · Type to search"}`;
+
+          return (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={pageText} dimColor />
+                </Box>
+              </Box>
+              <Box flexDirection="row">
+                <Box width={2} flexShrink={0} />
+                <Box flexGrow={1} width={footerWidth}>
+                  <MarkdownDisplay text={hintsText} dimColor />
+                </Box>
+              </Box>
             </Box>
-            <Box>
-              <Text dimColor>
-                Tab switch · ↑↓ navigate · Enter select · J/K page
-                {activeTab === "pinned" ? " · P unpin" : " · Type to search"}
-              </Text>
-            </Box>
-          </Box>
-        )}
+          );
+        })()}
     </Box>
   );
 }

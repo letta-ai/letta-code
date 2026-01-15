@@ -51,6 +51,7 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   isAnthropicProvider,
+  isAutocompleteActive,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -61,7 +62,13 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   isAnthropicProvider: boolean;
+  isAutocompleteActive: boolean;
 }) {
+  // Hide footer when autocomplete is showing
+  if (isAutocompleteActive) {
+    return null;
+  }
+
   return (
     <Box justifyContent="space-between" marginBottom={1}>
       {ctrlCPressed ? (
@@ -839,6 +846,7 @@ export function Input({
           agentName={agentName}
           currentModel={currentModel}
           isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+          isAutocompleteActive={isAutocompleteActive}
         />
       </Box>
     </Box>
