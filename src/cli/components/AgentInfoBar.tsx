@@ -9,6 +9,7 @@ interface AgentInfoBarProps {
   agentId?: string;
   agentName?: string | null;
   serverUrl?: string;
+  conversationId?: string;
 }
 
 /**
@@ -18,6 +19,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   agentId,
   agentName,
   serverUrl,
+  conversationId,
 }: AgentInfoBarProps) {
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
@@ -54,7 +56,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       </Box>
       <Box>
         {isCloudUser && (
-          <Link url={`https://app.letta.com/agents/${agentId}`}>
+          <Link
+            url={`https://app.letta.com/agents/${agentId}${conversationId ? `?conversation=${conversationId}` : ""}`}
+          >
             <Text>Open in ADE ↗ </Text>
           </Link>
         )}

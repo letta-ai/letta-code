@@ -29,7 +29,11 @@ function buildModelSettings(
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
-  const isAnthropic = modelHandle.startsWith("anthropic/");
+  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  const isAnthropic =
+    modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+  const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
@@ -70,6 +74,13 @@ function buildModelSettings(
       };
     }
     settings = anthropicSettings;
+  } else if (isZai) {
+    // Zai uses the same model_settings structure as other providers.
+    // Ensure parallel_tool_calls is enabled.
+    settings = {
+      provider_type: "zai",
+      parallel_tool_calls: true,
+    };
   } else if (isGoogleAI) {
     const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",

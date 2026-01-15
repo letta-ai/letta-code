@@ -571,6 +571,12 @@ export function clipToolReturn(
 ): string {
   if (!text) return text;
 
+  // Don't clip user rejection reasons - they contain important feedback
+  // All denials use format: "Error: request to call tool denied. User reason: ..."
+  if (text.includes("request to call tool denied")) {
+    return text;
+  }
+
   // First apply character limit to avoid extremely long text
   let clipped = text;
   if (text.length > maxChars) {

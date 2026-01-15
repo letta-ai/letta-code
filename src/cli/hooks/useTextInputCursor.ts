@@ -7,6 +7,7 @@ interface Key {
   delete?: boolean;
   ctrl?: boolean;
   meta?: boolean;
+  isPasted?: boolean;
 }
 
 /**
@@ -47,7 +48,18 @@ export function useTextInputCursor(initialText = "") {
       return true;
     }
 
-    // Typing: insert at cursor position
+    // Paste: insert pasted text at cursor position
+    if (key.isPasted && input) {
+      // Sanitize pasted text: replace newlines with spaces for single-line input
+      const sanitized = input.replace(/[\r\n]+/g, " ");
+      setText(
+        (prev) => prev.slice(0, cursorPos) + sanitized + prev.slice(cursorPos),
+      );
+      setCursorPos((prev) => prev + sanitized.length);
+      return true;
+    }
+
+    // Typing: insert at cursor position (single character)
     if (input && !key.ctrl && !key.meta && input.length === 1) {
       setText(
         (prev) => prev.slice(0, cursorPos) + input + prev.slice(cursorPos),

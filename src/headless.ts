@@ -1,13 +1,11 @@
 import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  ApprovalCreate,
-  LettaStreamingResponse,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -18,6 +16,7 @@ import {
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -30,6 +29,7 @@ import {
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
+import { StreamProcessor } from "./cli/helpers/streamProcessor";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
 import type {
@@ -444,10 +444,24 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Save agent ID to both project and global settings
+  // Always create a new conversation on startup for headless mode too
+  // This ensures isolated message history per CLI invocation
+  const conversation = await client.conversations.create({
+    agent_id: agent.id,
+    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+  });
+  const conversationId = conversation.id;
+
+  // Save session (agent + conversation) to both project and global settings
   await settingsManager.loadLocalProjectSettings();
-  settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-  settingsManager.updateSettings({ lastAgent: agent.id });
+  settingsManager.setLocalLastSession(
+    { agentId: agent.id, conversationId },
+    process.cwd(),
+  );
+  settingsManager.setGlobalLastSession({
+    agentId: agent.id,
+    conversationId,
+  });
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
@@ -508,6 +522,7 @@ export async function handleHeadlessCommand(
   if (isBidirectionalMode) {
     await runBidirectionalMode(
       agent,
+      conversationId,
       client,
       outputFormat,
       includePartialMessages,
@@ -549,7 +564,20 @@ export async function handleHeadlessCommand(
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
       const freshAgent = await client.agents.retrieve(agent.id);
-      const resume = await getResumeData(client, freshAgent);
+
+      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      try {
+        resume = await getResumeData(client, freshAgent);
+      } catch (error) {
+        // Treat 404/422 as "no approvals" - stale message/conversation state
+        if (
+          error instanceof APIError &&
+          (error.status === 404 || error.status === 422)
+        ) {
+          break;
+        }
+        throw error;
+      }
 
       // Use plural field for parallel tool calls
       const pendingApprovals = resume.pendingApprovals || [];
@@ -661,7 +689,9 @@ export async function handleHeadlessCommand(
       };
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendMessageStream(agent.id, [approvalInput]);
+      const approvalStream = await sendMessageStream(conversationId, [
+        approvalInput,
+      ]);
       if (outputFormat === "stream-json") {
         // Consume quickly but don't emit message frames to stdout
         for await (const _ of approvalStream) {
@@ -710,10 +740,10 @@ export async function handleHeadlessCommand(
 
   try {
     while (true) {
-      const stream = await sendMessageStream(agent.id, currentInput);
+      const stream = await sendMessageStream(conversationId, currentInput);
 
       // For stream-json, output each chunk as it arrives
-      let stopReason: StopReasonType;
+      let stopReason: StopReasonType | null = null;
       let approvals: Array<{
         toolCallId: string;
         toolName: string;
@@ -724,71 +754,35 @@ export async function handleHeadlessCommand(
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
-        let lastStopReason: StopReasonType | null = null;
 
         // Track approval requests across streamed chunks
-        const approvalRequests = new Map<
-          string,
-          { toolName: string; args: string }
-        >();
         const autoApprovalEmitted = new Set<string>();
-        let _lastApprovalId: string | null = null;
 
-        // Track all run_ids seen during this turn
-        const runIds = new Set<string>();
+        const streamProcessor = new StreamProcessor();
 
         for await (const chunk of stream) {
-          // Track run_id if present
-          if ("run_id" in chunk && chunk.run_id) {
-            runIds.add(chunk.run_id);
-          }
+          const { shouldOutput, errorInfo, updatedApproval } =
+            streamProcessor.processChunk(chunk);
 
           // Detect mid-stream errors
-          // Case 1: LettaErrorMessage from the API (has message_type: "error_message")
-          if (
-            "message_type" in chunk &&
-            chunk.message_type === "error_message"
-          ) {
-            // This is a LettaErrorMessage - nest it in our wire format
-            const apiError = chunk as LettaStreamingResponse.LettaErrorMessage;
+          if (errorInfo && shouldOutput) {
             const errorEvent: ErrorMessage = {
               type: "error",
-              message: apiError.message,
+              message: errorInfo.message,
               stop_reason: "error",
-              run_id: apiError.run_id,
-              api_error: apiError,
+              run_id: errorInfo.run_id,
               session_id: sessionId,
               uuid: crypto.randomUUID(),
-            };
-            console.log(JSON.stringify(errorEvent));
-
-            // Still accumulate for tracking
-            const { onChunk: accumulatorOnChunk } = await import(
-              "./cli/helpers/accumulator"
-            );
-            accumulatorOnChunk(buffers, chunk);
-            continue;
-          }
-
-          // Case 2: Generic error object without message_type
-          const chunkWithError = chunk as typeof chunk & {
-            error?: { message?: string; detail?: string };
-          };
-          if (chunkWithError.error && !("message_type" in chunk)) {
-            // Emit as error event
-            const errorText =
-              chunkWithError.error.message || "An error occurred";
-            const errorDetail = chunkWithError.error.detail || "";
-            const fullErrorText = errorDetail
-              ? `${errorText}: ${errorDetail}`
-              : errorText;
-
-            const errorEvent: ErrorMessage = {
-              type: "error",
-              message: fullErrorText,
-              stop_reason: "error",
-              session_id: sessionId,
-              uuid: crypto.randomUUID(),
+              ...(errorInfo.error_type &&
+                errorInfo.run_id && {
+                  api_error: {
+                    message_type: "error_message",
+                    message: errorInfo.message,
+                    error_type: errorInfo.error_type,
+                    detail: errorInfo.detail,
+                    run_id: errorInfo.run_id,
+                  },
+                }),
             };
             console.log(JSON.stringify(errorEvent));
 
@@ -801,136 +795,58 @@ export async function handleHeadlessCommand(
           }
 
           // Detect server conflict due to pending approval; handle it and retry
-          const errObj = (chunk as unknown as { error?: { detail?: string } })
-            .error;
-          if (errObj?.detail?.includes("Cannot send a new message")) {
+          if (errorInfo?.message?.includes("Cannot send a new message")) {
             // Don't emit this error; clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
-            lastStopReason = "error" as StopReasonType;
+            stopReason = "error" as StopReasonType;
             break;
           }
-          if (
-            errObj?.detail?.includes(
-              "No tool call is currently awaiting approval",
-            )
-          ) {
-            // Server isn't ready for an approval yet; let the stream continue until it is
-            // Suppress the error frame from output
-            continue;
-          }
+
           // Check if we should skip outputting approval requests in bypass mode
-          const isApprovalRequest =
-            chunk.message_type === "approval_request_message";
-          let shouldOutputChunk = true;
+          let shouldOutputChunk = shouldOutput;
 
-          // Track approval requests (stream-aware: accumulate by tool_call_id)
-          if (isApprovalRequest) {
-            const chunkWithTools = chunk as typeof chunk & {
-              tool_call?: {
-                tool_call_id?: string;
-                name?: string;
-                arguments?: string;
-              };
-              tool_calls?: Array<{
-                tool_call_id?: string;
-                name?: string;
-                arguments?: string;
-              }>;
-            };
-
-            const toolCalls = Array.isArray(chunkWithTools.tool_calls)
-              ? chunkWithTools.tool_calls
-              : chunkWithTools.tool_call
-                ? [chunkWithTools.tool_call]
-                : [];
-
-            for (const toolCall of toolCalls) {
-              // Many backends stream tool_call chunks where only the first frame
-              // carries the tool_call_id; subsequent argument deltas omit it.
-              // Fall back to the last seen id within this turn so we can
-              // properly accumulate args.
-              let id: string | null = toolCall?.tool_call_id ?? _lastApprovalId;
-              if (!id) {
-                // As an additional guard, if exactly one approval is being
-                // tracked already, use that id for continued argument deltas.
-                if (approvalRequests.size === 1) {
-                  id = Array.from(approvalRequests.keys())[0] ?? null;
-                }
-              }
-              if (!id) continue; // cannot safely attribute this chunk
-
-              _lastApprovalId = id;
-
-              // Concatenate argument deltas; do not inject placeholder JSON
-              const prev = approvalRequests.get(id);
-              const base = prev?.args ?? "";
-              const incomingArgs =
-                toolCall?.arguments != null ? base + toolCall.arguments : base;
-
-              // Preserve previously seen name; set if provided in this chunk
-              const nextName = toolCall?.name || prev?.toolName || "";
-              approvalRequests.set(id, {
-                toolName: nextName,
-                args: incomingArgs,
-              });
-
-              // Keep an up-to-date approvals array for downstream handling
-              // Update existing approval if present, otherwise add new one
-              const existingIndex = approvals.findIndex(
-                (a) => a.toolCallId === id,
+          // Check if this approval will be auto-approved. Dedup per tool_call_id
+          if (
+            updatedApproval &&
+            !autoApprovalEmitted.has(updatedApproval.toolCallId) &&
+            updatedApproval.toolName
+          ) {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown> | null>(
+              updatedApproval.toolArgs || "{}",
+              null,
+            );
+            const permission = await checkToolPermission(
+              updatedApproval.toolName,
+              parsedArgs || {},
+            );
+            if (permission.decision === "allow" && parsedArgs) {
+              // Only emit auto_approval if we already have all required params
+              const { getToolSchema } = await import("./tools/manager");
+              const schema = getToolSchema(updatedApproval.toolName);
+              const required =
+                (schema?.input_schema?.required as string[] | undefined) || [];
+              const missing = required.filter(
+                (key) =>
+                  !(key in parsedArgs) ||
+                  (parsedArgs as Record<string, unknown>)[key] == null,
               );
-              const approvalObj = {
-                toolCallId: id,
-                toolName: nextName,
-                toolArgs: incomingArgs,
-              };
-              if (existingIndex >= 0) {
-                approvals[existingIndex] = approvalObj;
-              } else {
-                approvals.push(approvalObj);
-              }
-
-              // Check if this approval will be auto-approved. Dedup per tool_call_id
-              if (!autoApprovalEmitted.has(id) && nextName) {
-                const parsedArgs = safeJsonParseOr<Record<
-                  string,
-                  unknown
-                > | null>(incomingArgs || "{}", null);
-                const permission = await checkToolPermission(
-                  nextName,
-                  parsedArgs || {},
-                );
-                if (permission.decision === "allow" && parsedArgs) {
-                  // Only emit auto_approval if we already have all required params
-                  const { getToolSchema } = await import("./tools/manager");
-                  const schema = getToolSchema(nextName);
-                  const required =
-                    (schema?.input_schema?.required as string[] | undefined) ||
-                    [];
-                  const missing = required.filter(
-                    (key) =>
-                      !(key in parsedArgs) ||
-                      (parsedArgs as Record<string, unknown>)[key] == null,
-                  );
-                  if (missing.length === 0) {
-                    shouldOutputChunk = false;
-                    const autoApprovalMsg: AutoApprovalMessage = {
-                      type: "auto_approval",
-                      tool_call: {
-                        name: nextName,
-                        tool_call_id: id,
-                        arguments: incomingArgs || "{}",
-                      },
-                      reason: permission.reason || "Allowed by permission rule",
-                      matched_rule: permission.matchedRule || "auto-approved",
-                      session_id: sessionId,
-                      uuid: `auto-approval-${id}`,
-                    };
-                    console.log(JSON.stringify(autoApprovalMsg));
-                    autoApprovalEmitted.add(id);
-                  }
-                }
+              if (missing.length === 0) {
+                shouldOutputChunk = false;
+                const autoApprovalMsg: AutoApprovalMessage = {
+                  type: "auto_approval",
+                  tool_call: {
+                    name: updatedApproval.toolName,
+                    tool_call_id: updatedApproval.toolCallId,
+                    arguments: updatedApproval.toolArgs || "{}",
+                  },
+                  reason: permission.reason || "Allowed by permission rule",
+                  matched_rule: permission.matchedRule || "auto-approved",
+                  session_id: sessionId,
+                  uuid: `auto-approval-${updatedApproval.toolCallId}`,
+                };
+                console.log(JSON.stringify(autoApprovalMsg));
+                autoApprovalEmitted.add(updatedApproval.toolCallId);
               }
             }
           }
@@ -968,17 +884,13 @@ export async function handleHeadlessCommand(
           // Still accumulate for approval tracking
           const { onChunk } = await import("./cli/helpers/accumulator");
           onChunk(buffers, chunk);
-
-          // Track stop reason
-          if (chunk.message_type === "stop_reason") {
-            lastStopReason = chunk.stop_reason;
-          }
         }
 
-        stopReason = lastStopReason || "error";
+        stopReason = stopReason || streamProcessor.stopReason || "error";
         apiDurationMs = performance.now() - startTime;
+        approvals = streamProcessor.getApprovals();
         // Use the last run_id we saw (if any)
-        lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
+        lastRunId = streamProcessor.lastRunId;
         if (lastRunId) lastKnownRunId = lastRunId;
 
         // Mark final line as finished
@@ -1233,16 +1145,24 @@ export async function handleHeadlessCommand(
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
-      // Before failing, check run metadata to see if this is a retriable llm_api_error
-      // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
-      // This could happen if there's a backend edge case where LLMError is raised but
-      // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
-      // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
-      if (
-        stopReason === "error" &&
-        lastRunId &&
-        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-      ) {
+      // Before failing, check run metadata to see if this is a retriable error
+      // This handles cases where the backend sends a generic error stop_reason but the
+      // underlying cause is a transient LLM/network issue that should be retried
+
+      // Early exit for stop reasons that should never be retried
+      const nonRetriableReasons: StopReasonType[] = [
+        "cancelled",
+        "requires_approval",
+        "max_steps",
+        "max_tokens_exceeded",
+        "context_window_overflow_in_system_prompt",
+        "end_turn",
+        "tool_rule",
+        "no_tool_call",
+      ];
+      if (nonRetriableReasons.includes(stopReason)) {
+        // Fall through to error display
+      } else if (lastRunId && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         try {
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
@@ -1259,7 +1179,7 @@ export async function handleHeadlessCommand(
           const errorType =
             metaError?.error_type ?? metaError?.error?.error_type;
 
-          // Fallback: detect LLM provider errors from detail even if misclassified as internal_error
+          // Fallback: detect LLM provider errors from detail even if misclassified
           // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
           const llmProviderPatterns = [
@@ -1269,10 +1189,11 @@ export async function handleHeadlessCommand(
             "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
             "api_error", // Anthropic SDK error type field
             "Network error", // Transient network failures during streaming
+            "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
           ];
-          const isLlmErrorFromDetail =
-            errorType === "internal_error" &&
-            llmProviderPatterns.some((pattern) => detail.includes(pattern));
+          const isLlmErrorFromDetail = llmProviderPatterns.some((pattern) =>
+            detail.includes(pattern),
+          );
 
           if (errorType === "llm_error" || isLlmErrorFromDetail) {
             const attempt = llmApiErrorRetries + 1;
@@ -1500,6 +1421,7 @@ export async function handleHeadlessCommand(
  */
 async function runBidirectionalMode(
   agent: AgentState,
+  conversationId: string,
   _client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
@@ -1741,14 +1663,9 @@ async function runBidirectionalMode(
           }
 
           // Send message to agent
-          const stream = await sendMessageStream(agent.id, currentInput);
+          const stream = await sendMessageStream(conversationId, currentInput);
 
-          // Track stop reason and approvals during this stream
-          let stopReason: StopReasonType = "error";
-          const approvalRequests = new Map<
-            string,
-            { toolName: string; args: string }
-          >();
+          const streamProcessor = new StreamProcessor();
 
           // Process stream
           for await (const chunk of stream) {
@@ -1757,59 +1674,43 @@ async function runBidirectionalMode(
               break;
             }
 
-            // Track stop reason
-            if (chunk.message_type === "stop_reason") {
-              stopReason = chunk.stop_reason;
-            }
+            // Process chunk through StreamProcessor
+            const { shouldOutput } = streamProcessor.processChunk(chunk);
 
-            // Track approval requests
-            if (chunk.message_type === "approval_request_message") {
-              const chunkWithTools = chunk as typeof chunk & {
-                tool_call?: {
-                  tool_call_id?: string;
-                  name?: string;
-                  arguments?: string;
+            // Output chunk if not suppressed
+            if (shouldOutput) {
+              const chunkWithIds = chunk as typeof chunk & {
+                otid?: string;
+                id?: string;
+              };
+              const uuid = chunkWithIds.otid || chunkWithIds.id;
+
+              if (includePartialMessages) {
+                const streamEvent: StreamEvent = {
+                  type: "stream_event",
+                  event: chunk,
+                  session_id: sessionId,
+                  uuid: uuid || crypto.randomUUID(),
                 };
-              };
-              const toolCall = chunkWithTools.tool_call;
-              if (toolCall?.tool_call_id && toolCall?.name) {
-                const existing = approvalRequests.get(toolCall.tool_call_id);
-                approvalRequests.set(toolCall.tool_call_id, {
-                  toolName: toolCall.name,
-                  args: (existing?.args || "") + (toolCall.arguments || ""),
-                });
+                console.log(JSON.stringify(streamEvent));
+              } else {
+                const msg: MessageWire = {
+                  type: "message",
+                  ...chunk,
+                  session_id: sessionId,
+                  uuid: uuid || crypto.randomUUID(),
+                };
+                console.log(JSON.stringify(msg));
               }
-            }
-
-            // Output chunk
-            const chunkWithIds = chunk as typeof chunk & {
-              otid?: string;
-              id?: string;
-            };
-            const uuid = chunkWithIds.otid || chunkWithIds.id;
-
-            if (includePartialMessages) {
-              const streamEvent: StreamEvent = {
-                type: "stream_event",
-                event: chunk,
-                session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
-              };
-              console.log(JSON.stringify(streamEvent));
-            } else {
-              const msg: MessageWire = {
-                type: "message",
-                ...chunk,
-                session_id: sessionId,
-                uuid: uuid || crypto.randomUUID(),
-              };
-              console.log(JSON.stringify(msg));
             }
 
             // Accumulate for result
             const { onChunk } = await import("./cli/helpers/accumulator");
             onChunk(buffers, chunk);
           }
+
+          // Get stop reason from processor
+          const stopReason = streamProcessor.stopReason || "error";
 
           // Case 1: Turn ended normally - break out of loop
           if (stopReason === "end_turn") {
@@ -1823,13 +1724,7 @@ async function runBidirectionalMode(
 
           // Case 3: Requires approval - process approvals and continue
           if (stopReason === "requires_approval") {
-            const approvals = Array.from(approvalRequests.entries()).map(
-              ([toolCallId, { toolName, args }]) => ({
-                toolCallId,
-                toolName,
-                toolArgs: args,
-              }),
-            );
+            const approvals = streamProcessor.getApprovals();
 
             if (approvals.length === 0) {
               // No approvals to process - break

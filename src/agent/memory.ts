@@ -40,6 +40,13 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
 export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
 
 /**
+ * Block labels that should be isolated per-conversation.
+ * When creating a conversation, these blocks are copied from the agent's blocks
+ * to create conversation-specific versions, preventing cross-conversation state pollution.
+ */
+export const ISOLATED_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+
+/**
  * Check if a block label is a project-level block
  */
 export function isProjectBlock(label: string): boolean {
@@ -49,7 +56,7 @@ export function isProjectBlock(label: string): boolean {
 /**
  * Parse frontmatter and content from an .mdx file
  */
-function parseMdxFrontmatter(content: string): {
+export function parseMdxFrontmatter(content: string): {
   frontmatter: Record<string, string>;
   body: string;
 } {

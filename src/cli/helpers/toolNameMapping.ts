@@ -210,3 +210,29 @@ export function isShellTool(name: string): boolean {
     n === "runshellcommand"
   );
 }
+
+/**
+ * Checks if a tool is a search/grep tool
+ */
+export function isSearchTool(name: string): boolean {
+  return (
+    name === "grep" ||
+    name === "Grep" ||
+    name === "grep_files" ||
+    name === "GrepFiles" ||
+    name === "search_file_content" ||
+    name === "SearchFileContent"
+  );
+}
+
+/**
+ * Checks if a tool is a glob tool
+ */
+export function isGlobTool(name: string): boolean {
+  return (
+    name === "glob" ||
+    name === "Glob" ||
+    name === "glob_gemini" ||
+    name === "GlobGemini"
+  );
+}

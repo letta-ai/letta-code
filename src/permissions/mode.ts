@@ -199,11 +199,7 @@ class PermissionModeManager {
           }
 
           // Allow if target is any .md file in the plans directory
-          if (
-            targetPath &&
-            targetPath.startsWith(plansDir) &&
-            targetPath.endsWith(".md")
-          ) {
+          if (targetPath?.startsWith(plansDir) && targetPath.endsWith(".md")) {
             return "allow";
           }
         }

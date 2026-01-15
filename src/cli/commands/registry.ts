@@ -6,6 +6,7 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
 }
@@ -67,12 +68,29 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
-  "/clear": {
-    desc: "Clear conversation history (keep memory)",
+  "/plan": {
+    desc: "Enter plan mode",
     order: 17,
     handler: () => {
-      // Handled specially in App.tsx to access client and agent ID
-      return "Clearing messages...";
+      // Handled specially in App.tsx
+      return "Entering plan mode...";
+    },
+  },
+  "/clear": {
+    desc: "Start a new conversation (keep agent memory)",
+    order: 18,
+    handler: () => {
+      // Handled specially in App.tsx to create new conversation
+      return "Starting new conversation...";
+    },
+  },
+  "/clear-messages": {
+    desc: "Reset all agent messages (destructive)",
+    order: 19,
+    hidden: true, // Advanced command, not shown in autocomplete
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Resetting agent messages...";
     },
   },
 
@@ -339,11 +357,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/resume": {
-    desc: "Browse and switch to another agent",
-    hidden: true, // Backwards compatibility alias for /agents
+    desc: "Resume a previous conversation",
+    args: "[conversation_id]",
+    order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
+      // Handled specially in App.tsx to show conversation selector or switch directly
+      return "Opening conversation selector...";
     },
   },
   "/pinned": {

@@ -1,5 +1,5 @@
 /**
- * Utilities for sending messages to an agent
+ * Utilities for sending messages to an agent via conversations
  **/
 
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -15,8 +15,12 @@ import { getClient } from "./client";
 // Symbol to store timing info on the stream object
 export const STREAM_REQUEST_START_TIME = Symbol("streamRequestStartTime");
 
+/**
+ * Send a message to a conversation and return a streaming response.
+ * Uses the conversations API for proper message isolation per session.
+ */
 export async function sendMessageStream(
-  agentId: string,
+  conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
   opts: {
     streamTokens?: boolean;
@@ -33,8 +37,8 @@ export async function sendMessageStream(
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
 
   const client = await getClient();
-  const stream = await client.agents.messages.create(
-    agentId,
+  const stream = await client.conversations.messages.create(
+    conversationId,
     {
       messages: messages,
       streaming: true,

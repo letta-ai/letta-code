@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -320,16 +322,23 @@ async function main(): Promise<void> {
   });
 
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
+  // Preprocess args to support --conv as alias for --conversation
+  const processedArgs = process.argv.map((arg) =>
+    arg === "--conv" ? "--conversation" : arg,
+  );
+
   let values: Record<string, unknown>;
   let positionals: string[];
   try {
     const parsed = parseArgs({
-      args: process.argv,
+      args: processedArgs,
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         info: { type: "boolean" },
-        continue: { type: "boolean", short: "c" },
+        continue: { type: "boolean" }, // Deprecated - kept for error message
+        resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
+        conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
         new: { type: "boolean" },
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
@@ -406,7 +415,18 @@ async function main(): Promise<void> {
     process.exit(result.success ? 0 : 1);
   }
 
-  const shouldContinue = (values.continue as boolean | undefined) ?? false;
+  // Check for deprecated --continue flag
+  if (values.continue) {
+    console.error(
+      "Error: --continue is deprecated. Did you mean --resume (-r)?\n" +
+        "  --resume resumes your last session (agent + conversation)",
+    );
+    process.exit(1);
+  }
+
+  const shouldResume = (values.resume as boolean | undefined) ?? false; // Resume last session
+  const specifiedConversationId =
+    (values.conversation as string | undefined) ?? null; // Specific conversation to resume
   const forceNew = (values.new as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
@@ -556,8 +576,8 @@ async function main(): Promise<void> {
       console.error("Error: --from-af cannot be used with --name");
       process.exit(1);
     }
-    if (shouldContinue) {
-      console.error("Error: --from-af cannot be used with --continue");
+    if (shouldResume) {
+      console.error("Error: --from-af cannot be used with --resume");
       process.exit(1);
     }
     if (forceNew) {
@@ -806,8 +826,11 @@ async function main(): Promise<void> {
     >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
+    const [conversationId, setConversationId] = useState<string | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [resumedExistingConversation, setResumedExistingConversation] =
+      useState(false);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
@@ -895,19 +918,46 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
+        let globalPinned = settingsManager.getGlobalPinnedAgents();
+
+        // Check if user would see selector (fresh dir, no bypass flags)
+        const wouldShowSelector =
+          !localSettings.lastAgent &&
+          !forceNew &&
+          !agentIdArg &&
+          !fromAfFile &&
+          !continueSession;
+
+        // Ensure default agents (Memo/Incognito) exist for all users
+        const client = await getClient();
+        const { ensureDefaultAgents } = await import("./agent/defaults");
+
+        if (wouldShowSelector && globalPinned.length === 0) {
+          // New user with no agents - block and show loading while creating defaults
+          setLoadingState("assembling");
+          try {
+            await ensureDefaultAgents(client);
+            // Refresh pinned list after defaults created
+            globalPinned = settingsManager.getGlobalPinnedAgents();
+          } catch (err) {
+            console.warn(
+              `Warning: Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        } else {
+          // Existing user - fire and forget, don't block startup
+          ensureDefaultAgents(client).catch((err) =>
+            console.warn(
+              `Warning: Failed to ensure default agents: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
 
         // Show selector if:
         // 1. No lastAgent in this project (fresh directory)
         // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
         // 3. Has global pinned agents available
-        const shouldShowSelector =
-          !localSettings.lastAgent &&
-          !forceNew &&
-          !agentIdArg &&
-          !fromAfFile &&
-          !continueSession &&
-          globalPinned.length > 0;
+        const shouldShowSelector = wouldShowSelector && globalPinned.length > 0;
 
         if (shouldShowSelector) {
           setLoadingState("selecting_global");
@@ -939,8 +989,21 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 2: LRU from local settings (if not --new or user explicitly requested new from selector)
+        // Priority 2: Use agent selected from global selector (user just picked one)
+        // This takes precedence over stale LRU since user explicitly chose it
         const shouldCreateNew = forceNew || userRequestedNewAgent;
+        if (!resumingAgentId && !shouldCreateNew && selectedGlobalAgentId) {
+          try {
+            await client.agents.retrieve(selectedGlobalAgentId);
+            resumingAgentId = selectedGlobalAgentId;
+          } catch {
+            // Selected agent doesn't exist - show selector again
+            setLoadingState("selecting_global");
+            return;
+          }
+        }
+
+        // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
@@ -956,7 +1019,7 @@ async function main(): Promise<void> {
             }
           }
 
-          // Priority 3: Try global settings if --continue flag
+          // Priority 4: Try global settings if --continue flag
           if (!resumingAgentId && continueSession && settings.lastAgent) {
             try {
               await client.agents.retrieve(settings.lastAgent);
@@ -965,16 +1028,6 @@ async function main(): Promise<void> {
               // Global agent doesn't exist - show selector
               setLoadingState("selecting_global");
               return;
-            }
-          }
-
-          // Priority 4: Use agent selected from global selector
-          if (!resumingAgentId && selectedGlobalAgentId) {
-            try {
-              await client.agents.retrieve(selectedGlobalAgentId);
-              resumingAgentId = selectedGlobalAgentId;
-            } catch {
-              // Agent doesn't exist, will create new
             }
           }
         }
@@ -1171,7 +1224,7 @@ async function main(): Promise<void> {
         // Check if we're resuming an existing agent
         // We're resuming if:
         // 1. We specified an agent ID via --agent flag (agentIdArg)
-        // 2. We used --continue flag (continueSession)
+        // 2. We used --resume flag (continueSession)
         // 3. We're reusing a project agent (detected early as resumingAgentId)
         // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !shouldCreateNew && !!resumingAgentId;
@@ -1224,15 +1277,124 @@ async function main(): Promise<void> {
           }
         }
 
-        // Get resume data (pending approval + message history) if resuming
-        if (resuming) {
-          setLoadingState("checking");
-          const data = await getResumeData(client, agent);
-          setResumeData(data);
+        // Handle conversation: either resume existing or create new
+        // Using definite assignment assertion - all branches below either set this or exit/throw
+        let conversationIdToUse!: string;
+
+        // Debug: log resume flag status
+        if (process.env.DEBUG) {
+          console.log(`[DEBUG] shouldResume=${shouldResume}`);
+          console.log(
+            `[DEBUG] specifiedConversationId=${specifiedConversationId}`,
+          );
         }
+
+        if (specifiedConversationId) {
+          // Use the explicitly specified conversation ID
+          // User explicitly requested this conversation, so error if it doesn't exist
+          conversationIdToUse = specifiedConversationId;
+          setResumedExistingConversation(true);
+          try {
+            // Load message history and pending approvals from the conversation
+            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+            setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
+            const data = await getResumeData(
+              client,
+              freshAgent,
+              specifiedConversationId,
+            );
+            setResumeData(data);
+          } catch (error) {
+            // Only treat 404/422 as "not found", rethrow other errors
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(
+                `Conversation ${specifiedConversationId} not found`,
+              );
+              process.exit(1);
+            }
+            throw error;
+          }
+        } else if (shouldResume) {
+          // Try to load the last session for this agent
+          const lastSession =
+            settingsManager.getLocalLastSession(process.cwd()) ??
+            settingsManager.getGlobalLastSession();
+
+          if (process.env.DEBUG) {
+            console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
+            console.log(`[DEBUG] agent.id=${agent.id}`);
+          }
+
+          let resumedSuccessfully = false;
+          if (lastSession && lastSession.agentId === agent.id) {
+            // Try to resume the exact last conversation
+            // If it no longer exists, fall back to creating new
+            try {
+              // Load message history and pending approvals from the conversation
+              // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+              setLoadingState("checking");
+              const freshAgent = await client.agents.retrieve(agent.id);
+              const data = await getResumeData(
+                client,
+                freshAgent,
+                lastSession.conversationId,
+              );
+              // Only set state after validation succeeds
+              conversationIdToUse = lastSession.conversationId;
+              setResumedExistingConversation(true);
+              setResumeData(data);
+              resumedSuccessfully = true;
+            } catch (error) {
+              // Only treat 404/422 as "not found", rethrow other errors
+              if (
+                error instanceof APIError &&
+                (error.status === 404 || error.status === 422)
+              ) {
+                // Conversation no longer exists, will create new below
+                console.warn(
+                  `Previous conversation ${lastSession.conversationId} not found, creating new`,
+                );
+              } else {
+                throw error;
+              }
+            }
+          }
+
+          if (!resumedSuccessfully) {
+            // No valid session to resume for this agent, or it failed - create new
+            const conversation = await client.conversations.create({
+              agent_id: agent.id,
+              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+            });
+            conversationIdToUse = conversation.id;
+          }
+        } else {
+          // Default: create a new conversation on startup
+          // This ensures each CLI session has isolated message history
+          const conversation = await client.conversations.create({
+            agent_id: agent.id,
+            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+          });
+          conversationIdToUse = conversation.id;
+        }
+
+        // Save the session (agent + conversation) to settings
+        settingsManager.setLocalLastSession(
+          { agentId: agent.id, conversationId: conversationIdToUse },
+          process.cwd(),
+        );
+        settingsManager.setGlobalLastSession({
+          agentId: agent.id,
+          conversationId: conversationIdToUse,
+        });
 
         setAgentId(agent.id);
         setAgentState(agent);
+        setConversationId(conversationIdToUse);
         setLoadingState("ready");
       }
 
@@ -1256,6 +1418,7 @@ async function main(): Promise<void> {
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
+      shouldResume,
     ]);
 
     // Wait for keybinding auto-install to complete before showing UI
@@ -1275,9 +1438,6 @@ async function main(): Promise<void> {
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         onSelect: (agentId: string) => {
-          // Auto-pin the selected global agent to this project
-          settingsManager.pinLocal(agentId);
-
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");
         },
@@ -1291,14 +1451,16 @@ async function main(): Promise<void> {
       });
     }
 
-    if (!agentId) {
+    if (!agentId || !conversationId) {
       return React.createElement(App, {
         agentId: "loading",
+        conversationId: "loading",
         loadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+        resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
       });
@@ -1307,11 +1469,13 @@ async function main(): Promise<void> {
     return React.createElement(App, {
       agentId,
       agentState,
+      conversationId,
       loadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+      resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
     });
@@ -1319,7 +1483,7 @@ async function main(): Promise<void> {
 
   render(
     React.createElement(LoadingApp, {
-      continueSession: shouldContinue,
+      continueSession: shouldResume,
       forceNew: forceNew,
       initBlocks: initBlocks,
       baseTools: baseTools,
