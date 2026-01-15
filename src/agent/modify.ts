@@ -29,10 +29,10 @@ function buildModelSettings(
   const isOpenAI =
     modelHandle.startsWith("openai/") ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
-  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+    modelHandle.startsWith("claude-pro-max/");
   const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
