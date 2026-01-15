@@ -4409,6 +4409,33 @@ export default function App({
                   setStaticItems([separator, successItem]);
                   setLines(toLines(buffersRef.current));
                 }
+
+                // Restore pending approvals if any (fixes #540 for /resume command)
+                if (resumeData.pendingApprovals.length > 0) {
+                  setPendingApprovals(resumeData.pendingApprovals);
+
+                  // Analyze approval contexts (same logic as startup)
+                  try {
+                    const contexts = await Promise.all(
+                      resumeData.pendingApprovals.map(async (approval) => {
+                        const parsedArgs = safeJsonParseOr<
+                          Record<string, unknown>
+                        >(approval.toolArgs, {});
+                        return await analyzeToolApproval(
+                          approval.toolName,
+                          parsedArgs,
+                        );
+                      }),
+                    );
+                    setApprovalContexts(contexts);
+                  } catch (approvalError) {
+                    // If analysis fails, leave context as null (will show basic options)
+                    console.error(
+                      "Failed to analyze resume approvals:",
+                      approvalError,
+                    );
+                  }
+                }
               }
             } catch (error) {
               const errorCmdId = uid("cmd");
@@ -7511,6 +7538,35 @@ Plan file path: ${planFilePath}`;
                         };
                         setStaticItems([separator, successItem]);
                         setLines(toLines(buffersRef.current));
+                      }
+
+                      // Restore pending approvals if any (fixes #540 for ConversationSelector)
+                      if (resumeData.pendingApprovals.length > 0) {
+                        setPendingApprovals(resumeData.pendingApprovals);
+
+                        // Analyze approval contexts (same logic as startup)
+                        try {
+                          const contexts = await Promise.all(
+                            resumeData.pendingApprovals.map(
+                              async (approval) => {
+                                const parsedArgs = safeJsonParseOr<
+                                  Record<string, unknown>
+                                >(approval.toolArgs, {});
+                                return await analyzeToolApproval(
+                                  approval.toolName,
+                                  parsedArgs,
+                                );
+                              },
+                            ),
+                          );
+                          setApprovalContexts(contexts);
+                        } catch (approvalError) {
+                          // If analysis fails, leave context as null (will show basic options)
+                          console.error(
+                            "Failed to analyze resume approvals:",
+                            approvalError,
+                          );
+                        }
                       }
                     }
                   } catch (error) {
