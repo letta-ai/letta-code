@@ -4,7 +4,6 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
 interface ConversationSelectorProps {
@@ -15,15 +14,21 @@ interface ConversationSelectorProps {
   onCancel: () => void;
 }
 
+// Preview line with role prefix
+interface PreviewLine {
+  role: "user" | "assistant";
+  text: string;
+}
+
 // Enriched conversation with message data
 interface EnrichedConversation {
   conversation: Conversation;
-  lastUserMessage: string | null;
+  previewLines: PreviewLine[]; // Last 1-3 user/assistant messages
   lastActiveAt: string | null;
   messageCount: number;
 }
 
-const DISPLAY_PAGE_SIZE = 5;
+const DISPLAY_PAGE_SIZE = 3;
 const FETCH_PAGE_SIZE = 20;
 
 /**
@@ -83,6 +88,9 @@ function extractUserMessagePreview(message: Message): string | null {
 
   if (!textToShow) return null;
 
+  // Strip newlines and collapse whitespace
+  textToShow = textToShow.replace(/\s+/g, " ").trim();
+
   // Truncate to a reasonable preview length
   const maxLen = 60;
   if (textToShow.length > maxLen) {
@@ -92,48 +100,83 @@ function extractUserMessagePreview(message: Message): string | null {
 }
 
 /**
- * Get the last user message and last activity time from messages
+ * Extract preview text from an assistant message
+ * Content can be a string or array of content parts (text, images, etc.)
+ */
+function extractAssistantMessagePreview(message: Message): string | null {
+  // Assistant messages have content field directly on message
+  const content = (
+    message as Message & {
+      content?: string | Array<{ type?: string; text?: string }>;
+    }
+  ).content;
+
+  if (!content) return null;
+
+  let textToShow: string | null = null;
+
+  if (typeof content === "string") {
+    textToShow = content.trim();
+  } else if (Array.isArray(content)) {
+    // Find the first text part
+    for (const part of content) {
+      if (part?.type === "text" && part.text) {
+        textToShow = part.text.trim();
+        break;
+      }
+    }
+  }
+
+  if (!textToShow) return null;
+
+  // Strip newlines and collapse whitespace
+  textToShow = textToShow.replace(/\s+/g, " ").trim();
+
+  // Truncate to a reasonable preview length
+  const maxLen = 60;
+  if (textToShow.length > maxLen) {
+    return `${textToShow.slice(0, maxLen - 3)}...`;
+  }
+  return textToShow;
+}
+
+/**
+ * Get preview lines and stats from messages
  */
 function getMessageStats(messages: Message[]): {
-  lastUserMessage: string | null;
+  previewLines: PreviewLine[];
   lastActiveAt: string | null;
   messageCount: number;
 } {
   if (messages.length === 0) {
-    return { lastUserMessage: null, lastActiveAt: null, messageCount: 0 };
+    return { previewLines: [], lastActiveAt: null, messageCount: 0 };
   }
 
-  // Find last user message with actual content (searching from end)
-  let lastUserMessage: string | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
+  // Find last 3 user/assistant messages with actual content (searching from end)
+  const previewLines: PreviewLine[] = [];
+  for (let i = messages.length - 1; i >= 0 && previewLines.length < 3; i--) {
     const msg = messages[i];
     if (!msg) continue;
 
-    // Check for user_message type
     if (msg.message_type === "user_message") {
-      lastUserMessage = extractUserMessagePreview(msg);
-      if (lastUserMessage) break;
+      const text = extractUserMessagePreview(msg);
+      if (text) {
+        previewLines.unshift({ role: "user", text });
+      }
+    } else if (msg.message_type === "assistant_message") {
+      const text = extractAssistantMessagePreview(msg);
+      if (text) {
+        previewLines.unshift({ role: "assistant", text });
+      }
     }
   }
 
   // Last activity is the timestamp of the last message
-  // Most message types have a 'date' field for the timestamp
   const lastMessage = messages[messages.length - 1];
   const lastActiveAt =
     (lastMessage as Message & { date?: string }).date ?? null;
 
-  return { lastUserMessage, lastActiveAt, messageCount: messages.length };
-}
-
-/**
- * Truncate ID with middle ellipsis if it exceeds available width
- */
-function truncateId(id: string, availableWidth: number): string {
-  if (id.length <= availableWidth) return id;
-  if (availableWidth < 15) return id.slice(0, availableWidth);
-  const prefixLen = Math.floor((availableWidth - 3) / 2);
-  const suffixLen = availableWidth - 3 - prefixLen;
-  return `${id.slice(0, prefixLen)}...${id.slice(-suffixLen)}`;
+  return { previewLines, lastActiveAt, messageCount: messages.length };
 }
 
 export function ConversationSelector({
@@ -143,7 +186,6 @@ export function ConversationSelector({
   onNewConversation,
   onCancel,
 }: ConversationSelectorProps) {
-  const terminalWidth = useTerminalWidth();
   const clientRef = useRef<Letta | null>(null);
 
   // Conversation list state (enriched with message data)
@@ -185,14 +227,19 @@ export function ConversationSelector({
         const enrichedConversations = await Promise.all(
           result.map(async (conv) => {
             try {
-              // Fetch messages to get stats
+              // Fetch recent messages to get stats (desc order = newest first)
               const messages = await client.conversations.messages.list(
                 conv.id,
+                { limit: 20, order: "desc" },
               );
-              const stats = getMessageStats(messages.getPaginatedItems());
+              // Reverse to chronological for getMessageStats (expects oldest-first)
+              const chronologicalMessages = [
+                ...messages.getPaginatedItems(),
+              ].reverse();
+              const stats = getMessageStats(chronologicalMessages);
               return {
                 conversation: conv,
-                lastUserMessage: stats.lastUserMessage,
+                previewLines: stats.previewLines,
                 lastActiveAt: stats.lastActiveAt,
                 messageCount: stats.messageCount,
               };
@@ -200,7 +247,7 @@ export function ConversationSelector({
               // If we fail to fetch messages, show conversation anyway with -1 to indicate error
               return {
                 conversation: conv,
-                lastUserMessage: null,
+                previewLines: [],
                 lastActiveAt: null,
                 messageCount: -1, // Unknown, don't filter out
               };
@@ -318,28 +365,73 @@ export function ConversationSelector({
   ) => {
     const {
       conversation: conv,
-      lastUserMessage,
+      previewLines,
       lastActiveAt,
       messageCount,
     } = enrichedConv;
     const isCurrent = conv.id === currentConversationId;
-    const displayId = truncateId(conv.id, Math.min(40, terminalWidth - 30));
 
     // Format timestamps
     const activeTime = formatRelativeTime(lastActiveAt);
     const createdTime = formatRelativeTime(conv.created_at);
 
-    // Preview text: prefer last user message, fall back to summary or message count
-    let previewText: string;
-    if (lastUserMessage) {
-      previewText = lastUserMessage;
-    } else if (conv.summary) {
-      previewText = conv.summary;
-    } else if (messageCount > 0) {
-      previewText = `${messageCount} message${messageCount === 1 ? "" : "s"}`;
-    } else {
-      previewText = "No preview";
-    }
+    // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
+    const renderPreview = () => {
+      // Priority 1: Summary
+      if (conv.summary) {
+        return (
+          <Box flexDirection="row" marginLeft={2}>
+            <Text dimColor italic>
+              {conv.summary.length > 60
+                ? `${conv.summary.slice(0, 57)}...`
+                : conv.summary}
+            </Text>
+          </Box>
+        );
+      }
+
+      // Priority 2: Preview lines with emoji prefixes
+      if (previewLines.length > 0) {
+        return (
+          <>
+            {previewLines.map((line, idx) => (
+              <Box
+                key={`${line.role}-${idx}`}
+                flexDirection="row"
+                marginLeft={2}
+              >
+                <Text dimColor>
+                  {line.role === "assistant" ? "👾 " : "👤 "}
+                </Text>
+                <Text dimColor italic>
+                  {line.text}
+                </Text>
+              </Box>
+            ))}
+          </>
+        );
+      }
+
+      // Priority 3: Message count fallback
+      if (messageCount > 0) {
+        return (
+          <Box flexDirection="row" marginLeft={2}>
+            <Text dimColor italic>
+              {messageCount} message{messageCount === 1 ? "" : "s"} (no
+              in-context user/agent messages)
+            </Text>
+          </Box>
+        );
+      }
+
+      return (
+        <Box flexDirection="row" marginLeft={2}>
+          <Text dimColor italic>
+            No in-context messages
+          </Text>
+        </Box>
+      );
+    };
 
     return (
       <Box key={conv.id} flexDirection="column" marginBottom={1}>
@@ -354,17 +446,13 @@ export function ConversationSelector({
             bold={isSelected}
             color={isSelected ? colors.selector.itemHighlighted : undefined}
           >
-            {displayId}
+            {conv.id}
           </Text>
           {isCurrent && (
             <Text color={colors.selector.itemCurrent}> (current)</Text>
           )}
         </Box>
-        <Box flexDirection="row" marginLeft={2}>
-          <Text dimColor italic>
-            {previewText}
-          </Text>
-        </Box>
+        {renderPreview()}
         <Box flexDirection="row" marginLeft={2}>
           <Text dimColor>
             Active {activeTime} · Created {createdTime}
