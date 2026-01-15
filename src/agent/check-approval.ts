@@ -27,6 +27,78 @@ export interface ResumeData {
 }
 
 /**
+ * Extract approval requests from an approval_request_message.
+ */
+function extractApprovals(messageToCheck: Message): {
+  pendingApproval: ApprovalRequest | null;
+  pendingApprovals: ApprovalRequest[];
+} {
+  // Cast to access tool_calls with proper typing
+  const approvalMsg = messageToCheck as Message & {
+    tool_calls?: Array<{
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    }>;
+    tool_call?: {
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    };
+  };
+
+  // Use tool_calls array (new) or fallback to tool_call (deprecated)
+  const toolCalls = Array.isArray(approvalMsg.tool_calls)
+    ? approvalMsg.tool_calls
+    : approvalMsg.tool_call
+      ? [approvalMsg.tool_call]
+      : [];
+
+  // Extract ALL tool calls for parallel approval support
+  type ToolCallEntry = {
+    tool_call_id?: string;
+    name?: string;
+    arguments?: string;
+  };
+  const pendingApprovals = toolCalls
+    .filter(
+      (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
+        !!tc && !!tc.tool_call_id,
+    )
+    .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
+      toolCallId: tc.tool_call_id,
+      toolName: tc.name || "",
+      toolArgs: tc.arguments || "",
+    }));
+
+  const pendingApproval = pendingApprovals[0] || null;
+
+  if (pendingApprovals.length > 0) {
+    debugWarn(
+      "check-approval",
+      `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
+    );
+  }
+
+  return { pendingApproval, pendingApprovals };
+}
+
+/**
+ * Prepare message history for backfill, trimming orphaned tool returns.
+ */
+function prepareMessageHistory(messages: Message[]): Message[] {
+  const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
+  let messageHistory = messages.slice(-historyCount);
+
+  // Skip if starts with orphaned tool_return (incomplete turn)
+  if (messageHistory[0]?.message_type === "tool_return_message") {
+    messageHistory = messageHistory.slice(1);
+  }
+
+  return messageHistory;
+}
+
+/**
  * Gets data needed to resume an agent session.
  * Checks for pending approvals and retrieves recent message history for backfill.
  *
@@ -65,7 +137,7 @@ export async function getResumeData(
           return {
             pendingApproval: null,
             pendingApprovals: [],
-            messageHistory: backfill,
+            messageHistory: backfill.getPaginatedItems(),
           };
         }
         return {
@@ -75,38 +147,53 @@ export async function getResumeData(
         };
       }
 
-      // Fetch messages anchored to in_context_message_ids.
-      // By using `after` with the second-to-last in-context message ID,
-      // we guarantee the last in-context message is included in results.
-      //
-      // TODO: Once client.messages.get(messageId) is added to the SDK,
-      // replace the workaround below with this simpler approach:
-      //
-      // ```
-      // const lastInContextId = inContextMessageIds[inContextMessageIds.length - 1];
-      // const messageToCheck = await client.messages.get(lastInContextId);
-      // const messages = isBackfillEnabled()
-      //   ? await client.conversations.messages.list(conversationId, { limit: MESSAGE_HISTORY_LIMIT })
-      //   : [];
-      // ```
-      //
-      // WORKAROUND: Use pagination to guarantee we fetch the last in-context message.
-      if (inContextMessageIds.length >= 2) {
-        const anchorId = inContextMessageIds[inContextMessageIds.length - 2];
+      // Fetch the last in-context message directly by ID
+      // (We already checked inContextMessageIds.length > 0 above)
+      const lastInContextId =
+        inContextMessageIds[inContextMessageIds.length - 1]!;
+      const retrievedMessages = await client.messages.retrieve(lastInContextId);
+
+      // Fetch message history separately for backfill
+      const backfillPage = isBackfillEnabled()
+        ? await client.conversations.messages.list(conversationId, {
+            limit: MESSAGE_HISTORY_LIMIT,
+          })
+        : null;
+      messages = backfillPage ? backfillPage.getPaginatedItems() : [];
+
+      // Find the approval_request_message variant if it exists
+      // (A single DB message can have multiple content types returned as separate Message objects)
+      const messageToCheck =
+        retrievedMessages.find(
+          (msg) => msg.message_type === "approval_request_message",
+        ) ?? retrievedMessages[0];
+
+      if (messageToCheck) {
         debugWarn(
           "check-approval",
-          `Fetching messages anchored to: ${anchorId}`,
+          `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
+            (retrievedMessages.length > 1
+              ? ` - had ${retrievedMessages.length} variants`
+              : ""),
         );
-        messages = await client.conversations.messages.list(conversationId, {
-          after: anchorId,
-          limit: MESSAGE_HISTORY_LIMIT,
-        });
-      } else {
-        // Only 1 in-context message - fetch recent and find it
-        messages = await client.conversations.messages.list(conversationId, {
-          limit: MESSAGE_HISTORY_LIMIT,
-        });
+
+        // Check for pending approval(s) inline since we already have the message
+        if (messageToCheck.message_type === "approval_request_message") {
+          const { pendingApproval, pendingApprovals } =
+            extractApprovals(messageToCheck);
+          return {
+            pendingApproval,
+            pendingApprovals,
+            messageHistory: prepareMessageHistory(messages),
+          };
+        }
       }
+
+      return {
+        pendingApproval: null,
+        pendingApprovals: [],
+        messageHistory: prepareMessageHistory(messages),
+      };
     } else {
       // Legacy: fall back to agent messages (no conversation ID)
       inContextMessageIds = agent.message_ids;
@@ -133,124 +220,52 @@ export async function getResumeData(
         };
       }
 
-      // Same anchored fetch approach as conversations path.
-      // TODO: Once client.messages.get(messageId) is added to the SDK,
-      // simplify to a direct fetch (see TODO in conversations path above).
-      if (inContextMessageIds.length >= 2) {
-        const anchorId = inContextMessageIds[inContextMessageIds.length - 2];
+      // Fetch the last in-context message directly by ID
+      // (We already checked inContextMessageIds.length > 0 above)
+      const lastInContextId =
+        inContextMessageIds[inContextMessageIds.length - 1]!;
+      const retrievedMessages = await client.messages.retrieve(lastInContextId);
+
+      // Fetch message history separately for backfill
+      const messagesPage = isBackfillEnabled()
+        ? await client.agents.messages.list(agent.id, {
+            limit: MESSAGE_HISTORY_LIMIT,
+          })
+        : null;
+      messages = messagesPage?.items ?? [];
+
+      // Find the approval_request_message variant if it exists
+      const messageToCheck =
+        retrievedMessages.find(
+          (msg) => msg.message_type === "approval_request_message",
+        ) ?? retrievedMessages[0];
+
+      if (messageToCheck) {
         debugWarn(
           "check-approval",
-          `Fetching agent messages anchored to: ${anchorId}`,
+          `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
+            (retrievedMessages.length > 1
+              ? ` - had ${retrievedMessages.length} variants`
+              : ""),
         );
-        const messagesPage = await client.agents.messages.list(agent.id, {
-          after: anchorId,
-          limit: MESSAGE_HISTORY_LIMIT,
-        });
-        messages = messagesPage.items;
-      } else {
-        const messagesPage = await client.agents.messages.list(agent.id, {
-          limit: MESSAGE_HISTORY_LIMIT,
-        });
-        messages = messagesPage.items;
+
+        if (messageToCheck.message_type === "approval_request_message") {
+          const { pendingApproval, pendingApprovals } =
+            extractApprovals(messageToCheck);
+          return {
+            pendingApproval,
+            pendingApprovals,
+            messageHistory: prepareMessageHistory(messages),
+          };
+        }
       }
-    }
 
-    // Find the last in-context message - source of truth for approval state.
-    // NOTE: A single DB message can contain multiple content types (e.g., reasoning + tool_calls).
-    // The API splits these into separate LettaMessage objects with the SAME ID but different types.
-    // We prefer approval_request_message if it exists, since that's what we're checking for.
-    const lastInContextId = inContextMessageIds[inContextMessageIds.length - 1];
-    const matchingMessages = messages.filter(
-      (msg) => msg.id === lastInContextId,
-    );
-    const messageToCheck =
-      matchingMessages.find(
-        (msg) => msg.message_type === "approval_request_message",
-      ) ??
-      matchingMessages[0] ??
-      null;
-
-    if (messageToCheck) {
-      debugWarn(
-        "check-approval",
-        `Found last in-context message: ${messageToCheck.id} (type: ${messageToCheck.message_type})` +
-          (matchingMessages.length > 1
-            ? ` - had ${matchingMessages.length} duplicates`
-            : ""),
-      );
-    } else {
-      debugWarn(
-        "check-approval",
-        `Last in-context message ${lastInContextId} not found in fetched messages`,
-      );
-    }
-
-    // Check for pending approval(s)
-    let pendingApproval: ApprovalRequest | null = null;
-    let pendingApprovals: ApprovalRequest[] = [];
-
-    if (messageToCheck?.message_type === "approval_request_message") {
-      // Cast to access tool_calls with proper typing
-      const approvalMsg = messageToCheck as Message & {
-        tool_calls?: Array<{
-          tool_call_id?: string;
-          name?: string;
-          arguments?: string;
-        }>;
-        tool_call?: {
-          tool_call_id?: string;
-          name?: string;
-          arguments?: string;
-        };
+      return {
+        pendingApproval: null,
+        pendingApprovals: [],
+        messageHistory: prepareMessageHistory(messages),
       };
-
-      // Use tool_calls array (new) or fallback to tool_call (deprecated)
-      const toolCalls = Array.isArray(approvalMsg.tool_calls)
-        ? approvalMsg.tool_calls
-        : approvalMsg.tool_call
-          ? [approvalMsg.tool_call]
-          : [];
-
-      // Extract ALL tool calls for parallel approval support
-      type ToolCallEntry = {
-        tool_call_id?: string;
-        name?: string;
-        arguments?: string;
-      };
-      pendingApprovals = toolCalls
-        .filter(
-          (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
-            !!tc && !!tc.tool_call_id,
-        )
-        .map((tc: ToolCallEntry & { tool_call_id: string }) => ({
-          toolCallId: tc.tool_call_id,
-          toolName: tc.name || "",
-          toolArgs: tc.arguments || "",
-        }));
-
-      if (pendingApprovals.length > 0) {
-        pendingApproval = pendingApprovals[0] || null;
-        debugWarn(
-          "check-approval",
-          `Found ${pendingApprovals.length} pending approval(s): ${pendingApprovals.map((a) => a.toolName).join(", ")}`,
-        );
-      }
     }
-
-    // Get message history for backfill
-    if (!isBackfillEnabled()) {
-      return { pendingApproval, pendingApprovals, messageHistory: [] };
-    }
-
-    const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
-    let messageHistory = messages.slice(-historyCount);
-
-    // Skip if starts with orphaned tool_return (incomplete turn)
-    if (messageHistory[0]?.message_type === "tool_return_message") {
-      messageHistory = messageHistory.slice(1);
-    }
-
-    return { pendingApproval, pendingApprovals, messageHistory };
   } catch (error) {
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
