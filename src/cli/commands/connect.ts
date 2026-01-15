@@ -138,7 +138,7 @@ export async function handleConnect(
 }
 
 /**
- * Handle /connect codex - OpenAI Codex OAuth with local server
+ * Handle /connect codex - ChatGPT OAuth with local server
  */
 async function handleConnectCodex(
   ctx: ConnectCommandContext,
@@ -151,7 +151,7 @@ async function handleConnectCodex(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Already connected to OpenAI Codex via OAuth.\n\nUse /disconnect codex to remove the current connection first.",
+      "Already connected to ChatGPT via OAuth.\n\nUse /disconnect codex to remove the current connection first.",
       false,
     );
     return;
@@ -179,7 +179,7 @@ async function handleConnectCodex(
         ctx.refreshDerived,
         cmdId,
         msg,
-        `\u2717 OpenAI Codex OAuth requires a Pro or Enterprise plan\n\n` +
+        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
           `This feature is only available for Letta Pro or Enterprise customers.\n` +
           `Current plan: ${eligibility.billing_tier}\n\n` +
           `To upgrade your plan, visit:\n\n` +
@@ -304,7 +304,7 @@ async function handleConnectCodex(
       ctx.refreshDerived,
       cmdId,
       msg,
-      "Creating OpenAI Codex provider...",
+      "Creating ChatGPT OAuth provider...",
       true,
       "running",
     );
@@ -326,7 +326,7 @@ async function handleConnectCodex(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Successfully connected to OpenAI Codex!\n\n` +
+      `\u2713 Successfully connected to ChatGPT!\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' created/updated in Letta.\n` +
         `Your ChatGPT Plus/Pro subscription is now linked.`,
       true,
@@ -348,7 +348,7 @@ async function handleConnectCodex(
     let displayMessage: string;
     if (errorMessage === "PLAN_UPGRADE_REQUIRED") {
       displayMessage =
-        `\u2717 OpenAI Codex OAuth requires a Pro or Enterprise plan\n\n` +
+        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
         `This feature is only available for Letta Pro or Enterprise customers.\n` +
         `To upgrade your plan, visit:\n\n` +
         `  https://app.letta.com/settings/organization/usage\n\n` +
@@ -437,7 +437,7 @@ async function handleDisconnectCodex(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Not currently connected to OpenAI Codex via OAuth.\n\nUse /connect codex to authenticate.",
+      "Not currently connected to ChatGPT via OAuth.\n\nUse /connect codex to authenticate.",
       false,
     );
     return;
@@ -448,7 +448,7 @@ async function handleDisconnectCodex(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Disconnecting from OpenAI Codex OAuth...",
+    "Disconnecting from ChatGPT OAuth...",
     true,
     "running",
   );
@@ -464,7 +464,7 @@ async function handleDisconnectCodex(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2713 Disconnected from OpenAI Codex OAuth.\n\n` +
+      `\u2713 Disconnected from ChatGPT OAuth.\n\n` +
         `Provider '${OPENAI_CODEX_PROVIDER_NAME}' removed from Letta.`,
       true,
       "finished",
@@ -475,7 +475,7 @@ async function handleDisconnectCodex(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `\u2717 Failed to disconnect from OpenAI Codex: ${getErrorMessage(error)}`,
+      `\u2717 Failed to disconnect from ChatGPT: ${getErrorMessage(error)}`,
       false,
       "finished",
     );

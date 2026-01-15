@@ -1,5 +1,5 @@
 /**
- * Direct API calls to Letta for managing OpenAI Codex provider
+ * Direct API calls to Letta for managing ChatGPT OAuth provider
  * Uses the chatgpt_oauth provider type - backend handles request transformation
  * (transforms OpenAI API format → ChatGPT backend API format)
  */
@@ -7,7 +7,7 @@
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
-// Provider name constant for letta-code's OpenAI Codex OAuth provider
+// Provider name constant for letta-code's ChatGPT OAuth provider
 export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
 
 // Provider type for ChatGPT OAuth (backend handles transformation)
@@ -190,7 +190,7 @@ export async function updateOpenAICodexProvider(
 }
 
 /**
- * Delete the OpenAI Codex provider
+ * Delete the ChatGPT OAuth provider
  */
 export async function deleteOpenAICodexProvider(
   providerId: string,
@@ -224,7 +224,7 @@ export async function createOrUpdateOpenAICodexProvider(
 }
 
 /**
- * Remove the OpenAI Codex provider (called on /disconnect)
+ * Remove the ChatGPT OAuth provider (called on /disconnect)
  */
 export async function removeOpenAICodexProvider(): Promise<void> {
   const existing = await getOpenAICodexProvider();
@@ -234,7 +234,7 @@ export async function removeOpenAICodexProvider(): Promise<void> {
 }
 
 /**
- * Check if user is eligible for OpenAI Codex OAuth
+ * Check if user is eligible for ChatGPT OAuth
  * Requires Pro or Enterprise billing tier
  */
 export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckResult> {
@@ -257,12 +257,12 @@ export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckRes
     return {
       eligible: false,
       billing_tier: balance.billing_tier,
-      reason: `OpenAI Codex OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
+      reason: `ChatGPT OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
     };
   } catch (error) {
     // If we can't check eligibility, allow the flow to continue
     // The provider creation will handle the error appropriately
-    console.warn("Failed to check OpenAI Codex OAuth eligibility:", error);
+    console.warn("Failed to check ChatGPT OAuth eligibility:", error);
     return {
       eligible: true,
       billing_tier: "unknown",
