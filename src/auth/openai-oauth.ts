@@ -175,13 +175,17 @@ export function extractAccountIdFromToken(accessToken: string): string {
   try {
     const payload = decodeJwtPayload(accessToken);
     // The account ID is in the custom claim path
-    const authClaim = payload["https://api.openai.com/auth"] as Record<string, unknown> | undefined;
+    const authClaim = payload["https://api.openai.com/auth"] as
+      | Record<string, unknown>
+      | undefined;
     if (authClaim && typeof authClaim.chatgpt_account_id === "string") {
       return authClaim.chatgpt_account_id;
     }
     throw new Error("chatgpt_account_id not found in token claims");
   } catch (error) {
-    throw new Error(`Failed to extract account ID from token: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Failed to extract account ID from token: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -217,12 +221,14 @@ export function startLocalOAuthServer(
 
         if (error) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(renderOAuthPage({
-            success: false,
-            title: "Authentication Failed",
-            message: `Error: ${error}`,
-            detail: errorDescription || undefined,
-          }));
+          res.end(
+            renderOAuthPage({
+              success: false,
+              title: "Authentication Failed",
+              message: `Error: ${error}`,
+              detail: errorDescription || undefined,
+            }),
+          );
           reject(
             new Error(`OAuth error: ${error} - ${errorDescription || ""}`),
           );
@@ -231,22 +237,27 @@ export function startLocalOAuthServer(
 
         if (!code || !state) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(renderOAuthPage({
-            success: false,
-            title: "Authentication Failed",
-            message: "Missing authorization code or state parameter.",
-          }));
+          res.end(
+            renderOAuthPage({
+              success: false,
+              title: "Authentication Failed",
+              message: "Missing authorization code or state parameter.",
+            }),
+          );
           reject(new Error("Missing authorization code or state parameter"));
           return;
         }
 
         if (state !== expectedState) {
           res.writeHead(400, { "Content-Type": "text/html" });
-          res.end(renderOAuthPage({
-            success: false,
-            title: "Authentication Failed",
-            message: "State mismatch - the authorization may have been tampered with.",
-          }));
+          res.end(
+            renderOAuthPage({
+              success: false,
+              title: "Authentication Failed",
+              message:
+                "State mismatch - the authorization may have been tampered with.",
+            }),
+          );
           reject(
             new Error(
               "State mismatch - the authorization may have been tampered with",
@@ -257,12 +268,14 @@ export function startLocalOAuthServer(
 
         // Success!
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(renderOAuthPage({
-          success: true,
-          title: "Authorization Successful",
-          message: "You can close this window and return to Letta Code.",
-          autoClose: true,
-        }));
+        res.end(
+          renderOAuthPage({
+            success: true,
+            title: "Authorization Successful",
+            message: "You can close this window and return to Letta Code.",
+            autoClose: true,
+          }),
+        );
 
         resolve({ result: { code, state }, server });
       } else {
@@ -370,5 +383,3 @@ export async function exchangeCodeForTokens(
 
   return (await response.json()) as OpenAITokens;
 }
-
-

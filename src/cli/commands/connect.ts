@@ -507,7 +507,9 @@ async function handleDisconnectClaude(
       "../../providers/openai-codex-provider"
     );
     const providers = await listProviders();
-    const claudeProvider = providers.find((p) => p.name === CLAUDE_PROVIDER_NAME);
+    const claudeProvider = providers.find(
+      (p) => p.name === CLAUDE_PROVIDER_NAME,
+    );
 
     if (!claudeProvider) {
       updateCommandResult(

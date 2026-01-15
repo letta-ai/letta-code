@@ -201,7 +201,7 @@ export async function deleteOpenAICodexProvider(
 /**
  * Create or update the ChatGPT OAuth provider
  * This is the main function called after successful /connect codex
- * 
+ *
  * The Letta backend will:
  * 1. Store the OAuth tokens securely
  * 2. Handle token refresh when needed
