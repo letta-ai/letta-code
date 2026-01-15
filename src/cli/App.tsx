@@ -4444,11 +4444,24 @@ export default function App({
               }
             } catch (error) {
               // Update existing loading message instead of creating new one
+              // Format error message to be user-friendly (avoid raw JSON/internal details)
+              let errorMsg = "Unknown error";
+              if (error instanceof APIError) {
+                if (error.status === 404) {
+                  errorMsg = "Conversation not found";
+                } else if (error.status === 422) {
+                  errorMsg = "Invalid conversation ID";
+                } else {
+                  errorMsg = error.message;
+                }
+              } else if (error instanceof Error) {
+                errorMsg = error.message;
+              }
               buffersRef.current.byId.set(cmdId, {
                 kind: "command",
                 id: cmdId,
                 input: msg.trim(),
-                output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+                output: `Failed to switch conversation: ${errorMsg}`,
                 phase: "finished",
                 success: false,
               });
@@ -7576,11 +7589,24 @@ Plan file path: ${planFilePath}`;
                     }
                   } catch (error) {
                     // Update existing loading message instead of creating new one
+                    // Format error message to be user-friendly (avoid raw JSON/internal details)
+                    let errorMsg = "Unknown error";
+                    if (error instanceof APIError) {
+                      if (error.status === 404) {
+                        errorMsg = "Conversation not found";
+                      } else if (error.status === 422) {
+                        errorMsg = "Invalid conversation ID";
+                      } else {
+                        errorMsg = error.message;
+                      }
+                    } else if (error instanceof Error) {
+                      errorMsg = error.message;
+                    }
                     buffersRef.current.byId.set(cmdId, {
                       kind: "command",
                       id: cmdId,
                       input: inputCmd,
-                      output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+                      output: `Failed to switch conversation: ${errorMsg}`,
                       phase: "finished",
                       success: false,
                     });
