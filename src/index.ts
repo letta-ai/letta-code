@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
@@ -1277,7 +1278,8 @@ async function main(): Promise<void> {
         }
 
         // Handle conversation: either resume existing or create new
-        let conversationIdToUse: string;
+        // Using definite assignment assertion - all branches below either set this or exit/throw
+        let conversationIdToUse!: string;
 
         // Debug: log resume flag status
         if (process.env.DEBUG) {
@@ -1289,19 +1291,33 @@ async function main(): Promise<void> {
 
         if (specifiedConversationId) {
           // Use the explicitly specified conversation ID
+          // User explicitly requested this conversation, so error if it doesn't exist
           conversationIdToUse = specifiedConversationId;
           setResumedExistingConversation(true);
-
-          // Load message history and pending approvals from the conversation
-          // Re-fetch agent to get fresh message_ids for accurate pending approval detection
-          setLoadingState("checking");
-          const freshAgent = await client.agents.retrieve(agent.id);
-          const data = await getResumeData(
-            client,
-            freshAgent,
-            specifiedConversationId,
-          );
-          setResumeData(data);
+          try {
+            // Load message history and pending approvals from the conversation
+            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+            setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
+            const data = await getResumeData(
+              client,
+              freshAgent,
+              specifiedConversationId,
+            );
+            setResumeData(data);
+          } catch (error) {
+            // Only treat 404/422 as "not found", rethrow other errors
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(
+                `Conversation ${specifiedConversationId} not found`,
+              );
+              process.exit(1);
+            }
+            throw error;
+          }
         } else if (shouldResume) {
           // Try to load the last session for this agent
           const lastSession =
@@ -1313,23 +1329,43 @@ async function main(): Promise<void> {
             console.log(`[DEBUG] agent.id=${agent.id}`);
           }
 
+          let resumedSuccessfully = false;
           if (lastSession && lastSession.agentId === agent.id) {
-            // Resume the exact last conversation
-            conversationIdToUse = lastSession.conversationId;
-            setResumedExistingConversation(true);
+            // Try to resume the exact last conversation
+            // If it no longer exists, fall back to creating new
+            try {
+              // Load message history and pending approvals from the conversation
+              // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+              setLoadingState("checking");
+              const freshAgent = await client.agents.retrieve(agent.id);
+              const data = await getResumeData(
+                client,
+                freshAgent,
+                lastSession.conversationId,
+              );
+              // Only set state after validation succeeds
+              conversationIdToUse = lastSession.conversationId;
+              setResumedExistingConversation(true);
+              setResumeData(data);
+              resumedSuccessfully = true;
+            } catch (error) {
+              // Only treat 404/422 as "not found", rethrow other errors
+              if (
+                error instanceof APIError &&
+                (error.status === 404 || error.status === 422)
+              ) {
+                // Conversation no longer exists, will create new below
+                console.warn(
+                  `Previous conversation ${lastSession.conversationId} not found, creating new`,
+                );
+              } else {
+                throw error;
+              }
+            }
+          }
 
-            // Load message history and pending approvals from the conversation
-            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
-            setLoadingState("checking");
-            const freshAgent = await client.agents.retrieve(agent.id);
-            const data = await getResumeData(
-              client,
-              freshAgent,
-              lastSession.conversationId,
-            );
-            setResumeData(data);
-          } else {
-            // No valid session to resume for this agent, create new
+          if (!resumedSuccessfully) {
+            // No valid session to resume for this agent, or it failed - create new
             const conversation = await client.conversations.create({
               agent_id: agent.id,
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],

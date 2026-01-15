@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import type { Letta } from "@letta-ai/letta-client";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -563,7 +564,20 @@ export async function handleHeadlessCommand(
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
       const freshAgent = await client.agents.retrieve(agent.id);
-      const resume = await getResumeData(client, freshAgent);
+
+      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      try {
+        resume = await getResumeData(client, freshAgent);
+      } catch (error) {
+        // Treat 404/422 as "no approvals" - stale message/conversation state
+        if (
+          error instanceof APIError &&
+          (error.status === 404 || error.status === 422)
+        ) {
+          break;
+        }
+        throw error;
+      }
 
       // Use plural field for parallel tool calls
       const pendingApprovals = resume.pendingApprovals || [];

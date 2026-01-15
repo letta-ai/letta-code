@@ -4332,18 +4332,8 @@ export default function App({
             refreshDerived();
 
             try {
-              // Update conversation ID and settings
-              setConversationId(targetConvId);
-              settingsManager.setLocalLastSession(
-                { agentId, conversationId: targetConvId },
-                process.cwd(),
-              );
-              settingsManager.setGlobalLastSession({
-                agentId,
-                conversationId: targetConvId,
-              });
-
-              // Fetch message history for the selected conversation
+              // Validate conversation exists BEFORE updating state
+              // (getResumeData throws 404/422 for non-existent conversations)
               if (agentState) {
                 const client = await getClient();
                 const resumeData = await getResumeData(
@@ -4351,6 +4341,17 @@ export default function App({
                   agentState,
                   targetConvId,
                 );
+
+                // Only update state after validation succeeds
+                setConversationId(targetConvId);
+                settingsManager.setLocalLastSession(
+                  { agentId, conversationId: targetConvId },
+                  process.cwd(),
+                );
+                settingsManager.setGlobalLastSession({
+                  agentId,
+                  conversationId: targetConvId,
+                });
 
                 // Clear current transcript and static items
                 buffersRef.current.byId.clear();
@@ -4442,16 +4443,15 @@ export default function App({
                 }
               }
             } catch (error) {
-              const errorCmdId = uid("cmd");
-              buffersRef.current.byId.set(errorCmdId, {
+              // Update existing loading message instead of creating new one
+              buffersRef.current.byId.set(cmdId, {
                 kind: "command",
-                id: errorCmdId,
+                id: cmdId,
                 input: msg.trim(),
                 output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
                 phase: "finished",
                 success: false,
               });
-              buffersRef.current.order.push(errorCmdId);
               refreshDerived();
             } finally {
               setCommandRunning(false);
@@ -7454,18 +7454,8 @@ Plan file path: ${planFilePath}`;
                   refreshDerived();
 
                   try {
-                    // Update conversation ID and settings
-                    setConversationId(convId);
-                    settingsManager.setLocalLastSession(
-                      { agentId, conversationId: convId },
-                      process.cwd(),
-                    );
-                    settingsManager.setGlobalLastSession({
-                      agentId,
-                      conversationId: convId,
-                    });
-
-                    // Fetch message history for the selected conversation
+                    // Validate conversation exists BEFORE updating state
+                    // (getResumeData throws 404/422 for non-existent conversations)
                     if (agentState) {
                       const client = await getClient();
                       const resumeData = await getResumeData(
@@ -7473,6 +7463,17 @@ Plan file path: ${planFilePath}`;
                         agentState,
                         convId,
                       );
+
+                      // Only update state after validation succeeds
+                      setConversationId(convId);
+                      settingsManager.setLocalLastSession(
+                        { agentId, conversationId: convId },
+                        process.cwd(),
+                      );
+                      settingsManager.setGlobalLastSession({
+                        agentId,
+                        conversationId: convId,
+                      });
 
                       // Clear current transcript and static items
                       buffersRef.current.byId.clear();
@@ -7574,16 +7575,15 @@ Plan file path: ${planFilePath}`;
                       }
                     }
                   } catch (error) {
-                    const errorCmdId = uid("cmd");
-                    buffersRef.current.byId.set(errorCmdId, {
+                    // Update existing loading message instead of creating new one
+                    buffersRef.current.byId.set(cmdId, {
                       kind: "command",
-                      id: errorCmdId,
+                      id: cmdId,
                       input: inputCmd,
                       output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
                       phase: "finished",
                       success: false,
                     });
-                    buffersRef.current.order.push(errorCmdId);
                     refreshDerived();
                   } finally {
                     setCommandRunning(false);

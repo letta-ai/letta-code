@@ -2,6 +2,7 @@
 // Check for pending approvals and retrieve recent message history when resuming an agent/conversation
 
 import type Letta from "@letta-ai/letta-client";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ApprovalRequest } from "../cli/helpers/stream";
@@ -293,6 +294,14 @@ export async function getResumeData(
       };
     }
   } catch (error) {
+    // Re-throw "not found" errors (404/422) so callers can handle appropriately
+    // (e.g., /resume command should fail for non-existent conversations)
+    if (
+      error instanceof APIError &&
+      (error.status === 404 || error.status === 422)
+    ) {
+      throw error;
+    }
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }
