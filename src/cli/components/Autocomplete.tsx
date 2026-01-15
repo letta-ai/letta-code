@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { colors } from "./colors";
 
 interface AutocompleteBoxProps {
-  /** Header text shown at top of autocomplete */
-  header: ReactNode;
+  /** Optional header text shown at top of autocomplete */
+  header?: ReactNode;
   children: ReactNode;
 }
 
@@ -14,13 +14,8 @@ interface AutocompleteBoxProps {
  */
 export function AutocompleteBox({ header, children }: AutocompleteBoxProps) {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-    >
-      <Text dimColor>{header}</Text>
+    <Box flexDirection="column">
+      {header && <Text dimColor>{header}</Text>}
       {children}
     </Box>
   );
@@ -35,7 +30,8 @@ interface AutocompleteItemProps {
 
 /**
  * Shared item component for autocomplete lists.
- * Handles selection indicator and styling.
+ * Handles selection styling (color-based, no arrow indicator).
+ * 2-char gutter aligns with input box prompt.
  */
 export function AutocompleteItem({
   selected,
@@ -46,7 +42,7 @@ export function AutocompleteItem({
       color={selected ? colors.command.selected : undefined}
       bold={selected}
     >
-      {selected ? "▶ " : "  "}
+      {"  "}
       {children}
     </Text>
   );
