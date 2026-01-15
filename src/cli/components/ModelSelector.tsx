@@ -7,9 +7,13 @@ import {
   getAvailableModelsCacheInfo,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
-const PAGE_SIZE = 10;
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
+
+const VISIBLE_ITEMS = 8;
 
 type ModelCategory = "supported" | "all";
 const MODEL_CATEGORIES: ModelCategory[] = ["supported", "all"];
@@ -35,9 +39,10 @@ export function ModelSelector({
   onSelect,
   onCancel,
 }: ModelSelectorProps) {
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
   const [category, setCategory] = useState<ModelCategory>("supported");
-  const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // undefined: not loaded yet (show spinner)
@@ -140,18 +145,27 @@ export function ModelSelector({
     }));
   }, [category, supportedModels, otherModelHandles]);
 
-  // Pagination
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(currentList.length / PAGE_SIZE)),
-    [currentList.length],
-  );
+  // Show 1 fewer item in "all" category because Search line takes space
+  const visibleCount = category === "all" ? VISIBLE_ITEMS - 1 : VISIBLE_ITEMS;
+
+  // Scrolling - keep selectedIndex in view
+  const startIndex = useMemo(() => {
+    // Keep selected item in the visible window
+    if (selectedIndex < visibleCount) return 0;
+    return Math.min(
+      selectedIndex - visibleCount + 1,
+      Math.max(0, currentList.length - visibleCount),
+    );
+  }, [selectedIndex, currentList.length, visibleCount]);
 
   const visibleModels = useMemo(() => {
-    const start = currentPage * PAGE_SIZE;
-    return currentList.slice(start, start + PAGE_SIZE);
-  }, [currentList, currentPage]);
+    return currentList.slice(startIndex, startIndex + visibleCount);
+  }, [currentList, startIndex, visibleCount]);
 
-  // Reset page and selection when category changes
+  const showScrollDown = startIndex + visibleCount < currentList.length;
+  const itemsBelow = currentList.length - startIndex - visibleCount;
+
+  // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
       const idx = MODEL_CATEGORIES.indexOf(current);
@@ -159,7 +173,6 @@ export function ModelSelector({
         (idx + 1) % MODEL_CATEGORIES.length
       ] as ModelCategory;
     });
-    setCurrentPage(0);
     setSelectedIndex(0);
     setSearchQuery("");
   }, []);
@@ -167,21 +180,21 @@ export function ModelSelector({
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
   useEffect(() => {
-    if (!initializedRef.current && visibleModels.length > 0) {
-      const index = visibleModels.findIndex((m) => m.id === currentModelId);
+    if (!initializedRef.current && currentList.length > 0) {
+      const index = currentList.findIndex((m) => m.id === currentModelId);
       if (index >= 0) {
         setSelectedIndex(index);
       }
       initializedRef.current = true;
     }
-  }, [visibleModels, currentModelId]);
+  }, [currentList, currentModelId]);
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
-    if (selectedIndex >= visibleModels.length && visibleModels.length > 0) {
-      setSelectedIndex(visibleModels.length - 1);
+    if (selectedIndex >= currentList.length && currentList.length > 0) {
+      setSelectedIndex(currentList.length - 1);
     }
-  }, [selectedIndex, visibleModels.length]);
+  }, [selectedIndex, currentList.length]);
 
   useInput(
     (input, key) => {
@@ -195,7 +208,6 @@ export function ModelSelector({
       if (key.escape) {
         if (searchQuery) {
           setSearchQuery("");
-          setCurrentPage(0);
           setSelectedIndex(0);
         } else {
           onCancel();
@@ -218,38 +230,28 @@ export function ModelSelector({
       if (key.backspace || key.delete) {
         if (searchQuery) {
           setSearchQuery((prev) => prev.slice(0, -1));
-          setCurrentPage(0);
           setSelectedIndex(0);
         }
         return;
       }
 
       // Disable other inputs while loading
-      if (isLoading || refreshing || visibleModels.length === 0) {
+      if (isLoading || refreshing || currentList.length === 0) {
         return;
       }
 
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) =>
-          Math.min(visibleModels.length - 1, prev + 1),
-        );
-      } else if (key.leftArrow && currentPage > 0) {
-        setCurrentPage((prev) => prev - 1);
-        setSelectedIndex(0);
-      } else if (key.rightArrow && currentPage < totalPages - 1) {
-        setCurrentPage((prev) => prev + 1);
-        setSelectedIndex(0);
+        setSelectedIndex((prev) => Math.min(currentList.length - 1, prev + 1));
       } else if (key.return) {
-        const selectedModel = visibleModels[selectedIndex];
+        const selectedModel = currentList[selectedIndex];
         if (selectedModel) {
           onSelect(selectedModel.id);
         }
       } else if (category === "all" && input && input.length === 1) {
         // Capture text input for search (only in "all" category)
         setSearchQuery((prev) => prev + input);
-        setCurrentPage(0);
         setSelectedIndex(0);
       }
     },
@@ -259,65 +261,68 @@ export function ModelSelector({
 
   const getCategoryLabel = (cat: ModelCategory) => {
     if (cat === "supported") return `Recommended (${supportedModels.length})`;
-    return `All Available Models (${otherModelHandles.length})`;
+    return `All Available (${otherModelHandles.length})`;
   };
 
+  // Render tab bar (matches AgentSelector style)
+  const renderTabBar = () => (
+    <Box flexDirection="row" gap={2}>
+      {MODEL_CATEGORIES.map((cat) => {
+        const isActive = cat === category;
+        return (
+          <Text
+            key={cat}
+            backgroundColor={
+              isActive ? colors.selector.itemHighlighted : undefined
+            }
+            color={isActive ? "black" : undefined}
+            bold={isActive}
+          >
+            {` ${getCategoryLabel(cat)} `}
+          </Text>
+        );
+      })}
+    </Box>
+  );
+
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box flexDirection="column">
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /model"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title and tabs */}
+      <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Select Model (Enter select · ↑↓ navigate · ←→ page · Tab category ·
-          Esc cancel)
+          Swap your agent's model
         </Text>
         {!isLoading && !refreshing && (
-          <Box>
-            <Text dimColor>Category: </Text>
-            {MODEL_CATEGORIES.map((cat, i) => (
-              <Text key={cat}>
-                {i > 0 && <Text dimColor> · </Text>}
-                <Text
-                  bold={cat === category}
-                  dimColor={cat !== category}
-                  color={
-                    cat === category
-                      ? colors.selector.itemHighlighted
-                      : undefined
-                  }
-                >
-                  {getCategoryLabel(cat)}
-                </Text>
-              </Text>
-            ))}
-            <Text dimColor> (Tab to switch)</Text>
-          </Box>
-        )}
-        {!isLoading && !refreshing && (
-          <Box flexDirection="column">
-            <Text dimColor>
-              Page {currentPage + 1}/{totalPages}
-              {isCached ? " · cached" : ""} · 'r' to refresh
-            </Text>
+          <Box flexDirection="column" paddingLeft={1}>
+            {renderTabBar()}
             {category === "all" && (
-              <Text dimColor>Search: {searchQuery || "(type to search)"}</Text>
+              <Text dimColor> Search: {searchQuery || "(type to filter)"}</Text>
             )}
           </Box>
         )}
       </Box>
 
+      {/* Loading states */}
       {isLoading && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>Loading available models...</Text>
         </Box>
       )}
 
       {refreshing && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>Refreshing models...</Text>
         </Box>
       )}
 
       {error && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text color="yellow">
             Warning: Could not fetch available models. Showing all models.
           </Text>
@@ -325,7 +330,7 @@ export function ModelSelector({
       )}
 
       {!isLoading && !refreshing && visibleModels.length === 0 && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>
             {category === "supported"
               ? "No supported models available."
@@ -334,40 +339,61 @@ export function ModelSelector({
         </Box>
       )}
 
+      {/* Model list */}
       <Box flexDirection="column">
         {visibleModels.map((model, index) => {
-          const isSelected = index === selectedIndex;
+          const actualIndex = startIndex + index;
+          const isSelected = actualIndex === selectedIndex;
           const isCurrent = model.id === currentModelId;
 
           return (
-            <Box key={model.id} flexDirection="row" gap={1}>
+            <Box key={model.id} flexDirection="row">
               <Text
                 color={isSelected ? colors.selector.itemHighlighted : undefined}
               >
-                {isSelected ? "›" : " "}
+                {isSelected ? "> " : "  "}
               </Text>
-              <Box flexDirection="row">
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected
-                      ? colors.selector.itemHighlighted
-                      : isCurrent
-                        ? colors.selector.itemCurrent
-                        : undefined
-                  }
-                >
-                  {model.label}
-                  {isCurrent && <Text> (current)</Text>}
-                </Text>
-                {model.description && (
-                  <Text dimColor> {model.description}</Text>
-                )}
-              </Box>
+              <Text
+                bold={isSelected}
+                color={
+                  isSelected
+                    ? colors.selector.itemHighlighted
+                    : isCurrent
+                      ? colors.selector.itemCurrent
+                      : undefined
+                }
+              >
+                {model.label}
+                {isCurrent && <Text> (current)</Text>}
+              </Text>
+              {model.description && (
+                <Text dimColor> · {model.description}</Text>
+              )}
             </Box>
           );
         })}
+        {showScrollDown ? (
+          <Text dimColor>
+            {"  "}↓ {itemsBelow} more below
+          </Text>
+        ) : currentList.length > visibleCount ? (
+          <Text> </Text>
+        ) : null}
       </Box>
+
+      {/* Footer */}
+      {!isLoading && !refreshing && currentList.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>
+            {"  "}
+            {currentList.length} models{isCached ? " · cached" : ""} · R to
+            refresh
+          </Text>
+          <Text dimColor>
+            {"  "}Enter select · ↑↓ navigate · Tab switch · Esc cancel
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

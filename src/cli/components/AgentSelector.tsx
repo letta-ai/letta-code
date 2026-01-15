@@ -696,11 +696,11 @@ export function AgentSelector({
       {/* Header */}
       <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Browsing Agents
+          Swap to a different agent
         </Text>
-        <Box flexDirection="column" paddingLeft={2}>
+        <Box flexDirection="column" paddingLeft={1}>
           {renderTabBar()}
-          <Text dimColor>{TAB_DESCRIPTIONS[activeTab]}</Text>
+          <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
         </Box>
       </Box>
 
@@ -729,7 +729,7 @@ export function AgentSelector({
       {/* Loading state */}
       {currentLoading && (
         <Box>
-          <Text dimColor>Loading agents...</Text>
+          <Text dimColor>{"  "}Loading agents...</Text>
         </Box>
       )}
 
