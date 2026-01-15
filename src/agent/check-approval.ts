@@ -85,6 +85,7 @@ function extractApprovals(messageToCheck: Message): {
 
 /**
  * Prepare message history for backfill, trimming orphaned tool returns.
+ * Messages should already be in chronological order (oldest first).
  */
 function prepareMessageHistory(messages: Message[]): Message[] {
   const historyCount = Math.min(MESSAGE_HISTORY_LIMIT, messages.length);
@@ -96,6 +97,14 @@ function prepareMessageHistory(messages: Message[]): Message[] {
   }
 
   return messageHistory;
+}
+
+/**
+ * Fetch messages in descending order (newest first) and reverse to get chronological.
+ * This gives us the most recent N messages in chronological order.
+ */
+function reverseToChronological(messages: Message[]): Message[] {
+  return [...messages].reverse();
 }
 
 /**
@@ -132,12 +141,14 @@ export async function getResumeData(
         if (isBackfillEnabled()) {
           const backfill = await client.conversations.messages.list(
             conversationId,
-            { limit: MESSAGE_HISTORY_LIMIT },
+            { limit: MESSAGE_HISTORY_LIMIT, order: "desc" },
           );
           return {
             pendingApproval: null,
             pendingApprovals: [],
-            messageHistory: backfill.getPaginatedItems(),
+            messageHistory: reverseToChronological(
+              backfill.getPaginatedItems(),
+            ),
           };
         }
         return {
@@ -153,13 +164,16 @@ export async function getResumeData(
         inContextMessageIds[inContextMessageIds.length - 1]!;
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
-      // Fetch message history separately for backfill
+      // Fetch message history separately for backfill (desc then reverse for last N chronological)
       const backfillPage = isBackfillEnabled()
         ? await client.conversations.messages.list(conversationId, {
             limit: MESSAGE_HISTORY_LIMIT,
+            order: "desc",
           })
         : null;
-      messages = backfillPage ? backfillPage.getPaginatedItems() : [];
+      messages = backfillPage
+        ? reverseToChronological(backfillPage.getPaginatedItems())
+        : [];
 
       // Find the approval_request_message variant if it exists
       // (A single DB message can have multiple content types returned as separate Message objects)
@@ -187,6 +201,11 @@ export async function getResumeData(
             messageHistory: prepareMessageHistory(messages),
           };
         }
+      } else {
+        debugWarn(
+          "check-approval",
+          `Last in-context message ${lastInContextId} not found via retrieve`,
+        );
       }
 
       return {
@@ -206,11 +225,12 @@ export async function getResumeData(
         if (isBackfillEnabled()) {
           const messagesPage = await client.agents.messages.list(agent.id, {
             limit: MESSAGE_HISTORY_LIMIT,
+            order: "desc",
           });
           return {
             pendingApproval: null,
             pendingApprovals: [],
-            messageHistory: messagesPage.items,
+            messageHistory: reverseToChronological(messagesPage.items),
           };
         }
         return {
@@ -226,13 +246,14 @@ export async function getResumeData(
         inContextMessageIds[inContextMessageIds.length - 1]!;
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
-      // Fetch message history separately for backfill
+      // Fetch message history separately for backfill (desc then reverse for last N chronological)
       const messagesPage = isBackfillEnabled()
         ? await client.agents.messages.list(agent.id, {
             limit: MESSAGE_HISTORY_LIMIT,
+            order: "desc",
           })
         : null;
-      messages = messagesPage?.items ?? [];
+      messages = messagesPage ? reverseToChronological(messagesPage.items) : [];
 
       // Find the approval_request_message variant if it exists
       const messageToCheck =
@@ -258,6 +279,11 @@ export async function getResumeData(
             messageHistory: prepareMessageHistory(messages),
           };
         }
+      } else {
+        debugWarn(
+          "check-approval",
+          `Last in-context message ${lastInContextId} not found via retrieve (legacy)`,
+        );
       }
 
       return {
