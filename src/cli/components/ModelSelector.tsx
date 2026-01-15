@@ -235,18 +235,6 @@ export function ModelSelector({
         setSelectedIndex((prev) =>
           Math.min(visibleModels.length - 1, prev + 1),
         );
-      } else if (input === "j" || input === "J") {
-        // Previous page
-        if (currentPage > 0) {
-          setCurrentPage((prev) => prev - 1);
-          setSelectedIndex(0);
-        }
-      } else if (input === "k" || input === "K") {
-        // Next page
-        if (currentPage < totalPages - 1) {
-          setCurrentPage((prev) => prev + 1);
-          setSelectedIndex(0);
-        }
       } else if (key.leftArrow && currentPage > 0) {
         setCurrentPage((prev) => prev - 1);
         setSelectedIndex(0);
@@ -278,8 +266,8 @@ export function ModelSelector({
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ navigate, ←→/jk page, Tab category, Enter select, ESC
-          cancel)
+          Select Model (Enter select · ↑↓ navigate · ←→ page · Tab category ·
+          Esc cancel)
         </Text>
         {!isLoading && !refreshing && (
           <Box>

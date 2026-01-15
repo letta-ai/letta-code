@@ -190,13 +190,13 @@ export const ProfileSelector = memo(function ProfileSelector({
         setMode("confirming-delete");
         setDeleteConfirmIndex(1); // Default to "No"
       }
-    } else if (input === "j" || input === "J") {
+    } else if (key.leftArrow) {
       // Previous page
       if (currentPage > 0) {
         setCurrentPage((prev) => prev - 1);
         setSelectedIndex(0);
       }
-    } else if (input === "k" || input === "K") {
+    } else if (key.rightArrow) {
       // Next page
       if (currentPage < totalPages - 1) {
         setCurrentPage((prev) => prev + 1);
@@ -370,7 +370,8 @@ export const ProfileSelector = memo(function ProfileSelector({
           )}
           <Box>
             <Text dimColor>
-              ↑↓ navigate · Enter load · P unpin · D unpin all · Esc close
+              Enter select · ↑↓ navigate{totalPages > 1 ? " · ←→ page" : ""} · P
+              unpin · D unpin all · Esc cancel
             </Text>
           </Box>
         </Box>

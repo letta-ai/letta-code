@@ -338,13 +338,13 @@ export function ConversationSelector({
     } else if (input === "n" || input === "N") {
       // New conversation
       onNewConversation();
-    } else if (input === "j" || input === "J") {
+    } else if (key.leftArrow) {
       // Previous page
       if (page > 0) {
         setPage((prev) => prev - 1);
         setSelectedIndex(0);
       }
-    } else if (input === "k" || input === "K") {
+    } else if (key.rightArrow) {
       // Next page
       if (canGoNext) {
         const nextPageIndex = page + 1;
@@ -533,7 +533,7 @@ export function ConversationSelector({
           const footerWidth = Math.max(0, terminalWidth - 2);
           const pageText = `Page ${page + 1}${hasMore ? "+" : `/${totalPages || 1}`}${loadingMore ? " (loading...)" : ""}`;
           const hintsText =
-            "↑↓ navigate · Enter select · J/K page · N new · Esc cancel";
+            "Enter select · ↑↓ navigate · ←→ page · N new · Esc cancel";
 
           return (
             <Box flexDirection="column">
