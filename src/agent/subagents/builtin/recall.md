@@ -3,7 +3,7 @@ name: recall
 description: Search conversation history to recall past discussions, decisions, and context
 tools: Skill, Bash, Read, BashOutput
 model: haiku
-memoryBlocks: human, persona
+memoryBlocks: human, persona, skills, loaded_skills
 mode: stateless
 ---
 
