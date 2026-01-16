@@ -9,6 +9,7 @@ import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import { permissionMode } from "./permissions/mode";
@@ -30,6 +31,8 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 USAGE
   # interactive TUI
   letta                 Resume from profile or create new agent (shows selector)
+  letta --continue      Resume last session (agent + conversation) directly
+  letta --resume        Open agent selector UI to pick agent/conversation
   letta --new           Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
@@ -43,6 +46,8 @@ OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
   --info                Show current directory, skills, and pinned agents
+  --continue            Resume last session (agent + conversation) directly
+  -r, --resume          Open agent selector UI after loading
   --new                 Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
   --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
@@ -415,16 +420,10 @@ async function main(): Promise<void> {
     process.exit(result.success ? 0 : 1);
   }
 
-  // Check for deprecated --continue flag
-  if (values.continue) {
-    console.error(
-      "Error: --continue is deprecated. Did you mean --resume (-r)?\n" +
-        "  --resume resumes your last session (agent + conversation)",
-    );
-    process.exit(1);
-  }
-
-  const shouldResume = (values.resume as boolean | undefined) ?? false; // Resume last session
+  // --continue: Resume last session (agent + conversation) automatically
+  const shouldContinue = (values.continue as boolean | undefined) ?? false;
+  // --resume: Open agent selector UI after loading
+  const shouldResume = (values.resume as boolean | undefined) ?? false;
   const specifiedConversationId =
     (values.conversation as string | undefined) ?? null; // Specific conversation to resume
   const forceNew = (values.new as boolean | undefined) ?? false;
@@ -818,6 +817,7 @@ async function main(): Promise<void> {
     const [loadingState, setLoadingState] = useState<
       | "selecting"
       | "selecting_global"
+      | "selecting_conversation"
       | "assembling"
       | "importing"
       | "initializing"
@@ -834,6 +834,11 @@ async function main(): Promise<void> {
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
+      string | null
+    >(null);
+    // Track agent and conversation for conversation selector (--resume flag)
+    const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
+    const [selectedConversationId, setSelectedConversationId] = useState<
       string | null
     >(null);
     // Track when user explicitly requested new agent from selector (not via --new flag)
@@ -953,6 +958,28 @@ async function main(): Promise<void> {
           );
         }
 
+        // Handle --resume flag: show conversation selector directly
+        if (shouldResume) {
+          // Find the last-used agent for this project
+          const lastSession =
+            settingsManager.getLocalLastSession(process.cwd()) ??
+            settingsManager.getGlobalLastSession();
+          const lastAgentId = lastSession?.agentId ?? localSettings.lastAgent;
+
+          if (lastAgentId) {
+            // Verify agent exists
+            try {
+              await client.agents.retrieve(lastAgentId);
+              setResumeAgentId(lastAgentId);
+              setLoadingState("selecting_conversation");
+              return;
+            } catch {
+              // Agent doesn't exist, fall through to normal flow
+            }
+          }
+          // No valid agent found, fall through to normal startup
+        }
+
         // Show selector if:
         // 1. No lastAgent in this project (fresh directory)
         // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
@@ -967,7 +994,7 @@ async function main(): Promise<void> {
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, [forceNew, agentIdArg, fromAfFile, continueSession]);
+    }, [forceNew, agentIdArg, fromAfFile, continueSession, shouldResume]);
 
     // Main initialization effect - runs after profile selection
     useEffect(() => {
@@ -987,6 +1014,11 @@ async function main(): Promise<void> {
           } catch {
             // Agent doesn't exist, will create new later
           }
+        }
+
+        // Priority 1.5: Use agent from conversation selector (--resume flag)
+        if (!resumingAgentId && resumeAgentId) {
+          resumingAgentId = resumeAgentId;
         }
 
         // Priority 2: Use agent selected from global selector (user just picked one)
@@ -1283,6 +1315,7 @@ async function main(): Promise<void> {
 
         // Debug: log resume flag status
         if (process.env.DEBUG) {
+          console.log(`[DEBUG] shouldContinue=${shouldContinue}`);
           console.log(`[DEBUG] shouldResume=${shouldResume}`);
           console.log(
             `[DEBUG] specifiedConversationId=${specifiedConversationId}`,
@@ -1318,7 +1351,7 @@ async function main(): Promise<void> {
             }
             throw error;
           }
-        } else if (shouldResume) {
+        } else if (shouldContinue) {
           // Try to load the last session for this agent
           const lastSession =
             settingsManager.getLocalLastSession(process.cwd()) ??
@@ -1372,6 +1405,29 @@ async function main(): Promise<void> {
             });
             conversationIdToUse = conversation.id;
           }
+        } else if (selectedConversationId) {
+          // User selected a specific conversation from the --resume selector
+          try {
+            setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
+            const data = await getResumeData(
+              client,
+              freshAgent,
+              selectedConversationId,
+            );
+            conversationIdToUse = selectedConversationId;
+            setResumedExistingConversation(true);
+            setResumeData(data);
+          } catch (error) {
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(`Conversation ${selectedConversationId} not found`);
+              process.exit(1);
+            }
+            throw error;
+          }
         } else {
           // Default: create a new conversation on startup
           // This ensures each CLI session has isolated message history
@@ -1418,7 +1474,9 @@ async function main(): Promise<void> {
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
-      shouldResume,
+      shouldContinue,
+      resumeAgentId,
+      selectedConversationId,
     ]);
 
     // Wait for keybinding auto-install to complete before showing UI
@@ -1429,6 +1487,25 @@ async function main(): Promise<void> {
     // Don't render anything during initial "selecting" phase - wait for checkAndStart
     if (loadingState === "selecting") {
       return null;
+    }
+
+    // Show conversation selector for --resume flag
+    if (loadingState === "selecting_conversation" && resumeAgentId) {
+      return React.createElement(ConversationSelector, {
+        agentId: resumeAgentId,
+        currentConversationId: "", // No current conversation yet
+        onSelect: (conversationId: string) => {
+          setSelectedConversationId(conversationId);
+          setLoadingState("assembling");
+        },
+        onNewConversation: () => {
+          // Start with a new conversation for this agent
+          setLoadingState("assembling");
+        },
+        onCancel: () => {
+          process.exit(0);
+        },
+      });
     }
 
     // Show global agent selector in fresh repos with global pinned agents
@@ -1451,11 +1528,18 @@ async function main(): Promise<void> {
       });
     }
 
+    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
+    // (those are handled above), so it's safe to pass to App
+    const appLoadingState = loadingState as Exclude<
+      typeof loadingState,
+      "selecting" | "selecting_global" | "selecting_conversation"
+    >;
+
     if (!agentId || !conversationId) {
       return React.createElement(App, {
         agentId: "loading",
         conversationId: "loading",
-        loadingState,
+        loadingState: appLoadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
@@ -1470,7 +1554,7 @@ async function main(): Promise<void> {
       agentId,
       agentState,
       conversationId,
-      loadingState,
+      loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
@@ -1483,7 +1567,7 @@ async function main(): Promise<void> {
 
   render(
     React.createElement(LoadingApp, {
-      continueSession: shouldResume,
+      continueSession: shouldContinue,
       forceNew: forceNew,
       initBlocks: initBlocks,
       baseTools: baseTools,

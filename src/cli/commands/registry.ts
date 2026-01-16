@@ -96,11 +96,11 @@ export const commands: Record<string, Command> = {
 
   // === Page 2: Agent management (order 20-29) ===
   "/new": {
-    desc: "Create a new agent and switch to it",
+    desc: "Start a new conversation (same as /clear)",
     order: 20,
     handler: () => {
-      // Handled specially in App.tsx
-      return "Creating new agent...";
+      // Handled specially in App.tsx - same as /clear
+      return "Starting new conversation...";
     },
   },
   "/pin": {
