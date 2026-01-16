@@ -13,8 +13,8 @@ import { parseMdxFrontmatter } from "./memory";
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 // Tags used to identify default agents
-const MEMO_TAG = "default:memo";
-const INCOGNITO_TAG = "default:incognito";
+export const MEMO_TAG = "default:memo";
+export const INCOGNITO_TAG = "default:incognito";
 
 // Memo's persona - loaded from persona_memo.mdx
 const MEMO_PERSONA = parseMdxFrontmatter(
@@ -125,8 +125,9 @@ export async function ensureDefaultAgents(
       settingsManager.pinGlobal(agent.id);
     }
   } catch (err) {
-    console.warn(
-      `Warning: Failed to ensure default agents: ${err instanceof Error ? err.message : String(err)}`,
+    // Re-throw so caller can handle/exit appropriately
+    throw new Error(
+      `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 

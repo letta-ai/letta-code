@@ -206,6 +206,26 @@ export async function handleHeadlessCommand(
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const fromAfFile = values["from-af"] as string | undefined;
 
+  // Validate --conversation flag (mutually exclusive with agent-selection flags)
+  if (specifiedConversationId) {
+    if (specifiedAgentId) {
+      console.error("Error: --conversation cannot be used with --agent");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --conversation cannot be used with --new-agent");
+      process.exit(1);
+    }
+    if (fromAfFile) {
+      console.error("Error: --conversation cannot be used with --from-af");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
   // Validate --from-af flag
   if (fromAfFile) {
     if (specifiedAgentId) {
@@ -340,8 +360,21 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Priority 0: --conversation derives agent from conversation ID
+  if (specifiedConversationId) {
+    try {
+      const conversation = await client.conversations.retrieve(
+        specifiedConversationId,
+      );
+      agent = await client.agents.retrieve(conversation.agent_id);
+    } catch (_error) {
+      console.error(`Conversation ${specifiedConversationId} not found`);
+      process.exit(1);
+    }
+  }
+
   // Priority 1: Import from AgentFile template
-  if (fromAfFile) {
+  if (!agent && fromAfFile) {
     const { importAgentFromFile } = await import("./agent/import");
     const result = await importAgentFromFile({
       filePath: fromAfFile,
@@ -356,7 +389,8 @@ export async function handleHeadlessCommand(
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
     } catch (_error) {
-      console.error(`Agent ${specifiedAgentId} not found, creating new one...`);
+      console.error(`Agent ${specifiedAgentId} not found`);
+      process.exit(1);
     }
   }
 
@@ -389,38 +423,36 @@ export async function handleHeadlessCommand(
       try {
         agent = await client.agents.retrieve(localProjectSettings.lastAgent);
       } catch (_error) {
+        // Local LRU agent doesn't exist - log and continue
         console.error(
-          `Project agent ${localProjectSettings.lastAgent} not found, creating new one...`,
+          `Unable to locate agent ${localProjectSettings.lastAgent} in .letta/`,
         );
       }
     }
   }
 
   // Priority 5: Try to reuse global lastAgent if --continue flag is passed
-  if (!agent && shouldContinue && settings.lastAgent) {
-    try {
-      agent = await client.agents.retrieve(settings.lastAgent);
-    } catch (_error) {
-      console.error(
-        `Previous agent ${settings.lastAgent} not found, creating new one...`,
-      );
+  if (!agent && shouldContinue) {
+    if (settings.lastAgent) {
+      try {
+        agent = await client.agents.retrieve(settings.lastAgent);
+      } catch (_error) {
+        // Global LRU agent doesn't exist
+      }
+    }
+    // --continue requires an LRU agent to exist
+    if (!agent) {
+      console.error("No recent session found in .letta/ or ~/.letta.");
+      console.error("Run 'letta' to get started.");
+      process.exit(1);
     }
   }
 
-  // Priority 6: Create a new agent
+  // All paths should have resolved to an agent by now
+  // If not, it's an unexpected state - error out instead of auto-creating
   if (!agent) {
-    const updateArgs = getModelUpdateArgs(model);
-    const createOptions = {
-      model,
-      updateArgs,
-      skillsDirectory,
-      parallelToolCalls: true,
-      enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
-      systemPromptPreset,
-      // Note: systemCustom, systemAppend, and memoryBlocks only apply with --new flag
-    };
-    const result = await createAgent(createOptions);
-    agent = result.agent;
+    console.error("No agent found. Use --new-agent to create a new agent.");
+    process.exit(1);
   }
 
   // Check if we're resuming an existing agent (not creating a new one)
