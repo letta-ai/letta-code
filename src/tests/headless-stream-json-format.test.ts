@@ -22,7 +22,7 @@ async function runHeadlessCommand(
       [
         "run",
         "dev",
-        "--new",
+        "--new-agent",
         "-p",
         prompt,
         "--output-format",

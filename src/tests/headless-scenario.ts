@@ -70,7 +70,7 @@ async function runCLI(
     "-p",
     scenarioPrompt(),
     "--yolo",
-    "--new",
+    "--new-agent",
     "--output-format",
     output,
     "-m",
