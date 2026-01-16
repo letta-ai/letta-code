@@ -81,6 +81,7 @@ export interface SystemInitMessage extends MessageEnvelope {
   type: "system";
   subtype: "init";
   agent_id: string;
+  conversation_id: string;
   model: string;
   tools: string[];
   cwd: string;
@@ -217,6 +218,7 @@ export interface ResultMessage extends MessageEnvelope {
   type: "result";
   subtype: ResultSubtype;
   agent_id: string;
+  conversation_id: string;
   duration_ms: number;
   duration_api_ms: number;
   num_turns: number;

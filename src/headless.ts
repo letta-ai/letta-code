@@ -66,6 +66,8 @@ export async function handleHeadlessCommand(
     options: {
       // Flags used in headless mode
       continue: { type: "boolean", short: "c" },
+      resume: { type: "boolean", short: "r" },
+      conversation: { type: "string" },
       new: { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
@@ -167,9 +169,21 @@ export async function handleHeadlessCommand(
 
   const client = await getClient();
 
+  // Check for --resume flag (interactive only)
+  if (values.resume) {
+    console.error(
+      "Error: --resume is for interactive mode only (opens conversation selector).\n" +
+        "In headless mode, use:\n" +
+        "  --continue           Resume the last session (agent + conversation)\n" +
+        "  --conversation <id>  Resume a specific conversation by ID",
+    );
+    process.exit(1);
+  }
+
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
+  const specifiedConversationId = values.conversation as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values.new as boolean | undefined;
   const systemPromptPreset = values.system as string | undefined;
@@ -444,13 +458,55 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Always create a new conversation on startup for headless mode too
-  // This ensures isolated message history per CLI invocation
-  const conversation = await client.conversations.create({
-    agent_id: agent.id,
-    isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
-  });
-  const conversationId = conversation.id;
+  // Determine which conversation to use
+  let conversationId: string;
+
+  if (specifiedConversationId) {
+    // User specified a conversation to resume
+    try {
+      await client.conversations.retrieve(specifiedConversationId);
+      conversationId = specifiedConversationId;
+    } catch {
+      console.error(`Error: Conversation ${specifiedConversationId} not found`);
+      process.exit(1);
+    }
+  } else if (shouldContinue) {
+    // Try to resume the last conversation for this agent
+    await settingsManager.loadLocalProjectSettings();
+    const lastSession =
+      settingsManager.getLocalLastSession(process.cwd()) ??
+      settingsManager.getGlobalLastSession();
+
+    if (lastSession && lastSession.agentId === agent.id) {
+      // Verify the conversation still exists
+      try {
+        await client.conversations.retrieve(lastSession.conversationId);
+        conversationId = lastSession.conversationId;
+      } catch {
+        // Conversation no longer exists, create new
+        const conversation = await client.conversations.create({
+          agent_id: agent.id,
+          isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+        });
+        conversationId = conversation.id;
+      }
+    } else {
+      // No matching session, create new conversation
+      const conversation = await client.conversations.create({
+        agent_id: agent.id,
+        isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+      });
+      conversationId = conversation.id;
+    }
+  } else {
+    // Default: create a new conversation
+    // This ensures isolated message history per CLI invocation
+    const conversation = await client.conversations.create({
+      agent_id: agent.id,
+      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+    });
+    conversationId = conversation.id;
+  }
 
   // Save session (agent + conversation) to both project and global settings
   await settingsManager.loadLocalProjectSettings();
@@ -546,6 +602,7 @@ export async function handleHeadlessCommand(
       subtype: "init",
       session_id: sessionId,
       agent_id: agent.id,
+      conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
       tools:
         agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [],
@@ -1360,6 +1417,7 @@ export async function handleHeadlessCommand(
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      conversation_id: conversationId,
       usage: {
         prompt_tokens: stats.usage.promptTokens,
         completion_tokens: stats.usage.completionTokens,
@@ -1395,6 +1453,7 @@ export async function handleHeadlessCommand(
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      conversation_id: conversationId,
       run_ids: Array.from(allRunIds),
       usage: {
         prompt_tokens: stats.usage.promptTokens,
@@ -1435,6 +1494,7 @@ async function runBidirectionalMode(
     subtype: "init",
     session_id: sessionId,
     agent_id: agent.id,
+    conversation_id: conversationId,
     model: agent.llm_config?.model,
     tools: agent.tools?.map((t) => t.name) || [],
     cwd: process.cwd(),
@@ -1898,6 +1958,7 @@ async function runBidirectionalMode(
           num_turns: numTurns,
           result: resultText,
           agent_id: agent.id,
+          conversation_id: conversationId,
           run_ids: [],
           usage: null,
           uuid: `result-${agent.id}-${Date.now()}`,
