@@ -324,7 +324,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
         // Now we can report success
         for (const skillId of preparedSkills) {
-          results.push(`"${skillId}" loaded`);
+          results.push(
+            `"${skillId}" loaded. Contents have been placed into your memory - check your 'loaded_skills' block for instructions.`,
+          );
         }
 
         // Update the cached flag
