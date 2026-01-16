@@ -7414,6 +7414,7 @@ Plan file path: ${planFilePath}`;
             {activeOverlay === "conversations" && (
               <ConversationSelector
                 agentId={agentId}
+                agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
                 onSelect={async (convId) => {
                   closeOverlay();

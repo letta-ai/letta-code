@@ -13,6 +13,7 @@ const SOLID_LINE = "─";
 
 interface ConversationSelectorProps {
   agentId: string;
+  agentName?: string;
   currentConversationId: string;
   onSelect: (conversationId: string) => void;
   onNewConversation: () => void;
@@ -186,6 +187,7 @@ function getMessageStats(messages: Message[]): {
 
 export function ConversationSelector({
   agentId,
+  agentName,
   currentConversationId,
   onSelect,
   onNewConversation,
@@ -511,7 +513,9 @@ export function ConversationSelector({
       {/* Empty state */}
       {!loading && !error && conversations.length === 0 && (
         <Box flexDirection="column">
-          <Text dimColor>No conversations found</Text>
+          <Text dimColor>
+            No conversations for {agentName || agentId.slice(0, 12)}
+          </Text>
           <Text dimColor>Press N to start a new conversation</Text>
         </Box>
       )}

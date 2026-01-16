@@ -68,7 +68,8 @@ export async function handleHeadlessCommand(
       continue: { type: "boolean", short: "c" },
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
-      new: { type: "boolean" },
+      "new-agent": { type: "boolean" },
+      new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       system: { type: "string", short: "s" },
@@ -180,12 +181,21 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
+  // Check for deprecated --new flag
+  if (values.new) {
+    console.error(
+      "Error: --new has been renamed to --new-agent\n" +
+        'Usage: letta -p "..." --new-agent',
+    );
+    process.exit(1);
+  }
+
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
   const specifiedAgentId = values.agent as string | undefined;
   const specifiedConversationId = values.conversation as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
-  const forceNew = values.new as boolean | undefined;
+  const forceNew = values["new-agent"] as boolean | undefined;
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;

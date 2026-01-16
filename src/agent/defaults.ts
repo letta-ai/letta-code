@@ -105,6 +105,8 @@ export async function ensureDefaultAgents(
     const existingMemo = await findDefaultAgent(client, MEMO_TAG);
     if (existingMemo) {
       memoAgent = existingMemo;
+      // Ensure it's pinned (might not be if settings were cleared or new machine)
+      settingsManager.pinGlobal(existingMemo.id);
     } else {
       const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.memo);
       await addTagToAgent(client, agent.id, MEMO_TAG);
@@ -114,7 +116,10 @@ export async function ensureDefaultAgents(
 
     // Check/create Incognito
     const existingIncognito = await findDefaultAgent(client, INCOGNITO_TAG);
-    if (!existingIncognito) {
+    if (existingIncognito) {
+      // Ensure it's pinned (might not be if settings were cleared or new machine)
+      settingsManager.pinGlobal(existingIncognito.id);
+    } else {
       const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.incognito);
       await addTagToAgent(client, agent.id, INCOGNITO_TAG);
       settingsManager.pinGlobal(agent.id);

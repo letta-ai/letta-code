@@ -61,7 +61,7 @@ async function runCLI(
     "-p",
     windowsScenarioPrompt(),
     "--yolo",
-    "--new",
+    "--new-agent",
     "--output-format",
     "text",
     "-m",

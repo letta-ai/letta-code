@@ -38,7 +38,7 @@ async function runBidirectional(
         "stream-json",
         "--output-format",
         "stream-json",
-        "--new",
+        "--new-agent",
         "-m",
         "haiku",
         "--yolo",
