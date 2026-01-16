@@ -16,7 +16,7 @@ import {
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -528,6 +528,12 @@ export async function handleHeadlessCommand(
     agentId: agent.id,
     conversationId,
   });
+
+  // Ensure the agent has the required skills blocks (for backwards compatibility)
+  const createdBlocks = await ensureSkillsBlocks(agent.id);
+  if (createdBlocks.length > 0) {
+    console.log("Created missing skills blocks for agent compatibility");
+  }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);

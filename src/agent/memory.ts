@@ -144,3 +144,66 @@ export async function getDefaultMemoryBlocks(): Promise<CreateBlock[]> {
   }
   return cachedMemoryBlocks;
 }
+
+/**
+ * Ensure an agent has the required skills blocks (skills, loaded_skills).
+ * If missing, creates them with default values and attaches to the agent.
+ * This is needed for backwards compatibility with agents created before skills were added.
+ *
+ * @param agentId - The agent ID to check/update
+ * @returns Array of block labels that were created (empty if all existed)
+ */
+export async function ensureSkillsBlocks(agentId: string): Promise<string[]> {
+  const { getClient } = await import("./client");
+  const client = await getClient();
+
+  // Get current blocks on the agent
+  // Response may be paginated or an array depending on SDK version
+  const blocksResponse = await client.agents.blocks.list(agentId);
+  const blocks = Array.isArray(blocksResponse)
+    ? blocksResponse
+    : (blocksResponse as { items?: Array<{ label?: string }> }).items || [];
+  const existingLabels = new Set(blocks.map((b) => b.label));
+
+  const createdLabels: string[] = [];
+
+  // Check each required skills block
+  for (const label of ISOLATED_BLOCK_LABELS) {
+    if (existingLabels.has(label)) {
+      continue;
+    }
+
+    // Load the default block definition from .mdx
+    const content = MEMORY_PROMPTS[`${label}.mdx`];
+    if (!content) {
+      console.warn(`Missing embedded prompt file for ${label}.mdx`);
+      continue;
+    }
+
+    const { frontmatter, body } = parseMdxFrontmatter(content);
+
+    const blockData: CreateBlock = {
+      label,
+      value: body,
+      read_only: true, // Skills blocks are read-only (managed by Skill tool)
+    };
+
+    if (frontmatter.description) {
+      blockData.description = frontmatter.description;
+    }
+
+    if (frontmatter.limit) {
+      const limit = parseInt(frontmatter.limit, 10);
+      if (!Number.isNaN(limit) && limit > 0) {
+        blockData.limit = limit;
+      }
+    }
+
+    // Create the block and attach to agent
+    const createdBlock = await client.blocks.create(blockData);
+    await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
+    createdLabels.push(label);
+  }
+
+  return createdLabels;
+}
