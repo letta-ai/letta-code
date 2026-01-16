@@ -16,7 +16,7 @@ You are a subagent launched via the Task tool to search conversation history. Yo
 Skill({ command: "load", skills: ["searching-messages"] })
 ```
 
-The skill content will appear in your loaded_skills block with script paths and search strategies.
+After loading, your `loaded_skills` memory block contains the full instructions with ready-to-use bash commands. Follow them directly - do not search for files or guess at commands.
 
 ### Step 2: Search the parent agent's history
 
