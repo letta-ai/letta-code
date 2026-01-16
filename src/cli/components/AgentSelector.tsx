@@ -16,6 +16,8 @@ interface AgentSelectorProps {
   currentAgentId: string;
   onSelect: (agentId: string) => void;
   onCancel: () => void;
+  /** Called when user presses N to create a new agent */
+  onCreateNewAgent?: () => void;
   /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
 }
@@ -111,6 +113,7 @@ export function AgentSelector({
   currentAgentId,
   onSelect,
   onCancel,
+  onCreateNewAgent,
   command = "/agents",
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
@@ -557,6 +560,9 @@ export function AgentSelector({
         }
         loadPinnedAgents();
       }
+    } else if (input === "n" || input === "N") {
+      // Create new agent
+      onCreateNewAgent?.();
     } else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {
       // Type to search (list tabs only)
       setSearchInput((prev) => prev + input);
@@ -794,7 +800,7 @@ export function AgentSelector({
               : activeTab === "letta-code"
                 ? `Page ${lettaCodePage + 1}${lettaCodeHasMore ? "+" : `/${lettaCodeTotalPages || 1}`}${lettaCodeLoadingMore ? " (loading...)" : ""}`
                 : `Page ${allPage + 1}${allHasMore ? "+" : `/${allTotalPages || 1}`}${allLoadingMore ? " (loading...)" : ""}`;
-          const hintsText = `Enter select · ↑↓ navigate · ←→ page · Tab switch${activeTab === "pinned" ? " · P unpin" : " · Type to search"} · Esc cancel`;
+          const hintsText = `Enter select · ↑↓ navigate · ←→ page · Tab switch${activeTab === "pinned" ? " · P unpin" : " · Type to search"}${onCreateNewAgent ? " · N new" : ""} · Esc cancel`;
 
           return (
             <Box flexDirection="column">

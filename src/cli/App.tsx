@@ -3910,8 +3910,9 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /clear command - start new conversation
-        if (msg.trim() === "/clear") {
+        // Special handling for /clear and /new commands - start new conversation
+        // (/new used to create a new agent, now it's just an alias for /clear)
+        if (msg.trim() === "/clear" || msg.trim() === "/new") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -4553,11 +4554,6 @@ export default function App({
         }
 
         // Special handling for /new command - create new agent dialog
-        if (msg.trim() === "/new") {
-          setActiveOverlay("new");
-          return { submitted: true };
-        }
-
         // Special handling for /pin command - pin current agent to project (or globally with -g)
         if (msg.trim() === "/pin" || msg.trim().startsWith("/pin ")) {
           const argsStr = msg.trim().slice(4).trim();
@@ -7407,6 +7403,10 @@ Plan file path: ${planFilePath}`;
                   await handleAgentSelect(id);
                 }}
                 onCancel={closeOverlay}
+                onCreateNewAgent={() => {
+                  closeOverlay();
+                  setActiveOverlay("new");
+                }}
               />
             )}
 
