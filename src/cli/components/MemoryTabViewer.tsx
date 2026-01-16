@@ -1,7 +1,8 @@
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { Box, Text, useInput } from "ink";
 import Link from "ink-link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
@@ -40,9 +41,33 @@ export function MemoryTabViewer({
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [freshBlocks, setFreshBlocks] = useState<Block[] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch fresh memory blocks from the API when component mounts
+  useEffect(() => {
+    const fetchBlocks = async () => {
+      try {
+        const client = await getClient();
+        const agent = await client.agents.retrieve(agentId);
+        setFreshBlocks(agent.memory?.blocks || []);
+      } catch (error) {
+        console.error("Failed to fetch memory blocks:", error);
+        // Fall back to passed-in blocks if fetch fails
+        setFreshBlocks(blocks);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBlocks();
+  }, [agentId, blocks]);
+
+  // Use fresh blocks if available, otherwise fall back to passed-in blocks
+  const displayBlocks = freshBlocks ?? blocks;
 
   // Get current block
-  const currentBlock = blocks[selectedTabIndex];
+  const currentBlock = displayBlocks[selectedTabIndex];
   const valueLines = currentBlock?.value?.split("\n") || [];
   const maxScrollOffset = Math.max(0, valueLines.length - VISIBLE_LINES);
 
@@ -67,20 +92,22 @@ export function MemoryTabViewer({
 
     // Tab or left/right to switch tabs
     if (key.tab) {
-      const nextIndex = (selectedTabIndex + 1) % blocks.length;
+      const nextIndex = (selectedTabIndex + 1) % displayBlocks.length;
       switchTab(nextIndex);
       return;
     }
 
     if (key.leftArrow) {
       const prevIndex =
-        selectedTabIndex === 0 ? blocks.length - 1 : selectedTabIndex - 1;
+        selectedTabIndex === 0
+          ? displayBlocks.length - 1
+          : selectedTabIndex - 1;
       switchTab(prevIndex);
       return;
     }
 
     if (key.rightArrow) {
-      const nextIndex = (selectedTabIndex + 1) % blocks.length;
+      const nextIndex = (selectedTabIndex + 1) % displayBlocks.length;
       switchTab(nextIndex);
       return;
     }
@@ -96,7 +123,7 @@ export function MemoryTabViewer({
   // Render tab bar
   const renderTabBar = () => (
     <Box flexDirection="row" gap={1} flexWrap="wrap">
-      {blocks.map((block, index) => {
+      {displayBlocks.map((block, index) => {
         const isActive = index === selectedTabIndex;
         return (
           <Text
@@ -114,8 +141,30 @@ export function MemoryTabViewer({
     </Box>
   );
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>{"> /memory"}</Text>
+        <Text dimColor>{solidLine}</Text>
+
+        <Box height={1} />
+
+        <Box marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            View your agent's memory
+          </Text>
+        </Box>
+        <Text dimColor>{"  "}Loading memory blocks...</Text>
+        <Box marginTop={1}>
+          <Text dimColor>{"  "}Esc cancel</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   // Empty state
-  if (blocks.length === 0) {
+  if (displayBlocks.length === 0) {
     return (
       <Box flexDirection="column">
         <Text dimColor>{"> /memory"}</Text>
