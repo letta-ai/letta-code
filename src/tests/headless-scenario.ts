@@ -50,11 +50,10 @@ async function ensurePrereqs(_model: string): Promise<"ok" | "skip"> {
 function scenarioPrompt(): string {
   return (
     "I want to test your tool calling abilities (do not ask for any clarifications, this is an automated test suite inside a CI runner, there is no human to assist you). " +
-    "First, use the memory tool to create a new memory block called 'test1' with value 'hello'. " +
-    "Then, try calling the memory tool twice in parallel to create two new blocks: 'test2' with value 'world' and 'test3' with value 'foo'. " +
+    "First, use the memory tool to append the text 'TEST1' to the end of the 'human' memory block. " +
     "Then, try running a shell command to output an echo (use whatever shell/bash tool is available). " +
     "Then, try running three shell commands in parallel to do 3 parallel echos: echo 'Test1', echo 'Test2', echo 'Test3'. " +
-    "Then finally, try running 2 shell commands and 1 memory create in parallel (echo 'Final1', echo 'Final2', and create block 'test4' with value 'bar'), so three parallel tools. " +
+    "Then finally, try running 2 shell commands and 1 memory append in parallel (echo 'Final1', echo 'Final2', and append 'TEST2' to the 'human' block), so three parallel tools mixing server-side and client-side. " +
     "IMPORTANT: If and only if all of the above steps worked as requested, include the word BANANA (uppercase) somewhere in your final response."
   );
 }
