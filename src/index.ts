@@ -344,7 +344,7 @@ async function main(): Promise<void> {
         continue: { type: "boolean" }, // Deprecated - kept for error message
         resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
         conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
-        new: { type: "boolean" },
+        "new-agent": { type: "boolean" }, // Force create a new agent
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
@@ -426,7 +426,7 @@ async function main(): Promise<void> {
   const shouldResume = (values.resume as boolean | undefined) ?? false;
   const specifiedConversationId =
     (values.conversation as string | undefined) ?? null; // Specific conversation to resume
-  const forceNew = (values.new as boolean | undefined) ?? false;
+  const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   let specifiedAgentId = (values.agent as string | undefined) ?? null;
@@ -838,6 +838,7 @@ async function main(): Promise<void> {
     >(null);
     // Track agent and conversation for conversation selector (--resume flag)
     const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
+    const [resumeAgentName, setResumeAgentName] = useState<string | null>(null);
     const [selectedConversationId, setSelectedConversationId] = useState<
       string | null
     >(null);
@@ -969,8 +970,9 @@ async function main(): Promise<void> {
           if (lastAgentId) {
             // Verify agent exists
             try {
-              await client.agents.retrieve(lastAgentId);
+              const agent = await client.agents.retrieve(lastAgentId);
               setResumeAgentId(lastAgentId);
+              setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
               return;
             } catch {
@@ -1493,6 +1495,7 @@ async function main(): Promise<void> {
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
         agentId: resumeAgentId,
+        agentName: resumeAgentName ?? undefined,
         currentConversationId: "", // No current conversation yet
         onSelect: (conversationId: string) => {
           setSelectedConversationId(conversationId);

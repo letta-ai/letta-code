@@ -68,7 +68,7 @@ export async function handleHeadlessCommand(
       continue: { type: "boolean", short: "c" },
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
-      new: { type: "boolean" },
+      "new-agent": { type: "boolean" },
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       system: { type: "string", short: "s" },
@@ -185,7 +185,7 @@ export async function handleHeadlessCommand(
   const specifiedAgentId = values.agent as string | undefined;
   const specifiedConversationId = values.conversation as string | undefined;
   const shouldContinue = values.continue as boolean | undefined;
-  const forceNew = values.new as boolean | undefined;
+  const forceNew = values["new-agent"] as boolean | undefined;
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
