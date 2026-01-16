@@ -471,6 +471,16 @@ export async function handleHeadlessCommand(
   // Determine which conversation to use
   let conversationId: string;
 
+  // Only isolate blocks that actually exist on this agent
+  // If initBlocks is undefined, agent has default blocks (all ISOLATED_BLOCK_LABELS exist)
+  // If initBlocks is defined, only isolate blocks that are in both lists
+  const isolatedBlockLabels: string[] =
+    initBlocks === undefined
+      ? [...ISOLATED_BLOCK_LABELS]
+      : ISOLATED_BLOCK_LABELS.filter((label) =>
+          initBlocks.includes(label as string),
+        );
+
   if (specifiedConversationId) {
     // User specified a conversation to resume
     try {
@@ -496,7 +506,7 @@ export async function handleHeadlessCommand(
         // Conversation no longer exists, create new
         const conversation = await client.conversations.create({
           agent_id: agent.id,
-          isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+          isolated_block_labels: isolatedBlockLabels,
         });
         conversationId = conversation.id;
       }
@@ -504,7 +514,7 @@ export async function handleHeadlessCommand(
       // No matching session, create new conversation
       const conversation = await client.conversations.create({
         agent_id: agent.id,
-        isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+        isolated_block_labels: isolatedBlockLabels,
       });
       conversationId = conversation.id;
     }
@@ -513,7 +523,7 @@ export async function handleHeadlessCommand(
     // This ensures isolated message history per CLI invocation
     const conversation = await client.conversations.create({
       agent_id: agent.id,
-      isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+      isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
   }

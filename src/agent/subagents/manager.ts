@@ -308,7 +308,7 @@ function buildSubagentArgs(
   userPrompt: string,
 ): string[] {
   const args: string[] = [
-    "--new",
+    "--new-agent",
     "--system",
     type,
     "--model",
