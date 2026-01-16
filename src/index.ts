@@ -7,7 +7,7 @@ import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -1226,6 +1226,12 @@ async function main(): Promise<void> {
         // Save agent ID to both project and global settings
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
+
+        // Ensure the agent has the required skills blocks (for backwards compatibility)
+        const createdBlocks = await ensureSkillsBlocks(agent.id);
+        if (createdBlocks.length > 0) {
+          console.log("Created missing skills blocks for agent compatibility");
+        }
 
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
