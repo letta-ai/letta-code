@@ -39,8 +39,8 @@ export function MemoryDiffRenderer({
 
     switch (command) {
       case "str_replace": {
-        const oldStr = args.old_str || "";
-        const newStr = args.new_str || "";
+        const oldStr = args.old_string || "";
+        const newStr = args.new_string || "";
         return (
           <MemoryStrReplaceDiff
             blockName={blockName}
