@@ -75,10 +75,13 @@ export function NewAgentDialog({ onSubmit, onCancel }: NewAgentDialogProps) {
       <Box height={1} />
 
       {/* Input field */}
-      <Box flexDirection="column" paddingLeft={2}>
-        <Text>Agent name:</Text>
+      <Box flexDirection="column">
+        <Box paddingLeft={2}>
+          <Text>Agent name:</Text>
+        </Box>
         <Box>
-          <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
+          <Text color={colors.selector.itemHighlighted}>{">"}</Text>
+          <Text> </Text>
           <PasteAwareTextInput
             value={nameInput}
             onChange={(val) => {
