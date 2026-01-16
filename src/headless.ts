@@ -448,8 +448,16 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Priority 6: Fresh user with no LRU - create Memo (same as interactive mode)
+  if (!agent) {
+    const { ensureDefaultAgents } = await import("./agent/defaults");
+    const memoAgent = await ensureDefaultAgents(client);
+    if (memoAgent) {
+      agent = memoAgent;
+    }
+  }
+
   // All paths should have resolved to an agent by now
-  // If not, it's an unexpected state - error out instead of auto-creating
   if (!agent) {
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
