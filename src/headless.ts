@@ -529,15 +529,19 @@ export async function handleHeadlessCommand(
   }
 
   // Save session (agent + conversation) to both project and global settings
-  await settingsManager.loadLocalProjectSettings();
-  settingsManager.setLocalLastSession(
-    { agentId: agent.id, conversationId },
-    process.cwd(),
-  );
-  settingsManager.setGlobalLastSession({
-    agentId: agent.id,
-    conversationId,
-  });
+  // Skip for subagents - they shouldn't pollute the LRU settings
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  if (!isSubagent) {
+    await settingsManager.loadLocalProjectSettings();
+    settingsManager.setLocalLastSession(
+      { agentId: agent.id, conversationId },
+      process.cwd(),
+    );
+    settingsManager.setGlobalLastSession({
+      agentId: agent.id,
+      conversationId,
+    });
+  }
 
   // Ensure the agent has the required skills blocks (for backwards compatibility)
   const createdBlocks = await ensureSkillsBlocks(agent.id);
