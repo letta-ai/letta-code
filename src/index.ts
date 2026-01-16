@@ -7,6 +7,7 @@ import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
+import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -22,6 +23,37 @@ import { loadTools } from "./tools/manager";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
+
+/**
+ * Check if pinned agents consist only of default agents (Memo + Incognito).
+ * Used to auto-select Memo for fresh users without showing a selector.
+ */
+async function hasOnlyDefaultAgents(
+  pinnedIds: string[],
+): Promise<{ onlyDefaults: boolean; memoId: string | null }> {
+  if (pinnedIds.length === 0) return { onlyDefaults: true, memoId: null };
+  if (pinnedIds.length > 2) return { onlyDefaults: false, memoId: null };
+
+  const client = await getClient();
+  let memoId: string | null = null;
+
+  for (const id of pinnedIds) {
+    try {
+      const agent = await client.agents.retrieve(id);
+      const tags = agent.tags || [];
+      if (tags.includes(MEMO_TAG)) {
+        memoId = agent.id;
+      } else if (!tags.includes(INCOGNITO_TAG)) {
+        // Found a non-default agent
+        return { onlyDefaults: false, memoId: null };
+      }
+    } catch {
+      // Agent doesn't exist, skip it
+    }
+  }
+
+  return { onlyDefaults: true, memoId };
+}
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -576,6 +608,34 @@ async function main(): Promise<void> {
     }
   }
 
+  // Validate --conversation flag (mutually exclusive with agent-selection flags)
+  if (specifiedConversationId) {
+    if (specifiedAgentId) {
+      console.error("Error: --conversation cannot be used with --agent");
+      process.exit(1);
+    }
+    if (specifiedAgentName) {
+      console.error("Error: --conversation cannot be used with --name");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --conversation cannot be used with --new-agent");
+      process.exit(1);
+    }
+    if (fromAfFile) {
+      console.error("Error: --conversation cannot be used with --from-af");
+      process.exit(1);
+    }
+    if (shouldResume) {
+      console.error("Error: --conversation cannot be used with --resume");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
   // Validate --from-af flag
   if (fromAfFile) {
     if (specifiedAgentId) {
@@ -936,70 +996,206 @@ async function main(): Promise<void> {
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
         let globalPinned = settingsManager.getGlobalPinnedAgents();
-
-        // Check if user would see selector (fresh dir, no bypass flags)
-        const wouldShowSelector =
-          !localSettings.lastAgent &&
-          !forceNew &&
-          !agentIdArg &&
-          !fromAfFile &&
-          !continueSession;
-
-        // Ensure default agents (Memo/Incognito) exist for all users
         const client = await getClient();
-        const { ensureDefaultAgents } = await import("./agent/defaults");
 
-        if (wouldShowSelector && globalPinned.length === 0) {
-          // New user with no agents - block and show loading while creating defaults
-          setLoadingState("assembling");
+        // =====================================================================
+        // TOP-LEVEL PATH: --conversation <id>
+        // Conversation ID is unique, so we can derive the agent from it
+        // =====================================================================
+        if (specifiedConversationId) {
           try {
-            await ensureDefaultAgents(client);
-            // Refresh pinned list after defaults created
-            globalPinned = settingsManager.getGlobalPinnedAgents();
-          } catch (err) {
-            console.warn(
-              `Warning: Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            const conversation = await client.conversations.retrieve(
+              specifiedConversationId,
             );
+            // Use the agent that owns this conversation
+            setSelectedGlobalAgentId(conversation.agent_id);
+            setSelectedConversationId(specifiedConversationId);
+            setLoadingState("assembling");
+            return;
+          } catch (error) {
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(
+                `Conversation ${specifiedConversationId} not found`,
+              );
+              process.exit(1);
+            }
+            throw error;
           }
-        } else {
-          // Existing user - fire and forget, don't block startup
-          ensureDefaultAgents(client).catch((err) =>
-            console.warn(
-              `Warning: Failed to ensure default agents: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          );
         }
 
-        // Handle --resume flag: show conversation selector directly
+        // =====================================================================
+        // TOP-LEVEL PATH: --resume
+        // Show conversation selector for last-used agent (local → global fallback)
+        // =====================================================================
         if (shouldResume) {
-          // Find the last-used agent for this project
-          const lastSession =
-            settingsManager.getLocalLastSession(process.cwd()) ??
-            settingsManager.getGlobalLastSession();
-          const lastAgentId = lastSession?.agentId ?? localSettings.lastAgent;
+          const localSession = settingsManager.getLocalLastSession(
+            process.cwd(),
+          );
+          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
 
-          if (lastAgentId) {
-            // Verify agent exists
+          // Try local LRU first
+          if (localAgentId) {
             try {
-              const agent = await client.agents.retrieve(lastAgentId);
-              setResumeAgentId(lastAgentId);
+              const agent = await client.agents.retrieve(localAgentId);
+              setResumeAgentId(localAgentId);
               setResumeAgentName(agent.name ?? null);
               setLoadingState("selecting_conversation");
               return;
             } catch {
-              // Agent doesn't exist, fall through to normal flow
+              // Local agent doesn't exist, try global
+              console.log(
+                `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
+              );
+            }
+          } else {
+            console.log("No recent agent in .letta/, using global (~/.letta)");
+          }
+
+          // Try global LRU
+          const globalSession = settingsManager.getGlobalLastSession();
+          const globalAgentId = globalSession?.agentId;
+          if (globalAgentId) {
+            try {
+              const agent = await client.agents.retrieve(globalAgentId);
+              setResumeAgentId(globalAgentId);
+              setResumeAgentName(agent.name ?? null);
+              setLoadingState("selecting_conversation");
+              return;
+            } catch {
+              // Global agent also doesn't exist
             }
           }
-          // No valid agent found, fall through to normal startup
+
+          // No valid agent found anywhere
+          console.error("No recent session found in .letta/ or ~/.letta.");
+          console.error("Run 'letta' to get started.");
+          process.exit(1);
         }
 
-        // Show selector if:
-        // 1. No lastAgent in this project (fresh directory)
-        // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
-        // 3. Has global pinned agents available
-        const shouldShowSelector = wouldShowSelector && globalPinned.length > 0;
+        // =====================================================================
+        // TOP-LEVEL PATH: --continue
+        // Resume last session directly (local → global fallback)
+        // =====================================================================
+        if (continueSession) {
+          const localSession = settingsManager.getLocalLastSession(
+            process.cwd(),
+          );
+          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
 
-        if (shouldShowSelector) {
+          // Try local LRU first
+          if (localAgentId) {
+            try {
+              await client.agents.retrieve(localAgentId);
+              setSelectedGlobalAgentId(localAgentId);
+              if (localSession?.conversationId) {
+                setSelectedConversationId(localSession.conversationId);
+              }
+              setLoadingState("assembling");
+              return;
+            } catch {
+              // Local agent doesn't exist, try global
+              console.log(
+                `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
+              );
+            }
+          } else {
+            console.log("No recent agent in .letta/, using global (~/.letta)");
+          }
+
+          // Try global LRU
+          const globalSession = settingsManager.getGlobalLastSession();
+          const globalAgentId = globalSession?.agentId;
+          if (globalAgentId) {
+            try {
+              await client.agents.retrieve(globalAgentId);
+              setSelectedGlobalAgentId(globalAgentId);
+              if (globalSession?.conversationId) {
+                setSelectedConversationId(globalSession.conversationId);
+              }
+              setLoadingState("assembling");
+              return;
+            } catch {
+              // Global agent also doesn't exist
+            }
+          }
+
+          // No valid agent found anywhere
+          console.error("No recent session found in .letta/ or ~/.letta.");
+          console.error("Run 'letta' to get started.");
+          process.exit(1);
+        }
+
+        // =====================================================================
+        // DEFAULT PATH: No special flags
+        // Check local LRU, then selector, then defaults
+        // =====================================================================
+
+        // Check if user would see selector (fresh dir, no bypass flags)
+        const wouldShowSelector =
+          !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
+
+        // Ensure default agents (Memo/Incognito) exist for all users
+        const { ensureDefaultAgents } = await import("./agent/defaults");
+
+        if (wouldShowSelector && globalPinned.length === 0) {
+          // New user with no agents - create defaults first, then trigger init
+          // NOTE: Don't set loadingState to "assembling" until we have the agent ID,
+          // otherwise init will run before we've set selectedGlobalAgentId
+          try {
+            const memoAgent = await ensureDefaultAgents(client);
+            // Refresh pinned list after defaults created
+            globalPinned = settingsManager.getGlobalPinnedAgents();
+            // Auto-select Memo for fresh users
+            if (memoAgent) {
+              setSelectedGlobalAgentId(memoAgent.id);
+              setLoadingState("assembling");
+              return;
+            }
+            // If memoAgent is null (createDefaultAgents disabled), fall through
+          } catch (err) {
+            console.error(
+              `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(1);
+          }
+        } else {
+          // Existing user - fire and forget, don't block startup
+          ensureDefaultAgents(client).catch(() => {
+            // Silently ignore - defaults may already exist
+          });
+        }
+
+        // If there's a local LRU, use it directly
+        if (localSettings.lastAgent) {
+          try {
+            await client.agents.retrieve(localSettings.lastAgent);
+            setLoadingState("assembling");
+            return;
+          } catch {
+            // LRU agent doesn't exist, show message and fall through to selector
+            console.log(
+              `Unable to locate recently used agent ${localSettings.lastAgent}`,
+            );
+          }
+        }
+
+        // Check if we should show selector or auto-select Memo
+        if (wouldShowSelector && globalPinned.length > 0) {
+          // Check if only default agents are pinned
+          const { onlyDefaults, memoId } =
+            await hasOnlyDefaultAgents(globalPinned);
+
+          if (onlyDefaults && memoId) {
+            // Only defaults pinned - auto-select Memo
+            setSelectedGlobalAgentId(memoId);
+            setLoadingState("assembling");
+            return;
+          }
+
+          // Has custom agents - show selector
           setLoadingState("selecting_global");
           return;
         }
@@ -1007,7 +1203,14 @@ async function main(): Promise<void> {
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, [forceNew, agentIdArg, fromAfFile, continueSession, shouldResume]);
+    }, [
+      forceNew,
+      agentIdArg,
+      fromAfFile,
+      continueSession,
+      shouldResume,
+      specifiedConversationId,
+    ]);
 
     // Main initialization effect - runs after profile selection
     useEffect(() => {
@@ -1196,23 +1399,13 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 7: Create a new agent
+        // All paths should have resolved to an agent by now
+        // If not, it's an unexpected state - error out instead of auto-creating
         if (!agent) {
-          const updateArgs = getModelUpdateArgs(model);
-          const result = await createAgent(
-            undefined,
-            model,
-            undefined,
-            updateArgs,
-            skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
-            systemPromptPreset,
-            undefined,
-            undefined,
+          console.error(
+            "No agent found. Use --new-agent to create a new agent.",
           );
-          agent = result.agent;
-          setAgentProvenance(result.provenance);
+          process.exit(1);
         }
 
         // Ensure local project settings are loaded before updating
