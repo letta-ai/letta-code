@@ -53,7 +53,7 @@ export function NewAgentDialog({ onSubmit, onCancel }: NewAgentDialogProps) {
   return (
     <Box flexDirection="column">
       {/* Command header */}
-      <Text dimColor>{"> /new"}</Text>
+      <Text dimColor>{"> /agents"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
@@ -67,7 +67,7 @@ export function NewAgentDialog({ onSubmit, onCancel }: NewAgentDialogProps) {
 
       {/* Description */}
       <Box paddingLeft={2}>
-        <Text dimColor>
+        <Text>
           Enter a name for your new agent, or press Enter for default.
         </Text>
       </Box>
@@ -76,7 +76,7 @@ export function NewAgentDialog({ onSubmit, onCancel }: NewAgentDialogProps) {
 
       {/* Input field */}
       <Box flexDirection="column" paddingLeft={2}>
-        <Text dimColor>Agent name:</Text>
+        <Text>Agent name:</Text>
         <Box>
           <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
           <PasteAwareTextInput
