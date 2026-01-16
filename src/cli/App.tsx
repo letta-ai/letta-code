@@ -970,32 +970,39 @@ export default function App({
   const prevColumnsRef = useRef(columns);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialResizeRef = useRef(true);
   useEffect(() => {
     const prev = prevColumnsRef.current;
     if (columns === prev) return;
 
-    // Clear pending debounced clear on any resize
+    // Clear pending debounced operation on any resize
     if (resizeClearTimeout.current) {
       clearTimeout(resizeClearTimeout.current);
       resizeClearTimeout.current = null;
     }
 
-    // Only clear screen on significant width decrease (4+ columns)
-    // Debounce to avoid flicker from transient resize events (e.g., Ghostty focus/tab changes)
-    if (
-      columns < prev - 3 &&
-      typeof process !== "undefined" &&
-      process.stdout &&
-      "write" in process.stdout &&
-      process.stdout.isTTY
-    ) {
-      resizeClearTimeout.current = setTimeout(() => {
-        resizeClearTimeout.current = null;
-        process.stdout.write(CLEAR_SCREEN_AND_HOME);
-      }, 150);
+    // Skip initial mount - no clearing needed on first render
+    if (isInitialResizeRef.current) {
+      isInitialResizeRef.current = false;
+      prevColumnsRef.current = columns;
+      return;
     }
 
-    setStaticRenderEpoch((epoch) => epoch + 1);
+    // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
+    // Clear and remount must happen together - otherwise Static re-renders on top of existing content
+    resizeClearTimeout.current = setTimeout(() => {
+      resizeClearTimeout.current = null;
+      if (
+        typeof process !== "undefined" &&
+        process.stdout &&
+        "write" in process.stdout &&
+        process.stdout.isTTY
+      ) {
+        process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      }
+      setStaticRenderEpoch((epoch) => epoch + 1);
+    }, 150);
+
     prevColumnsRef.current = columns;
 
     // Cleanup on unmount
