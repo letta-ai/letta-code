@@ -69,6 +69,7 @@ export async function handleHeadlessCommand(
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
       "new-agent": { type: "boolean" },
+      new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       system: { type: "string", short: "s" },
@@ -176,6 +177,15 @@ export async function handleHeadlessCommand(
         "In headless mode, use:\n" +
         "  --continue           Resume the last session (agent + conversation)\n" +
         "  --conversation <id>  Resume a specific conversation by ID",
+    );
+    process.exit(1);
+  }
+
+  // Check for deprecated --new flag
+  if (values.new) {
+    console.error(
+      "Error: --new has been renamed to --new-agent\n" +
+        'Usage: letta -p "..." --new-agent',
     );
     process.exit(1);
   }

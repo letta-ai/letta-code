@@ -345,6 +345,7 @@ async function main(): Promise<void> {
         resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
         conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
         "new-agent": { type: "boolean" }, // Force create a new agent
+        new: { type: "boolean" }, // Deprecated - kept for helpful error message
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
@@ -427,6 +428,16 @@ async function main(): Promise<void> {
   const specifiedConversationId =
     (values.conversation as string | undefined) ?? null; // Specific conversation to resume
   const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
+
+  // Check for deprecated --new flag
+  if (values.new) {
+    console.error(
+      "Error: --new has been renamed to --new-agent\n" +
+        "Usage: letta --new-agent",
+    );
+    process.exit(1);
+  }
+
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   let specifiedAgentId = (values.agent as string | undefined) ?? null;
