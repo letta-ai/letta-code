@@ -1458,14 +1458,18 @@ async function main(): Promise<void> {
         }
 
         // Save the session (agent + conversation) to settings
-        settingsManager.setLocalLastSession(
-          { agentId: agent.id, conversationId: conversationIdToUse },
-          process.cwd(),
-        );
-        settingsManager.setGlobalLastSession({
-          agentId: agent.id,
-          conversationId: conversationIdToUse,
-        });
+        // Skip for subagents - they shouldn't pollute the LRU settings
+        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+        if (!isSubagent) {
+          settingsManager.setLocalLastSession(
+            { agentId: agent.id, conversationId: conversationIdToUse },
+            process.cwd(),
+          );
+          settingsManager.setGlobalLastSession({
+            agentId: agent.id,
+            conversationId: conversationIdToUse,
+          });
+        }
 
         setAgentId(agent.id);
         setAgentState(agent);
