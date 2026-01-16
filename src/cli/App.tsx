@@ -907,6 +907,9 @@ export default function App({
   // Track conversation turn count for periodic memory reminders
   const turnCountRef = useRef(0);
 
+  // Track last notified permission mode to detect changes
+  const lastNotifiedModeRef = useRef<PermissionMode>("default");
+
   // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
@@ -5219,9 +5222,24 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       // Increment turn count for next iteration
       turnCountRef.current += 1;
 
-      // Combine reminders with content (session context first, then plan mode, then ralph mode, then skill unload, then bash commands, then memory reminder)
+      // Build permission mode change alert if mode changed since last notification
+      let permissionModeAlert = "";
+      const currentMode = permissionMode.getMode();
+      if (currentMode !== lastNotifiedModeRef.current) {
+        const modeDescriptions: Record<PermissionMode, string> = {
+          default: "Normal approval flow.",
+          acceptEdits: "File edits auto-approved.",
+          plan: "Read-only mode. Focus on exploration and planning.",
+          bypassPermissions: "All tools auto-approved. Bias toward action.",
+        };
+        permissionModeAlert = `<system-alert>Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}</system-alert>\n\n`;
+        lastNotifiedModeRef.current = currentMode;
+      }
+
+      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then memory reminder)
       const allReminders =
         sessionContextReminder +
+        permissionModeAlert +
         planModeReminder +
         ralphModeReminder +
         skillUnloadReminder +
