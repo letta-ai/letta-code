@@ -99,7 +99,9 @@ export function MemoryTabViewer({
 
     if (key.leftArrow) {
       const prevIndex =
-        selectedTabIndex === 0 ? displayBlocks.length - 1 : selectedTabIndex - 1;
+        selectedTabIndex === 0
+          ? displayBlocks.length - 1
+          : selectedTabIndex - 1;
       switchTab(prevIndex);
       return;
     }
