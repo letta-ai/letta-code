@@ -40,6 +40,8 @@ export interface Settings {
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
+  // Release notes tracking
+  lastSeenReleaseNotesVersion?: string; // Base version of last seen release notes (e.g., "0.13.0")
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
