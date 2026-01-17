@@ -355,7 +355,12 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    'Usage: /mcp [add ...]\n  /mcp - list MCP servers\n  /mcp add --transport <http|sse|stdio> <name> <url|command> [...] - add a new server\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http api https://api.example.com --header "Authorization: Bearer token"',
+    "Usage: /mcp [subcommand ...]\n" +
+      "  /mcp                  - Open MCP server manager\n" +
+      "  /mcp add ...          - Add a new server (without OAuth)\n" +
+      "  /mcp connect          - Interactive wizard with OAuth support\n\n" +
+      "Examples:\n" +
+      "  /mcp add --transport http notion https://mcp.notion.com/mcp",
     false,
   );
 }

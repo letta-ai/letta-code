@@ -109,6 +109,16 @@ export const McpSelector = memo(function McpSelector({
     }
   }, []);
 
+  const fetchAttachedToolIds = useCallback(
+    async (client: Awaited<ReturnType<typeof getClient>>) => {
+      const agent = await client.agents.retrieve(agentId, {
+        include: ["agent.tools"],
+      });
+      return new Set(agent.tools?.map((t) => t.id) || []);
+    },
+    [agentId],
+  );
+
   // Load tools for a specific server
   const loadTools = useCallback(
     async (server: McpServer) => {
@@ -138,8 +148,7 @@ export const McpSelector = memo(function McpSelector({
         setTools(toolsList);
 
         // Fetch agent's current tools to check which are attached
-        const agent = await client.agents.retrieve(agentId);
-        const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+        const agentToolIds = await fetchAttachedToolIds(client);
         setAttachedToolIds(agentToolIds);
 
         setToolsPage(0);
@@ -153,7 +162,7 @@ export const McpSelector = memo(function McpSelector({
         setToolsLoading(false);
       }
     },
-    [agentId],
+    [fetchAttachedToolIds],
   );
 
   // Refresh tools from MCP server
@@ -174,8 +183,7 @@ export const McpSelector = memo(function McpSelector({
       setTools(toolsList);
 
       // Refresh agent's current tools
-      const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+      const agentToolIds = await fetchAttachedToolIds(client);
       setAttachedToolIds(agentToolIds);
 
       setToolsPage(0);
@@ -194,7 +202,7 @@ export const McpSelector = memo(function McpSelector({
     } finally {
       setToolsLoading(false);
     }
-  }, [agentId, viewingServer]);
+  }, [agentId, fetchAttachedToolIds, viewingServer]);
 
   // Toggle tool attachment
   const toggleTool = useCallback(
@@ -213,8 +221,7 @@ export const McpSelector = memo(function McpSelector({
         }
 
         // Fetch agent's current tools to get accurate total count
-        const agent = await client.agents.retrieve(agentId);
-        const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+        const agentToolIds = await fetchAttachedToolIds(client);
         setAttachedToolIds(agentToolIds);
       } catch (err) {
         setToolsError(
@@ -226,7 +233,7 @@ export const McpSelector = memo(function McpSelector({
         setIsTogglingTool(false);
       }
     },
-    [agentId, attachedToolIds],
+    [agentId, attachedToolIds, fetchAttachedToolIds],
   );
 
   // Attach all tools
@@ -244,8 +251,7 @@ export const McpSelector = memo(function McpSelector({
       );
 
       // Fetch agent's current tools to get accurate total count
-      const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+      const agentToolIds = await fetchAttachedToolIds(client);
       setAttachedToolIds(agentToolIds);
     } catch (err) {
       setToolsError(
@@ -254,7 +260,7 @@ export const McpSelector = memo(function McpSelector({
     } finally {
       setIsTogglingTool(false);
     }
-  }, [agentId, tools, attachedToolIds]);
+  }, [agentId, tools, attachedToolIds, fetchAttachedToolIds]);
 
   // Detach all tools
   const detachAllTools = useCallback(async () => {
@@ -271,8 +277,7 @@ export const McpSelector = memo(function McpSelector({
       );
 
       // Fetch agent's current tools to get accurate total count
-      const agent = await client.agents.retrieve(agentId);
-      const agentToolIds = new Set(agent.tools?.map((t) => t.id) || []);
+      const agentToolIds = await fetchAttachedToolIds(client);
       setAttachedToolIds(agentToolIds);
     } catch (err) {
       setToolsError(
@@ -281,7 +286,7 @@ export const McpSelector = memo(function McpSelector({
     } finally {
       setIsTogglingTool(false);
     }
-  }, [agentId, tools, attachedToolIds]);
+  }, [agentId, tools, attachedToolIds, fetchAttachedToolIds]);
 
   useEffect(() => {
     loadServers();
