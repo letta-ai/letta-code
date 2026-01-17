@@ -24,3 +24,9 @@ export const INTERRUPTED_BY_USER = "Interrupted by user";
 export const TOKEN_DISPLAY_THRESHOLD = 100;
 // Show elapsed time after 2 minutes (in ms)
 export const ELAPSED_DISPLAY_THRESHOLD_MS = 2 * 60 * 1000;
+
+/**
+ * Polling interval for checking remote-triggered tool calls (in ms)
+ * Can be overridden via LETTA_POLL_INTERVAL environment variable
+ */
+export const DEFAULT_POLL_INTERVAL_MS = 5000;
