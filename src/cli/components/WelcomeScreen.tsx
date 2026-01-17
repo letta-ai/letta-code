@@ -23,7 +23,17 @@ function toTildePath(absolutePath: string): string {
 }
 
 /**
- * Determine the auth method used
+ * Synchronously determine auth method from env vars (for initial render).
+ * Returns null if we need to check keychain/settings asynchronously.
+ */
+function getInitialAuthMethod(): "url" | "api-key" | null {
+  if (process.env.LETTA_BASE_URL) return "url";
+  if (process.env.LETTA_API_KEY) return "api-key";
+  return null; // Need async check for keychain/settings
+}
+
+/**
+ * Determine the auth method used (async for keychain access)
  */
 async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
   // Check if custom URL is being used
@@ -84,14 +94,18 @@ export function WelcomeScreen({
     ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
     : undefined;
 
-  // Get auth method
+  // Get auth method - use sync check for env vars, async only for keychain
+  const initialAuth = getInitialAuthMethod();
   const [authMethod, setAuthMethod] = useState<"url" | "api-key" | "oauth">(
-    "oauth",
+    initialAuth ?? "oauth",
   );
 
   useEffect(() => {
-    getAuthMethod().then(setAuthMethod);
-  }, []);
+    // Only run async check if env vars didn't determine auth method
+    if (!initialAuth) {
+      getAuthMethod().then(setAuthMethod);
+    }
+  }, [initialAuth]);
   const authDisplay =
     authMethod === "url"
       ? process.env.LETTA_BASE_URL || "Custom URL"
