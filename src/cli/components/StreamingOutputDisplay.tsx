@@ -23,10 +23,13 @@ export const StreamingOutputDisplay = memo(
     const { tailLines, totalLineCount } = streaming;
     const hiddenCount = Math.max(0, totalLineCount - tailLines.length);
 
-    // No output yet - don't show anything
     const firstLine = tailLines[0];
     if (!firstLine) {
-      return null;
+      return (
+        <Box>
+          <Text dimColor>{`  ⎿  Running... (${elapsed}s)`}</Text>
+        </Box>
+      );
     }
 
     return (

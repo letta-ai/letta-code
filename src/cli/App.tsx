@@ -689,6 +689,8 @@ export default function App({
       reason: string;
     }>
   >([]);
+  const executingToolCallIdsRef = useRef<string[]>([]);
+  const interruptQueuedRef = useRef(false);
 
   // Bash mode: cache bash commands to prefix next user message
   // Use ref instead of state to avoid stale closure issues in onSubmit
@@ -2717,6 +2719,20 @@ export default function App({
     // If we're executing client-side tools, abort them AND the main stream
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
+
+      if (executingToolCallIdsRef.current.length > 0) {
+        const interruptedResults = executingToolCallIdsRef.current.map(
+          (toolCallId) => ({
+            type: "tool" as const,
+            tool_call_id: toolCallId,
+            tool_return: INTERRUPTED_BY_USER,
+            status: "error" as const,
+          }),
+        );
+        setQueuedApprovalResults(interruptedResults);
+        executingToolCallIdsRef.current = [];
+        interruptQueuedRef.current = true;
+      }
 
       // ALSO abort the main stream - don't leave it running
       buffersRef.current.abortGeneration =
@@ -5683,6 +5699,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           approvals: queuedApprovalResults,
         });
         setQueuedApprovalResults(null);
+        interruptQueuedRef.current = false;
       }
 
       initialInput.push({
@@ -5804,6 +5821,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           ...(additionalDecision ? [additionalDecision] : []),
         ];
 
+        executingToolCallIdsRef.current = allDecisions
+          .filter((decision) => decision.type === "approve")
+          .map((decision) => decision.approval.toolCallId);
+
         // Set phase to "running" for all approved tools
         setToolCallsRunning(
           buffersRef.current,
@@ -5898,9 +5919,9 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         const userCancelled = userCancelledRef.current;
 
         if (wasAborted || userCancelled) {
-          // Queue results to send alongside the next user message (if not cancelled entirely)
-          // Don't queue if ESC was pressed - interrupted results would cause desync errors
-          if (!userCancelled) {
+          // Queue results to send alongside the next user message so the backend
+          // doesn't keep requesting the same approvals after an interrupt.
+          if (!interruptQueuedRef.current) {
             setQueuedApprovalResults(allResults as ApprovalResult[]);
           }
           setStreaming(false);
@@ -5921,6 +5942,8 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         // Always release the execution guard, even if an error occurred
         setIsExecutingTool(false);
         toolAbortControllerRef.current = null;
+        executingToolCallIdsRef.current = [];
+        interruptQueuedRef.current = false;
       }
     },
     [
