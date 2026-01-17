@@ -366,8 +366,9 @@ export function Input({
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!visible) return;
-    // Don't interfere with autocomplete navigation
-    if (isAutocompleteActive) {
+    // Don't interfere with autocomplete navigation, BUT allow history navigation
+    // when we're already browsing history (historyIndex !== -1)
+    if (isAutocompleteActive && historyIndex === -1) {
       return;
     }
 
@@ -440,10 +441,12 @@ export function Input({
           // Go to most recent command
           setHistoryIndex(history.length - 1);
           setValue(history[history.length - 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         } else if (historyIndex > 0) {
           // Go to older command
           setHistoryIndex(historyIndex - 1);
           setValue(history[historyIndex - 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         }
       } else if (key.downArrow) {
         if (currentWrappedLine < totalWrappedLines - 1) {
@@ -483,10 +486,12 @@ export function Input({
           // Go to newer command
           setHistoryIndex(historyIndex + 1);
           setValue(history[historyIndex + 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         } else {
           // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
+          setCursorPos(temporaryInput.length); // Cursor at end for user's draft
         }
       }
     }
