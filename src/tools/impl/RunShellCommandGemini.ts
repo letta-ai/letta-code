@@ -3,26 +3,28 @@
  * Uses Gemini's exact schema and description
  */
 
-import { bash } from "./Bash";
+import { shell_command } from "./ShellCommand";
 
 interface RunShellCommandGeminiArgs {
   command: string;
   description?: string;
   dir_path?: string;
+  timeout_ms?: number;
+  signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
 export async function run_shell_command(
   args: RunShellCommandGeminiArgs,
 ): Promise<{ message: string }> {
-  // Adapt Gemini params to Letta Code's Bash tool
-  const lettaArgs = {
+  const result = await shell_command({
     command: args.command,
-    description: args.description,
-  };
+    workdir: args.dir_path,
+    timeout_ms: args.timeout_ms,
+    signal: args.signal,
+    onOutput: args.onOutput,
+  });
 
-  const result = await bash(lettaArgs);
-
-  // Bash returns { content: Array<{ type: string, text: string }>, status: string }
-  const message = result.content.map((item) => item.text).join("\n");
+  const message = result.output.trim() || "(Command completed with no output)";
   return { message };
 }
