@@ -976,6 +976,9 @@ export default function App({
   const columns = useTerminalWidth();
   const terminalRows = useTerminalRows();
   const prevColumnsRef = useRef(columns);
+  const lastClearedColumnsRef = useRef(columns);
+  const pendingResizeRef = useRef(false);
+  const pendingResizeColumnsRef = useRef<number | null>(null);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialResizeRef = useRef(true);
@@ -993,18 +996,35 @@ export default function App({
     if (isInitialResizeRef.current) {
       isInitialResizeRef.current = false;
       prevColumnsRef.current = columns;
+      lastClearedColumnsRef.current = columns;
       return;
     }
 
     const delta = Math.abs(columns - prev);
     const isMinorJitter = delta > 0 && delta < MIN_RESIZE_DELTA;
-    if (streaming && isMinorJitter) {
+    if (streaming) {
+      if (isMinorJitter) {
+        prevColumnsRef.current = columns;
+        return;
+      }
+
+      // Defer clear/remount until streaming ends to avoid Ghostty flicker.
+      pendingResizeRef.current = true;
+      pendingResizeColumnsRef.current = columns;
+      prevColumnsRef.current = columns;
+      return;
+    }
+
+    if (columns === lastClearedColumnsRef.current) {
+      pendingResizeRef.current = false;
+      pendingResizeColumnsRef.current = null;
       prevColumnsRef.current = columns;
       return;
     }
 
     // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
     // Clear and remount must happen together - otherwise Static re-renders on top of existing content
+    const scheduledColumns = columns;
     resizeClearTimeout.current = setTimeout(() => {
       resizeClearTimeout.current = null;
       if (
@@ -1016,6 +1036,7 @@ export default function App({
         process.stdout.write(CLEAR_SCREEN_AND_HOME);
       }
       setStaticRenderEpoch((epoch) => epoch + 1);
+      lastClearedColumnsRef.current = scheduledColumns;
     }, 150);
 
     prevColumnsRef.current = columns;
@@ -1027,6 +1048,38 @@ export default function App({
         resizeClearTimeout.current = null;
       }
     };
+  }, [columns, streaming]);
+
+  useEffect(() => {
+    if (streaming) {
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+        pendingResizeRef.current = true;
+        pendingResizeColumnsRef.current = columns;
+      }
+      return;
+    }
+
+    if (!pendingResizeRef.current) return;
+
+    const pendingColumns = pendingResizeColumnsRef.current;
+    pendingResizeRef.current = false;
+    pendingResizeColumnsRef.current = null;
+
+    if (pendingColumns === null) return;
+    if (pendingColumns === lastClearedColumnsRef.current) return;
+
+    if (
+      typeof process !== "undefined" &&
+      process.stdout &&
+      "write" in process.stdout &&
+      process.stdout.isTTY
+    ) {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+    }
+    setStaticRenderEpoch((epoch) => epoch + 1);
+    lastClearedColumnsRef.current = pendingColumns;
   }, [columns, streaming]);
 
   // Commit immutable/finished lines into the historical log
