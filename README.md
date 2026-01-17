@@ -30,7 +30,7 @@ Letta Code is built around long-lived agents that persist across sessions and im
 **Letta Code** (Agent-Based)
 - Same agent across sessions
 - Persistent memory and learning over time
-- `/clear` resets the session (clears current in-context messages), but memory persists
+- `/clear` starts a new conversation (aka "thread" or "session"), but memory persists
 - Relationship: Like having a coworker or mentee that learns and remembers
 
 ## Agent Memory & Learning
