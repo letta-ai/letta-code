@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   isApprovalPendingError,
   isApprovalStateDesyncError,
 } from "../agent/approval-recovery";
+import { extractApprovals } from "../agent/check-approval";
 
 /**
  * Tests for approval error detection helpers (LET-7101).
@@ -79,6 +81,159 @@ describe("isApprovalPendingError", () => {
     expect(isApprovalPendingError(undefined)).toBe(false);
     expect(isApprovalPendingError(123)).toBe(false);
     expect(isApprovalPendingError({ detail: REAL_ERROR_DETAIL })).toBe(false);
+  });
+});
+
+/**
+ * Tests for parallel tool call approval extraction.
+ * Ensures lazy recovery handles multiple simultaneous tool calls correctly.
+ */
+describe("extractApprovals", () => {
+  // Helper to create a minimal Message-like object for testing
+  // We use 'as Message' cast because the real Message type is complex
+  const createMessage = (overrides: {
+    tool_calls?: Array<{
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    }>;
+    tool_call?: {
+      tool_call_id?: string;
+      name?: string;
+      arguments?: string;
+    };
+  }): Message =>
+    ({
+      id: "test-msg-id",
+      date: new Date().toISOString(),
+      message_type: "approval_request_message",
+      ...overrides,
+    }) as unknown as Message;
+
+  test("extracts single tool call from tool_calls array", () => {
+    const msg = createMessage({
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "Bash",
+          arguments: '{"command": "echo hello"}',
+        },
+      ],
+    });
+
+    const result = extractApprovals(msg);
+
+    expect(result.pendingApprovals).toHaveLength(1);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-1");
+    expect(result.pendingApprovals[0]!.toolName).toBe("Bash");
+    expect(result.pendingApproval?.toolCallId).toBe("call-1");
+  });
+
+  test("extracts multiple parallel tool calls", () => {
+    const msg = createMessage({
+      tool_calls: [
+        {
+          tool_call_id: "call-1",
+          name: "Bash",
+          arguments: '{"command": "echo hello"}',
+        },
+        {
+          tool_call_id: "call-2",
+          name: "web_search",
+          arguments: '{"query": "test"}',
+        },
+        {
+          tool_call_id: "call-3",
+          name: "Read",
+          arguments: '{"file_path": "/tmp/test.txt"}',
+        },
+      ],
+    });
+
+    const result = extractApprovals(msg);
+
+    expect(result.pendingApprovals).toHaveLength(3);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-1");
+    expect(result.pendingApprovals[0]!.toolName).toBe("Bash");
+    expect(result.pendingApprovals[1]!.toolCallId).toBe("call-2");
+    expect(result.pendingApprovals[1]!.toolName).toBe("web_search");
+    expect(result.pendingApprovals[2]!.toolCallId).toBe("call-3");
+    expect(result.pendingApprovals[2]!.toolName).toBe("Read");
+    // pendingApproval is deprecated, should be first item
+    expect(result.pendingApproval?.toolCallId).toBe("call-1");
+  });
+
+  test("handles deprecated single tool_call field", () => {
+    const msg = createMessage({
+      tool_call: {
+        tool_call_id: "call-legacy",
+        name: "Write",
+        arguments: '{"file_path": "/tmp/out.txt"}',
+      },
+    });
+
+    const result = extractApprovals(msg);
+
+    expect(result.pendingApprovals).toHaveLength(1);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-legacy");
+    expect(result.pendingApprovals[0]!.toolName).toBe("Write");
+  });
+
+  test("prefers tool_calls array over deprecated tool_call", () => {
+    const msg = createMessage({
+      tool_calls: [{ tool_call_id: "call-new", name: "Bash", arguments: "{}" }],
+      tool_call: {
+        tool_call_id: "call-old",
+        name: "Write",
+        arguments: "{}",
+      },
+    });
+
+    const result = extractApprovals(msg);
+
+    // Should use tool_calls, not tool_call
+    expect(result.pendingApprovals).toHaveLength(1);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-new");
+  });
+
+  test("filters out tool calls without tool_call_id", () => {
+    const msg = createMessage({
+      tool_calls: [
+        { tool_call_id: "call-valid", name: "Bash", arguments: "{}" },
+        { name: "Invalid", arguments: "{}" }, // Missing tool_call_id
+        { tool_call_id: "", name: "Empty", arguments: "{}" }, // Empty tool_call_id
+        { tool_call_id: "call-valid-2", name: "Read", arguments: "{}" },
+      ],
+    });
+
+    const result = extractApprovals(msg);
+
+    // Should only include entries with valid tool_call_id
+    expect(result.pendingApprovals).toHaveLength(2);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-valid");
+    expect(result.pendingApprovals[1]!.toolCallId).toBe("call-valid-2");
+  });
+
+  test("returns empty array when no tool calls present", () => {
+    const msg = createMessage({});
+
+    const result = extractApprovals(msg);
+
+    expect(result.pendingApprovals).toHaveLength(0);
+    expect(result.pendingApproval).toBeNull();
+  });
+
+  test("handles missing name and arguments gracefully", () => {
+    const msg = createMessage({
+      tool_calls: [{ tool_call_id: "call-minimal" }],
+    });
+
+    const result = extractApprovals(msg);
+
+    expect(result.pendingApprovals).toHaveLength(1);
+    expect(result.pendingApprovals[0]!.toolCallId).toBe("call-minimal");
+    expect(result.pendingApprovals[0]!.toolName).toBe("");
+    expect(result.pendingApprovals[0]!.toolArgs).toBe("");
   });
 });
 

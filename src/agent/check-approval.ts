@@ -29,8 +29,9 @@ export interface ResumeData {
 
 /**
  * Extract approval requests from an approval_request_message.
+ * Exported for testing parallel tool call handling.
  */
-function extractApprovals(messageToCheck: Message): {
+export function extractApprovals(messageToCheck: Message): {
   pendingApproval: ApprovalRequest | null;
   pendingApprovals: ApprovalRequest[];
 } {

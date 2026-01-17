@@ -41,6 +41,7 @@ import type {
   ControlResponse,
   ErrorMessage,
   MessageWire,
+  RecoveryMessage,
   ResultMessage,
   RetryMessage,
   StreamEvent,
@@ -839,8 +840,11 @@ export async function handleHeadlessCommand(
     }
   };
 
-  // Clear any pending approvals before starting a new turn
-  await resolveAllPendingApprovals();
+  // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
+  // For new agents/conversations, lazy recovery handles any edge cases
+  if (isResumingAgent) {
+    await resolveAllPendingApprovals();
+  }
 
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
@@ -939,7 +943,20 @@ export async function handleHeadlessCommand(
             isApprovalPendingError(errorInfo?.detail) ||
             isApprovalPendingError(errorInfo?.message)
           ) {
-            // Don't emit this error; clear approvals and retry outer loop
+            // Emit recovery message for stream-json mode (enables testing)
+            if (outputFormat === "stream-json") {
+              const recoveryMsg: RecoveryMessage = {
+                type: "recovery",
+                recovery_type: "approval_pending",
+                message:
+                  "Detected pending approval conflict; auto-denying stale approval and retrying",
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(recoveryMsg));
+            }
+            // Clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
             stopReason = "error" as StopReasonType;
