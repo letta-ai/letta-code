@@ -45,6 +45,11 @@ import type {
   StreamEvent,
   SystemInitMessage,
 } from "./types/protocol";
+import {
+  markMilestone,
+  measureSinceMilestone,
+  reportAllMilestones,
+} from "./utils/timing";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -169,6 +174,7 @@ export async function handleHeadlessCommand(
   }
 
   const client = await getClient();
+  markMilestone("HEADLESS_CLIENT_READY");
 
   // Check for --resume flag (interactive only)
   if (values.resume) {
@@ -462,6 +468,7 @@ export async function handleHeadlessCommand(
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
   }
+  markMilestone("HEADLESS_AGENT_RESOLVED");
 
   // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(
@@ -567,6 +574,7 @@ export async function handleHeadlessCommand(
     });
     conversationId = conversation.id;
   }
+  markMilestone("HEADLESS_CONVERSATION_READY");
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
@@ -864,6 +872,9 @@ export async function handleHeadlessCommand(
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
+
+  markMilestone("HEADLESS_FIRST_STREAM_START");
+  measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
   try {
     while (true) {
@@ -1541,6 +1552,10 @@ export async function handleHeadlessCommand(
     }
     console.log(resultText);
   }
+
+  // Report all milestones at the end for latency audit
+  markMilestone("HEADLESS_COMPLETE");
+  reportAllMilestones();
 }
 
 /**

@@ -34,6 +34,112 @@ export function logTiming(message: string): void {
   }
 }
 
+// ============================================================================
+// Milestone tracking for latency audits
+// ============================================================================
+
+// Store milestones with their timestamps (ms since process start via performance.now())
+const milestones: Map<string, number> = new Map();
+
+// Reference time for relative measurements (set on first milestone)
+let firstMilestoneTime: number | null = null;
+
+/**
+ * Mark a named milestone in the boot/execution sequence.
+ * Call this at key points to track where time is spent.
+ *
+ * @param name - Descriptive name like "SETTINGS_LOADED" or "AGENT_RESOLVED"
+ */
+export function markMilestone(name: string): void {
+  const now = performance.now();
+  milestones.set(name, now);
+
+  if (firstMilestoneTime === null) {
+    firstMilestoneTime = now;
+  }
+
+  if (isTimingsEnabled()) {
+    const relative = now - firstMilestoneTime;
+    console.error(
+      `[timing] MILESTONE ${name} at +${formatDuration(relative)} (${formatTimestamp(new Date())})`,
+    );
+  }
+}
+
+/**
+ * Measure time elapsed since a previous milestone.
+ *
+ * @param label - Description of what we're measuring (e.g., "tool loading")
+ * @param fromMilestone - Name of the starting milestone
+ */
+export function measureSinceMilestone(
+  label: string,
+  fromMilestone: string,
+): void {
+  if (!isTimingsEnabled()) return;
+
+  const startTime = milestones.get(fromMilestone);
+  if (startTime === undefined) {
+    console.error(
+      `[timing] WARNING: milestone "${fromMilestone}" not found for measurement "${label}"`,
+    );
+    return;
+  }
+
+  const duration = performance.now() - startTime;
+  console.error(`[timing] ${label}: ${formatDuration(duration)}`);
+}
+
+/**
+ * Get the duration between two milestones in milliseconds.
+ * Returns null if either milestone doesn't exist.
+ */
+export function getMilestoneDuration(
+  fromMilestone: string,
+  toMilestone: string,
+): number | null {
+  const start = milestones.get(fromMilestone);
+  const end = milestones.get(toMilestone);
+  if (start === undefined || end === undefined) return null;
+  return end - start;
+}
+
+/**
+ * Print a summary of all milestones with relative timestamps.
+ * Useful at the end of a benchmark run.
+ */
+export function reportAllMilestones(): void {
+  if (!isTimingsEnabled() || milestones.size === 0) return;
+
+  const first = firstMilestoneTime ?? 0;
+
+  console.error(`[timing] ======== MILESTONE SUMMARY ========`);
+
+  // Sort by timestamp
+  const sorted = [...milestones.entries()].sort((a, b) => a[1] - b[1]);
+
+  let prevTime = first;
+  for (const [name, time] of sorted) {
+    const relativeToStart = time - first;
+    const delta = time - prevTime;
+    const deltaStr = prevTime === first ? "" : ` (+${formatDuration(delta)})`;
+    console.error(
+      `[timing]   +${formatDuration(relativeToStart).padStart(8)} ${name}${deltaStr}`,
+    );
+    prevTime = time;
+  }
+
+  console.error(`[timing] =====================================`);
+}
+
+/**
+ * Clear all milestones (useful for running multiple benchmarks in sequence).
+ */
+export function clearMilestones(): void {
+  milestones.clear();
+  firstMilestoneTime = null;
+}
+
 // Simple fetch type that matches the SDK's expected signature
 type SimpleFetch = (
   input: string | URL | Request,
