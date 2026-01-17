@@ -1451,42 +1451,35 @@ async function main(): Promise<void> {
 
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
-        await initializeLoadedSkillsFlag();
 
-        // Re-discover skills and update the skills memory block
+        // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+        // Don't await - this is just for the skill unload reminder
+        initializeLoadedSkillsFlag().catch(() => {
+          // Ignore errors - not critical
+        });
+
+        // Fire-and-forget: Sync skills in background (LET-7101)
         // This ensures new skills added after agent creation are available
-        try {
-          const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } =
-            await import("./agent/skills");
-          const { join } = await import("node:path");
+        // Don't await - user can start typing immediately
+        (async () => {
+          try {
+            const { syncSkillsToAgent, SKILLS_DIR } = await import(
+              "./agent/skills"
+            );
+            const { join } = await import("node:path");
 
-          const resolvedSkillsDirectory =
-            skillsDirectory || join(process.cwd(), SKILLS_DIR);
-          const { skills, errors } = await discoverSkills(
-            resolvedSkillsDirectory,
-          );
+            const resolvedSkillsDirectory =
+              skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
-          if (errors.length > 0) {
-            console.warn("Errors encountered during skill discovery:");
-            for (const error of errors) {
-              console.warn(`  ${error.path}: ${error.message}`);
-            }
+            await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+              skipIfUnchanged: true,
+            });
+          } catch (error) {
+            console.warn(
+              `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-
-          // Update the skills memory block with freshly discovered skills
-          const formattedSkills = formatSkillsForMemory(
-            skills,
-            resolvedSkillsDirectory,
-          );
-          await client.agents.blocks.update("skills", {
-            agent_id: agent.id,
-            value: formattedSkills,
-          });
-        } catch (error) {
-          console.warn(
-            `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+        })();
 
         // Check if we're resuming an existing agent
         // We're resuming if:
