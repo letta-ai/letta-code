@@ -6,6 +6,7 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { isShellTool } from "./toolNameMapping";
 
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
@@ -610,7 +611,23 @@ export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
     if (lineId) {
       const line = b.byId.get(lineId);
       if (line && line.kind === "tool_call") {
-        b.byId.set(lineId, { ...line, phase: "running" });
+        const shouldSeedStreaming =
+          line.name && isShellTool(line.name) && !line.streaming;
+        b.byId.set(lineId, {
+          ...line,
+          phase: "running",
+          ...(shouldSeedStreaming
+            ? {
+                streaming: {
+                  tailLines: [],
+                  partialLine: "",
+                  partialIsStderr: false,
+                  totalLineCount: 0,
+                  startTime: Date.now(),
+                },
+              }
+            : {}),
+        });
       }
     }
   }

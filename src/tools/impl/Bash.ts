@@ -57,6 +57,7 @@ function spawnWithLauncher(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
@@ -65,6 +66,13 @@ function spawnWithLauncher(
 
     const abortHandler = () => {
       childProcess.kill("SIGTERM");
+      if (!killTimer) {
+        killTimer = setTimeout(() => {
+          if (childProcess.exitCode === null && !childProcess.killed) {
+            childProcess.kill("SIGKILL");
+          }
+        }, 2000);
+      }
     };
     if (options.signal) {
       options.signal.addEventListener("abort", abortHandler, { once: true });
@@ -82,6 +90,10 @@ function spawnWithLauncher(
 
     childProcess.on("error", (err) => {
       clearTimeout(timeoutId);
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
       if (options.signal) {
         options.signal.removeEventListener("abort", abortHandler);
       }
@@ -90,6 +102,10 @@ function spawnWithLauncher(
 
     childProcess.on("close", (code) => {
       clearTimeout(timeoutId);
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
       if (options.signal) {
         options.signal.removeEventListener("abort", abortHandler);
       }
