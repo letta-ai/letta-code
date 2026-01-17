@@ -90,6 +90,7 @@ import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { Input } from "./components/InputRich";
+import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
 import { MemoryTabViewer } from "./components/MemoryTabViewer";
 import { MessageSearch } from "./components/MessageSearch";
@@ -819,6 +820,7 @@ export default function App({
     | "pin"
     | "new"
     | "mcp"
+    | "mcp-connect"
     | "help"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
@@ -3557,6 +3559,12 @@ export default function App({
             // Pass the full command string after "add" to preserve quotes
             const afterAdd = afterMcp.slice(firstWord.length).trim();
             await handleMcpAdd(mcpCtx, msg, afterAdd);
+            return { submitted: true };
+          }
+
+          // /mcp connect - interactive TUI for connecting with OAuth
+          if (firstWord === "connect") {
+            setActiveOverlay("mcp-connect");
             return { submitted: true };
           }
 
@@ -7721,15 +7729,28 @@ Plan file path: ${planFilePath}`;
               <McpSelector
                 agentId={agentId}
                 onAdd={() => {
-                  // Close overlay and prompt user to use /mcp add command
+                  // Switch to the MCP connect flow
+                  setActiveOverlay("mcp-connect");
+                }}
+                onCancel={closeOverlay}
+              />
+            )}
+
+            {/* MCP Connect Flow - interactive TUI for OAuth connection */}
+            {activeOverlay === "mcp-connect" && (
+              <McpConnectFlow
+                onComplete={(serverName, serverId, toolCount) => {
                   closeOverlay();
                   const cmdId = uid("cmd");
                   buffersRef.current.byId.set(cmdId, {
                     kind: "command",
                     id: cmdId,
-                    input: "/mcp",
+                    input: "/mcp connect",
                     output:
-                      "Use /mcp add --transport <http|sse|stdio> <name> <url|command> [...] to add a new server",
+                      `Successfully created MCP server "${serverName}"\n` +
+                      `ID: ${serverId}\n` +
+                      `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
+                      "Open /mcp to attach or detach tools for this server.",
                     phase: "finished",
                     success: true,
                   });
