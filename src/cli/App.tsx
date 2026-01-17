@@ -7462,6 +7462,11 @@ Plan file path: ${planFilePath}`;
                     ? `letta -n "${agentName}"`
                     : `letta --agent ${agentId}`}
                 </Text>
+                <Text> </Text>
+                <Text dimColor>Resume this conversation with:</Text>
+                <Text color={colors.link.url}>
+                  {`letta --conv ${conversationId}`}
+                </Text>
               </Box>
             )}
 
