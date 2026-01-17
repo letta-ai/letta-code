@@ -1,0 +1,135 @@
+name: 'Letta Code'
+description: 'Run Letta Code AI agent in your GitHub workflows for automated code analysis, generation, and modifications'
+author: 'Letta AI'
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  api-key:
+    description: 'Letta API key (get one at https://app.letta.com)'
+    required: true
+  prompt:
+    description: 'The prompt/task to send to Letta Code'
+    required: false
+    default: ''
+  stdin:
+    description: 'Input to pipe to stdin (alternative to prompt)'
+    required: false
+    default: ''
+  cli-args:
+    description: 'Additional CLI arguments to pass to letta (e.g., "-m gpt-4o --tools Bash,Read --permission-mode plan")'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Working directory to run Letta Code in'
+    required: false
+    default: '.'
+  bun-version:
+    description: 'Version of Bun to use'
+    required: false
+    default: '1.3.0'
+  letta-code-version:
+    description: 'Version of Letta Code to install (e.g., "latest", "0.5.1")'
+    required: false
+    default: 'latest'
+  base-url:
+    description: 'Letta base URL (for self-hosted instances)'
+    required: false
+    default: ''
+
+outputs:
+  result:
+    description: 'The result/response from Letta Code'
+    value: ${{ steps.run-letta.outputs.result }}
+  agent-id:
+    description: 'The agent ID used in this run'
+    value: ${{ steps.run-letta.outputs.agent_id }}
+  exit-code:
+    description: 'Exit code from Letta Code (0 = success)'
+    value: ${{ steps.run-letta.outputs.exit_code }}
+  duration-ms:
+    description: 'Total duration in milliseconds'
+    value: ${{ steps.run-letta.outputs.duration_ms }}
+  usage:
+    description: 'Token usage statistics (JSON)'
+    value: ${{ steps.run-letta.outputs.usage }}
+  full-output:
+    description: 'Complete output from Letta Code'
+    value: ${{ steps.run-letta.outputs.full_output }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Install Letta Code
+      shell: bash
+      run: |
+        if [ "${{ inputs.letta-code-version }}" = "latest" ]; then
+          bun install -g @letta-ai/letta-code
+        else
+          bun install -g @letta-ai/letta-code@${{ inputs.letta-code-version }}
+        fi
+
+    - name: Run Letta Code
+      id: run-letta
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        LETTA_API_KEY: ${{ inputs.api-key }}
+        LETTA_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        # Build the command
+        CMD="letta"
+        
+        # Add prompt if provided
+        if [ -n "${{ inputs.prompt }}" ]; then
+          CMD="$CMD -p \"${{ inputs.prompt }}\""
+        elif [ -n "${{ inputs.stdin }}" ]; then
+          # Use stdin mode
+          CMD="$CMD -p"
+        fi
+        
+        # Add additional CLI arguments
+        if [ -n "${{ inputs.cli-args }}" ]; then
+          CMD="$CMD ${{ inputs.cli-args }}"
+        fi
+        
+        echo "Running: $CMD"
+        
+        # Run and capture output
+        set +e
+        if [ -n "${{ inputs.stdin }}" ]; then
+          OUTPUT=$(echo "${{ inputs.stdin }}" | eval $CMD 2>&1)
+        else
+          OUTPUT=$(eval $CMD 2>&1)
+        fi
+        EXIT_CODE=$?
+        set -e
+        
+        echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Save full output
+        echo "full_output<<EOF" >> $GITHUB_OUTPUT
+        echo "$OUTPUT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        # Try to parse JSON output if it looks like JSON
+        if echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+          echo "result=$(echo "$OUTPUT" | jq -r '.result // empty')" >> $GITHUB_OUTPUT
+          echo "agent_id=$(echo "$OUTPUT" | jq -r '.agent_id // empty')" >> $GITHUB_OUTPUT
+          echo "duration_ms=$(echo "$OUTPUT" | jq -r '.duration_ms // empty')" >> $GITHUB_OUTPUT
+          echo "usage=$(echo "$OUTPUT" | jq -c '.usage // {}')" >> $GITHUB_OUTPUT
+        else
+          # Not JSON, use full output as result
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        fi
+        
+        # Exit with the same code as letta
+        exit $EXIT_CODE
