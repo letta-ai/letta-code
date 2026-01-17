@@ -916,6 +916,9 @@ async function main(): Promise<void> {
     // Track when user explicitly requested new agent from selector (not via --new flag)
     const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
 
+    // Release notes to display (checked once on mount)
+    const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+
     // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
     useEffect(() => {
       async function autoInstallKeybinding() {
@@ -987,6 +990,16 @@ async function main(): Promise<void> {
 
       autoInstallKeybinding();
       autoInstallWezTermFix();
+    }, []);
+
+    // Check for release notes to display (runs once on mount)
+    useEffect(() => {
+      async function checkNotes() {
+        const { checkReleaseNotes } = await import("./release-notes");
+        const notes = await checkReleaseNotes();
+        setReleaseNotes(notes);
+      }
+      checkNotes();
     }, []);
 
     // Initialize on mount - check if we should show global agent selector
@@ -1764,6 +1777,7 @@ async function main(): Promise<void> {
         resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
+        releaseNotes,
       });
     }
 
@@ -1779,6 +1793,7 @@ async function main(): Promise<void> {
       resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
+      releaseNotes,
     });
   }
 

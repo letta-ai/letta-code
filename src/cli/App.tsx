@@ -537,6 +537,7 @@ export default function App({
   resumedExistingConversation = false,
   tokenStreaming = false,
   agentProvenance = null,
+  releaseNotes = null,
 }: {
   agentId: string;
   agentState?: AgentState | null;
@@ -554,6 +555,7 @@ export default function App({
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
   agentProvenance?: AgentProvenance | null;
+  releaseNotes?: string | null; // Markdown release notes to display above header
 }) {
   // Warm the model-access cache in the background so /model is fast on first open.
   useEffect(() => {
@@ -1434,7 +1436,18 @@ export default function App({
             "→ **/remember**  teach your agent",
           ];
 
-      const statusLines = [headerMessage, ...commandHints];
+      // Build status lines with optional release notes above header
+      const statusLines: string[] = [];
+
+      // Add release notes first (above everything) - same styling as rest of status block
+      if (releaseNotes) {
+        statusLines.push(releaseNotes);
+        statusLines.push(""); // blank line separator
+      }
+
+      statusLines.push(headerMessage);
+      statusLines.push(...commandHints);
+
       buffersRef.current.byId.set(statusId, {
         kind: "status",
         id: statusId,
@@ -1455,6 +1468,7 @@ export default function App({
     agentState,
     agentProvenance,
     resumedExistingConversation,
+    releaseNotes,
   ]);
 
   // Fetch llmConfig when agent is ready
@@ -7184,7 +7198,17 @@ Plan file path: ${planFilePath}`;
             "→ **/remember**  teach your agent",
           ];
 
-      const statusLines = [headerMessage, ...commandHints];
+      // Build status lines with optional release notes above header
+      const statusLines: string[] = [];
+
+      // Add release notes first (above everything) - same styling as rest of status block
+      if (releaseNotes) {
+        statusLines.push(releaseNotes);
+        statusLines.push(""); // blank line separator
+      }
+
+      statusLines.push(headerMessage);
+      statusLines.push(...commandHints);
 
       buffersRef.current.byId.set(statusId, {
         kind: "status",
@@ -7205,6 +7229,7 @@ Plan file path: ${planFilePath}`;
     agentProvenance,
     agentState,
     refreshDerived,
+    releaseNotes,
   ]);
 
   return (

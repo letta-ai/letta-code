@@ -161,8 +161,10 @@ export async function getResumeData(
 
       // Fetch the last in-context message directly by ID
       // (We already checked inContextMessageIds.length > 0 above)
-      const lastInContextId =
-        inContextMessageIds[inContextMessageIds.length - 1]!;
+      const lastInContextId = inContextMessageIds.at(-1);
+      if (!lastInContextId) {
+        throw new Error("Expected at least one in-context message");
+      }
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
       // Fetch message history separately for backfill (desc then reverse for last N chronological)
@@ -243,8 +245,10 @@ export async function getResumeData(
 
       // Fetch the last in-context message directly by ID
       // (We already checked inContextMessageIds.length > 0 above)
-      const lastInContextId =
-        inContextMessageIds[inContextMessageIds.length - 1]!;
+      const lastInContextId = inContextMessageIds.at(-1);
+      if (!lastInContextId) {
+        throw new Error("Expected at least one in-context message");
+      }
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
       // Fetch message history separately for backfill (desc then reverse for last N chronological)
