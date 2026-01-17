@@ -3,6 +3,7 @@ import { INTERRUPTED_BY_USER } from "../../constants";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
+import { spawnWithLauncher } from "./shellRunner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -27,123 +28,6 @@ function getBackgroundLauncher(command: string): string[] {
 }
 
 /**
- * Spawn a command with a specific launcher.
- * Returns a promise that resolves with the output or rejects with an error.
- */
-function spawnWithLauncher(
-  launcher: string[],
-  options: {
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    timeout: number;
-    signal?: AbortSignal;
-    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
-  },
-): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const [executable, ...args] = launcher;
-    if (!executable) {
-      reject(new Error("Empty launcher"));
-      return;
-    }
-
-    const childProcess = spawn(executable, args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false, // Don't use another shell layer
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      childProcess.kill("SIGTERM");
-    }, options.timeout);
-
-    const abortHandler = () => {
-      childProcess.kill("SIGTERM");
-      if (!killTimer) {
-        killTimer = setTimeout(() => {
-          if (childProcess.exitCode === null && !childProcess.killed) {
-            childProcess.kill("SIGKILL");
-          }
-        }, 2000);
-      }
-    };
-    if (options.signal) {
-      options.signal.addEventListener("abort", abortHandler, { once: true });
-    }
-
-    childProcess.stdout?.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-      options.onOutput?.(chunk.toString("utf8"), "stdout");
-    });
-
-    childProcess.stderr?.on("data", (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      options.onOutput?.(chunk.toString("utf8"), "stderr");
-    });
-
-    childProcess.on("error", (err) => {
-      clearTimeout(timeoutId);
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
-      }
-      reject(err);
-    });
-
-    childProcess.on("close", (code) => {
-      clearTimeout(timeoutId);
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
-      }
-
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-
-      if (timedOut) {
-        reject(
-          Object.assign(new Error("Command timed out"), {
-            killed: true,
-            signal: "SIGTERM",
-            stdout,
-            stderr,
-            code,
-          }),
-        );
-        return;
-      }
-
-      if (options.signal?.aborted) {
-        reject(
-          Object.assign(new Error("The operation was aborted"), {
-            name: "AbortError",
-            code: "ABORT_ERR",
-            stdout,
-            stderr,
-          }),
-        );
-        return;
-      }
-
-      resolve({ stdout, stderr, exitCode: code });
-    });
-  });
-}
-
-/**
  * Execute a command using spawn with explicit shell.
  * This avoids the double-shell parsing that exec() does.
  * Uses buildShellLaunchers() to try multiple shells with ENOENT fallback.
@@ -164,7 +48,13 @@ export async function spawnCommand(
   if (process.platform !== "win32") {
     // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
-    return spawnWithLauncher([executable, "-c", command], options);
+    return spawnWithLauncher([executable, "-c", command], {
+      cwd: options.cwd,
+      env: options.env,
+      timeoutMs: options.timeout,
+      signal: options.signal,
+      onOutput: options.onOutput,
+    });
   }
 
   // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
@@ -173,7 +63,13 @@ export async function spawnCommand(
     if (executable) {
       const newLauncher = [executable, ...launcherArgs.slice(0, -1), command];
       try {
-        const result = await spawnWithLauncher(newLauncher, options);
+        const result = await spawnWithLauncher(newLauncher, {
+          cwd: options.cwd,
+          env: options.env,
+          timeoutMs: options.timeout,
+          signal: options.signal,
+          onOutput: options.onOutput,
+        });
         return result;
       } catch (error) {
         const err = error as NodeJS.ErrnoException;
@@ -195,7 +91,13 @@ export async function spawnCommand(
 
   for (const launcher of launchers) {
     try {
-      const result = await spawnWithLauncher(launcher, options);
+      const result = await spawnWithLauncher(launcher, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeout,
+        signal: options.signal,
+        onOutput: options.onOutput,
+      });
       cachedWorkingLauncher = launcher;
       return result;
     } catch (error) {

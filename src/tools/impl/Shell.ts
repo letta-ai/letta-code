@@ -1,13 +1,8 @@
-import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { getShellEnv } from "./shellEnv.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
+import { ShellExecutionError, spawnWithLauncher } from "./shellRunner.js";
 import { validateRequiredParams } from "./validation.js";
-
-export class ShellExecutionError extends Error {
-  code?: string;
-  executable?: string;
-}
 
 interface ShellArgs {
   command: string[];
@@ -15,6 +10,8 @@ interface ShellArgs {
   timeout_ms?: number;
   with_escalated_permissions?: boolean;
   justification?: string;
+  signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
 interface ShellResult {
@@ -30,81 +27,39 @@ type SpawnContext = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeout: number;
+  signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 };
 
-function runProcess(context: SpawnContext): Promise<ShellResult> {
-  return new Promise((resolve, reject) => {
-    const { command, cwd, env, timeout } = context;
-    const [executable, ...execArgs] = command;
-    if (!executable) {
-      reject(new ShellExecutionError("Executable is required"));
-      return;
-    }
+async function runProcess(context: SpawnContext): Promise<ShellResult> {
+  const { stdout, stderr, exitCode } = await spawnWithLauncher(
+    context.command,
+    {
+      cwd: context.cwd,
+      env: context.env,
+      timeoutMs: context.timeout,
+      signal: context.signal,
+      onOutput: context.onOutput,
+    },
+  );
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
+  const stdoutLines = stdout.split("\n").filter((line) => line.length > 0);
+  const stderrLines = stderr.split("\n").filter((line) => line.length > 0);
+  const output = [stdout, stderr].filter(Boolean).join("\n").trim();
 
-    const child = spawn(executable, execArgs, {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+  if (exitCode !== 0 && exitCode !== null) {
+    return {
+      output: output || `Command exited with code ${exitCode}`,
+      stdout: stdoutLines,
+      stderr: stderrLines,
+    };
+  }
 
-    const timeoutId = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`Command timed out after ${timeout}ms`));
-    }, timeout);
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-    });
-
-    child.on("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timeoutId);
-      const execError = new ShellExecutionError(
-        err?.code === "ENOENT"
-          ? `Executable not found: ${executable}`
-          : `Failed to execute command: ${err?.message || "unknown error"}`,
-      );
-      execError.code = err?.code;
-      execError.executable = executable;
-      reject(execError);
-    });
-
-    child.on("close", (code: number | null) => {
-      clearTimeout(timeoutId);
-
-      const stdoutText = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderrText = Buffer.concat(stderrChunks).toString("utf8");
-
-      const stdoutLines = stdoutText
-        .split("\n")
-        .filter((line) => line.length > 0);
-      const stderrLines = stderrText
-        .split("\n")
-        .filter((line) => line.length > 0);
-
-      const output = [stdoutText, stderrText].filter(Boolean).join("\n").trim();
-
-      if (code !== 0 && code !== null) {
-        resolve({
-          output: output || `Command exited with code ${code}`,
-          stdout: stdoutLines,
-          stderr: stderrLines,
-        });
-      } else {
-        resolve({
-          output,
-          stdout: stdoutLines,
-          stderr: stderrLines,
-        });
-      }
-    });
-  });
+  return {
+    output,
+    stdout: stdoutLines,
+    stderr: stderrLines,
+  };
 }
 
 /**
@@ -115,7 +70,7 @@ function runProcess(context: SpawnContext): Promise<ShellResult> {
 export async function shell(args: ShellArgs): Promise<ShellResult> {
   validateRequiredParams(args, ["command"], "shell");
 
-  const { command, workdir, timeout_ms } = args;
+  const { command, workdir, timeout_ms, signal, onOutput } = args;
   if (!Array.isArray(command) || command.length === 0) {
     throw new Error("command must be a non-empty array of strings");
   }
@@ -132,6 +87,8 @@ export async function shell(args: ShellArgs): Promise<ShellResult> {
     cwd,
     env: getShellEnv(),
     timeout,
+    signal,
+    onOutput,
   };
 
   try {

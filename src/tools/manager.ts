@@ -5,6 +5,15 @@ import { telemetry } from "../telemetry";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
+const STREAMING_SHELL_TOOLS = new Set([
+  "Bash",
+  "shell_command",
+  "ShellCommand",
+  "shell",
+  "Shell",
+  "run_shell_command",
+  "RunShellCommand",
+]);
 
 // Maps internal tool names to server/model-facing tool names
 // This allows us to have multiple implementations (e.g., write_file_gemini, Write from Anthropic)
@@ -726,8 +735,7 @@ export async function executeTool(
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
 
-    // Inject abort signal and streaming callback for Bash tool
-    if (internalName === "Bash") {
+    if (STREAMING_SHELL_TOOLS.has(internalName)) {
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }
