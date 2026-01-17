@@ -49,7 +49,9 @@ export function MemoryTabViewer({
     const fetchBlocks = async () => {
       try {
         const client = await getClient();
-        const agent = await client.agents.retrieve(agentId);
+        const agent = await client.agents.retrieve(agentId, {
+          include: ["agent.blocks"],
+        });
         setFreshBlocks(agent.memory?.blocks || []);
       } catch (error) {
         console.error("Failed to fetch memory blocks:", error);
