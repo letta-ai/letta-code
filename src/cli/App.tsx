@@ -30,6 +30,7 @@ import {
 import {
   buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
+  isApprovalPendingError,
   isApprovalStateDesyncError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
@@ -176,9 +177,9 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 const MIN_RESIZE_DELTA = 2;
 
 // Feature flag: Check for pending approvals before sending messages
-// This prevents infinite thinking state when there's an orphaned approval
-// Can be disabled if the latency check adds too much overhead
-const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
+// Disabled by default for latency (LET-7101) - lazy recovery handles orphaned approvals
+// Set to true to re-enable eager checking (adds ~2s latency per message)
+const CHECK_PENDING_APPROVALS_BEFORE_SEND = false;
 
 // Feature flag: Eagerly cancel streams client-side when user presses ESC
 // When true (default), immediately abort the stream after calling .cancel()
@@ -2550,6 +2551,76 @@ export default function App({
             sendDesktopNotification();
             refreshDerived();
             return;
+          }
+
+          // Check for approval pending error (sent user message while approval waiting)
+          // This is the lazy recovery path for when CHECK_PENDING_APPROVALS_BEFORE_SEND is false
+          const approvalPendingDetected =
+            isApprovalPendingError(detailFromRun) ||
+            isApprovalPendingError(latestErrorText);
+
+          if (
+            !hasApprovalInPayload &&
+            approvalPendingDetected &&
+            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+          ) {
+            llmApiErrorRetriesRef.current += 1;
+
+            // Show transient status
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: [
+                "Pending approval detected; auto-denying stale approval and retrying...",
+              ],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            try {
+              // Fetch pending approvals and auto-deny them
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+              const { pendingApprovals: existingApprovals } =
+                await getResumeData(client, agent, conversationIdRef.current);
+
+              if (existingApprovals && existingApprovals.length > 0) {
+                // Create denial results for all stale approvals
+                // Use the same format as handleCancelApprovals (lines 6390-6395)
+                const denialResults = existingApprovals.map((approval) => ({
+                  type: "approval" as const,
+                  tool_call_id: approval.toolCallId,
+                  approve: false,
+                  reason: "Auto-denied: stale approval from previous session",
+                }));
+
+                // Prepend approval denials to the current input (keeps user message)
+                const approvalPayload: ApprovalCreate = {
+                  type: "approval",
+                  approvals: denialResults,
+                };
+                currentInput.unshift(approvalPayload);
+              }
+            } catch (recoveryError) {
+              // If we can't fetch approvals, just retry the original message
+              // The server may have already cleared the state
+              console.error(
+                "Failed to fetch pending approvals for lazy recovery:",
+                recoveryError,
+              );
+            }
+
+            // Remove the transient status
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
+            // Reset interrupted flag so retry stream chunks are processed
+            buffersRef.current.interrupted = false;
+            continue;
           }
 
           // Check if this is a retriable error (transient LLM API error)

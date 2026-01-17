@@ -11,6 +11,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
+  isApprovalPendingError,
   isApprovalStateDesyncError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
@@ -933,7 +934,11 @@ export async function handleHeadlessCommand(
           }
 
           // Detect server conflict due to pending approval; handle it and retry
-          if (errorInfo?.message?.includes("Cannot send a new message")) {
+          // Check both detail and message fields since error formats vary
+          if (
+            isApprovalPendingError(errorInfo?.detail) ||
+            isApprovalPendingError(errorInfo?.message)
+          ) {
             // Don't emit this error; clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
