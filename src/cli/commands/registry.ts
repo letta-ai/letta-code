@@ -178,7 +178,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/mcp": {
-    desc: "Manage MCP servers",
+    desc: "Manage MCP servers (add, connect with OAuth)",
     order: 32,
     handler: () => {
       // Handled specially in App.tsx to show MCP server selector
