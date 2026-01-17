@@ -172,6 +172,7 @@ import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
 
 // Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
+const MIN_RESIZE_DELTA = 2;
 
 // Feature flag: Check for pending approvals before sending messages
 // This prevents infinite thinking state when there's an orphaned approval
@@ -991,6 +992,13 @@ export default function App({
       return;
     }
 
+    const delta = Math.abs(columns - prev);
+    const isMinorJitter = delta > 0 && delta < MIN_RESIZE_DELTA;
+    if (streaming && isMinorJitter) {
+      prevColumnsRef.current = columns;
+      return;
+    }
+
     // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
     // Clear and remount must happen together - otherwise Static re-renders on top of existing content
     resizeClearTimeout.current = setTimeout(() => {
@@ -1015,7 +1023,7 @@ export default function App({
         resizeClearTimeout.current = null;
       }
     };
-  }, [columns]);
+  }, [columns, streaming]);
 
   // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback((b: Buffers) => {
