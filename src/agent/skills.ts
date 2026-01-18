@@ -494,10 +494,14 @@ export function formatSkillsForMemory(
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 
-const SKILLS_HASH_FILE = join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".letta/skills-hash.json",
-);
+/**
+ * Get the project-local skills hash file path.
+ * Uses .letta/skills-hash.json in the current working directory
+ * because the skills block content depends on the project's .skills/ folder.
+ */
+function getSkillsHashFilePath(): string {
+  return join(process.cwd(), ".letta", "skills-hash.json");
+}
 
 interface SkillsHashCache {
   hash: string;
@@ -516,7 +520,8 @@ function computeSkillsHash(content: string): string {
  */
 async function getCachedSkillsHash(): Promise<string | null> {
   try {
-    const data = await readFile(SKILLS_HASH_FILE, "utf-8");
+    const hashFile = getSkillsHashFilePath();
+    const data = await readFile(hashFile, "utf-8");
     const cache: SkillsHashCache = JSON.parse(data);
     return cache.hash;
   } catch {
@@ -529,18 +534,16 @@ async function getCachedSkillsHash(): Promise<string | null> {
  */
 async function setCachedSkillsHash(hash: string): Promise<void> {
   try {
-    // Ensure .letta directory exists
-    const lettaDir = join(
-      process.env.HOME || process.env.USERPROFILE || "~",
-      ".letta",
-    );
+    const hashFile = getSkillsHashFilePath();
+    // Ensure project .letta directory exists
+    const lettaDir = join(process.cwd(), ".letta");
     await mkdir(lettaDir, { recursive: true });
 
     const cache: SkillsHashCache = {
       hash,
       timestamp: new Date().toISOString(),
     };
-    await writeFile(SKILLS_HASH_FILE, JSON.stringify(cache, null, 2));
+    await writeFile(hashFile, JSON.stringify(cache, null, 2));
   } catch {
     // Ignore cache write failures - not critical
   }
