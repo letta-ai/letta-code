@@ -2579,19 +2579,6 @@ export default function App({
           ) {
             llmApiErrorRetriesRef.current += 1;
 
-            // Log for debugging (visible in transcripts)
-            const statusId = uid("status");
-            buffersRef.current.byId.set(statusId, {
-              kind: "status",
-              id: statusId,
-              lines: [
-                "[LAZY RECOVERY] Detected CONFLICT: server has pending approval",
-                "[LAZY RECOVERY] Fetching stale approvals to auto-deny...",
-              ],
-            });
-            buffersRef.current.order.push(statusId);
-            refreshDerived();
-
             try {
               // Fetch pending approvals and auto-deny them
               const client = await getClient();
@@ -2600,22 +2587,6 @@ export default function App({
                 await getResumeData(client, agent, conversationIdRef.current);
 
               if (existingApprovals && existingApprovals.length > 0) {
-                // Update status with details
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: [
-                    "[LAZY RECOVERY] Detected CONFLICT: server has pending approval",
-                    `[LAZY RECOVERY] Found ${existingApprovals.length} stale approval(s):`,
-                    ...existingApprovals.map(
-                      (a) =>
-                        `  - ${a.toolName} (${a.toolCallId.slice(0, 8)}...)`,
-                    ),
-                    "[LAZY RECOVERY] Auto-denying and batching with user message...",
-                  ],
-                });
-                refreshDerived();
-
                 // Create denial results for all stale approvals
                 // Use the same format as handleCancelApprovals (lines 6390-6395)
                 const denialResults = existingApprovals.map((approval) => ({
@@ -2632,40 +2603,11 @@ export default function App({
                   approvals: denialResults,
                 };
                 currentInput.unshift(approvalPayload);
-              } else {
-                // No approvals found - server state may have cleared
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: [
-                    "[LAZY RECOVERY] Detected CONFLICT but no pending approvals found",
-                    "[LAZY RECOVERY] Retrying message...",
-                  ],
-                });
-                refreshDerived();
               }
-            } catch (_recoveryError) {
+              // else: No approvals found - server state may have cleared, just retry
+            } catch {
               // If we can't fetch approvals, just retry the original message
-              buffersRef.current.byId.set(statusId, {
-                kind: "status",
-                id: statusId,
-                lines: [
-                  "[LAZY RECOVERY] Failed to fetch pending approvals",
-                  "[LAZY RECOVERY] Retrying message anyway...",
-                ],
-              });
-              refreshDerived();
             }
-
-            // Brief pause so user can see the status
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
-            // Remove the transient status
-            buffersRef.current.byId.delete(statusId);
-            buffersRef.current.order = buffersRef.current.order.filter(
-              (id) => id !== statusId,
-            );
-            refreshDerived();
 
             // Reset interrupted flag so retry stream chunks are processed
             buffersRef.current.interrupted = false;
