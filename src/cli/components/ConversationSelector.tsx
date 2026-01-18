@@ -224,6 +224,37 @@ export function ConversationSelector({
         const client = clientRef.current || (await getClient());
         clientRef.current = client;
 
+        // Fetch default conversation data (agent's primary message history)
+        // Only fetch on initial load (not when paginating)
+        let defaultConversation: EnrichedConversation | null = null;
+        if (!afterCursor) {
+          try {
+            const defaultMessages = await client.agents.messages.list(agentId, {
+              limit: 20,
+              order: "desc",
+              conversation_id: "default", // Filter to default conversation only
+            });
+            const defaultMsgItems = defaultMessages.items;
+            if (defaultMsgItems.length > 0) {
+              const defaultStats = getMessageStats(
+                [...defaultMsgItems].reverse(),
+              );
+              defaultConversation = {
+                conversation: {
+                  id: "default",
+                  agent_id: agentId,
+                  created_at: new Date().toISOString(),
+                } as Conversation,
+                previewLines: defaultStats.previewLines,
+                lastActiveAt: defaultStats.lastActiveAt,
+                messageCount: defaultStats.messageCount,
+              };
+            }
+          } catch {
+            // If we can't fetch default messages, just skip showing it
+          }
+        }
+
         const result = await client.conversations.list({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
@@ -276,7 +307,11 @@ export function ConversationSelector({
         if (isLoadingMore) {
           setConversations((prev) => [...prev, ...nonEmptyConversations]);
         } else {
-          setConversations(nonEmptyConversations);
+          // Prepend default conversation to the list (if it has messages)
+          const allConversations = defaultConversation
+            ? [defaultConversation, ...nonEmptyConversations]
+            : nonEmptyConversations;
+          setConversations(allConversations);
           setPage(0);
           setSelectedIndex(0);
         }
@@ -448,6 +483,8 @@ export function ConversationSelector({
       );
     };
 
+    const isDefault = conv.id === "default";
+
     return (
       <Box key={conv.id} flexDirection="column" marginBottom={1}>
         <Box flexDirection="row">
@@ -461,8 +498,9 @@ export function ConversationSelector({
             bold={isSelected}
             color={isSelected ? colors.selector.itemHighlighted : undefined}
           >
-            {conv.id}
+            {isDefault ? "default" : conv.id}
           </Text>
+          {isDefault && <Text dimColor> (agent's default conversation)</Text>}
           {isCurrent && (
             <Text color={colors.selector.itemCurrent}> (current)</Text>
           )}

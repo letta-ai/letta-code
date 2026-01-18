@@ -1729,6 +1729,7 @@ export default function App({
             stream = await sendMessageStream(
               conversationIdRef.current,
               currentInput,
+              { agentId: agentIdRef.current },
             );
           } catch (preStreamError) {
             // Check if this is a pre-stream approval desync error

@@ -75,6 +75,7 @@ export async function handleHeadlessCommand(
       continue: { type: "boolean", short: "c" },
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
+      default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
@@ -200,10 +201,22 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
-  const specifiedAgentId = values.agent as string | undefined;
-  const specifiedConversationId = values.conversation as string | undefined;
+  let specifiedAgentId = values.agent as string | undefined;
+  let specifiedConversationId = values.conversation as string | undefined;
+  const useDefaultConv = values.default as boolean | undefined;
   const shouldContinue = values.continue as boolean | undefined;
   const forceNew = values["new-agent"] as boolean | undefined;
+
+  // Handle --default flag (alias for --conv default)
+  if (useDefaultConv) {
+    if (specifiedConversationId && specifiedConversationId !== "default") {
+      console.error(
+        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
+      );
+      process.exit(1);
+    }
+    specifiedConversationId = "default";
+  }
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
@@ -214,8 +227,29 @@ export async function handleHeadlessCommand(
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const fromAfFile = values["from-af"] as string | undefined;
 
+  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
+  if (specifiedConversationId?.startsWith("agent-")) {
+    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
+      console.error(
+        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
+      );
+      process.exit(1);
+    }
+    specifiedAgentId = specifiedConversationId;
+    specifiedConversationId = "default";
+  }
+
+  // Validate --conv default requires --agent
+  if (specifiedConversationId === "default" && !specifiedAgentId) {
+    console.error("Error: --conv default requires --agent <agent-id>");
+    console.error("Usage: letta --agent agent-xyz --conv default");
+    console.error("   or: letta --conv agent-xyz (shorthand)");
+    process.exit(1);
+  }
+
   // Validate --conversation flag (mutually exclusive with agent-selection flags)
-  if (specifiedConversationId) {
+  // Exception: --conv default requires --agent
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     if (specifiedAgentId) {
       console.error("Error: --conversation cannot be used with --agent");
       process.exit(1);
@@ -531,13 +565,21 @@ export async function handleHeadlessCommand(
         );
 
   if (specifiedConversationId) {
-    // User specified a conversation to resume
-    try {
-      await client.conversations.retrieve(specifiedConversationId);
-      conversationId = specifiedConversationId;
-    } catch {
-      console.error(`Error: Conversation ${specifiedConversationId} not found`);
-      process.exit(1);
+    if (specifiedConversationId === "default") {
+      // "default" is the agent's primary message history (no explicit conversation)
+      // Don't validate - just use it directly
+      conversationId = "default";
+    } else {
+      // User specified an explicit conversation to resume - validate it exists
+      try {
+        await client.conversations.retrieve(specifiedConversationId);
+        conversationId = specifiedConversationId;
+      } catch {
+        console.error(
+          `Error: Conversation ${specifiedConversationId} not found`,
+        );
+        process.exit(1);
+      }
     }
   } else if (shouldContinue) {
     // Try to resume the last conversation for this agent
@@ -547,17 +589,22 @@ export async function handleHeadlessCommand(
       settingsManager.getGlobalLastSession();
 
     if (lastSession && lastSession.agentId === agent.id) {
-      // Verify the conversation still exists
-      try {
-        await client.conversations.retrieve(lastSession.conversationId);
-        conversationId = lastSession.conversationId;
-      } catch {
-        // Conversation no longer exists, create new
-        const conversation = await client.conversations.create({
-          agent_id: agent.id,
-          isolated_block_labels: isolatedBlockLabels,
-        });
-        conversationId = conversation.id;
+      if (lastSession.conversationId === "default") {
+        // "default" is always valid - just use it directly
+        conversationId = "default";
+      } else {
+        // Verify the conversation still exists
+        try {
+          await client.conversations.retrieve(lastSession.conversationId);
+          conversationId = lastSession.conversationId;
+        } catch {
+          // Conversation no longer exists, create new
+          const conversation = await client.conversations.create({
+            agent_id: agent.id,
+            isolated_block_labels: isolatedBlockLabels,
+          });
+          conversationId = conversation.id;
+        }
       }
     } else {
       // No matching session, create new conversation
@@ -818,9 +865,11 @@ export async function handleHeadlessCommand(
       };
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendMessageStream(conversationId, [
-        approvalInput,
-      ]);
+      const approvalStream = await sendMessageStream(
+        conversationId,
+        [approvalInput],
+        { agentId: agent.id },
+      );
       if (outputFormat === "stream-json") {
         // Consume quickly but don't emit message frames to stdout
         for await (const _ of approvalStream) {
@@ -875,7 +924,9 @@ export async function handleHeadlessCommand(
 
   try {
     while (true) {
-      const stream = await sendMessageStream(conversationId, currentInput);
+      const stream = await sendMessageStream(conversationId, currentInput, {
+        agentId: agent.id,
+      });
 
       // For stream-json, output each chunk as it arrives
       let stopReason: StopReasonType | null = null;
@@ -1822,7 +1873,9 @@ async function runBidirectionalMode(
           }
 
           // Send message to agent
-          const stream = await sendMessageStream(conversationId, currentInput);
+          const stream = await sendMessageStream(conversationId, currentInput, {
+            agentId: agent.id,
+          });
 
           const streamProcessor = new StreamProcessor();
 
