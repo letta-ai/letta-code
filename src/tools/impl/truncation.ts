@@ -10,6 +10,7 @@ import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 export const LIMITS = {
   // Command output limits
   BASH_OUTPUT_CHARS: 30_000, // 30K characters for bash/shell output
+  TASK_OUTPUT_CHARS: 30_000, // 30K characters for subagent task output
 
   // File reading limits
   READ_MAX_LINES: 2_000, // Max lines per file read

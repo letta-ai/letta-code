@@ -362,6 +362,16 @@ async function main(): Promise<void> {
     // Silently ignore update failures
   });
 
+  // Clean up old overflow files (non-blocking, 24h retention)
+  const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+  Promise.resolve().then(() => {
+    try {
+      cleanupOldOverflowFiles(process.cwd());
+    } catch {
+      // Silently ignore cleanup failures
+    }
+  });
+
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
   // Preprocess args to support --conv as alias for --conversation
   const processedArgs = process.argv.map((arg) =>

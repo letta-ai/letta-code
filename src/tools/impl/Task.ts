@@ -16,6 +16,7 @@ import {
   generateSubagentId,
   registerSubagent,
 } from "../../cli/helpers/subagentState.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
 interface TaskArgs {
@@ -114,7 +115,18 @@ export async function task(args: TaskArgs): Promise<string> {
       .filter(Boolean)
       .join(" ");
 
-    return `${header}\n\n${result.report}`;
+    const fullOutput = `${header}\n\n${result.report}`;
+    const userCwd = process.env.USER_CWD || process.cwd();
+
+    // Apply truncation to prevent excessive token usage (same pattern as Bash tool)
+    const { content: truncatedOutput } = truncateByChars(
+      fullOutput,
+      LIMITS.TASK_OUTPUT_CHARS,
+      "Task",
+      { workingDirectory: userCwd, toolName: "Task" },
+    );
+
+    return truncatedOutput;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     completeSubagent(subagentId, { success: false, error: errorMessage });
