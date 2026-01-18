@@ -700,6 +700,34 @@ export default function App({
   >([]);
   const executingToolCallIdsRef = useRef<string[]>([]);
   const interruptQueuedRef = useRef(false);
+  const autoAllowedExecutionRef = useRef<{
+    toolCallIds: string[];
+    results: ApprovalResult[] | null;
+    conversationId: string;
+    generation: number;
+  } | null>(null);
+  const queuedApprovalMetadataRef = useRef<{
+    conversationId: string;
+    generation: number;
+  } | null>(null);
+
+  const queueApprovalResults = useCallback(
+    (
+      results: ApprovalResult[] | null,
+      metadata?: { conversationId: string; generation: number },
+    ) => {
+      setQueuedApprovalResults(results);
+      if (results) {
+        queuedApprovalMetadataRef.current = metadata ?? {
+          conversationId: conversationIdRef.current,
+          generation: conversationGenerationRef.current,
+        };
+      } else {
+        queuedApprovalMetadataRef.current = null;
+      }
+    },
+    [],
+  );
 
   // Bash mode: cache bash commands to prefix next user message
   // Use ref instead of state to avoid stale closure issues in onSubmit
@@ -2103,7 +2131,7 @@ export default function App({
                 refreshDerived();
 
                 // Queue denial results to be sent with the queued message
-                setQueuedApprovalResults(denialResults);
+                queueApprovalResults(denialResults);
 
                 // Get queued messages and clear queue
                 const concatenatedMessage = queueSnapshotRef.current.join("\n");
@@ -2266,65 +2294,81 @@ export default function App({
               }
             }
 
-            // Set phase to "running" for auto-allowed tools
-            setToolCallsRunning(
-              buffersRef.current,
-              autoAllowed.map((ac) => ac.approval.toolCallId),
+            const autoAllowedToolCallIds = autoAllowed.map(
+              (ac) => ac.approval.toolCallId,
             );
-            refreshDerived();
+            const autoAllowedAbortController =
+              abortControllerRef.current ?? new AbortController();
+            const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+            let autoAllowedResults: Array<{
+              toolCallId: string;
+              result: ToolExecutionResult;
+            }> = [];
+            let autoDeniedResults: Array<{
+              approval: ApprovalRequest;
+              reason: string;
+            }> = [];
 
-            // Execute auto-allowed tools (sequential for writes, parallel for reads)
-            const autoAllowedResults = await executeAutoAllowedTools(
-              autoAllowed,
-              (chunk) => onChunk(buffersRef.current, chunk),
-              {
-                abortSignal: signal,
-                onStreamingOutput: updateStreamingOutput,
-              },
-            );
-
-            // Create denial results for auto-denied tools and update buffers
-            const autoDeniedResults = autoDenied.map((ac) => {
-              // Prefer the detailed reason over the short matchedRule name
-              // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
-              const reason = ac.permission.reason
-                ? `Permission denied: ${ac.permission.reason}`
-                : "matchedRule" in ac.permission && ac.permission.matchedRule
-                  ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                  : "Permission denied: Unknown reason";
-
-              // Update buffers with tool rejection for UI
-              onChunk(buffersRef.current, {
-                message_type: "tool_return_message",
-                id: "dummy",
-                date: new Date().toISOString(),
-                tool_call_id: ac.approval.toolCallId,
-                tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                status: "error",
-                stdout: null,
-                stderr: null,
-              });
-
-              return {
-                approval: ac.approval,
-                reason,
+            if (shouldTrackAutoAllowed) {
+              setIsExecutingTool(true);
+              executingToolCallIdsRef.current = autoAllowedToolCallIds;
+              toolAbortControllerRef.current = autoAllowedAbortController;
+              autoAllowedExecutionRef.current = {
+                toolCallIds: autoAllowedToolCallIds,
+                results: null,
+                conversationId: conversationIdRef.current,
+                generation: conversationGenerationRef.current,
               };
-            });
+            }
 
-            // If all are auto-handled, continue immediately without showing dialog
-            if (needsUserInput.length === 0) {
-              // Check if user cancelled before continuing
-              if (
-                userCancelledRef.current ||
-                abortControllerRef.current?.signal.aborted
-              ) {
-                setStreaming(false);
-                markIncompleteToolsAsCancelled(buffersRef.current);
+            try {
+              if (autoAllowedToolCallIds.length > 0) {
+                // Set phase to "running" for auto-allowed tools
+                setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
                 refreshDerived();
-                return;
               }
 
-              // Combine auto-allowed results + auto-denied responses
+              // Execute auto-allowed tools (sequential for writes, parallel for reads)
+              autoAllowedResults =
+                autoAllowed.length > 0
+                  ? await executeAutoAllowedTools(
+                      autoAllowed,
+                      (chunk) => onChunk(buffersRef.current, chunk),
+                      {
+                        abortSignal: autoAllowedAbortController.signal,
+                        onStreamingOutput: updateStreamingOutput,
+                      },
+                    )
+                  : [];
+
+              // Create denial results for auto-denied tools and update buffers
+              autoDeniedResults = autoDenied.map((ac) => {
+                // Prefer the detailed reason over the short matchedRule name
+                // (e.g., reason contains plan file path info, matchedRule is just "plan mode")
+                const reason = ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                    : "Permission denied: Unknown reason";
+
+                // Update buffers with tool rejection for UI
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: ac.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  status: "error",
+                  stdout: null,
+                  stderr: null,
+                });
+
+                return {
+                  approval: ac.approval,
+                  reason,
+                };
+              });
+
               const allResults = [
                 ...autoAllowedResults.map((ar) => ({
                   type: "tool" as const,
@@ -2342,14 +2386,111 @@ export default function App({
                 })),
               ];
 
-              // Check if user queued messages during auto-allowed tool execution
+              if (autoAllowedExecutionRef.current) {
+                autoAllowedExecutionRef.current.results = allResults;
+              }
+              const autoAllowedMetadata = autoAllowedExecutionRef.current
+                ? {
+                    conversationId:
+                      autoAllowedExecutionRef.current.conversationId,
+                    generation: conversationGenerationRef.current,
+                  }
+                : undefined;
+
+              // If all are auto-handled, continue immediately without showing dialog
+              if (needsUserInput.length === 0) {
+                // Check if user cancelled before continuing
+                if (
+                  userCancelledRef.current ||
+                  abortControllerRef.current?.signal.aborted ||
+                  interruptQueuedRef.current
+                ) {
+                  if (allResults.length > 0) {
+                    queueApprovalResults(allResults, autoAllowedMetadata);
+                  }
+                  setStreaming(false);
+                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  refreshDerived();
+                  return;
+                }
+
+                // Check if user queued messages during auto-allowed tool execution
+                if (waitingForQueueCancelRef.current) {
+                  if (restoreQueueOnCancelRef.current) {
+                    // User hit ESC during queue cancel - abort the auto-send
+                    setRestoreQueueOnCancel(false);
+                  } else {
+                    // Queue results to be sent with the queued message
+                    if (allResults.length > 0) {
+                      queueApprovalResults(allResults, autoAllowedMetadata);
+                    }
+
+                    // Get queued messages and clear queue
+                    const concatenatedMessage =
+                      queueSnapshotRef.current.join("\n");
+                    setMessageQueue([]);
+
+                    // Send via onSubmit
+                    if (concatenatedMessage.trim()) {
+                      onSubmitRef.current(concatenatedMessage);
+                    }
+                  }
+
+                  // Reset flags
+                  waitingForQueueCancelRef.current = false;
+                  queueSnapshotRef.current = [];
+                  setStreaming(false);
+                  return;
+                }
+
+                // Rotate to a new thinking message
+                setThinkingMessage(getRandomThinkingVerb());
+                refreshDerived();
+
+                await processConversation(
+                  [
+                    {
+                      type: "approval",
+                      approvals: allResults,
+                    },
+                  ],
+                  { allowReentry: true },
+                );
+                return;
+              }
+
+              // Check again if user queued messages during auto-allowed tool execution
               if (waitingForQueueCancelRef.current) {
                 if (restoreQueueOnCancelRef.current) {
                   // User hit ESC during queue cancel - abort the auto-send
                   setRestoreQueueOnCancel(false);
                 } else {
-                  // Queue results to be sent with the queued message
-                  setQueuedApprovalResults(allResults);
+                  // Create denial results for tools that need user input
+                  const denialResults = needsUserInput.map((ac) => ({
+                    type: "approval" as const,
+                    tool_call_id: ac.approval.toolCallId,
+                    approve: false,
+                    reason: "User cancelled - new message queued",
+                  }));
+
+                  // Update buffers to show tools as cancelled
+                  for (const ac of needsUserInput) {
+                    onChunk(buffersRef.current, {
+                      message_type: "tool_return_message",
+                      id: "dummy",
+                      date: new Date().toISOString(),
+                      tool_call_id: ac.approval.toolCallId,
+                      tool_return: "Cancelled - user sent new message",
+                      status: "error",
+                    });
+                  }
+                  refreshDerived();
+
+                  // Combine with auto-handled results and queue for sending
+                  const queuedResults = [...allResults, ...denialResults];
+                  if (queuedResults.length > 0) {
+                    queueApprovalResults(queuedResults, autoAllowedMetadata);
+                  }
 
                   // Get queued messages and clear queue
                   const concatenatedMessage =
@@ -2368,83 +2509,13 @@ export default function App({
                 setStreaming(false);
                 return;
               }
-
-              // Rotate to a new thinking message
-              setThinkingMessage(getRandomThinkingVerb());
-              refreshDerived();
-
-              await processConversation(
-                [
-                  {
-                    type: "approval",
-                    approvals: allResults,
-                  },
-                ],
-                { allowReentry: true },
-              );
-              return;
-            }
-
-            // Check again if user queued messages during auto-allowed tool execution
-            if (waitingForQueueCancelRef.current) {
-              if (restoreQueueOnCancelRef.current) {
-                // User hit ESC during queue cancel - abort the auto-send
-                setRestoreQueueOnCancel(false);
-              } else {
-                // Create denial results for tools that need user input
-                const denialResults = needsUserInput.map((ac) => ({
-                  type: "approval" as const,
-                  tool_call_id: ac.approval.toolCallId,
-                  approve: false,
-                  reason: "User cancelled - new message queued",
-                }));
-
-                // Update buffers to show tools as cancelled
-                for (const ac of needsUserInput) {
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: ac.approval.toolCallId,
-                    tool_return: "Cancelled - user sent new message",
-                    status: "error",
-                  });
-                }
-                refreshDerived();
-
-                // Combine with auto-handled results and queue for sending
-                const allResults = [
-                  ...autoAllowedResults.map((ar) => ({
-                    type: "tool" as const,
-                    tool_call_id: ar.toolCallId,
-                    tool_return: ar.result.toolReturn,
-                    status: ar.result.status,
-                  })),
-                  ...autoDeniedResults.map((ad) => ({
-                    type: "approval" as const,
-                    tool_call_id: ad.approval.toolCallId,
-                    approve: false,
-                    reason: ad.reason,
-                  })),
-                  ...denialResults,
-                ];
-                setQueuedApprovalResults(allResults);
-
-                // Get queued messages and clear queue
-                const concatenatedMessage = queueSnapshotRef.current.join("\n");
-                setMessageQueue([]);
-
-                // Send via onSubmit
-                if (concatenatedMessage.trim()) {
-                  onSubmitRef.current(concatenatedMessage);
-                }
+            } finally {
+              if (shouldTrackAutoAllowed) {
+                setIsExecutingTool(false);
+                toolAbortControllerRef.current = null;
+                executingToolCallIdsRef.current = [];
+                autoAllowedExecutionRef.current = null;
               }
-
-              // Reset flags
-              waitingForQueueCancelRef.current = false;
-              queueSnapshotRef.current = [];
-              setStreaming(false);
-              return;
             }
 
             // Check if user cancelled before showing dialog
@@ -2820,6 +2891,7 @@ export default function App({
       currentModelId,
       updateStreamingOutput,
       needsEagerApprovalCheck,
+      queueApprovalResults,
     ],
   );
 
@@ -2850,7 +2922,22 @@ export default function App({
     if (isExecutingTool && toolAbortControllerRef.current) {
       toolAbortControllerRef.current.abort();
 
-      if (executingToolCallIdsRef.current.length > 0) {
+      // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
+      // Increment before tagging queued results so they are tied to the post-interrupt state.
+      conversationGenerationRef.current += 1;
+      processingConversationRef.current = 0;
+
+      const autoAllowedResults = autoAllowedExecutionRef.current?.results;
+      const autoAllowedMetadata = autoAllowedExecutionRef.current
+        ? {
+            conversationId: autoAllowedExecutionRef.current.conversationId,
+            generation: conversationGenerationRef.current,
+          }
+        : undefined;
+      if (autoAllowedResults && autoAllowedResults.length > 0) {
+        queueApprovalResults(autoAllowedResults, autoAllowedMetadata);
+        interruptQueuedRef.current = true;
+      } else if (executingToolCallIdsRef.current.length > 0) {
         const interruptedResults = executingToolCallIdsRef.current.map(
           (toolCallId) => ({
             type: "tool" as const,
@@ -2859,10 +2946,11 @@ export default function App({
             status: "error" as const,
           }),
         );
-        setQueuedApprovalResults(interruptedResults);
-        executingToolCallIdsRef.current = [];
+        queueApprovalResults(interruptedResults);
         interruptQueuedRef.current = true;
       }
+      executingToolCallIdsRef.current = [];
+      autoAllowedExecutionRef.current = null;
 
       // ALSO abort the main stream - don't leave it running
       buffersRef.current.abortGeneration =
@@ -2946,16 +3034,34 @@ export default function App({
       }
       refreshDerived();
 
-      // Cache any pending approvals as denials to send with the next message
-      // This tells the server "I'm rejecting these approvals" so it doesn't stay stuck waiting
-      if (pendingApprovals.length > 0) {
-        const denialResults = pendingApprovals.map((approval) => ({
+      // Cache pending approvals, plus any auto-handled results, for the next message.
+      const denialResults = pendingApprovals.map((approval) => ({
+        type: "approval" as const,
+        tool_call_id: approval.toolCallId,
+        approve: false,
+        reason: "User interrupted the stream",
+      }));
+      const autoHandledSnapshot = [...autoHandledResults];
+      const autoDeniedSnapshot = [...autoDeniedApprovals];
+      const queuedResults = [
+        ...autoHandledSnapshot.map((ar) => ({
+          type: "tool" as const,
+          tool_call_id: ar.toolCallId,
+          tool_return: ar.result.toolReturn,
+          status: ar.result.status,
+          stdout: ar.result.stdout,
+          stderr: ar.result.stderr,
+        })),
+        ...autoDeniedSnapshot.map((ad) => ({
           type: "approval" as const,
-          tool_call_id: approval.toolCallId,
+          tool_call_id: ad.approval.toolCallId,
           approve: false,
-          reason: "User interrupted the stream",
-        }));
-        setQueuedApprovalResults(denialResults);
+          reason: ad.reason,
+        })),
+        ...denialResults,
+      ];
+      if (queuedResults.length > 0) {
+        queueApprovalResults(queuedResults);
       }
 
       // Clear local approval state
@@ -3009,6 +3115,9 @@ export default function App({
     refreshDerived,
     setStreaming,
     pendingApprovals,
+    autoHandledResults,
+    autoDeniedApprovals,
+    queueApprovalResults,
   ]);
 
   // Keep ref to latest processConversation to avoid circular deps in useEffect
@@ -3427,61 +3536,114 @@ export default function App({
       // All approvals can be auto-handled - execute them before proceeding
       const allResults: ApprovalResult[] = [];
 
-      // Execute auto-allowed tools
-      if (autoAllowed.length > 0) {
-        // Set phase to "running" for auto-allowed tools
-        setToolCallsRunning(
-          buffersRef.current,
-          autoAllowed.map((ac) => ac.approval.toolCallId),
-        );
-        refreshDerived();
+      const autoAllowedToolCallIds = autoAllowed.map(
+        (ac) => ac.approval.toolCallId,
+      );
+      const autoAllowedAbortController =
+        abortControllerRef.current ?? new AbortController();
+      const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+      let autoAllowedResults: Array<{
+        toolCallId: string;
+        result: ToolExecutionResult;
+      }> = [];
 
-        const autoAllowedResults = await executeAutoAllowedTools(
-          autoAllowed,
-          (chunk) => onChunk(buffersRef.current, chunk),
-          { onStreamingOutput: updateStreamingOutput },
-        );
-        // Map to ApprovalResult format (ToolReturn)
-        allResults.push(
-          ...autoAllowedResults.map((ar) => ({
-            type: "tool" as const,
-            tool_call_id: ar.toolCallId,
-            tool_return: ar.result.toolReturn,
-            status: ar.result.status,
-            stdout: ar.result.stdout,
-            stderr: ar.result.stderr,
-          })),
-        );
+      if (shouldTrackAutoAllowed) {
+        setIsExecutingTool(true);
+        executingToolCallIdsRef.current = autoAllowedToolCallIds;
+        toolAbortControllerRef.current = autoAllowedAbortController;
+        autoAllowedExecutionRef.current = {
+          toolCallIds: autoAllowedToolCallIds,
+          results: null,
+          conversationId: conversationIdRef.current,
+          generation: conversationGenerationRef.current,
+        };
       }
 
-      // Create denial results for auto-denied
-      for (const ac of autoDenied) {
-        const reason = ac.permission.reason || "Permission denied";
-        // Update UI with denial
-        onChunk(buffersRef.current, {
-          message_type: "tool_return_message",
-          id: "dummy",
-          date: new Date().toISOString(),
-          tool_call_id: ac.approval.toolCallId,
-          tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-          status: "error",
-          stdout: null,
-          stderr: null,
-        });
-        // Map to ApprovalResult format (ApprovalReturn)
-        allResults.push({
-          type: "approval" as const,
-          tool_call_id: ac.approval.toolCallId,
-          approve: false,
-          reason,
-        });
-      }
+      try {
+        // Execute auto-allowed tools
+        if (autoAllowed.length > 0) {
+          // Set phase to "running" for auto-allowed tools
+          setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
+          refreshDerived();
 
-      // Send all results to server if any
-      if (allResults.length > 0) {
-        await processConversation([
-          { type: "approval", approvals: allResults },
-        ]);
+          autoAllowedResults = await executeAutoAllowedTools(
+            autoAllowed,
+            (chunk) => onChunk(buffersRef.current, chunk),
+            {
+              abortSignal: autoAllowedAbortController.signal,
+              onStreamingOutput: updateStreamingOutput,
+            },
+          );
+          // Map to ApprovalResult format (ToolReturn)
+          allResults.push(
+            ...autoAllowedResults.map((ar) => ({
+              type: "tool" as const,
+              tool_call_id: ar.toolCallId,
+              tool_return: ar.result.toolReturn,
+              status: ar.result.status,
+              stdout: ar.result.stdout,
+              stderr: ar.result.stderr,
+            })),
+          );
+        }
+
+        // Create denial results for auto-denied
+        for (const ac of autoDenied) {
+          const reason = ac.permission.reason || "Permission denied";
+          // Update UI with denial
+          onChunk(buffersRef.current, {
+            message_type: "tool_return_message",
+            id: "dummy",
+            date: new Date().toISOString(),
+            tool_call_id: ac.approval.toolCallId,
+            tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+            status: "error",
+            stdout: null,
+            stderr: null,
+          });
+          // Map to ApprovalResult format (ApprovalReturn)
+          allResults.push({
+            type: "approval" as const,
+            tool_call_id: ac.approval.toolCallId,
+            approve: false,
+            reason,
+          });
+        }
+
+        if (autoAllowedExecutionRef.current) {
+          autoAllowedExecutionRef.current.results = allResults;
+        }
+        const autoAllowedMetadata = autoAllowedExecutionRef.current
+          ? {
+              conversationId: autoAllowedExecutionRef.current.conversationId,
+              generation: conversationGenerationRef.current,
+            }
+          : undefined;
+
+        if (
+          userCancelledRef.current ||
+          autoAllowedAbortController.signal.aborted ||
+          interruptQueuedRef.current
+        ) {
+          if (allResults.length > 0) {
+            queueApprovalResults(allResults, autoAllowedMetadata);
+          }
+          return { blocked: false };
+        }
+
+        // Send all results to server if any
+        if (allResults.length > 0) {
+          await processConversation([
+            { type: "approval", approvals: allResults },
+          ]);
+        }
+      } finally {
+        if (shouldTrackAutoAllowed) {
+          setIsExecutingTool(false);
+          toolAbortControllerRef.current = null;
+          executingToolCallIdsRef.current = [];
+          autoAllowedExecutionRef.current = null;
+        }
       }
 
       return { blocked: false };
@@ -3495,6 +3657,7 @@ export default function App({
     refreshDerived,
     updateStreamingOutput,
     needsEagerApprovalCheck,
+    queueApprovalResults,
   ]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
@@ -5634,80 +5797,159 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                 }
               }
 
-              // Set phase to "running" for auto-allowed tools
-              setToolCallsRunning(
-                buffersRef.current,
-                autoAllowed.map((ac) => ac.approval.toolCallId),
+              const autoAllowedToolCallIds = autoAllowed.map(
+                (ac) => ac.approval.toolCallId,
               );
-              refreshDerived();
+              const autoAllowedAbortController =
+                abortControllerRef.current ?? new AbortController();
+              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+              let autoAllowedResults: Array<{
+                toolCallId: string;
+                result: ToolExecutionResult;
+              }> = [];
+              let autoDeniedResults: ApprovalResult[] = [];
 
-              // Execute auto-allowed tools (sequential for writes, parallel for reads)
-              const autoAllowedResults = await executeAutoAllowedTools(
-                autoAllowed,
-                (chunk) => onChunk(buffersRef.current, chunk),
-                { onStreamingOutput: updateStreamingOutput },
-              );
+              if (shouldTrackAutoAllowed) {
+                setIsExecutingTool(true);
+                executingToolCallIdsRef.current = autoAllowedToolCallIds;
+                toolAbortControllerRef.current = autoAllowedAbortController;
+                autoAllowedExecutionRef.current = {
+                  toolCallIds: autoAllowedToolCallIds,
+                  results: null,
+                  conversationId: conversationIdRef.current,
+                  generation: conversationGenerationRef.current,
+                };
+              }
 
-              // Create denial results for auto-denied and update UI
-              const autoDeniedResults = autoDenied.map((ac) => {
-                // Prefer the detailed reason over the short matchedRule name
-                const reason = ac.permission.reason
-                  ? `Permission denied: ${ac.permission.reason}`
-                  : "matchedRule" in ac.permission && ac.permission.matchedRule
-                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : "Permission denied: Unknown";
+              try {
+                if (autoAllowedToolCallIds.length > 0) {
+                  // Set phase to "running" for auto-allowed tools
+                  setToolCallsRunning(
+                    buffersRef.current,
+                    autoAllowedToolCallIds,
+                  );
+                  refreshDerived();
+                }
 
-                // Update buffers with denial for UI
-                onChunk(buffersRef.current, {
-                  message_type: "tool_return_message",
-                  id: "dummy",
-                  date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                  status: "error",
-                  stdout: null,
-                  stderr: null,
+                // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                autoAllowedResults =
+                  autoAllowed.length > 0
+                    ? await executeAutoAllowedTools(
+                        autoAllowed,
+                        (chunk) => onChunk(buffersRef.current, chunk),
+                        {
+                          abortSignal: autoAllowedAbortController.signal,
+                          onStreamingOutput: updateStreamingOutput,
+                        },
+                      )
+                    : [];
+
+                // Create denial results for auto-denied and update UI
+                autoDeniedResults = autoDenied.map((ac) => {
+                  // Prefer the detailed reason over the short matchedRule name
+                  const reason = ac.permission.reason
+                    ? `Permission denied: ${ac.permission.reason}`
+                    : "matchedRule" in ac.permission &&
+                        ac.permission.matchedRule
+                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                      : "Permission denied: Unknown";
+
+                  // Update buffers with denial for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                    status: "error",
+                    stdout: null,
+                    stderr: null,
+                  });
+
+                  return {
+                    type: "approval" as const,
+                    tool_call_id: ac.approval.toolCallId,
+                    approve: false,
+                    reason,
+                  };
                 });
 
-                return {
-                  type: "approval" as const,
-                  tool_call_id: ac.approval.toolCallId,
-                  approve: false,
-                  reason,
-                };
-              });
+                const queuedResults: ApprovalResult[] = [
+                  ...autoAllowedResults.map((ar) => ({
+                    type: "tool" as const,
+                    tool_call_id: ar.toolCallId,
+                    tool_return: ar.result.toolReturn,
+                    status: ar.result.status,
+                    stdout: ar.result.stdout,
+                    stderr: ar.result.stderr,
+                  })),
+                  ...autoDeniedResults,
+                ];
 
-              refreshDerived();
+                if (autoAllowedExecutionRef.current) {
+                  autoAllowedExecutionRef.current.results = queuedResults;
+                }
+                const autoAllowedMetadata = autoAllowedExecutionRef.current
+                  ? {
+                      conversationId:
+                        autoAllowedExecutionRef.current.conversationId,
+                      generation: conversationGenerationRef.current,
+                    }
+                  : undefined;
 
-              // Combine results and send directly with the user's message
-              // (can't use state here as it won't be available until next render)
-              const recoveryApprovalResults = [
-                ...autoAllowedResults.map((ar) => ({
-                  type: "approval" as const,
-                  tool_call_id: ar.toolCallId,
-                  approve: true,
-                  tool_return: ar.result.toolReturn,
-                })),
-                ...autoDeniedResults,
-              ];
+                if (
+                  userCancelledRef.current ||
+                  autoAllowedAbortController.signal.aborted ||
+                  interruptQueuedRef.current
+                ) {
+                  if (queuedResults.length > 0) {
+                    queueApprovalResults(queuedResults, autoAllowedMetadata);
+                  }
+                  setStreaming(false);
+                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  refreshDerived();
+                  return { submitted: false };
+                }
 
-              // Build and send initialInput directly
-              const initialInput: Array<MessageCreate | ApprovalCreate> = [
-                {
-                  type: "approval",
-                  approvals: recoveryApprovalResults,
-                },
-                {
-                  type: "message",
-                  role: "user",
-                  content:
-                    messageContent as unknown as MessageCreate["content"],
-                },
-              ];
+                refreshDerived();
 
-              await processConversation(initialInput);
-              clearPlaceholdersInText(msg);
-              return { submitted: true };
+                // Combine results and send directly with the user's message
+                // (can't use state here as it won't be available until next render)
+                const recoveryApprovalResults = [
+                  ...autoAllowedResults.map((ar) => ({
+                    type: "approval" as const,
+                    tool_call_id: ar.toolCallId,
+                    approve: true,
+                    tool_return: ar.result.toolReturn,
+                  })),
+                  ...autoDeniedResults,
+                ];
+
+                // Build and send initialInput directly
+                const initialInput: Array<MessageCreate | ApprovalCreate> = [
+                  {
+                    type: "approval",
+                    approvals: recoveryApprovalResults,
+                  },
+                  {
+                    type: "message",
+                    role: "user",
+                    content:
+                      messageContent as unknown as MessageCreate["content"],
+                  },
+                ];
+
+                await processConversation(initialInput);
+                clearPlaceholdersInText(msg);
+                return { submitted: true };
+              } finally {
+                if (shouldTrackAutoAllowed) {
+                  setIsExecutingTool(false);
+                  toolAbortControllerRef.current = null;
+                  executingToolCallIdsRef.current = [];
+                  autoAllowedExecutionRef.current = null;
+                }
+              }
             } else {
               // Some approvals need user input - show dialog
               // Remove the optimistic user message from transcript
@@ -5798,46 +6040,131 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                 }
               }
 
-              // Execute auto-allowed tools (sequential for writes, parallel for reads)
-              const autoAllowedWithResults = await executeAutoAllowedTools(
-                autoAllowed,
-                (chunk) => onChunk(buffersRef.current, chunk),
-                { onStreamingOutput: updateStreamingOutput },
+              const autoAllowedToolCallIds = autoAllowed.map(
+                (ac) => ac.approval.toolCallId,
               );
+              const autoAllowedAbortController =
+                abortControllerRef.current ?? new AbortController();
+              const shouldTrackAutoAllowed = autoAllowedToolCallIds.length > 0;
+              let autoAllowedWithResults: Array<{
+                toolCallId: string;
+                result: ToolExecutionResult;
+              }> = [];
+              let autoDeniedWithReasons: Array<{
+                approval: ApprovalRequest;
+                reason: string;
+              }> = [];
 
-              // Create denial reasons for auto-denied and update UI
-              const autoDeniedWithReasons = autoDenied.map((ac) => {
-                // Prefer the detailed reason over the short matchedRule name
-                const reason = ac.permission.reason
-                  ? `Permission denied: ${ac.permission.reason}`
-                  : "matchedRule" in ac.permission && ac.permission.matchedRule
-                    ? `Permission denied by rule: ${ac.permission.matchedRule}`
-                    : "Permission denied: Unknown";
+              if (shouldTrackAutoAllowed) {
+                setIsExecutingTool(true);
+                executingToolCallIdsRef.current = autoAllowedToolCallIds;
+                toolAbortControllerRef.current = autoAllowedAbortController;
+                autoAllowedExecutionRef.current = {
+                  toolCallIds: autoAllowedToolCallIds,
+                  results: null,
+                  conversationId: conversationIdRef.current,
+                  generation: conversationGenerationRef.current,
+                };
+              }
 
-                // Update buffers with denial for UI
-                onChunk(buffersRef.current, {
-                  message_type: "tool_return_message",
-                  id: "dummy",
-                  date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
-                  status: "error",
-                  stdout: null,
-                  stderr: null,
+              try {
+                // Execute auto-allowed tools (sequential for writes, parallel for reads)
+                autoAllowedWithResults =
+                  autoAllowed.length > 0
+                    ? await executeAutoAllowedTools(
+                        autoAllowed,
+                        (chunk) => onChunk(buffersRef.current, chunk),
+                        {
+                          abortSignal: autoAllowedAbortController.signal,
+                          onStreamingOutput: updateStreamingOutput,
+                        },
+                      )
+                    : [];
+
+                // Create denial reasons for auto-denied and update UI
+                autoDeniedWithReasons = autoDenied.map((ac) => {
+                  // Prefer the detailed reason over the short matchedRule name
+                  const reason = ac.permission.reason
+                    ? `Permission denied: ${ac.permission.reason}`
+                    : "matchedRule" in ac.permission &&
+                        ac.permission.matchedRule
+                      ? `Permission denied by rule: ${ac.permission.matchedRule}`
+                      : "Permission denied: Unknown";
+
+                  // Update buffers with denial for UI
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
+                    tool_call_id: ac.approval.toolCallId,
+                    tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                    status: "error",
+                    stdout: null,
+                    stderr: null,
+                  });
+
+                  return {
+                    approval: ac.approval,
+                    reason,
+                  };
                 });
 
-                return {
-                  approval: ac.approval,
-                  reason,
-                };
-              });
+                const queuedResults: ApprovalResult[] = [
+                  ...autoAllowedWithResults.map((ar) => ({
+                    type: "tool" as const,
+                    tool_call_id: ar.toolCallId,
+                    tool_return: ar.result.toolReturn,
+                    status: ar.result.status,
+                    stdout: ar.result.stdout,
+                    stderr: ar.result.stderr,
+                  })),
+                  ...autoDeniedWithReasons.map((ad) => ({
+                    type: "approval" as const,
+                    tool_call_id: ad.approval.toolCallId,
+                    approve: false,
+                    reason: ad.reason,
+                  })),
+                ];
 
-              // Store auto-handled results to send along with user decisions
-              setAutoHandledResults(autoAllowedWithResults);
-              setAutoDeniedApprovals(autoDeniedWithReasons);
+                if (autoAllowedExecutionRef.current) {
+                  autoAllowedExecutionRef.current.results = queuedResults;
+                }
+                const autoAllowedMetadata = autoAllowedExecutionRef.current
+                  ? {
+                      conversationId:
+                        autoAllowedExecutionRef.current.conversationId,
+                      generation: conversationGenerationRef.current,
+                    }
+                  : undefined;
 
-              refreshDerived();
-              return { submitted: false };
+                if (
+                  userCancelledRef.current ||
+                  autoAllowedAbortController.signal.aborted ||
+                  interruptQueuedRef.current
+                ) {
+                  if (queuedResults.length > 0) {
+                    queueApprovalResults(queuedResults, autoAllowedMetadata);
+                  }
+                  setStreaming(false);
+                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  refreshDerived();
+                  return { submitted: false };
+                }
+
+                // Store auto-handled results to send along with user decisions
+                setAutoHandledResults(autoAllowedWithResults);
+                setAutoDeniedApprovals(autoDeniedWithReasons);
+
+                refreshDerived();
+                return { submitted: false };
+              } finally {
+                if (shouldTrackAutoAllowed) {
+                  setIsExecutingTool(false);
+                  toolAbortControllerRef.current = null;
+                  executingToolCallIdsRef.current = [];
+                  autoAllowedExecutionRef.current = null;
+                }
+              }
             }
           }
         } catch (_error) {
@@ -5850,11 +6177,23 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       const initialInput: Array<MessageCreate | ApprovalCreate> = [];
 
       if (queuedApprovalResults) {
-        initialInput.push({
-          type: "approval",
-          approvals: queuedApprovalResults,
-        });
-        setQueuedApprovalResults(null);
+        const queuedMetadata = queuedApprovalMetadataRef.current;
+        const isQueuedValid =
+          queuedMetadata &&
+          queuedMetadata.conversationId === conversationIdRef.current &&
+          queuedMetadata.generation === conversationGenerationRef.current;
+
+        if (isQueuedValid) {
+          initialInput.push({
+            type: "approval",
+            approvals: queuedApprovalResults,
+          });
+        } else {
+          console.warn(
+            "[WARN] Dropping stale queued approval results for mismatched conversation or generation",
+          );
+        }
+        queueApprovalResults(null);
         interruptQueuedRef.current = false;
       }
 
@@ -5883,6 +6222,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
+      queueApprovalResults,
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,
@@ -6078,7 +6418,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           // Queue results to send alongside the next user message so the backend
           // doesn't keep requesting the same approvals after an interrupt.
           if (!interruptQueuedRef.current) {
-            setQueuedApprovalResults(allResults as ApprovalResult[]);
+            queueApprovalResults(allResults as ApprovalResult[]);
           }
           setStreaming(false);
 
@@ -6112,6 +6452,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       appendError,
       setStreaming,
       updateStreamingOutput,
+      queueApprovalResults,
     ],
   );
 
@@ -6408,7 +6749,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       approve: false,
       reason: "User cancelled the approval",
     }));
-    setQueuedApprovalResults(denialResults);
+    queueApprovalResults(denialResults);
 
     // Mark the pending approval tool calls as cancelled in the buffers
     markIncompleteToolsAsCancelled(buffersRef.current);
@@ -6420,7 +6761,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     setApprovalResults([]);
     setAutoHandledResults([]);
     setAutoDeniedApprovals([]);
-  }, [pendingApprovals, refreshDerived]);
+  }, [pendingApprovals, refreshDerived, queueApprovalResults]);
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
@@ -6965,7 +7306,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
               "Plan mode session expired (CLI restarted). Use EnterPlanMode to re-enter plan mode, or request the user to re-enter plan mode.",
           },
         ];
-        setQueuedApprovalResults(denialResults);
+        queueApprovalResults(denialResults);
 
         // Mark tool as cancelled in buffers
         markIncompleteToolsAsCancelled(buffersRef.current);
@@ -6996,6 +7337,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     approvalResults.length,
     handlePlanKeepPlanning,
     refreshDerived,
+    queueApprovalResults,
   ]);
 
   const handleQuestionSubmit = useCallback(
