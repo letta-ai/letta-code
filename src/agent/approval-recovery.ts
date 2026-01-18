@@ -2,8 +2,13 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { getClient } from "./client";
 import { APPROVAL_RECOVERY_PROMPT } from "./promptAssets";
 
+// Error when trying to SEND approval but server has no pending approval
 const APPROVAL_RECOVERY_DETAIL_FRAGMENT =
   "no tool call is currently awaiting approval";
+
+// Error when trying to SEND message but server has pending approval waiting
+// This is the CONFLICT error - opposite of desync
+const APPROVAL_PENDING_DETAIL_FRAGMENT = "cannot send a new message";
 
 type RunErrorMetadata =
   | {
@@ -18,6 +23,19 @@ type RunErrorMetadata =
 export function isApprovalStateDesyncError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_RECOVERY_DETAIL_FRAGMENT);
+}
+
+/**
+ * Check if error indicates there's a pending approval blocking new messages.
+ * This is the CONFLICT error from the backend when trying to send a user message
+ * while the agent is waiting for approval on a tool call.
+ *
+ * Error format:
+ * { detail: "CONFLICT: Cannot send a new message: The agent is waiting for approval..." }
+ */
+export function isApprovalPendingError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
 }
 
 export async function fetchRunErrorDetail(

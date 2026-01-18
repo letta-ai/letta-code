@@ -198,6 +198,19 @@ export interface RetryMessage extends MessageEnvelope {
   run_id?: string;
 }
 
+/**
+ * Recovery message emitted when the CLI detects and recovers from errors.
+ * Used for approval state conflicts and other recoverable errors.
+ */
+export interface RecoveryMessage extends MessageEnvelope {
+  type: "recovery";
+  /** Type of recovery performed */
+  recovery_type: "approval_pending" | "approval_desync";
+  /** Human-readable description of what happened */
+  message: string;
+  run_id?: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // RESULT
 // ═══════════════════════════════════════════════════════════════
@@ -329,6 +342,7 @@ export type WireMessage =
   | AutoApprovalMessage
   | ErrorMessage
   | RetryMessage
+  | RecoveryMessage
   | ResultMessage
   | ControlResponse
   | ControlRequest; // CLI → SDK control requests (e.g., can_use_tool)

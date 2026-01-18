@@ -17,6 +17,7 @@ import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
+import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
 // These are used as fallbacks when resumeData is null, avoiding the React
@@ -335,9 +336,12 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 }
 
 async function main(): Promise<void> {
+  markMilestone("CLI_START");
+
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
+  markMilestone("SETTINGS_LOADED");
 
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
@@ -728,6 +732,7 @@ async function main(): Promise<void> {
   // Validate credentials by checking health endpoint
   const { validateCredentials } = await import("./auth/oauth");
   const isValid = await validateCredentials(baseURL, apiKey ?? "");
+  markMilestone("CREDENTIALS_VALIDATED");
 
   if (!isValid) {
     // For headless mode, error out with helpful message
@@ -829,17 +834,21 @@ async function main(): Promise<void> {
   }
 
   if (isHeadless) {
+    markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
     const modelForTools = getModelForToolLoading(
       specifiedModel,
       specifiedToolset as "codex" | "default" | undefined,
     );
     await loadTools(modelForTools);
+    markMilestone("TOOLS_LOADED");
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
     return;
   }
+
+  markMilestone("TUI_MODE_START");
 
   // Enable enhanced key reporting (Shift+Enter, etc.) BEFORE Ink initializes.
   // In VS Code/xterm.js this typically requires a short handshake (query + enable).
@@ -853,6 +862,7 @@ async function main(): Promise<void> {
   }
 
   // Interactive: lazy-load React/Ink + App
+  markMilestone("REACT_IMPORT_START");
   const React = await import("react");
   const { render } = await import("ink");
   const { useState, useEffect } = React;
@@ -1441,42 +1451,35 @@ async function main(): Promise<void> {
 
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
-        await initializeLoadedSkillsFlag();
 
-        // Re-discover skills and update the skills memory block
+        // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+        // Don't await - this is just for the skill unload reminder
+        initializeLoadedSkillsFlag().catch(() => {
+          // Ignore errors - not critical
+        });
+
+        // Fire-and-forget: Sync skills in background (LET-7101)
         // This ensures new skills added after agent creation are available
-        try {
-          const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } =
-            await import("./agent/skills");
-          const { join } = await import("node:path");
+        // Don't await - user can start typing immediately
+        (async () => {
+          try {
+            const { syncSkillsToAgent, SKILLS_DIR } = await import(
+              "./agent/skills"
+            );
+            const { join } = await import("node:path");
 
-          const resolvedSkillsDirectory =
-            skillsDirectory || join(process.cwd(), SKILLS_DIR);
-          const { skills, errors } = await discoverSkills(
-            resolvedSkillsDirectory,
-          );
+            const resolvedSkillsDirectory =
+              skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
-          if (errors.length > 0) {
-            console.warn("Errors encountered during skill discovery:");
-            for (const error of errors) {
-              console.warn(`  ${error.path}: ${error.message}`);
-            }
+            await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+              skipIfUnchanged: true,
+            });
+          } catch (error) {
+            console.warn(
+              `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-
-          // Update the skills memory block with freshly discovered skills
-          const formattedSkills = formatSkillsForMemory(
-            skills,
-            resolvedSkillsDirectory,
-          );
-          await client.agents.blocks.update("skills", {
-            agent_id: agent.id,
-            value: formattedSkills,
-          });
-        } catch (error) {
-          console.warn(
-            `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+        })();
 
         // Check if we're resuming an existing agent
         // We're resuming if:
@@ -1797,6 +1800,7 @@ async function main(): Promise<void> {
     });
   }
 
+  markMilestone("REACT_RENDER_START");
   render(
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,

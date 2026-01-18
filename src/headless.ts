@@ -11,6 +11,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
+  isApprovalPendingError,
   isApprovalStateDesyncError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
@@ -40,11 +41,17 @@ import type {
   ControlResponse,
   ErrorMessage,
   MessageWire,
+  RecoveryMessage,
   ResultMessage,
   RetryMessage,
   StreamEvent,
   SystemInitMessage,
 } from "./types/protocol";
+import {
+  markMilestone,
+  measureSinceMilestone,
+  reportAllMilestones,
+} from "./utils/timing";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -169,6 +176,7 @@ export async function handleHeadlessCommand(
   }
 
   const client = await getClient();
+  markMilestone("HEADLESS_CLIENT_READY");
 
   // Check for --resume flag (interactive only)
   if (values.resume) {
@@ -462,6 +470,7 @@ export async function handleHeadlessCommand(
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
   }
+  markMilestone("HEADLESS_AGENT_RESOLVED");
 
   // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(
@@ -567,6 +576,7 @@ export async function handleHeadlessCommand(
     });
     conversationId = conversation.id;
   }
+  markMilestone("HEADLESS_CONVERSATION_READY");
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
@@ -591,41 +601,33 @@ export async function handleHeadlessCommand(
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
-  await initializeLoadedSkillsFlag();
 
-  // Re-discover skills and update the skills memory block
+  // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+  // Don't await - this is just for the skill unload reminder
+  initializeLoadedSkillsFlag().catch(() => {
+    // Ignore errors - not critical
+  });
+
+  // Fire-and-forget: Sync skills in background (LET-7101)
   // This ensures new skills added after agent creation are available
-  try {
-    const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } = await import(
-      "./agent/skills"
-    );
-    const { join } = await import("node:path");
+  // Don't await - proceed to message sending immediately
+  (async () => {
+    try {
+      const { syncSkillsToAgent, SKILLS_DIR } = await import("./agent/skills");
+      const { join } = await import("node:path");
 
-    const resolvedSkillsDirectory =
-      skillsDirectory || join(process.cwd(), SKILLS_DIR);
-    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
+      const resolvedSkillsDirectory =
+        skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
-    if (errors.length > 0) {
-      console.warn("Errors encountered during skill discovery:");
-      for (const error of errors) {
-        console.warn(`  ${error.path}: ${error.message}`);
-      }
+      await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+        skipIfUnchanged: true,
+      });
+    } catch (error) {
+      console.warn(
+        `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-
-    // Update the skills memory block with freshly discovered skills
-    const formattedSkills = formatSkillsForMemory(
-      skills,
-      resolvedSkillsDirectory,
-    );
-    await client.agents.blocks.update("skills", {
-      agent_id: agent.id,
-      value: formattedSkills,
-    });
-  } catch (error) {
-    console.warn(
-      `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  })();
 
   // Validate output format
   const outputFormat =
@@ -830,8 +832,11 @@ export async function handleHeadlessCommand(
     }
   };
 
-  // Clear any pending approvals before starting a new turn
-  await resolveAllPendingApprovals();
+  // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
+  // For new agents/conversations, lazy recovery handles any edge cases
+  if (isResumingAgent) {
+    await resolveAllPendingApprovals();
+  }
 
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
@@ -864,6 +869,9 @@ export async function handleHeadlessCommand(
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
+
+  markMilestone("HEADLESS_FIRST_STREAM_START");
+  measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
   try {
     while (true) {
@@ -922,8 +930,25 @@ export async function handleHeadlessCommand(
           }
 
           // Detect server conflict due to pending approval; handle it and retry
-          if (errorInfo?.message?.includes("Cannot send a new message")) {
-            // Don't emit this error; clear approvals and retry outer loop
+          // Check both detail and message fields since error formats vary
+          if (
+            isApprovalPendingError(errorInfo?.detail) ||
+            isApprovalPendingError(errorInfo?.message)
+          ) {
+            // Emit recovery message for stream-json mode (enables testing)
+            if (outputFormat === "stream-json") {
+              const recoveryMsg: RecoveryMessage = {
+                type: "recovery",
+                recovery_type: "approval_pending",
+                message:
+                  "Detected pending approval conflict; auto-denying stale approval and retrying",
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(recoveryMsg));
+            }
+            // Clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
             stopReason = "error" as StopReasonType;
@@ -1541,6 +1566,10 @@ export async function handleHeadlessCommand(
     }
     console.log(resultText);
   }
+
+  // Report all milestones at the end for latency audit
+  markMilestone("HEADLESS_COMPLETE");
+  reportAllMilestones();
 }
 
 /**

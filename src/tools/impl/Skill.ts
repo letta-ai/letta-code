@@ -149,7 +149,7 @@ async function readSkillContent(
   try {
     const content = await readFile(projectSkillPath, "utf-8");
     return { content, path: projectSkillPath };
-  } catch (primaryError) {
+  } catch {
     // Fallback: check for bundled skills in a repo-level skills directory (legacy)
     try {
       const bundledSkillsDir = join(process.cwd(), "skills", "skills");
@@ -157,8 +157,11 @@ async function readSkillContent(
       const content = await readFile(bundledSkillPath, "utf-8");
       return { content, path: bundledSkillPath };
     } catch {
-      // If all fallbacks fail, rethrow the original error
-      throw primaryError;
+      // If all fallbacks fail, throw a helpful error message (LET-7101)
+      // Suggest refresh in case skills sync is still running in background
+      throw new Error(
+        `Skill "${skillId}" not found. If you recently added this skill, try Skill({ command: "refresh" }) to re-scan the skills directory.`,
+      );
     }
   }
 }

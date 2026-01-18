@@ -30,6 +30,7 @@ import {
 import {
   buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
+  isApprovalPendingError,
   isApprovalStateDesyncError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
@@ -175,10 +176,10 @@ import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 const MIN_RESIZE_DELTA = 2;
 
-// Feature flag: Check for pending approvals before sending messages
-// This prevents infinite thinking state when there's an orphaned approval
-// Can be disabled if the latency check adds too much overhead
-const CHECK_PENDING_APPROVALS_BEFORE_SEND = true;
+// Eager approval checking is now CONDITIONAL (LET-7101):
+// - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
+// - Disabled for normal messages (lazy recovery handles edge cases)
+// This saves ~2s latency per message in the common case.
 
 // Feature flag: Eagerly cancel streams client-side when user presses ESC
 // When true (default), immediately abort the stream after calling .cancel()
@@ -677,6 +678,12 @@ export default function App({
     ApprovalResult[] | null
   >(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Eager approval checking: only enabled when resuming a session (LET-7101)
+  // After first successful message, we disable it since any new approvals are from our own turn
+  const [needsEagerApprovalCheck, setNeedsEagerApprovalCheck] = useState(
+    () => resumedExistingConversation || startupApprovals.length > 0,
+  );
 
   // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
@@ -1941,6 +1948,12 @@ export default function App({
             setStreaming(false);
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
 
+            // Disable eager approval check after first successful message (LET-7101)
+            // Any new approvals from here on are from our own turn, not orphaned
+            if (needsEagerApprovalCheck) {
+              setNeedsEagerApprovalCheck(false);
+            }
+
             // Send desktop notification when turn completes
             // and we're not about to auto-send another queued message
             if (!waitingForQueueCancelRef.current) {
@@ -2552,6 +2565,112 @@ export default function App({
             return;
           }
 
+          // Check for approval pending error (sent user message while approval waiting)
+          // This is the lazy recovery path for when needsEagerApprovalCheck is false
+          const approvalPendingDetected =
+            isApprovalPendingError(detailFromRun) ||
+            isApprovalPendingError(latestErrorText);
+
+          if (
+            !hasApprovalInPayload &&
+            approvalPendingDetected &&
+            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+          ) {
+            llmApiErrorRetriesRef.current += 1;
+
+            // Log for debugging (visible in transcripts)
+            const statusId = uid("status");
+            buffersRef.current.byId.set(statusId, {
+              kind: "status",
+              id: statusId,
+              lines: [
+                "[LAZY RECOVERY] Detected CONFLICT: server has pending approval",
+                "[LAZY RECOVERY] Fetching stale approvals to auto-deny...",
+              ],
+            });
+            buffersRef.current.order.push(statusId);
+            refreshDerived();
+
+            try {
+              // Fetch pending approvals and auto-deny them
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+              const { pendingApprovals: existingApprovals } =
+                await getResumeData(client, agent, conversationIdRef.current);
+
+              if (existingApprovals && existingApprovals.length > 0) {
+                // Update status with details
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: [
+                    "[LAZY RECOVERY] Detected CONFLICT: server has pending approval",
+                    `[LAZY RECOVERY] Found ${existingApprovals.length} stale approval(s):`,
+                    ...existingApprovals.map(
+                      (a) =>
+                        `  - ${a.toolName} (${a.toolCallId.slice(0, 8)}...)`,
+                    ),
+                    "[LAZY RECOVERY] Auto-denying and batching with user message...",
+                  ],
+                });
+                refreshDerived();
+
+                // Create denial results for all stale approvals
+                // Use the same format as handleCancelApprovals (lines 6390-6395)
+                const denialResults = existingApprovals.map((approval) => ({
+                  type: "approval" as const,
+                  tool_call_id: approval.toolCallId,
+                  approve: false,
+                  reason:
+                    "Auto-denied: stale approval from interrupted session",
+                }));
+
+                // Prepend approval denials to the current input (keeps user message)
+                const approvalPayload: ApprovalCreate = {
+                  type: "approval",
+                  approvals: denialResults,
+                };
+                currentInput.unshift(approvalPayload);
+              } else {
+                // No approvals found - server state may have cleared
+                buffersRef.current.byId.set(statusId, {
+                  kind: "status",
+                  id: statusId,
+                  lines: [
+                    "[LAZY RECOVERY] Detected CONFLICT but no pending approvals found",
+                    "[LAZY RECOVERY] Retrying message...",
+                  ],
+                });
+                refreshDerived();
+              }
+            } catch (_recoveryError) {
+              // If we can't fetch approvals, just retry the original message
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [
+                  "[LAZY RECOVERY] Failed to fetch pending approvals",
+                  "[LAZY RECOVERY] Retrying message anyway...",
+                ],
+              });
+              refreshDerived();
+            }
+
+            // Brief pause so user can see the status
+            await new Promise((resolve) => setTimeout(resolve, 500));
+
+            // Remove the transient status
+            buffersRef.current.byId.delete(statusId);
+            buffersRef.current.order = buffersRef.current.order.filter(
+              (id) => id !== statusId,
+            );
+            refreshDerived();
+
+            // Reset interrupted flag so retry stream chunks are processed
+            buffersRef.current.interrupted = false;
+            continue;
+          }
+
           // Check if this is a retriable error (transient LLM API error)
           const retriable = await isRetriableError(
             stopReasonToHandle,
@@ -2757,6 +2876,7 @@ export default function App({
       setStreaming,
       currentModelId,
       updateStreamingOutput,
+      needsEagerApprovalCheck,
     ],
   );
 
@@ -3278,7 +3398,8 @@ export default function App({
   const checkPendingApprovalsForSlashCommand = useCallback(async (): Promise<
     { blocked: true } | { blocked: false }
   > => {
-    if (!CHECK_PENDING_APPROVALS_BEFORE_SEND) {
+    // Only check eagerly when resuming a session (LET-7101)
+    if (!needsEagerApprovalCheck) {
       return { blocked: false };
     }
 
@@ -3425,7 +3546,13 @@ export default function App({
       // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
-  }, [agentId, processConversation, refreshDerived, updateStreamingOutput]);
+  }, [
+    agentId,
+    processConversation,
+    refreshDerived,
+    updateStreamingOutput,
+    needsEagerApprovalCheck,
+  ]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs read .current dynamically, complex callback with intentional deps
   const onSubmit = useCallback(
@@ -5372,7 +5499,20 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
-      if (CHECK_PENDING_APPROVALS_BEFORE_SEND && !queuedApprovalResults) {
+      // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
+      if (needsEagerApprovalCheck && !queuedApprovalResults) {
+        // Log for debugging
+        const eagerStatusId = uid("status");
+        buffersRef.current.byId.set(eagerStatusId, {
+          kind: "status",
+          id: eagerStatusId,
+          lines: [
+            "[EAGER CHECK] Checking for pending approvals (resume mode)...",
+          ],
+        });
+        buffersRef.current.order.push(eagerStatusId);
+        refreshDerived();
+
         try {
           const client = await getClient();
           // Fetch fresh agent state to check for pending approvals with accurate in-context messages
@@ -5381,6 +5521,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             client,
             agent,
             conversationIdRef.current,
+          );
+
+          // Remove eager check status
+          buffersRef.current.byId.delete(eagerStatusId);
+          buffersRef.current.order = buffersRef.current.order.filter(
+            (id) => id !== eagerStatusId,
           );
 
           // Check if user cancelled while we were fetching approval state
