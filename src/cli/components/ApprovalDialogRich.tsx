@@ -548,15 +548,15 @@ export const ApprovalDialog = memo(function ApprovalDialog({
   // Main input handler - disabled when entering denial reason to let PasteAwareTextInput handle input
   useInput(
     (_input, key) => {
-      if (isExecuting) return;
-
-      // Handle CTRL-C to cancel all approvals
+      // Always allow CTRL-C to cancel, even when executing
       if (key.ctrl && _input === "c") {
         if (onCancel) {
           onCancel();
         }
         return;
       }
+
+      if (isExecuting) return;
 
       if (key.escape) {
         // Shortcut: ESC immediately opens the deny reason prompt
