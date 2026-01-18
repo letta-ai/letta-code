@@ -1,13 +1,13 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env bun
 /**
  * Skill Packager - Creates a distributable .skill file of a skill folder
  *
  * Usage:
- *   npx ts-node package-skill.ts <path/to/skill-folder> [output-directory]
+ *   bun package-skill.ts <path/to/skill-folder> [output-directory]
  *
  * Example:
- *   npx ts-node package-skill.ts .skills/my-skill
- *   npx ts-node package-skill.ts .skills/my-skill ./dist
+ *   bun package-skill.ts .skills/my-skill
+ *   bun package-skill.ts .skills/my-skill ./dist
  */
 
 import {
@@ -244,11 +244,11 @@ if (require.main === module) {
 
   if (args.length < 1) {
     console.log(
-      "Usage: npx ts-node package-skill.ts <path/to/skill-folder> [output-directory]",
+      "Usage: bun package-skill.ts <path/to/skill-folder> [output-directory]",
     );
     console.log("\nExample:");
-    console.log("  npx ts-node package-skill.ts .skills/my-skill");
-    console.log("  npx ts-node package-skill.ts .skills/my-skill ./dist");
+    console.log("  bun package-skill.ts .skills/my-skill");
+    console.log("  bun package-skill.ts .skills/my-skill ./dist");
     process.exit(1);
   }
 
