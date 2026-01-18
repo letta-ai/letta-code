@@ -18,10 +18,12 @@ import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
+import { preloadSkillsContent } from "../../tools/impl/Skill";
 import { getErrorMessage } from "../../utils/error";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { resolveModelByLlmConfig } from "../model";
+import { SKILLS_DIR } from "../skills";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
@@ -306,6 +308,7 @@ function buildSubagentArgs(
   config: SubagentConfig,
   model: string,
   userPrompt: string,
+  preloadedSkillsContent?: string,
 ): string[] {
   const args: string[] = [
     "--new-agent",
@@ -360,6 +363,11 @@ function buildSubagentArgs(
     args.push("--tools", config.allowedTools.join(","));
   }
 
+  // Add pre-loaded skills content if provided
+  if (preloadedSkillsContent) {
+    args.push("--block-value", `loaded_skills=${preloadedSkillsContent}`);
+  }
+
   return args;
 }
 
@@ -390,7 +398,22 @@ async function executeSubagent(
   updateSubagent(subagentId, { model });
 
   try {
-    const cliArgs = buildSubagentArgs(type, config, model, userPrompt);
+    // Pre-load skills if configured
+    let preloadedSkillsContent: string | undefined;
+    if (config.skills && config.skills.length > 0) {
+      preloadedSkillsContent = await preloadSkillsContent(
+        config.skills,
+        SKILLS_DIR,
+      );
+    }
+
+    const cliArgs = buildSubagentArgs(
+      type,
+      config,
+      model,
+      userPrompt,
+      preloadedSkillsContent,
+    );
 
     // Spawn Letta Code in headless mode.
     // Some environments may have a different `letta` binary earlier in PATH.

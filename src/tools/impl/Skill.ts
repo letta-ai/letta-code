@@ -410,3 +410,46 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     throw new Error(`Failed to ${command} skill(s): ${String(error)}`);
   }
 }
+
+/**
+ * Pre-load skills and return formatted content for the loaded_skills block.
+ * This is used by subagent manager to pre-populate skills before the agent starts.
+ */
+export async function preloadSkillsContent(
+  skillIds: string[],
+  skillsDir: string,
+): Promise<string> {
+  if (skillIds.length === 0) {
+    return "No skills currently loaded.";
+  }
+
+  let content = "";
+
+  for (const skillId of skillIds) {
+    try {
+      const { content: skillContent, path: skillPath } = await readSkillContent(
+        skillId,
+        skillsDir,
+      );
+
+      const skillDir = dirname(skillPath);
+      const hasExtras = hasAdditionalFiles(skillPath);
+      const pathLine = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
+
+      // Replace <SKILL_DIR> placeholder with actual path
+      const processedContent = hasExtras
+        ? skillContent.replace(/<SKILL_DIR>/g, skillDir)
+        : skillContent;
+
+      const separator = content ? "\n\n---\n\n" : "";
+      content = `${content}${separator}# Skill: ${skillId}\n${pathLine}${processedContent}`;
+    } catch (error) {
+      // Skip skills that can't be loaded
+      console.error(
+        `Warning: Could not pre-load skill "${skillId}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return content || "No skills currently loaded.";
+}
