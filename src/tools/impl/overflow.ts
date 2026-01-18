@@ -113,17 +113,33 @@ export function cleanupOldOverflowFiles(
     return 0;
   }
 
-  const files = fs.readdirSync(overflowDir);
+  let files: string[];
+  try {
+    files = fs.readdirSync(overflowDir);
+  } catch {
+    // Directory may have been deleted or become inaccessible
+    return 0;
+  }
+
   const now = Date.now();
   let deletedCount = 0;
 
   for (const file of files) {
     const filePath = path.join(overflowDir, file);
-    const stats = fs.statSync(filePath);
+    try {
+      const stats = fs.statSync(filePath);
 
-    if (now - stats.mtimeMs > maxAgeMs) {
-      fs.unlinkSync(filePath);
-      deletedCount++;
+      // Skip directories (shouldn't exist, but be safe)
+      if (stats.isDirectory()) {
+        continue;
+      }
+
+      if (now - stats.mtimeMs > maxAgeMs) {
+        fs.unlinkSync(filePath);
+        deletedCount++;
+      }
+    } catch {
+      // File may have been deleted, or permission error - skip it
     }
   }
 

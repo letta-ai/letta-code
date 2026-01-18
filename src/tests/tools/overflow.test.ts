@@ -170,6 +170,33 @@ describe("overflow utilities", () => {
 
       expect(deletedCount).toBe(0);
     });
+
+    test("skips subdirectories without crashing", () => {
+      // Create a test file and a subdirectory
+      const content = "Test content";
+      const filePath = writeOverflowFile(content, testWorkingDir, "TestTool");
+
+      // Create a subdirectory in the overflow dir
+      const subDir = path.join(path.dirname(filePath), "subdir");
+      fs.mkdirSync(subDir, { recursive: true });
+
+      // Make the file old
+      const oldTime = Date.now() - 48 * 60 * 60 * 1000;
+      fs.utimesSync(filePath, new Date(oldTime), new Date(oldTime));
+
+      // Cleanup should skip the directory and only delete the file
+      const deletedCount = cleanupOldOverflowFiles(
+        testWorkingDir,
+        24 * 60 * 60 * 1000,
+      );
+
+      expect(deletedCount).toBe(1);
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(fs.existsSync(subDir)).toBe(true);
+
+      // Clean up the subdir
+      fs.rmdirSync(subDir);
+    });
   });
 
   describe("getOverflowStats", () => {
