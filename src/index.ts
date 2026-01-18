@@ -380,6 +380,7 @@ async function main(): Promise<void> {
         continue: { type: "boolean" }, // Deprecated - kept for error message
         resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
         conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
+        default: { type: "boolean" }, // Alias for --conv default (use agent's default conversation)
         "new-agent": { type: "boolean" }, // Force create a new agent
         new: { type: "boolean" }, // Deprecated - kept for helpful error message
         "init-blocks": { type: "string" },
@@ -461,9 +462,21 @@ async function main(): Promise<void> {
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
   // --resume: Open agent selector UI after loading
   const shouldResume = (values.resume as boolean | undefined) ?? false;
-  const specifiedConversationId =
+  let specifiedConversationId =
     (values.conversation as string | undefined) ?? null; // Specific conversation to resume
+  const useDefaultConv = (values.default as boolean | undefined) ?? false; // --default flag
   const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
+
+  // Handle --default flag (alias for --conv default)
+  if (useDefaultConv) {
+    if (specifiedConversationId && specifiedConversationId !== "default") {
+      console.error(
+        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
+      );
+      process.exit(1);
+    }
+    specifiedConversationId = "default";
+  }
 
   // Check for deprecated --new flag
   if (values.new) {
@@ -477,6 +490,27 @@ async function main(): Promise<void> {
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   let specifiedAgentId = (values.agent as string | undefined) ?? null;
+
+  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
+  if (specifiedConversationId?.startsWith("agent-")) {
+    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
+      console.error(
+        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
+      );
+      process.exit(1);
+    }
+    specifiedAgentId = specifiedConversationId;
+    specifiedConversationId = "default";
+  }
+
+  // Validate --conv default requires --agent
+  if (specifiedConversationId === "default" && !specifiedAgentId) {
+    console.error("Error: --conv default requires --agent <agent-id>");
+    console.error("Usage: letta --agent agent-xyz --conv default");
+    console.error("   or: letta --conv agent-xyz (shorthand)");
+    process.exit(1);
+  }
+
   const specifiedAgentName = (values.name as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
   const systemPromptPreset = (values.system as string | undefined) ?? undefined;
@@ -613,7 +647,8 @@ async function main(): Promise<void> {
   }
 
   // Validate --conversation flag (mutually exclusive with agent-selection flags)
-  if (specifiedConversationId) {
+  // Exception: --conv default requires --agent
+  if (specifiedConversationId && specifiedConversationId !== "default") {
     if (specifiedAgentId) {
       console.error("Error: --conversation cannot be used with --agent");
       process.exit(1);
@@ -1024,8 +1059,23 @@ async function main(): Promise<void> {
         // =====================================================================
         // TOP-LEVEL PATH: --conversation <id>
         // Conversation ID is unique, so we can derive the agent from it
+        // (except for "default" which requires --agent flag, validated above)
         // =====================================================================
         if (specifiedConversationId) {
+          if (specifiedConversationId === "default") {
+            // "default" requires --agent (validated in flag preprocessing above)
+            // Use the specified agent directly, skip conversation validation
+            // TypeScript can't see the validation above, but specifiedAgentId is guaranteed
+            if (!specifiedAgentId) {
+              throw new Error("Unreachable: --conv default requires --agent");
+            }
+            setSelectedGlobalAgentId(specifiedAgentId);
+            setSelectedConversationId("default");
+            setLoadingState("assembling");
+            return;
+          }
+
+          // For explicit conversations, derive agent from conversation
           try {
             const conversation = await client.conversations.retrieve(
               specifiedConversationId,

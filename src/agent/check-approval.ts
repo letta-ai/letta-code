@@ -102,11 +102,16 @@ function prepareMessageHistory(messages: Message[]): Message[] {
 }
 
 /**
- * Fetch messages in descending order (newest first) and reverse to get chronological.
- * This gives us the most recent N messages in chronological order.
+ * Sort messages chronologically (oldest first) by date.
+ * The API doesn't guarantee order, so we must sort explicitly.
  */
-function reverseToChronological(messages: Message[]): Message[] {
-  return [...messages].reverse();
+function sortChronological(messages: Message[]): Message[] {
+  return [...messages].sort((a, b) => {
+    // All message types have 'date' field
+    const dateA = a.date ?? "";
+    const dateB = b.date ?? "";
+    return new Date(dateA).getTime() - new Date(dateB).getTime();
+  });
 }
 
 /**
@@ -130,7 +135,17 @@ export async function getResumeData(
     let inContextMessageIds: string[] | null | undefined;
     let messages: Message[];
 
-    if (conversationId) {
+    // Use conversations API for explicit conversations,
+    // use agents API for "default" or no conversationId (agent's primary message history)
+    const useConversationsApi = conversationId && conversationId !== "default";
+
+    if (process.env.DEBUG) {
+      console.log(
+        `[DEBUG] getResumeData: conversationId=${conversationId}, useConversationsApi=${useConversationsApi}, agentId=${agent.id}`,
+      );
+    }
+
+    if (useConversationsApi) {
       // Get conversation to access in_context_message_ids (source of truth)
       const conversation = await client.conversations.retrieve(conversationId);
       inContextMessageIds = conversation.in_context_message_ids;
@@ -148,9 +163,7 @@ export async function getResumeData(
           return {
             pendingApproval: null,
             pendingApprovals: [],
-            messageHistory: reverseToChronological(
-              backfill.getPaginatedItems(),
-            ),
+            messageHistory: sortChronological(backfill.getPaginatedItems()),
           };
         }
         return {
@@ -176,7 +189,7 @@ export async function getResumeData(
           })
         : null;
       messages = backfillPage
-        ? reverseToChronological(backfillPage.getPaginatedItems())
+        ? sortChronological(backfillPage.getPaginatedItems())
         : [];
 
       // Find the approval_request_message variant if it exists
@@ -218,25 +231,16 @@ export async function getResumeData(
         messageHistory: prepareMessageHistory(messages),
       };
     } else {
-      // Legacy: fall back to agent messages (no conversation ID)
+      // Use agent messages API for "default" conversation or when no conversation ID
+      // (agent's primary message history without explicit conversation isolation)
       inContextMessageIds = agent.message_ids;
 
       if (!inContextMessageIds || inContextMessageIds.length === 0) {
         debugWarn(
           "check-approval",
-          "No in-context messages (legacy) - no pending approvals",
+          "No in-context messages (default/agent API) - no pending approvals",
         );
-        if (isBackfillEnabled()) {
-          const messagesPage = await client.agents.messages.list(agent.id, {
-            limit: MESSAGE_HISTORY_LIMIT,
-            order: "desc",
-          });
-          return {
-            pendingApproval: null,
-            pendingApprovals: [],
-            messageHistory: reverseToChronological(messagesPage.items),
-          };
-        }
+        // No in-context messages = empty default conversation, don't show random history
         return {
           pendingApproval: null,
           pendingApprovals: [],
@@ -252,14 +256,22 @@ export async function getResumeData(
       }
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
-      // Fetch message history separately for backfill (desc then reverse for last N chronological)
+      // Fetch message history for backfill using conversation_id=default
+      // This filters to only the default conversation's messages (like the ADE does)
       const messagesPage = isBackfillEnabled()
         ? await client.agents.messages.list(agent.id, {
             limit: MESSAGE_HISTORY_LIMIT,
             order: "desc",
+            conversation_id: "default", // Key: filter to default conversation only
           })
         : null;
-      messages = messagesPage ? reverseToChronological(messagesPage.items) : [];
+      messages = messagesPage ? sortChronological(messagesPage.items) : [];
+
+      if (process.env.DEBUG && messagesPage) {
+        console.log(
+          `[DEBUG] agents.messages.list(conversation_id=default) returned ${messagesPage.items.length} messages`,
+        );
+      }
 
       // Find the approval_request_message variant if it exists
       const messageToCheck =
@@ -288,7 +300,7 @@ export async function getResumeData(
       } else {
         debugWarn(
           "check-approval",
-          `Last in-context message ${lastInContextId} not found via retrieve (legacy)`,
+          `Last in-context message ${lastInContextId} not found via retrieve (default/agent API)`,
         );
       }
 

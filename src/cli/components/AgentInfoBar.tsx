@@ -79,7 +79,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         <Text dimColor>{"  "}</Text>
         {isCloudUser && (
           <Link
-            url={`https://app.letta.com/agents/${agentId}${conversationId ? `?conversation=${conversationId}` : ""}`}
+            url={`https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`}
           >
             <Text>Open in ADE ↗</Text>
           </Link>
