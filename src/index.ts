@@ -1740,7 +1740,6 @@ async function main(): Promise<void> {
           conversationIdToUse = conversation.id;
         } else {
           // Default (including --new-agent): use the agent's "default" conversation
-          // Default: use the agent's "default" conversation (OG single-threaded behavior)
           conversationIdToUse = "default";
 
           // Load message history from the default conversation
