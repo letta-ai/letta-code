@@ -16,7 +16,7 @@ npm install -g @letta-ai/letta-code
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
 > [!NOTE]
->  By default, Letta Code will connect to the [Letta API](https://app.letta.com/) (includes a free tier), which you can connect to via OAuth or setting a `LETTA_API_KEY`. You can also connect it to a [Docker server](https://docs.letta.com/letta-code/configuration#self-hosted-server) by setting `LETTA_BASE_URL`
+>  By default, Letta Code will connect to the [Letta API](https://app.letta.com/) (includes a free tier), which you can connect to via OAuth or setting a `LETTA_API_KEY`. You can also connect it to a [Docker server](https://docs.letta.com/letta-code/configuration#docker) by setting `LETTA_BASE_URL`
 
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
