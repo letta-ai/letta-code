@@ -29,7 +29,8 @@ await Bun.build({
     entry: "letta.js",
   },
   define: {
-    "process.env.LETTA_VERSION": JSON.stringify(version),
+    LETTA_VERSION: JSON.stringify(version),
+    BUILD_TIME: JSON.stringify(new Date().toISOString()),
   },
   // Load text files as strings (for markdown, etc.)
   loader: {
@@ -48,7 +49,14 @@ if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
 
-const withShebang = `#!/usr/bin/env node\n${content}`;
+// Patch secrets requirement back in for node build
+content = content.replace(
+  `(()=>{throw new Error("Cannot require module "+"bun");})().secrets`,
+  `globalThis.Bun.secrets`,
+);
+
+const withShebang = `#!/usr/bin/env node
+${content}`;
 await Bun.write(outputPath, withShebang);
 
 // Make executable
@@ -67,8 +75,11 @@ if (existsSync(bundledSkillsSrc)) {
   console.log("📂 Copied bundled skills to skills/");
 }
 
+// Generate type declarations for wire types export
+console.log("📝 Generating type declarations...");
+await Bun.$`bunx tsc -p tsconfig.types.json`;
+console.log("   Output: dist/types/protocol.d.ts");
+
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log(
-  `   Size: ${((await Bun.file(outputPath).size) / 1024).toFixed(0)}KB`,
-);
+console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);

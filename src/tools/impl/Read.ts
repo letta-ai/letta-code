@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -28,26 +29,18 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
         if (buffer[i] === 0) return true;
       }
 
-      // Try to decode as UTF-8 and check if valid
-      try {
-        const text = buffer.slice(0, bytesRead).toString("utf-8");
-        // Check for replacement characters (indicates invalid UTF-8)
-        if (text.includes("\uFFFD")) return true;
-
-        // Count control characters (excluding whitespace)
-        let controlCharCount = 0;
-        for (let i = 0; i < text.length; i++) {
-          const code = text.charCodeAt(i);
-          // Allow tab(9), newline(10), carriage return(13)
-          if (code < 9 || (code > 13 && code < 32)) {
-            controlCharCount++;
-          }
+      // Count control characters (excluding whitespace)
+      // This catches files that are mostly control characters but lack null bytes
+      const text = buffer.slice(0, bytesRead).toString("utf-8");
+      let controlCharCount = 0;
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        // Allow tab(9), newline(10), carriage return(13)
+        if (code < 9 || (code > 13 && code < 32)) {
+          controlCharCount++;
         }
-        return controlCharCount / text.length > 0.3;
-      } catch {
-        // Invalid UTF-8 = binary
-        return true;
       }
+      return controlCharCount / text.length > 0.3;
     } finally {
       await fd.close();
     }
@@ -60,6 +53,7 @@ function formatWithLineNumbers(
   content: string,
   offset?: number,
   limit?: number,
+  workingDirectory?: string,
 ): string {
   const lines = content.split("\n");
   const originalLineCount = lines.length;
@@ -96,6 +90,21 @@ function formatWithLineNumbers(
   const notices: string[] = [];
   const wasTruncatedByLineCount = actualEndLine < originalLineCount;
 
+  // Write to overflow file if content was truncated and overflow is enabled
+  let overflowPath: string | undefined;
+  if (
+    (wasTruncatedByLineCount || linesWereTruncatedInLength) &&
+    OVERFLOW_CONFIG.ENABLED &&
+    workingDirectory
+  ) {
+    try {
+      overflowPath = writeOverflowFile(content, workingDirectory, "Read");
+    } catch (error) {
+      // Silently fail if overflow file creation fails
+      console.error("Failed to write overflow file:", error);
+    }
+  }
+
   if (wasTruncatedByLineCount && !limit) {
     // Only show this notice if user didn't explicitly set a limit
     notices.push(
@@ -107,6 +116,10 @@ function formatWithLineNumbers(
     notices.push(
       `\n\n[Some lines exceeded ${LIMITS.READ_MAX_CHARS_PER_LINE.toLocaleString()} characters and were truncated.]`,
     );
+  }
+
+  if (overflowPath) {
+    notices.push(`\n\n[Full file content written to: ${overflowPath}]`);
   }
 
   if (notices.length > 0) {
@@ -140,7 +153,12 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
         content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
       };
     }
-    const formattedContent = formatWithLineNumbers(content, offset, limit);
+    const formattedContent = formatWithLineNumbers(
+      content,
+      offset,
+      limit,
+      userCwd,
+    );
     return { content: formattedContent };
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

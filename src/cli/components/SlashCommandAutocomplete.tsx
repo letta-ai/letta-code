@@ -176,12 +176,10 @@ export function SlashCommandAutocomplete({
     startIndex,
     startIndex + VISIBLE_COMMANDS,
   );
-  const showScrollUp = startIndex > 0;
   const showScrollDown = startIndex + VISIBLE_COMMANDS < totalMatches;
 
   return (
-    <AutocompleteBox header="↑↓ navigate, Tab autocomplete, Enter execute">
-      {showScrollUp && <Text dimColor> ↑ {startIndex} more above</Text>}
+    <AutocompleteBox>
       {visibleMatches.map((item, idx) => {
         const actualIndex = startIndex + idx;
         return (
@@ -194,12 +192,13 @@ export function SlashCommandAutocomplete({
           </AutocompleteItem>
         );
       })}
-      {showScrollDown && (
+      {showScrollDown ? (
         <Text dimColor>
-          {" "}
-          ↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
+          {"  "}↓ {totalMatches - startIndex - VISIBLE_COMMANDS} more below
         </Text>
-      )}
+      ) : needsScrolling ? (
+        <Text> </Text>
+      ) : null}
     </AutocompleteBox>
   );
 }

@@ -53,7 +53,56 @@ const useInput = (inputHandler, options = {}) => {
                 return;
             }
 
-            const keypress = parseKeypress(data);
+            let keypress = parseKeypress(data);
+            
+            // CSI u fallback: iTerm2 3.5+, Kitty, and other modern terminals send
+            // keys in CSI u format: ESC [ keycode ; modifier u
+            // or with event type: ESC [ keycode ; modifier : event u
+            // parseKeypress doesn't handle this, so we parse it ourselves as a fallback
+            if (!keypress.name && typeof data === 'string') {
+                // Match CSI u: ESC [ keycode ; modifier u  OR  ESC [ keycode ; modifier : event u
+                const csiUMatch = data.match(/^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?u$/);
+                if (csiUMatch) {
+                    const keycode = parseInt(csiUMatch[1], 10);
+                    const modifier = parseInt(csiUMatch[2] || '1', 10) - 1;
+                    const event = csiUMatch[3] ? parseInt(csiUMatch[3], 10) : 1;
+                    
+                    // Ignore key release events (event=3)
+                    if (event === 3) {
+                        return;
+                    }
+                    
+                    // Map keycodes to names
+                    const csiUKeyMap = {
+                        9: 'tab',
+                        13: 'return',
+                        27: 'escape',
+                        127: 'backspace',
+                    };
+                    
+                    let name = csiUKeyMap[keycode] || '';
+                    
+                    // Handle letter keycodes (a-z: 97-122, A-Z: 65-90)
+                    if (!name && keycode >= 97 && keycode <= 122) {
+                        name = String.fromCharCode(keycode); // lowercase letter
+                    } else if (!name && keycode >= 65 && keycode <= 90) {
+                        name = String.fromCharCode(keycode + 32); // convert to lowercase
+                    }
+                    
+                    if (name) {
+                        keypress = {
+                            name,
+                            ctrl: !!(modifier & 4),
+                            meta: !!(modifier & 10),
+                            shift: !!(modifier & 1),
+                            option: false,
+                            sequence: data,
+                            raw: data,
+                        };
+                    }
+                }
+            }
+            
             const key = {
                 upArrow: keypress.name === 'up',
                 downArrow: keypress.name === 'down',
@@ -71,6 +120,15 @@ const useInput = (inputHandler, options = {}) => {
                 meta: keypress.meta || keypress.name === 'escape' || keypress.option,
                 isPasted: false
             };
+
+            // Debug logging for key parsing (LETTA_DEBUG_KEYS=1)
+            if (process.env.LETTA_DEBUG_KEYS === '1') {
+                const rawHex = typeof data === 'string'
+                    ? [...data].map(c => '0x' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ')
+                    : '(non-string)';
+                // eslint-disable-next-line no-console
+                console.error(`[debug:ink-keypress] raw=${rawHex} name="${keypress.name}" seq="${keypress.sequence}" key={escape:${key.escape},tab:${key.tab},shift:${key.shift},ctrl:${key.ctrl},meta:${key.meta}}`);
+            }
 
             let input = keypress.ctrl ? keypress.name : keypress.sequence;
             const seq = typeof keypress.sequence === 'string' ? keypress.sequence : '';

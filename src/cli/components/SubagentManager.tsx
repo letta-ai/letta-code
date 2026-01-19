@@ -63,7 +63,13 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
     loadSubagents();
   }, []);
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
+    // CTRL-C: immediately close
+    if (key.ctrl && input === "c") {
+      onClose();
+      return;
+    }
+
     if (key.escape || key.return) {
       onClose();
     }

@@ -277,7 +277,7 @@ test("plan mode - denies Write", () => {
   expect(result.reason).toContain("Plan mode is active");
 });
 
-test("plan mode - denies Bash", () => {
+test("plan mode - denies non-read-only Bash", () => {
   permissionMode.setMode("plan");
 
   const permissions: PermissionRules = {
@@ -288,13 +288,96 @@ test("plan mode - denies Bash", () => {
 
   const result = checkPermission(
     "Bash",
-    { command: "ls" },
+    { command: "npm install" },
     permissions,
     "/Users/test/project",
   );
 
   expect(result.decision).toBe("deny");
   expect(result.matchedRule).toBe("plan mode");
+});
+
+test("plan mode - allows read-only Bash commands", () => {
+  permissionMode.setMode("plan");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  // ls should be allowed
+  const lsResult = checkPermission(
+    "Bash",
+    { command: "ls -la" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(lsResult.decision).toBe("allow");
+  expect(lsResult.matchedRule).toBe("plan mode");
+
+  // git status should be allowed
+  const gitStatusResult = checkPermission(
+    "Bash",
+    { command: "git status" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(gitStatusResult.decision).toBe("allow");
+
+  // git log should be allowed
+  const gitLogResult = checkPermission(
+    "Bash",
+    { command: "git log --oneline -10" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(gitLogResult.decision).toBe("allow");
+
+  // git diff should be allowed
+  const gitDiffResult = checkPermission(
+    "Bash",
+    { command: "git diff HEAD~1" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(gitDiffResult.decision).toBe("allow");
+
+  // cd && git should be allowed (common CLI pattern)
+  const cdGitResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && git status" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdGitResult.decision).toBe("allow");
+
+  // cd && git show should be allowed
+  const cdGitShowResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && git show abc123" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdGitShowResult.decision).toBe("allow");
+
+  // chained safe commands with ; should be allowed
+  const chainedResult = checkPermission(
+    "Bash",
+    { command: "ls; pwd; git status" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(chainedResult.decision).toBe("allow");
+
+  // cd && dangerous command should still be denied
+  const cdDangerousResult = checkPermission(
+    "Bash",
+    { command: "cd /some/path && npm install" },
+    permissions,
+    "/Users/test/project",
+  );
+  expect(cdDangerousResult.decision).toBe("deny");
 });
 
 test("plan mode - denies WebFetch", () => {
@@ -354,9 +437,10 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
     ask: [],
   };
 
+  // Use a non-read-only command to test precedence
   const result = checkPermission(
     "Bash",
-    { command: "ls" },
+    { command: "npm install" },
     permissions,
     "/Users/test/project",
   );

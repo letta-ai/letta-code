@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
 import { Box, Text } from "ink";
+import { useEffect, useState } from "react";
 
 import type { AgentProvenance } from "../../agent/create";
+import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -21,9 +23,19 @@ function toTildePath(absolutePath: string): string {
 }
 
 /**
- * Determine the auth method used
+ * Synchronously determine auth method from env vars (for initial render).
+ * Returns null if we need to check keychain/settings asynchronously.
  */
-function getAuthMethod(): "url" | "api-key" | "oauth" {
+function getInitialAuthMethod(): "url" | "api-key" | null {
+  if (process.env.LETTA_BASE_URL) return "url";
+  if (process.env.LETTA_API_KEY) return "api-key";
+  return null; // Need async check for keychain/settings
+}
+
+/**
+ * Determine the auth method used (async for keychain access)
+ */
+async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
   // Check if custom URL is being used
   if (process.env.LETTA_BASE_URL) {
     return "url";
@@ -32,12 +44,12 @@ function getAuthMethod(): "url" | "api-key" | "oauth" {
   if (process.env.LETTA_API_KEY) {
     return "api-key";
   }
-  // Check settings for refresh token (OAuth)
-  const settings = settingsManager.getSettings();
+  // Check settings for refresh token (OAuth) from keychain tokens
+  const settings = await settingsManager.getSettingsWithSecureTokens();
   if (settings.refreshToken) {
     return "oauth";
   }
-  // Check if API key stored in settings
+  // Check if API key stored in settings or keychain
   if (settings.env?.LETTA_API_KEY) {
     return "api-key";
   }
@@ -46,46 +58,11 @@ function getAuthMethod(): "url" | "api-key" | "oauth" {
 
 type LoadingState =
   | "assembling"
-  | "upserting"
-  | "updating_tools"
   | "importing"
   | "initializing"
   | "checking"
   | "selecting_global"
   | "ready";
-
-/**
- * Generate status hints based on session type and block provenance.
- * Pure function - no React dependencies.
- */
-export function getAgentStatusHints(
-  continueSession: boolean,
-  agentState?: Letta.AgentState | null,
-  _agentProvenance?: AgentProvenance | null,
-): string[] {
-  const hints: string[] = [];
-
-  // For resumed agents, show memory blocks and --new hint
-  if (continueSession) {
-    if (agentState?.memory?.blocks) {
-      const blocks = agentState.memory.blocks;
-      const count = blocks.length;
-      const labels = blocks
-        .map((b) => b.label)
-        .filter(Boolean)
-        .join(", ");
-      if (labels) {
-        hints.push(
-          `→ Attached ${count} memory block${count !== 1 ? "s" : ""}: ${labels}`,
-        );
-      }
-    }
-    hints.push("→ To create a new agent, use --new");
-    return hints;
-  }
-
-  return hints;
-}
 
 export function WelcomeScreen({
   loadingState,
@@ -105,12 +82,29 @@ export function WelcomeScreen({
 
   const tildePath = toTildePath(cwd);
 
-  // Get model from agent state - just the last part (after last /)
-  const fullModel = agentState?.model || agentState?.llm_config?.model;
-  const model = fullModel?.split("/").pop();
+  // Get model display name (pretty name if available, otherwise last part of handle)
+  // Build full model handle from llm_config (model_endpoint_type/model) like App.tsx does
+  const llmConfig = agentState?.llm_config;
+  const fullModel =
+    llmConfig?.model_endpoint_type && llmConfig?.model
+      ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+      : (llmConfig?.model ?? null);
+  const model = fullModel
+    ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
+    : undefined;
 
-  // Get auth method
-  const authMethod = getAuthMethod();
+  // Get auth method - use sync check for env vars, async only for keychain
+  const initialAuth = getInitialAuthMethod();
+  const [authMethod, setAuthMethod] = useState<"url" | "api-key" | "oauth">(
+    initialAuth ?? "oauth",
+  );
+
+  useEffect(() => {
+    // Only run async check if env vars didn't determine auth method
+    if (!initialAuth) {
+      getAuthMethod().then(setAuthMethod);
+    }
+  }, [initialAuth]);
   const authDisplay =
     authMethod === "url"
       ? process.env.LETTA_BASE_URL || "Custom URL"
@@ -156,10 +150,6 @@ function getLoadingMessage(
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
       return "Assembling tools...";
-    case "upserting":
-      return "Upserting tools...";
-    case "updating_tools":
-      return "Updating tools...";
     case "importing":
       return "Importing agent...";
     case "checking":

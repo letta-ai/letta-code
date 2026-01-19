@@ -1,22 +1,26 @@
 import { Box, Text } from "ink";
 import Link from "ink-link";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
+import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
+import { getVersion } from "../../version";
 import { colors } from "./colors";
 
 interface AgentInfoBarProps {
   agentId?: string;
   agentName?: string | null;
   serverUrl?: string;
+  conversationId?: string;
 }
 
 /**
- * Shows agent info bar with current agent details and useful links
+ * Shows agent info bar with current agent details and useful links.
  */
-export function AgentInfoBar({
+export const AgentInfoBar = memo(function AgentInfoBar({
   agentId,
   agentName,
   serverUrl,
+  conversationId,
 }: AgentInfoBarProps) {
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
@@ -34,38 +38,60 @@ export function AgentInfoBar({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={colors.command.border}
-      paddingX={1}
-      marginBottom={1}
-    >
+    <Box flexDirection="column">
+      {/* Blank line after commands */}
+      <Box height={1} />
+
+      {/* Discord/version info */}
       <Box>
-        <Text color="gray">Current agent: </Text>
-        <Text bold>{agentName || "Unnamed"}</Text>
+        <Text>
+          {"  "}Having issues? Report bugs with /feedback or{" "}
+          <Link url="https://discord.gg/letta">
+            <Text>join our Discord ↗</Text>
+          </Link>
+        </Text>
+      </Box>
+      <Box>
+        <Text>
+          {"  "}Version: Letta Code v{getVersion()}
+        </Text>
+      </Box>
+
+      {/* Blank line before agent info */}
+      <Box height={1} />
+
+      {/* Agent name and links */}
+      <Box>
+        <Text>{"  "}</Text>
+        <Text bold color={colors.footer.agentName}>
+          {agentName || "Unnamed"}
+        </Text>
         {isPinned ? (
           <Text color="green"> (pinned ✓)</Text>
+        ) : agentName === DEFAULT_AGENT_NAME || !agentName ? (
+          <Text color="gray"> (type /pin to give your agent a real name!)</Text>
         ) : (
           <Text color="gray"> (type /pin to pin agent)</Text>
         )}
+        <Text dimColor> · {agentId}</Text>
       </Box>
       <Box>
-        <Text dimColor>{agentId}</Text>
+        <Text dimColor>{"  "}</Text>
         {isCloudUser && (
-          <>
-            <Text dimColor> · </Text>
-            <Link url={`https://app.letta.com/agents/${agentId}`}>
-              <Text color={colors.link.text}>Open in ADE ↗</Text>
-            </Link>
-            <Text dimColor> · </Text>
-            <Link url="https://app.letta.com/settings/organization/usage">
-              <Text color={colors.link.text}>View usage ↗</Text>
-            </Link>
-          </>
+          <Link
+            url={`https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`}
+          >
+            <Text>Open in ADE ↗</Text>
+          </Link>
         )}
-        {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
+        {isCloudUser && <Text dimColor>{" · "}</Text>}
+        {isCloudUser && (
+          <Link url="https://app.letta.com/settings/organization/usage">
+            <Text>View usage ↗</Text>
+          </Link>
+        )}
+        {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
     </Box>
   );
-}
+});

@@ -83,21 +83,32 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         deviceId,
         deviceName,
       )
-        .then((tokens) => {
-          // Save tokens
+        .then(async (tokens) => {
+          // Save tokens using secrets for secure storage
           // Note: LETTA_BASE_URL is intentionally NOT saved to settings
           // It should only come from environment variables
           const now = Date.now();
-          settingsManager.updateSettings({
-            env: {
-              ...settingsManager.getSettings().env,
-              LETTA_API_KEY: tokens.access_token,
-            },
-            refreshToken: tokens.refresh_token,
-            tokenExpiresAt: now + tokens.expires_in * 1000,
-          });
-          setMode("done");
-          setTimeout(() => onComplete(), 1000);
+
+          try {
+            // Update settings with non-sensitive data and tokens (secrets handles secure storage)
+            settingsManager.updateSettings({
+              env: {
+                ...settingsManager.getSettings().env,
+                LETTA_API_KEY: tokens.access_token,
+              },
+              refreshToken: tokens.refresh_token,
+              tokenExpiresAt: now + tokens.expires_in * 1000,
+            });
+
+            // Wait for all pending writes (keychain, disk) to complete before continuing
+            // This prevents a race condition where main() validation runs before tokens are persisted
+            await settingsManager.flush();
+
+            setMode("done");
+            setTimeout(() => onComplete(), 1000);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
         })
         .catch((err) => {
           setError(err.message);

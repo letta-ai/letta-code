@@ -1,4 +1,6 @@
 import { parseArgs } from "node:util";
+import type { Letta } from "@letta-ai/letta-client";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -6,9 +8,16 @@ import type {
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
+import {
+  buildApprovalRecoveryMessage,
+  fetchRunErrorDetail,
+  isApprovalPendingError,
+  isApprovalStateDesyncError,
+} from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -21,12 +30,28 @@ import {
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
+import { StreamProcessor } from "./cli/helpers/streamProcessor";
 import { settingsManager } from "./settings-manager";
+import { checkToolPermission } from "./tools/manager";
+import type {
+  AutoApprovalMessage,
+  CanUseToolControlRequest,
+  CanUseToolResponse,
+  ControlRequest,
+  ControlResponse,
+  ErrorMessage,
+  MessageWire,
+  RecoveryMessage,
+  ResultMessage,
+  RetryMessage,
+  StreamEvent,
+  SystemInitMessage,
+} from "./types/protocol";
 import {
-  checkToolPermission,
-  forceUpsertTools,
-  isToolsNotFoundError,
-} from "./tools/manager";
+  markMilestone,
+  measureSinceMilestone,
+  reportAllMilestones,
+} from "./utils/timing";
 
 // Maximum number of times to retry a turn when the backend
 // reports an `llm_api_error` stop reason. This helps smooth
@@ -48,13 +73,23 @@ export async function handleHeadlessCommand(
     options: {
       // Flags used in headless mode
       continue: { type: "boolean", short: "c" },
-      new: { type: "boolean" },
+      resume: { type: "boolean", short: "r" },
+      conversation: { type: "string" },
+      default: { type: "boolean" }, // Alias for --conv default
+      "new-agent": { type: "boolean" },
+      new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
       system: { type: "string", short: "s" },
+      "system-custom": { type: "string" },
+      "system-append": { type: "string" },
+      "memory-blocks": { type: "string" },
+      "block-value": { type: "string", multiple: true },
       toolset: { type: "string" },
       prompt: { type: "boolean", short: "p" },
       "output-format": { type: "string" },
+      "input-format": { type: "string" },
+      "include-partial-messages": { type: "boolean" },
       // Additional flags from index.ts that need to be filtered out
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -65,12 +100,11 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
-      link: { type: "boolean" },
-      unlink: { type: "boolean" },
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
+      "no-skills": { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -82,11 +116,52 @@ export async function handleHeadlessCommand(
     toolFilter.setEnabledTools(values.tools as string);
   }
 
-  // Get prompt from either positional args or stdin
+  // Set permission mode if provided (or via --yolo alias)
+  const permissionModeValue = values["permission-mode"] as string | undefined;
+  const yoloMode = values.yolo as boolean | undefined;
+  if (yoloMode || permissionModeValue) {
+    const { permissionMode } = await import("./permissions/mode");
+    if (yoloMode) {
+      permissionMode.setMode("bypassPermissions");
+    } else if (permissionModeValue) {
+      const validModes = [
+        "default",
+        "acceptEdits",
+        "bypassPermissions",
+        "plan",
+      ];
+      if (validModes.includes(permissionModeValue)) {
+        permissionMode.setMode(
+          permissionModeValue as
+            | "default"
+            | "acceptEdits"
+            | "bypassPermissions"
+            | "plan",
+        );
+      }
+    }
+  }
+
+  // Set CLI permission overrides if provided (inherited from parent agent)
+  if (values.allowedTools || values.disallowedTools) {
+    const { cliPermissions } = await import("./permissions/cli");
+    if (values.allowedTools) {
+      cliPermissions.setAllowedTools(values.allowedTools as string);
+    }
+    if (values.disallowedTools) {
+      cliPermissions.setDisallowedTools(values.disallowedTools as string);
+    }
+  }
+
+  // Check for input-format early - if stream-json, we don't need a prompt
+  const inputFormat = values["input-format"] as string | undefined;
+  const isBidirectionalMode = inputFormat === "stream-json";
+
+  // Get prompt from either positional args or stdin (unless in bidirectional mode)
   let prompt = positionals.slice(2).join(" ");
 
-  // If no prompt provided as args, try reading from stdin
-  if (!prompt) {
+  // If no prompt provided as args, try reading from stdin (unless in bidirectional mode)
+  if (!prompt && !isBidirectionalMode) {
     // Check if stdin is available (piped input)
     if (!process.stdin.isTTY) {
       const chunks: Buffer[] = [];
@@ -97,29 +172,108 @@ export async function handleHeadlessCommand(
     }
   }
 
-  if (!prompt) {
+  if (!prompt && !isBidirectionalMode) {
     console.error("Error: No prompt provided");
     process.exit(1);
   }
 
   const client = await getClient();
+  markMilestone("HEADLESS_CLIENT_READY");
 
-  // Get base URL for tool upsert operations
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
+  // Check for --resume flag (interactive only)
+  if (values.resume) {
+    console.error(
+      "Error: --resume is for interactive mode only (opens conversation selector).\n" +
+        "In headless mode, use:\n" +
+        "  --continue           Resume the last session (agent + conversation)\n" +
+        "  --conversation <id>  Resume a specific conversation by ID",
+    );
+    process.exit(1);
+  }
+
+  // --new: Create a new conversation (for concurrent sessions)
+  const forceNewConversation = (values.new as boolean | undefined) ?? false;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
-  const specifiedAgentId = values.agent as string | undefined;
+  let specifiedAgentId = values.agent as string | undefined;
+  let specifiedConversationId = values.conversation as string | undefined;
+  const useDefaultConv = values.default as boolean | undefined;
   const shouldContinue = values.continue as boolean | undefined;
-  const forceNew = values.new as boolean | undefined;
-  const systemPromptId = values.system as string | undefined;
+  const forceNew = values["new-agent"] as boolean | undefined;
+
+  // Handle --default flag (alias for --conv default)
+  if (useDefaultConv) {
+    if (specifiedConversationId && specifiedConversationId !== "default") {
+      console.error(
+        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
+      );
+      process.exit(1);
+    }
+    specifiedConversationId = "default";
+  }
+  const systemPromptPreset = values.system as string | undefined;
+  const systemCustom = values["system-custom"] as string | undefined;
+  const systemAppend = values["system-append"] as string | undefined;
+  const memoryBlocksJson = values["memory-blocks"] as string | undefined;
+  const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+
+  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
+  if (specifiedConversationId?.startsWith("agent-")) {
+    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
+      console.error(
+        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
+      );
+      process.exit(1);
+    }
+    specifiedAgentId = specifiedConversationId;
+    specifiedConversationId = "default";
+  }
+
+  // Validate --conv default requires --agent
+  if (specifiedConversationId === "default" && !specifiedAgentId) {
+    console.error("Error: --conv default requires --agent <agent-id>");
+    console.error("Usage: letta --agent agent-xyz --conv default");
+    console.error("   or: letta --conv agent-xyz (shorthand)");
+    process.exit(1);
+  }
+
+  // Validate --conversation flag (mutually exclusive with agent-selection flags)
+  // Exception: --conv default requires --agent
+  if (specifiedConversationId && specifiedConversationId !== "default") {
+    if (specifiedAgentId) {
+      console.error("Error: --conversation cannot be used with --agent");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --conversation cannot be used with --new-agent");
+      process.exit(1);
+    }
+    if (fromAfFile) {
+      console.error("Error: --conversation cannot be used with --from-af");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
+  // Validate --new flag (create new conversation)
+  if (forceNewConversation) {
+    if (shouldContinue) {
+      console.error("Error: --new cannot be used with --continue");
+      process.exit(1);
+    }
+    if (specifiedConversationId) {
+      console.error("Error: --new cannot be used with --conversation");
+      process.exit(1);
+    }
+  }
 
   // Validate --from-af flag
   if (fromAfFile) {
@@ -177,8 +331,99 @@ export async function handleHeadlessCommand(
     }
   }
 
+  // Validate system prompt options (--system and --system-custom are mutually exclusive)
+  if (systemPromptPreset && systemCustom) {
+    console.error(
+      "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
+    );
+    process.exit(1);
+  }
+
+  // Parse memory blocks JSON if provided
+  // Supports two formats:
+  // - CreateBlock: { label: string, value: string, description?: string }
+  // - BlockReference: { blockId: string }
+  let memoryBlocks:
+    | Array<
+        | { label: string; value: string; description?: string }
+        | { blockId: string }
+      >
+    | undefined;
+  if (memoryBlocksJson !== undefined) {
+    if (!forceNew) {
+      console.error(
+        "Error: --memory-blocks can only be used together with --new to provide initial memory blocks.",
+      );
+      process.exit(1);
+    }
+    try {
+      memoryBlocks = JSON.parse(memoryBlocksJson);
+      if (!Array.isArray(memoryBlocks)) {
+        throw new Error("memory-blocks must be a JSON array");
+      }
+      // Validate each block has required fields
+      for (const block of memoryBlocks) {
+        const hasBlockId =
+          "blockId" in block && typeof block.blockId === "string";
+        const hasLabelValue =
+          "label" in block &&
+          "value" in block &&
+          typeof block.label === "string" &&
+          typeof block.value === "string";
+
+        if (!hasBlockId && !hasLabelValue) {
+          throw new Error(
+            "Each memory block must have either 'blockId' (string) or 'label' and 'value' (strings)",
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        `Error: Invalid --memory-blocks JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // Parse --block-value args (format: label=value)
+  let blockValues: Record<string, string> | undefined;
+  if (blockValueArgs && blockValueArgs.length > 0) {
+    if (!forceNew) {
+      console.error(
+        "Error: --block-value can only be used together with --new to set block values.",
+      );
+      process.exit(1);
+    }
+    blockValues = {};
+    for (const arg of blockValueArgs) {
+      const eqIndex = arg.indexOf("=");
+      if (eqIndex === -1) {
+        console.error(
+          `Error: Invalid --block-value format "${arg}". Expected format: label=value`,
+        );
+        process.exit(1);
+      }
+      const label = arg.slice(0, eqIndex);
+      const value = arg.slice(eqIndex + 1);
+      blockValues[label] = value;
+    }
+  }
+
+  // Priority 0: --conversation derives agent from conversation ID
+  if (specifiedConversationId) {
+    try {
+      const conversation = await client.conversations.retrieve(
+        specifiedConversationId,
+      );
+      agent = await client.agents.retrieve(conversation.agent_id);
+    } catch (_error) {
+      console.error(`Conversation ${specifiedConversationId} not found`);
+      process.exit(1);
+    }
+  }
+
   // Priority 1: Import from AgentFile template
-  if (fromAfFile) {
+  if (!agent && fromAfFile) {
     const { importAgentFromFile } = await import("./agent/import");
     const result = await importAgentFromFile({
       filePath: fromAfFile,
@@ -193,48 +438,30 @@ export async function handleHeadlessCommand(
     try {
       agent = await client.agents.retrieve(specifiedAgentId);
     } catch (_error) {
-      console.error(`Agent ${specifiedAgentId} not found, creating new one...`);
+      console.error(`Agent ${specifiedAgentId} not found`);
+      process.exit(1);
     }
   }
 
   // Priority 3: Check if --new flag was passed (skip all resume logic)
   if (!agent && forceNew) {
     const updateArgs = getModelUpdateArgs(model);
-    try {
-      const result = await createAgent(
-        undefined,
-        model,
-        undefined,
-        updateArgs,
-        skillsDirectory,
-        true, // parallelToolCalls always enabled
-        sleeptimeFlag ?? settings.enableSleeptime,
-        systemPromptId,
-        initBlocks,
-        baseTools,
-      );
-      agent = result.agent;
-    } catch (err) {
-      if (isToolsNotFoundError(err)) {
-        console.warn("Tools missing on server, re-uploading and retrying...");
-        await forceUpsertTools(client, baseURL);
-        const result = await createAgent(
-          undefined,
-          model,
-          undefined,
-          updateArgs,
-          skillsDirectory,
-          true,
-          sleeptimeFlag ?? settings.enableSleeptime,
-          systemPromptId,
-          initBlocks,
-          baseTools,
-        );
-        agent = result.agent;
-      } else {
-        throw err;
-      }
-    }
+    const createOptions = {
+      model,
+      updateArgs,
+      skillsDirectory,
+      parallelToolCalls: true,
+      enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
+      systemPromptPreset,
+      systemPromptCustom: systemCustom,
+      systemPromptAppend: systemAppend,
+      initBlocks,
+      baseTools,
+      memoryBlocks,
+      blockValues,
+    };
+    const result = await createAgent(createOptions);
+    agent = result.agent;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -245,63 +472,46 @@ export async function handleHeadlessCommand(
       try {
         agent = await client.agents.retrieve(localProjectSettings.lastAgent);
       } catch (_error) {
+        // Local LRU agent doesn't exist - log and continue
         console.error(
-          `Project agent ${localProjectSettings.lastAgent} not found, creating new one...`,
+          `Unable to locate agent ${localProjectSettings.lastAgent} in .letta/`,
         );
       }
     }
   }
 
   // Priority 5: Try to reuse global lastAgent if --continue flag is passed
-  if (!agent && shouldContinue && settings.lastAgent) {
-    try {
-      agent = await client.agents.retrieve(settings.lastAgent);
-    } catch (_error) {
-      console.error(
-        `Previous agent ${settings.lastAgent} not found, creating new one...`,
-      );
+  if (!agent && shouldContinue) {
+    if (settings.lastAgent) {
+      try {
+        agent = await client.agents.retrieve(settings.lastAgent);
+      } catch (_error) {
+        // Global LRU agent doesn't exist
+      }
+    }
+    // --continue requires an LRU agent to exist
+    if (!agent) {
+      console.error("No recent session found in .letta/ or ~/.letta.");
+      console.error("Run 'letta' to get started.");
+      process.exit(1);
     }
   }
 
-  // Priority 6: Create a new agent
+  // Priority 6: Fresh user with no LRU - create Memo (same as interactive mode)
   if (!agent) {
-    const updateArgs = getModelUpdateArgs(model);
-    try {
-      const result = await createAgent(
-        undefined,
-        model,
-        undefined,
-        updateArgs,
-        skillsDirectory,
-        true, // parallelToolCalls always enabled
-        sleeptimeFlag ?? settings.enableSleeptime,
-        systemPromptId,
-        undefined,
-        undefined,
-      );
-      agent = result.agent;
-    } catch (err) {
-      if (isToolsNotFoundError(err)) {
-        console.warn("Tools missing on server, re-uploading and retrying...");
-        await forceUpsertTools(client, baseURL);
-        const result = await createAgent(
-          undefined,
-          model,
-          undefined,
-          updateArgs,
-          skillsDirectory,
-          true,
-          sleeptimeFlag ?? settings.enableSleeptime,
-          systemPromptId,
-          undefined,
-          undefined,
-        );
-        agent = result.agent;
-      } else {
-        throw err;
-      }
+    const { ensureDefaultAgents } = await import("./agent/defaults");
+    const memoAgent = await ensureDefaultAgents(client);
+    if (memoAgent) {
+      agent = memoAgent;
     }
   }
+
+  // All paths should have resolved to an agent by now
+  if (!agent) {
+    console.error("No agent found. Use --new-agent to create a new agent.");
+    process.exit(1);
+  }
+  markMilestone("HEADLESS_AGENT_RESOLVED");
 
   // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(
@@ -311,7 +521,7 @@ export async function handleHeadlessCommand(
   );
 
   // If resuming and a model or system prompt was specified, apply those changes
-  if (isResumingAgent && (model || systemPromptId)) {
+  if (isResumingAgent && (model || systemPromptPreset)) {
     if (model) {
       const { resolveModel } = await import("./agent/model");
       const modelHandle = resolveModel(model);
@@ -334,9 +544,12 @@ export async function handleHeadlessCommand(
       }
     }
 
-    if (systemPromptId) {
+    if (systemPromptPreset) {
       const { updateAgentSystemPrompt } = await import("./agent/modify");
-      const result = await updateAgentSystemPrompt(agent.id, systemPromptId);
+      const result = await updateAgentSystemPrompt(
+        agent.id,
+        systemPromptPreset,
+      );
       if (!result.success || !result.agent) {
         console.error(`Failed to update system prompt: ${result.message}`);
         process.exit(1);
@@ -345,57 +558,178 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Save agent ID to both project and global settings
-  await settingsManager.loadLocalProjectSettings();
-  settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
-  settingsManager.updateSettings({ lastAgent: agent.id });
+  // Determine which conversation to use
+  let conversationId: string;
+
+  // Check flags early
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+
+  // Ensure skills blocks exist BEFORE conversation creation (for non-subagent, non-no-skills)
+  // This prevents "block not found" errors when creating conversations with isolated_block_labels
+  // Note: ensureSkillsBlocks already calls blocks.list internally, so no extra API call
+  if (!noSkillsFlag && !isSubagent) {
+    const createdBlocks = await ensureSkillsBlocks(agent.id);
+    if (createdBlocks.length > 0) {
+      console.log("Created missing skills blocks for agent compatibility");
+    }
+  }
+
+  // Determine which blocks to isolate for the conversation
+  let isolatedBlockLabels: string[] = [];
+  if (!noSkillsFlag) {
+    // After ensureSkillsBlocks, we know all standard blocks exist
+    // Use the full list, optionally filtered by initBlocks
+    isolatedBlockLabels =
+      initBlocks === undefined
+        ? [...ISOLATED_BLOCK_LABELS]
+        : ISOLATED_BLOCK_LABELS.filter((label) =>
+            initBlocks.includes(label as string),
+          );
+  }
+  // If --no-skills is set, isolatedBlockLabels stays empty (no isolation)
+
+  if (specifiedConversationId) {
+    if (specifiedConversationId === "default") {
+      // "default" is the agent's primary message history (no explicit conversation)
+      // Don't validate - just use it directly
+      conversationId = "default";
+    } else {
+      // User specified an explicit conversation to resume - validate it exists
+      try {
+        await client.conversations.retrieve(specifiedConversationId);
+        conversationId = specifiedConversationId;
+      } catch {
+        console.error(
+          `Error: Conversation ${specifiedConversationId} not found`,
+        );
+        process.exit(1);
+      }
+    }
+  } else if (shouldContinue) {
+    // Try to resume the last conversation for this agent
+    await settingsManager.loadLocalProjectSettings();
+    const lastSession =
+      settingsManager.getLocalLastSession(process.cwd()) ??
+      settingsManager.getGlobalLastSession();
+
+    if (lastSession && lastSession.agentId === agent.id) {
+      if (lastSession.conversationId === "default") {
+        // "default" is always valid - just use it directly
+        conversationId = "default";
+      } else {
+        // Verify the conversation still exists
+        try {
+          await client.conversations.retrieve(lastSession.conversationId);
+          conversationId = lastSession.conversationId;
+        } catch {
+          // Conversation no longer exists - error with helpful message
+          console.error(
+            `Attempting to resume conversation ${lastSession.conversationId}, but conversation was not found.`,
+          );
+          console.error(
+            "Resume the default conversation with 'letta -p ...', view recent conversations with 'letta --resume', or start a new conversation with 'letta -p ... --new'.",
+          );
+          process.exit(1);
+        }
+      }
+    } else {
+      // No matching session - error with helpful message
+      console.error("No previous session found for this agent to resume.");
+      console.error(
+        "Resume the default conversation with 'letta -p ...', or start a new conversation with 'letta -p ... --new'.",
+      );
+      process.exit(1);
+    }
+  } else if (forceNewConversation) {
+    // --new flag: create a new conversation (for concurrent sessions)
+    const conversation = await client.conversations.create({
+      agent_id: agent.id,
+      isolated_block_labels: isolatedBlockLabels,
+    });
+    conversationId = conversation.id;
+  } else {
+    // Default (including --new-agent, --agent): use the agent's "default" conversation
+    conversationId = "default";
+  }
+  markMilestone("HEADLESS_CONVERSATION_READY");
+
+  // Save session (agent + conversation) to both project and global settings
+  // Skip for subagents - they shouldn't pollute the LRU settings
+  if (!isSubagent) {
+    await settingsManager.loadLocalProjectSettings();
+    settingsManager.setLocalLastSession(
+      { agentId: agent.id, conversationId },
+      process.cwd(),
+    );
+    settingsManager.setGlobalLastSession({
+      agentId: agent.id,
+      conversationId,
+    });
+  }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
-  await initializeLoadedSkillsFlag();
 
-  // Re-discover skills and update the skills memory block
-  // This ensures new skills added after agent creation are available
-  try {
-    const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } = await import(
-      "./agent/skills"
-    );
-    const { join } = await import("node:path");
-
-    const resolvedSkillsDirectory =
-      skillsDirectory || join(process.cwd(), SKILLS_DIR);
-    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
-
-    if (errors.length > 0) {
-      console.warn("Errors encountered during skill discovery:");
-      for (const error of errors) {
-        console.warn(`  ${error.path}: ${error.message}`);
-      }
-    }
-
-    // Update the skills memory block with freshly discovered skills
-    const formattedSkills = formatSkillsForMemory(
-      skills,
-      resolvedSkillsDirectory,
-    );
-    await client.agents.blocks.update("skills", {
-      agent_id: agent.id,
-      value: formattedSkills,
+  // Skills-related fire-and-forget operations (skip for subagents/--no-skills)
+  if (!noSkillsFlag && !isSubagent) {
+    // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+    // Don't await - this is just for the skill unload reminder
+    initializeLoadedSkillsFlag().catch(() => {
+      // Ignore errors - not critical
     });
-  } catch (error) {
-    console.warn(
-      `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
+
+    // Fire-and-forget: Sync skills in background (LET-7101)
+    // This ensures new skills added after agent creation are available
+    // Don't await - proceed to message sending immediately
+    (async () => {
+      try {
+        const { syncSkillsToAgent, SKILLS_DIR } = await import(
+          "./agent/skills"
+        );
+        const { join } = await import("node:path");
+
+        const resolvedSkillsDirectory =
+          skillsDirectory || join(process.cwd(), SKILLS_DIR);
+
+        await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+          skipIfUnchanged: true,
+        });
+      } catch (error) {
+        console.warn(
+          `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
   }
 
   // Validate output format
   const outputFormat =
     (values["output-format"] as string | undefined) || "text";
+  const includePartialMessages = Boolean(values["include-partial-messages"]);
   if (!["text", "json", "stream-json"].includes(outputFormat)) {
     console.error(
       `Error: Invalid output format "${outputFormat}". Valid formats: text, json, stream-json`,
     );
     process.exit(1);
+  }
+  if (inputFormat && inputFormat !== "stream-json") {
+    console.error(
+      `Error: Invalid input format "${inputFormat}". Valid formats: stream-json`,
+    );
+    process.exit(1);
+  }
+
+  // If input-format is stream-json, use bidirectional mode
+  if (isBidirectionalMode) {
+    await runBidirectionalMode(
+      agent,
+      conversationId,
+      client,
+      outputFormat,
+      includePartialMessages,
+    );
+    return;
   }
 
   // Create buffers to accumulate stream
@@ -404,13 +738,25 @@ export async function handleHeadlessCommand(
   // Initialize session stats
   const sessionStats = new SessionStats();
 
+  // Use agent.id as session_id for all stream-json messages
+  const sessionId = agent.id;
+
   // Output init event for stream-json format
   if (outputFormat === "stream-json") {
-    const initEvent = {
-      type: "init",
+    const initEvent: SystemInitMessage = {
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
       agent_id: agent.id,
-      model: agent.llm_config?.model,
-      tools: agent.tools?.map((t) => t.name) || [],
+      conversation_id: conversationId,
+      model: agent.llm_config?.model ?? "",
+      tools:
+        agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [],
+      cwd: process.cwd(),
+      mcp_servers: [],
+      permission_mode: "",
+      slash_commands: [],
+      uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
   }
@@ -421,7 +767,20 @@ export async function handleHeadlessCommand(
     while (true) {
       // Re-fetch agent to get latest in-context messages (source of truth for backend)
       const freshAgent = await client.agents.retrieve(agent.id);
-      const resume = await getResumeData(client, freshAgent);
+
+      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      try {
+        resume = await getResumeData(client, freshAgent);
+      } catch (error) {
+        // Treat 404/422 as "no approvals" - stale message/conversation state
+        if (
+          error instanceof APIError &&
+          (error.status === 404 || error.status === 422)
+        ) {
+          break;
+        }
+        throw error;
+      }
 
       // Use plural field for parallel tool calls
       const pendingApprovals = resume.pendingApprovals || [];
@@ -436,6 +795,8 @@ export async function handleHeadlessCommand(
               toolName: string;
               toolArgs: string;
             };
+            reason: string;
+            matchedRule: string;
           }
         | {
             type: "deny";
@@ -491,6 +852,8 @@ export async function handleHeadlessCommand(
         decisions.push({
           type: "approve",
           approval: currentApproval,
+          reason: permission.reason || "Allowed by permission rule",
+          matchedRule: permission.matchedRule || "auto-approved",
         });
       }
 
@@ -503,14 +866,19 @@ export async function handleHeadlessCommand(
       if (outputFormat === "stream-json") {
         for (const decision of decisions) {
           if (decision.type === "approve") {
-            console.log(
-              JSON.stringify({
-                type: "auto_approval",
-                tool_name: decision.approval.toolName,
+            const autoApprovalMsg: AutoApprovalMessage = {
+              type: "auto_approval",
+              tool_call: {
+                name: decision.approval.toolName,
                 tool_call_id: decision.approval.toolCallId,
-                tool_args: decision.approval.toolArgs,
-              }),
-            );
+                arguments: decision.approval.toolArgs,
+              },
+              reason: decision.reason,
+              matched_rule: decision.matchedRule,
+              session_id: sessionId,
+              uuid: `auto-approval-${decision.approval.toolCallId}`,
+            };
+            console.log(JSON.stringify(autoApprovalMsg));
           }
         }
       }
@@ -524,7 +892,11 @@ export async function handleHeadlessCommand(
       };
 
       // Send the approval to clear the pending state; drain the stream without output
-      const approvalStream = await sendMessageStream(agent.id, [approvalInput]);
+      const approvalStream = await sendMessageStream(
+        conversationId,
+        [approvalInput],
+        { agentId: agent.id },
+      );
       if (outputFormat === "stream-json") {
         // Consume quickly but don't emit message frames to stdout
         for await (const _ of approvalStream) {
@@ -536,8 +908,11 @@ export async function handleHeadlessCommand(
     }
   };
 
-  // Clear any pending approvals before starting a new turn
-  await resolveAllPendingApprovals();
+  // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
+  // For new agents/conversations, lazy recovery handles any edge cases
+  if (isResumingAgent) {
+    await resolveAllPendingApprovals();
+  }
 
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
@@ -571,12 +946,17 @@ export async function handleHeadlessCommand(
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
 
+  markMilestone("HEADLESS_FIRST_STREAM_START");
+  measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
+
   try {
     while (true) {
-      const stream = await sendMessageStream(agent.id, currentInput);
+      const stream = await sendMessageStream(conversationId, currentInput, {
+        agentId: agent.id,
+      });
 
       // For stream-json, output each chunk as it arrives
-      let stopReason: StopReasonType;
+      let stopReason: StopReasonType | null = null;
       let approvals: Array<{
         toolCallId: string;
         toolName: string;
@@ -587,45 +967,37 @@ export async function handleHeadlessCommand(
 
       if (outputFormat === "stream-json") {
         const startTime = performance.now();
-        let lastStopReason: StopReasonType | null = null;
 
         // Track approval requests across streamed chunks
-        const approvalRequests = new Map<
-          string,
-          { toolName: string; args: string }
-        >();
         const autoApprovalEmitted = new Set<string>();
-        let _lastApprovalId: string | null = null;
 
-        // Track all run_ids seen during this turn
-        const runIds = new Set<string>();
+        const streamProcessor = new StreamProcessor();
 
         for await (const chunk of stream) {
-          // Track run_id if present
-          if ("run_id" in chunk && chunk.run_id) {
-            runIds.add(chunk.run_id);
-          }
+          const { shouldOutput, errorInfo, updatedApproval } =
+            streamProcessor.processChunk(chunk);
 
-          // Detect mid-stream errors (errors without message_type)
-          const chunkWithError = chunk as typeof chunk & {
-            error?: { message?: string; detail?: string };
-          };
-          if (chunkWithError.error && !chunk.message_type) {
-            // Emit as error event
-            const errorMsg =
-              chunkWithError.error.message || "An error occurred";
-            const errorDetail = chunkWithError.error.detail || "";
-            const fullErrorText = errorDetail
-              ? `${errorMsg}: ${errorDetail}`
-              : errorMsg;
-
-            console.log(
-              JSON.stringify({
-                type: "error",
-                message: fullErrorText,
-                detail: errorDetail,
-              }),
-            );
+          // Detect mid-stream errors
+          if (errorInfo && shouldOutput) {
+            const errorEvent: ErrorMessage = {
+              type: "error",
+              message: errorInfo.message,
+              stop_reason: "error",
+              run_id: errorInfo.run_id,
+              session_id: sessionId,
+              uuid: crypto.randomUUID(),
+              ...(errorInfo.error_type &&
+                errorInfo.run_id && {
+                  api_error: {
+                    message_type: "error_message",
+                    message: errorInfo.message,
+                    error_type: errorInfo.error_type,
+                    detail: errorInfo.detail,
+                    run_id: errorInfo.run_id,
+                  },
+                }),
+            };
+            console.log(JSON.stringify(errorEvent));
 
             // Still accumulate for tracking
             const { onChunk: accumulatorOnChunk } = await import(
@@ -636,161 +1008,119 @@ export async function handleHeadlessCommand(
           }
 
           // Detect server conflict due to pending approval; handle it and retry
-          const errObj = (chunk as unknown as { error?: { detail?: string } })
-            .error;
-          if (errObj?.detail?.includes("Cannot send a new message")) {
-            // Don't emit this error; clear approvals and retry outer loop
+          // Check both detail and message fields since error formats vary
+          if (
+            isApprovalPendingError(errorInfo?.detail) ||
+            isApprovalPendingError(errorInfo?.message)
+          ) {
+            // Emit recovery message for stream-json mode (enables testing)
+            if (outputFormat === "stream-json") {
+              const recoveryMsg: RecoveryMessage = {
+                type: "recovery",
+                recovery_type: "approval_pending",
+                message:
+                  "Detected pending approval conflict; auto-denying stale approval and retrying",
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(recoveryMsg));
+            }
+            // Clear approvals and retry outer loop
             await resolveAllPendingApprovals();
             // Reset state and restart turn
-            lastStopReason = "error" as StopReasonType;
+            stopReason = "error" as StopReasonType;
             break;
           }
-          if (
-            errObj?.detail?.includes(
-              "No tool call is currently awaiting approval",
-            )
-          ) {
-            // Server isn't ready for an approval yet; let the stream continue until it is
-            // Suppress the error frame from output
-            continue;
-          }
+
           // Check if we should skip outputting approval requests in bypass mode
-          const isApprovalRequest =
-            chunk.message_type === "approval_request_message";
-          let shouldOutputChunk = true;
+          let shouldOutputChunk = shouldOutput;
 
-          // Track approval requests (stream-aware: accumulate by tool_call_id)
-          if (isApprovalRequest) {
-            const chunkWithTools = chunk as typeof chunk & {
-              tool_call?: {
-                tool_call_id?: string;
-                name?: string;
-                arguments?: string;
-              };
-              tool_calls?: Array<{
-                tool_call_id?: string;
-                name?: string;
-                arguments?: string;
-              }>;
-            };
-
-            const toolCalls = Array.isArray(chunkWithTools.tool_calls)
-              ? chunkWithTools.tool_calls
-              : chunkWithTools.tool_call
-                ? [chunkWithTools.tool_call]
-                : [];
-
-            for (const toolCall of toolCalls) {
-              // Many backends stream tool_call chunks where only the first frame
-              // carries the tool_call_id; subsequent argument deltas omit it.
-              // Fall back to the last seen id within this turn so we can
-              // properly accumulate args.
-              let id: string | null = toolCall?.tool_call_id ?? _lastApprovalId;
-              if (!id) {
-                // As an additional guard, if exactly one approval is being
-                // tracked already, use that id for continued argument deltas.
-                if (approvalRequests.size === 1) {
-                  id = Array.from(approvalRequests.keys())[0] ?? null;
-                }
-              }
-              if (!id) continue; // cannot safely attribute this chunk
-
-              _lastApprovalId = id;
-
-              // Concatenate argument deltas; do not inject placeholder JSON
-              const prev = approvalRequests.get(id);
-              const base = prev?.args ?? "";
-              const incomingArgs =
-                toolCall?.arguments != null ? base + toolCall.arguments : base;
-
-              // Preserve previously seen name; set if provided in this chunk
-              const nextName = toolCall?.name || prev?.toolName || "";
-              approvalRequests.set(id, {
-                toolName: nextName,
-                args: incomingArgs,
-              });
-
-              // Keep an up-to-date approvals array for downstream handling
-              // Update existing approval if present, otherwise add new one
-              const existingIndex = approvals.findIndex(
-                (a) => a.toolCallId === id,
+          // Check if this approval will be auto-approved. Dedup per tool_call_id
+          if (
+            updatedApproval &&
+            !autoApprovalEmitted.has(updatedApproval.toolCallId) &&
+            updatedApproval.toolName
+          ) {
+            const parsedArgs = safeJsonParseOr<Record<string, unknown> | null>(
+              updatedApproval.toolArgs || "{}",
+              null,
+            );
+            const permission = await checkToolPermission(
+              updatedApproval.toolName,
+              parsedArgs || {},
+            );
+            if (permission.decision === "allow" && parsedArgs) {
+              // Only emit auto_approval if we already have all required params
+              const { getToolSchema } = await import("./tools/manager");
+              const schema = getToolSchema(updatedApproval.toolName);
+              const required =
+                (schema?.input_schema?.required as string[] | undefined) || [];
+              const missing = required.filter(
+                (key) =>
+                  !(key in parsedArgs) ||
+                  (parsedArgs as Record<string, unknown>)[key] == null,
               );
-              const approvalObj = {
-                toolCallId: id,
-                toolName: nextName,
-                toolArgs: incomingArgs,
-              };
-              if (existingIndex >= 0) {
-                approvals[existingIndex] = approvalObj;
-              } else {
-                approvals.push(approvalObj);
-              }
-
-              // Check if this approval will be auto-approved. Dedup per tool_call_id
-              if (!autoApprovalEmitted.has(id) && nextName) {
-                const parsedArgs = safeJsonParseOr<Record<
-                  string,
-                  unknown
-                > | null>(incomingArgs || "{}", null);
-                const permission = await checkToolPermission(
-                  nextName,
-                  parsedArgs || {},
-                );
-                if (permission.decision === "allow" && parsedArgs) {
-                  // Only emit auto_approval if we already have all required params
-                  const { getToolSchema } = await import("./tools/manager");
-                  const schema = getToolSchema(nextName);
-                  const required =
-                    (schema?.input_schema?.required as string[] | undefined) ||
-                    [];
-                  const missing = required.filter(
-                    (key) =>
-                      !(key in parsedArgs) ||
-                      (parsedArgs as Record<string, unknown>)[key] == null,
-                  );
-                  if (missing.length === 0) {
-                    shouldOutputChunk = false;
-                    console.log(
-                      JSON.stringify({
-                        type: "auto_approval",
-                        tool_name: nextName,
-                        tool_call_id: id,
-                        tool_args: incomingArgs,
-                        reason: permission.reason,
-                        matched_rule: permission.matchedRule,
-                      }),
-                    );
-                    autoApprovalEmitted.add(id);
-                  }
-                }
+              if (missing.length === 0) {
+                shouldOutputChunk = false;
+                const autoApprovalMsg: AutoApprovalMessage = {
+                  type: "auto_approval",
+                  tool_call: {
+                    name: updatedApproval.toolName,
+                    tool_call_id: updatedApproval.toolCallId,
+                    arguments: updatedApproval.toolArgs || "{}",
+                  },
+                  reason: permission.reason || "Allowed by permission rule",
+                  matched_rule: permission.matchedRule || "auto-approved",
+                  session_id: sessionId,
+                  uuid: `auto-approval-${updatedApproval.toolCallId}`,
+                };
+                console.log(JSON.stringify(autoApprovalMsg));
+                autoApprovalEmitted.add(updatedApproval.toolCallId);
               }
             }
           }
 
           // Output chunk as message event (unless filtered)
           if (shouldOutputChunk) {
-            console.log(
-              JSON.stringify({
+            // Use existing otid or id from the Letta SDK chunk
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
+            };
+            const uuid = chunkWithIds.otid || chunkWithIds.id;
+
+            if (includePartialMessages) {
+              // Emit as stream_event wrapper (like Claude Code with --include-partial-messages)
+              const streamEvent: StreamEvent = {
+                type: "stream_event",
+                event: chunk,
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
+              };
+              console.log(JSON.stringify(streamEvent));
+            } else {
+              // Emit as regular message (default)
+              const msg: MessageWire = {
                 type: "message",
                 ...chunk,
-              }),
-            );
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
+              };
+              console.log(JSON.stringify(msg));
+            }
           }
 
           // Still accumulate for approval tracking
           const { onChunk } = await import("./cli/helpers/accumulator");
           onChunk(buffers, chunk);
-
-          // Track stop reason
-          if (chunk.message_type === "stop_reason") {
-            lastStopReason = chunk.stop_reason;
-          }
         }
 
-        stopReason = lastStopReason || "error";
+        stopReason = stopReason || streamProcessor.stopReason || "error";
         apiDurationMs = performance.now() - startTime;
+        approvals = streamProcessor.getApprovals();
         // Use the last run_id we saw (if any)
-        lastRunId = runIds.size > 0 ? Array.from(runIds).pop() || null : null;
+        lastRunId = streamProcessor.lastRunId;
         if (lastRunId) lastKnownRunId = lastRunId;
 
         // Mark final line as finished
@@ -921,8 +1251,41 @@ export async function handleHeadlessCommand(
         continue;
       }
 
+      // Cache latest error text for this turn
+      let latestErrorText: string | null = null;
+      const linesForTurn = toLines(buffers);
+      for (let i = linesForTurn.length - 1; i >= 0; i -= 1) {
+        const line = linesForTurn[i];
+        if (
+          line?.kind === "error" &&
+          "text" in line &&
+          typeof line.text === "string"
+        ) {
+          latestErrorText = line.text;
+          break;
+        }
+      }
+
+      // Detect approval desync once per turn
+      const detailFromRun = await fetchRunErrorDetail(lastRunId);
+      const approvalDesynced =
+        currentInput.length === 1 &&
+        currentInput[0]?.type === "approval" &&
+        (isApprovalStateDesyncError(detailFromRun) ||
+          isApprovalStateDesyncError(latestErrorText));
+
+      // Track last failure text for emitting on exit
+      const lastFailureText =
+        latestErrorText ||
+        detailFromRun ||
+        (lastRunId
+          ? `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
+          : `An error occurred during agent execution\n(stop_reason: ${stopReason})`);
+
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
+        const shouldUseApprovalRecovery = approvalDesynced;
+
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
           const baseDelayMs = 1000;
@@ -931,40 +1294,105 @@ export async function handleHeadlessCommand(
           llmApiErrorRetries = attempt;
 
           if (outputFormat === "stream-json") {
-            console.log(
-              JSON.stringify({
-                type: "retry",
-                reason: "llm_api_error",
-                attempt,
-                max_attempts: LLM_API_ERROR_MAX_RETRIES,
-                delay_ms: delayMs,
-                run_id: lastRunId,
-              }),
-            );
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "llm_api_error",
+              attempt,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: delayMs,
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
           } else {
             const delaySeconds = Math.round(delayMs / 1000);
+            const recoveryNote = shouldUseApprovalRecovery
+              ? " (approval state desynced - sending keep-going prompt)"
+              : "";
             console.error(
-              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...${recoveryNote}`,
             );
           }
 
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+          if (shouldUseApprovalRecovery) {
+            currentInput = [buildApprovalRecoveryMessage()];
+          }
           continue;
         }
       }
 
+      // Fallback: if we were sending only approvals and hit an internal error that
+      // says there is no pending approval, resend using the keep-alive recovery prompt.
+      if (approvalDesynced) {
+        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          llmApiErrorRetries += 1;
+
+          const retryReason = stopReason ?? "error";
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: retryReason,
+              attempt: llmApiErrorRetries,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: 0,
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            console.error(
+              "Approval state desynced; resending keep-alive recovery prompt...",
+            );
+          }
+
+          // Small pause to avoid rapid-fire retries
+          await new Promise((resolve) => setTimeout(resolve, 250));
+
+          currentInput = [buildApprovalRecoveryMessage()];
+          continue;
+        }
+
+        // No retries left or non-retriable: emit error and exit
+        if (outputFormat === "stream-json") {
+          const errorMsg: ErrorMessage = {
+            type: "error",
+            message: lastFailureText,
+            stop_reason: stopReason,
+            run_id: lastRunId ?? undefined,
+            session_id: sessionId,
+            uuid: `error-${lastRunId || crypto.randomUUID()}`,
+          };
+          console.log(JSON.stringify(errorMsg));
+        } else {
+          console.error(lastFailureText);
+        }
+        process.exit(1);
+      }
+
       // Unexpected stop reason (error, llm_api_error, etc.)
-      // Before failing, check run metadata to see if this is a retriable llm_api_error
-      // Fallback check: in case stop_reason is "error" but metadata indicates LLM error
-      // This could happen if there's a backend edge case where LLMError is raised but
-      // stop_reason isn't set correctly. The metadata.error is a LettaErrorMessage with
-      // error_type="llm_error" for LLM errors (see streaming_service.py:402-411)
-      if (
-        stopReason === "error" &&
-        lastRunId &&
-        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-      ) {
+      // Before failing, check run metadata to see if this is a retriable error
+      // This handles cases where the backend sends a generic error stop_reason but the
+      // underlying cause is a transient LLM/network issue that should be retried
+
+      // Early exit for stop reasons that should never be retried
+      const nonRetriableReasons: StopReasonType[] = [
+        "cancelled",
+        "requires_approval",
+        "max_steps",
+        "max_tokens_exceeded",
+        "context_window_overflow_in_system_prompt",
+        "end_turn",
+        "tool_rule",
+        "no_tool_call",
+      ];
+      if (nonRetriableReasons.includes(stopReason)) {
+        // Fall through to error display
+      } else if (lastRunId && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         try {
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
@@ -972,10 +1400,32 @@ export async function handleHeadlessCommand(
                 error_type?: string;
                 message?: string;
                 detail?: string;
+                // Handle nested error structure (error.error) that can occur in some edge cases
+                error?: { error_type?: string; detail?: string };
               }
             | undefined;
 
-          if (metaError?.error_type === "llm_error") {
+          // Check for llm_error at top level or nested (handles error.error nesting)
+          const errorType =
+            metaError?.error_type ?? metaError?.error?.error_type;
+
+          // Fallback: detect LLM provider errors from detail even if misclassified
+          // Patterns are derived from handle_llm_error() message formats in the backend
+          const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+          const llmProviderPatterns = [
+            "Anthropic API error", // anthropic_client.py:759
+            "OpenAI API error", // openai_client.py:1034
+            "Google Vertex API error", // google_vertex_client.py:848
+            "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
+            "api_error", // Anthropic SDK error type field
+            "Network error", // Transient network failures during streaming
+            "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
+          ];
+          const isLlmErrorFromDetail = llmProviderPatterns.some((pattern) =>
+            detail.includes(pattern),
+          );
+
+          if (errorType === "llm_error" || isLlmErrorFromDetail) {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);
@@ -983,16 +1433,17 @@ export async function handleHeadlessCommand(
             llmApiErrorRetries = attempt;
 
             if (outputFormat === "stream-json") {
-              console.log(
-                JSON.stringify({
-                  type: "retry",
-                  reason: "llm_api_error",
-                  attempt,
-                  max_attempts: LLM_API_ERROR_MAX_RETRIES,
-                  delay_ms: delayMs,
-                  run_id: lastRunId,
-                }),
-              );
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
+                run_id: lastRunId ?? undefined,
+                session_id: sessionId,
+                uuid: `retry-${lastRunId || crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
             } else {
               const delaySeconds = Math.round(delayMs / 1000);
               console.error(
@@ -1051,14 +1502,15 @@ export async function handleHeadlessCommand(
 
       if (outputFormat === "stream-json") {
         // Emit error event
-        console.log(
-          JSON.stringify({
-            type: "error",
-            message: errorMessage,
-            stop_reason: stopReason,
-            run_id: lastRunId,
-          }),
-        );
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message: errorMessage,
+          stop_reason: stopReason,
+          run_id: lastRunId ?? undefined,
+          session_id: sessionId,
+          uuid: `error-${lastRunId || crypto.randomUUID()}`,
+        };
+        console.log(JSON.stringify(errorMsg));
       } else {
         console.error(`Error: ${errorMessage}`);
       }
@@ -1072,13 +1524,15 @@ export async function handleHeadlessCommand(
     const errorDetails = formatErrorDetails(error, agent.id);
 
     if (outputFormat === "stream-json") {
-      console.log(
-        JSON.stringify({
-          type: "error",
-          message: errorDetails,
-          run_id: lastKnownRunId,
-        }),
-      );
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: errorDetails,
+        stop_reason: "error",
+        run_id: lastKnownRunId ?? undefined,
+        session_id: sessionId,
+        uuid: `error-${lastKnownRunId || crypto.randomUUID()}`,
+      };
+      console.log(JSON.stringify(errorMsg));
     } else {
       console.error(`Error: ${errorDetails}`);
     }
@@ -1136,6 +1590,7 @@ export async function handleHeadlessCommand(
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      conversation_id: conversationId,
       usage: {
         prompt_tokens: stats.usage.promptTokens,
         completion_tokens: stats.usage.completionTokens,
@@ -1157,21 +1612,28 @@ export async function handleHeadlessCommand(
       }
     }
 
-    const resultEvent = {
+    // Use the last run_id as the result uuid if available, otherwise derive from agent_id
+    const resultUuid =
+      allRunIds.size > 0
+        ? `result-${Array.from(allRunIds).pop()}`
+        : `result-${agent.id}`;
+    const resultEvent: ResultMessage = {
       type: "result",
       subtype: "success",
-      is_error: false,
+      session_id: sessionId,
       duration_ms: Math.round(stats.totalWallMs),
       duration_api_ms: Math.round(stats.totalApiMs),
       num_turns: stats.usage.stepCount,
       result: resultText,
       agent_id: agent.id,
+      conversation_id: conversationId,
       run_ids: Array.from(allRunIds),
       usage: {
         prompt_tokens: stats.usage.promptTokens,
         completion_tokens: stats.usage.completionTokens,
         total_tokens: stats.usage.totalTokens,
       },
+      uuid: resultUuid,
     };
     console.log(JSON.stringify(resultEvent));
   } else {
@@ -1182,4 +1644,532 @@ export async function handleHeadlessCommand(
     }
     console.log(resultText);
   }
+
+  // Report all milestones at the end for latency audit
+  markMilestone("HEADLESS_COMPLETE");
+  reportAllMilestones();
+}
+
+/**
+ * Bidirectional mode for SDK communication.
+ * Reads JSON messages from stdin, processes them, and outputs responses.
+ * Stays alive until stdin closes.
+ */
+async function runBidirectionalMode(
+  agent: AgentState,
+  conversationId: string,
+  _client: Letta,
+  _outputFormat: string,
+  includePartialMessages: boolean,
+): Promise<void> {
+  const sessionId = agent.id;
+  const readline = await import("node:readline");
+
+  // Emit init event
+  const initEvent = {
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    agent_id: agent.id,
+    conversation_id: conversationId,
+    model: agent.llm_config?.model,
+    tools: agent.tools?.map((t) => t.name) || [],
+    cwd: process.cwd(),
+    uuid: `init-${agent.id}`,
+  };
+  console.log(JSON.stringify(initEvent));
+
+  // Track current operation for interrupt support
+  let currentAbortController: AbortController | null = null;
+
+  // Create readline interface for stdin
+  const rl = readline.createInterface({
+    input: process.stdin,
+    terminal: false,
+  });
+
+  // Create async iterator and line queue for permission callbacks
+  const lineQueue: string[] = [];
+  let lineResolver: ((line: string | null) => void) | null = null;
+
+  // Feed lines into queue or resolver
+  rl.on("line", (line) => {
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(line);
+    } else {
+      lineQueue.push(line);
+    }
+  });
+
+  rl.on("close", () => {
+    if (lineResolver) {
+      const resolve = lineResolver;
+      lineResolver = null;
+      resolve(null);
+    }
+  });
+
+  // Helper to get next line (from queue or wait)
+  async function getNextLine(): Promise<string | null> {
+    if (lineQueue.length > 0) {
+      return lineQueue.shift() ?? null;
+    }
+    return new Promise<string | null>((resolve) => {
+      lineResolver = resolve;
+    });
+  }
+
+  // Helper to send permission request and wait for response
+  // Uses Claude SDK's control_request/control_response format for compatibility
+  async function requestPermission(
+    toolCallId: string,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): Promise<{ decision: "allow" | "deny"; reason?: string }> {
+    const requestId = `perm-${toolCallId}`;
+
+    // Build can_use_tool control request (Claude SDK format)
+    const canUseToolRequest: CanUseToolControlRequest = {
+      subtype: "can_use_tool",
+      tool_name: toolName,
+      input: toolInput,
+      tool_call_id: toolCallId, // Letta-specific
+      permission_suggestions: [], // TODO: not implemented
+      blocked_path: null, // TODO: not implemented
+    };
+
+    const controlRequest: ControlRequest = {
+      type: "control_request",
+      request_id: requestId,
+      request: canUseToolRequest,
+    };
+
+    console.log(JSON.stringify(controlRequest));
+
+    // Wait for control_response
+    while (true) {
+      const line = await getNextLine();
+      if (line === null) {
+        return { decision: "deny", reason: "stdin closed" };
+      }
+      if (!line.trim()) continue;
+
+      try {
+        const msg = JSON.parse(line);
+        if (
+          msg.type === "control_response" &&
+          msg.response?.request_id === requestId
+        ) {
+          // Parse the can_use_tool response
+          const response = msg.response?.response as
+            | CanUseToolResponse
+            | undefined;
+          if (!response) {
+            return { decision: "deny", reason: "Invalid response format" };
+          }
+
+          if (response.behavior === "allow") {
+            return { decision: "allow" };
+          } else {
+            return {
+              decision: "deny",
+              reason: response.message,
+              // TODO: handle interrupt flag
+            };
+          }
+        }
+        // Put other messages back in queue for main loop
+        lineQueue.unshift(line);
+        // But since we're waiting for permission, we need to wait more
+        // Actually this causes issues - let's just ignore other messages
+        // during permission wait (they'll be lost)
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  }
+
+  // Main processing loop
+  while (true) {
+    const line = await getNextLine();
+    if (line === null) break; // stdin closed
+    if (!line.trim()) continue;
+
+    let message: {
+      type: string;
+      message?: { role: string; content: string };
+      request_id?: string;
+      request?: { subtype: string };
+      session_id?: string;
+    };
+
+    try {
+      message = JSON.parse(line);
+    } catch {
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: "Invalid JSON input",
+        stop_reason: "error",
+        session_id: sessionId,
+        uuid: crypto.randomUUID(),
+      };
+      console.log(JSON.stringify(errorMsg));
+      continue;
+    }
+
+    // Handle control requests
+    if (message.type === "control_request") {
+      const subtype = message.request?.subtype;
+      const requestId = message.request_id;
+
+      if (subtype === "initialize") {
+        // Return session info
+        const initResponse: ControlResponse = {
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: requestId ?? "",
+            response: {
+              agent_id: agent.id,
+              model: agent.llm_config?.model,
+              tools: agent.tools?.map((t) => t.name) || [],
+            },
+          },
+          session_id: sessionId,
+          uuid: crypto.randomUUID(),
+        };
+        console.log(JSON.stringify(initResponse));
+      } else if (subtype === "interrupt") {
+        // Abort current operation if any
+        if (currentAbortController !== null) {
+          (currentAbortController as AbortController).abort();
+          currentAbortController = null;
+        }
+        const interruptResponse: ControlResponse = {
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: requestId ?? "",
+          },
+          session_id: sessionId,
+          uuid: crypto.randomUUID(),
+        };
+        console.log(JSON.stringify(interruptResponse));
+      } else {
+        const errorResponse: ControlResponse = {
+          type: "control_response",
+          response: {
+            subtype: "error",
+            request_id: requestId ?? "",
+            error: `Unknown control request subtype: ${subtype}`,
+          },
+          session_id: sessionId,
+          uuid: crypto.randomUUID(),
+        };
+        console.log(JSON.stringify(errorResponse));
+      }
+      continue;
+    }
+
+    // Handle user messages
+    if (message.type === "user" && message.message?.content) {
+      const userContent = message.message.content;
+
+      // Create abort controller for this operation
+      currentAbortController = new AbortController();
+
+      try {
+        const buffers = createBuffers();
+        const startTime = performance.now();
+        let numTurns = 0;
+
+        // Initial input is the user message
+        let currentInput: MessageCreate[] = [
+          { role: "user", content: userContent },
+        ];
+
+        // Approval handling loop - continue until end_turn or error
+        while (true) {
+          numTurns++;
+
+          // Check if aborted
+          if (currentAbortController?.signal.aborted) {
+            break;
+          }
+
+          // Send message to agent
+          const stream = await sendMessageStream(conversationId, currentInput, {
+            agentId: agent.id,
+          });
+
+          const streamProcessor = new StreamProcessor();
+
+          // Process stream
+          for await (const chunk of stream) {
+            // Check if aborted
+            if (currentAbortController?.signal.aborted) {
+              break;
+            }
+
+            // Process chunk through StreamProcessor
+            const { shouldOutput } = streamProcessor.processChunk(chunk);
+
+            // Output chunk if not suppressed
+            if (shouldOutput) {
+              const chunkWithIds = chunk as typeof chunk & {
+                otid?: string;
+                id?: string;
+              };
+              const uuid = chunkWithIds.otid || chunkWithIds.id;
+
+              if (includePartialMessages) {
+                const streamEvent: StreamEvent = {
+                  type: "stream_event",
+                  event: chunk,
+                  session_id: sessionId,
+                  uuid: uuid || crypto.randomUUID(),
+                };
+                console.log(JSON.stringify(streamEvent));
+              } else {
+                const msg: MessageWire = {
+                  type: "message",
+                  ...chunk,
+                  session_id: sessionId,
+                  uuid: uuid || crypto.randomUUID(),
+                };
+                console.log(JSON.stringify(msg));
+              }
+            }
+
+            // Accumulate for result
+            const { onChunk } = await import("./cli/helpers/accumulator");
+            onChunk(buffers, chunk);
+          }
+
+          // Get stop reason from processor
+          const stopReason = streamProcessor.stopReason || "error";
+
+          // Case 1: Turn ended normally - break out of loop
+          if (stopReason === "end_turn") {
+            break;
+          }
+
+          // Case 2: Aborted - break out of loop
+          if (currentAbortController?.signal.aborted) {
+            break;
+          }
+
+          // Case 3: Requires approval - process approvals and continue
+          if (stopReason === "requires_approval") {
+            const approvals = streamProcessor.getApprovals();
+
+            if (approvals.length === 0) {
+              // No approvals to process - break
+              break;
+            }
+
+            // Check permissions and collect decisions
+            type Decision =
+              | {
+                  type: "approve";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  matchedRule: string;
+                }
+              | {
+                  type: "deny";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  reason: string;
+                };
+
+            const decisions: Decision[] = [];
+
+            for (const approval of approvals) {
+              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
+                approval.toolArgs,
+                {},
+              );
+              const permission = await checkToolPermission(
+                approval.toolName,
+                parsedArgs,
+              );
+
+              if (permission.decision === "allow") {
+                decisions.push({
+                  type: "approve",
+                  approval,
+                  matchedRule: permission.matchedRule || "auto-approved",
+                });
+
+                // Emit auto_approval event
+                const autoApprovalMsg: AutoApprovalMessage = {
+                  type: "auto_approval",
+                  tool_call: {
+                    name: approval.toolName,
+                    tool_call_id: approval.toolCallId,
+                    arguments: approval.toolArgs,
+                  },
+                  reason: permission.reason || "auto-approved",
+                  matched_rule: permission.matchedRule || "auto-approved",
+                  session_id: sessionId,
+                  uuid: `auto-approval-${approval.toolCallId}`,
+                };
+                console.log(JSON.stringify(autoApprovalMsg));
+              } else if (permission.decision === "deny") {
+                // Explicitly denied by permission rules
+                decisions.push({
+                  type: "deny",
+                  approval,
+                  reason: `Permission denied: ${permission.matchedRule || permission.reason}`,
+                });
+              } else {
+                // permission.decision === "ask" - request permission from SDK
+                const permResponse = await requestPermission(
+                  approval.toolCallId,
+                  approval.toolName,
+                  parsedArgs,
+                );
+
+                if (permResponse.decision === "allow") {
+                  decisions.push({
+                    type: "approve",
+                    approval,
+                    matchedRule: "SDK callback approved",
+                  });
+
+                  // Emit auto_approval event for SDK-approved tool
+                  const autoApprovalMsg: AutoApprovalMessage = {
+                    type: "auto_approval",
+                    tool_call: {
+                      name: approval.toolName,
+                      tool_call_id: approval.toolCallId,
+                      arguments: approval.toolArgs,
+                    },
+                    reason: permResponse.reason || "SDK callback approved",
+                    matched_rule: "canUseTool callback",
+                    session_id: sessionId,
+                    uuid: `auto-approval-${approval.toolCallId}`,
+                  };
+                  console.log(JSON.stringify(autoApprovalMsg));
+                } else {
+                  decisions.push({
+                    type: "deny",
+                    approval,
+                    reason: permResponse.reason || "Denied by SDK callback",
+                  });
+                }
+              }
+            }
+
+            // Execute approved tools
+            const { executeApprovalBatch } = await import(
+              "./agent/approval-execution"
+            );
+            const executedResults = await executeApprovalBatch(decisions);
+
+            // Send approval results back to continue
+            currentInput = [
+              {
+                type: "approval",
+                approvals: executedResults,
+              } as unknown as MessageCreate,
+            ];
+
+            // Continue the loop to process the next stream
+            continue;
+          }
+
+          // Other stop reasons - break
+          break;
+        }
+
+        // Emit result
+        const durationMs = performance.now() - startTime;
+        const lines = toLines(buffers);
+        const reversed = [...lines].reverse();
+        const lastAssistant = reversed.find(
+          (line) =>
+            line.kind === "assistant" &&
+            "text" in line &&
+            typeof line.text === "string" &&
+            line.text.trim().length > 0,
+        ) as Extract<Line, { kind: "assistant" }> | undefined;
+        const lastReasoning = reversed.find(
+          (line) =>
+            line.kind === "reasoning" &&
+            "text" in line &&
+            typeof line.text === "string" &&
+            line.text.trim().length > 0,
+        ) as Extract<Line, { kind: "reasoning" }> | undefined;
+        const lastToolResult = reversed.find(
+          (line) =>
+            line.kind === "tool_call" &&
+            "resultText" in line &&
+            typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
+              "string" &&
+            (
+              (line as Extract<Line, { kind: "tool_call" }>).resultText ?? ""
+            ).trim().length > 0,
+        ) as Extract<Line, { kind: "tool_call" }> | undefined;
+        const resultText =
+          lastAssistant?.text ||
+          lastReasoning?.text ||
+          lastToolResult?.resultText ||
+          "";
+
+        const resultMsg: ResultMessage = {
+          type: "result",
+          subtype: currentAbortController?.signal.aborted
+            ? "interrupted"
+            : "success",
+          session_id: sessionId,
+          duration_ms: Math.round(durationMs),
+          duration_api_ms: 0, // Not tracked in bidirectional mode
+          num_turns: numTurns,
+          result: resultText,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          run_ids: [],
+          usage: null,
+          uuid: `result-${agent.id}-${Date.now()}`,
+        };
+        console.log(JSON.stringify(resultMsg));
+      } catch (error) {
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message:
+            error instanceof Error ? error.message : "Unknown error occurred",
+          stop_reason: "error",
+          session_id: sessionId,
+          uuid: crypto.randomUUID(),
+        };
+        console.log(JSON.stringify(errorMsg));
+      } finally {
+        currentAbortController = null;
+      }
+      continue;
+    }
+
+    // Unknown message type
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message: `Unknown message type: ${message.type}`,
+      stop_reason: "error",
+      session_id: sessionId,
+      uuid: crypto.randomUUID(),
+    };
+    console.log(JSON.stringify(errorMsg));
+  }
+
+  // Stdin closed, exit gracefully
+  process.exit(0);
 }

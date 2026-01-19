@@ -218,7 +218,7 @@ export function checkPermission(
 
   // Fall back to tool defaults
   return {
-    decision: getDefaultDecision(toolName),
+    decision: getDefaultDecision(toolName, toolArgs),
     reason: "Default behavior for tool",
   };
 }
@@ -398,9 +398,26 @@ function matchesPattern(
 }
 
 /**
+ * Subagent types that are read-only and safe to auto-approve.
+ * These only have access to read-only tools (Glob, Grep, Read, LS, BashOutput).
+ * See: src/agent/subagents/builtin/*.md for definitions
+ */
+const READ_ONLY_SUBAGENT_TYPES = new Set([
+  "explore", // Codebase exploration - Glob, Grep, Read, LS, BashOutput
+  "Explore",
+  "plan", // Planning agent - Glob, Grep, Read, LS, BashOutput
+  "Plan",
+  "recall", // Conversation history search - Skill, Bash, Read, BashOutput
+  "Recall",
+]);
+
+/**
  * Get default decision for a tool (when no rules match)
  */
-function getDefaultDecision(toolName: string): PermissionDecision {
+function getDefaultDecision(
+  toolName: string,
+  toolArgs?: ToolArgs,
+): PermissionDecision {
   // Check TOOL_PERMISSIONS to determine if tool requires approval
   // Import is async so we need to do this synchronously - get the permissions from manager
   // For now, use a hardcoded check that matches TOOL_PERMISSIONS configuration
@@ -411,7 +428,6 @@ function getDefaultDecision(toolName: string): PermissionDecision {
     "Grep",
     "TodoWrite",
     "BashOutput",
-    "ExitPlanMode",
     "LS",
     // Codex toolset (snake_case) - tools that don't require approval
     "read_file",
@@ -441,6 +457,17 @@ function getDefaultDecision(toolName: string): PermissionDecision {
 
   if (autoAllowTools.includes(toolName)) {
     return "allow";
+  }
+
+  // Task tool: auto-approve read-only subagent types
+  if (toolName === "Task" || toolName === "task") {
+    const subagentType =
+      typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
+    if (READ_ONLY_SUBAGENT_TYPES.has(subagentType)) {
+      return "allow";
+    }
+    // Non-read-only subagent types require approval
+    return "ask";
   }
 
   // Everything else defaults to ask

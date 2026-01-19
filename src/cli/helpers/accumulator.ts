@@ -6,6 +6,94 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { isShellTool } from "./toolNameMapping";
+
+// Constants for streaming output
+const MAX_TAIL_LINES = 5;
+const MAX_BUFFER_SIZE = 100_000; // 100KB
+
+/**
+ * A line of streaming output with its source (stdout or stderr).
+ */
+export interface StreamingLine {
+  text: string;
+  isStderr: boolean;
+}
+
+/**
+ * Streaming state for bash/shell tools.
+ * Tracks a rolling window of output during execution.
+ */
+export interface StreamingState {
+  tailLines: StreamingLine[]; // Last 5 complete lines (for rolling display)
+  partialLine: string; // Incomplete line being accumulated
+  partialIsStderr: boolean; // Whether partial line is from stderr
+  totalLineCount: number; // Total lines seen (for "+N more" count)
+  startTime: number; // For elapsed time display
+}
+
+/**
+ * Append a chunk of output to the streaming state.
+ * Maintains a tail buffer of the last N lines and handles partial line accumulation.
+ */
+export function appendStreamingOutput(
+  state: StreamingState | undefined,
+  chunk: string,
+  startTime: number,
+  isStderr = false,
+): StreamingState {
+  const current = state || {
+    tailLines: [],
+    partialLine: "",
+    partialIsStderr: false,
+    totalLineCount: 0,
+    startTime,
+  };
+
+  const tailLines = [...current.tailLines];
+  let totalLineCount = current.totalLineCount;
+  let partialLine = current.partialLine;
+  const partialIsStderr = current.partialIsStderr;
+
+  // If stream type changed and we have a partial, flush it as a complete line
+  if (partialLine && isStderr !== partialIsStderr) {
+    tailLines.push({ text: partialLine, isStderr: partialIsStderr });
+    totalLineCount++;
+    partialLine = "";
+  }
+
+  // Append chunk to partial line
+  let buffer = partialLine + chunk;
+
+  // Size limit check - slice at line boundary to avoid corrupted lines
+  if (buffer.length > MAX_BUFFER_SIZE) {
+    const truncated = buffer.slice(-MAX_BUFFER_SIZE);
+    const firstNewline = truncated.indexOf("\n");
+    buffer = firstNewline >= 0 ? truncated.slice(firstNewline + 1) : truncated;
+  }
+
+  // Split into complete lines + remainder
+  const lines = buffer.split("\n");
+  const newPartialLine = lines.pop() || ""; // Last element is incomplete
+
+  // Convert string lines to StreamingLine objects with current stream's stderr flag
+  const newLines: StreamingLine[] = lines.map((text) => ({
+    text,
+    isStderr,
+  }));
+
+  // Update tail with new complete lines (keep empty lines for accurate display)
+  const allLines = [...tailLines, ...newLines];
+  const finalTailLines = allLines.slice(-MAX_TAIL_LINES);
+
+  return {
+    tailLines: finalTailLines,
+    partialLine: newPartialLine,
+    partialIsStderr: isStderr,
+    totalLineCount: totalLineCount + lines.length,
+    startTime: current.startTime,
+  };
+}
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -36,6 +124,8 @@ export type Line =
       resultOk?: boolean;
       // state that's useful for rendering
       phase: "streaming" | "ready" | "running" | "finished";
+      // streaming output state (for shell tools during execution)
+      streaming?: StreamingState;
     }
   | { kind: "error"; id: string; text: string }
   | {
@@ -54,6 +144,8 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
+      // streaming output state (during execution)
+      streaming?: StreamingState;
     }
   | {
       kind: "status";
@@ -72,6 +164,8 @@ export type Buffers = {
   lastOtid: string | null; // Track the last otid to detect transitions
   pendingRefresh?: boolean; // Track throttled refresh state
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
+  commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
+  abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -90,6 +184,8 @@ export function createBuffers(): Buffers {
     pendingToolByRun: new Map(),
     toolCallIdToLineId: new Map(),
     lastOtid: null,
+    commitGeneration: 0,
+    abortGeneration: 0,
     usage: {
       promptTokens: 0,
       completionTokens: 0,
@@ -170,11 +266,21 @@ export function markCurrentLineAsFinished(b: Buffers) {
 /**
  * Mark any incomplete tool calls as cancelled when stream is interrupted.
  * This prevents blinking tool calls from staying in progress state.
+ * @param b - The buffers object
+ * @param setInterruptedFlag - Whether to set the interrupted flag (default true).
+ *   Pass false when clearing stale tool calls at stream startup to avoid race conditions
+ *   with concurrent processConversation calls reading the flag.
  * @returns true if any tool calls were marked as cancelled
  */
-export function markIncompleteToolsAsCancelled(b: Buffers): boolean {
+export function markIncompleteToolsAsCancelled(
+  b: Buffers,
+  setInterruptedFlag = true,
+): boolean {
   // Mark buffer as interrupted to skip stale throttled refreshes
-  b.interrupted = true;
+  // (only when actually interrupting, not when clearing stale state at startup)
+  if (setInterruptedFlag) {
+    b.interrupted = true;
+  }
 
   let anyToolsCancelled = false;
   for (const [id, line] of b.byId.entries()) {
@@ -219,6 +325,13 @@ function extractTextPart(v: unknown): string {
 
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+  // Skip processing if stream was interrupted mid-turn. handleInterrupt already
+  // rendered the cancellation state, so we should ignore any buffered chunks
+  // that arrive before drainStream exits.
+  if (b.interrupted) {
+    return;
+  }
+
   // TODO remove once SDK v1 has proper typing for in-stream errors
   // Check for streaming error objects (not typed in SDK but emitted by backend)
   // Note: Error handling moved to catch blocks in App.tsx and headless.ts
@@ -388,6 +501,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           argsText: (line.argsText || "") + argsText,
         };
         b.byId.set(id, updatedLine);
+        // Count tool call arguments as LLM output tokens
+        b.tokenCount += argsText.length;
       }
       break;
     }
@@ -413,12 +528,19 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       for (const toolReturn of toolReturns) {
         const toolCallId = toolReturn.tool_call_id;
         // Handle both func_response (streaming) and tool_return (SDK) properties
-        const resultText =
+        const rawResult =
           ("func_response" in toolReturn
             ? toolReturn.func_response
             : undefined) ||
-          ("tool_return" in toolReturn ? toolReturn.tool_return : undefined) ||
-          "";
+          ("tool_return" in toolReturn ? toolReturn.tool_return : undefined);
+
+        // Ensure resultText is always a string (guard against SDK returning objects)
+        const resultText =
+          typeof rawResult === "string"
+            ? rawResult
+            : rawResult != null
+              ? JSON.stringify(rawResult)
+              : "";
         const status = toolReturn.status;
 
         // Look up the line by toolCallId
@@ -477,4 +599,36 @@ export function toLines(b: Buffers): Line[] {
     if (line) out.push(line);
   }
   return out;
+}
+
+/**
+ * Set tool calls to "running" phase before execution.
+ * This updates the UI to show the formatted args instead of ellipsis.
+ */
+export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
+  for (const toolCallId of toolCallIds) {
+    const lineId = b.toolCallIdToLineId.get(toolCallId);
+    if (lineId) {
+      const line = b.byId.get(lineId);
+      if (line && line.kind === "tool_call") {
+        const shouldSeedStreaming =
+          line.name && isShellTool(line.name) && !line.streaming;
+        b.byId.set(lineId, {
+          ...line,
+          phase: "running",
+          ...(shouldSeedStreaming
+            ? {
+                streaming: {
+                  tailLines: [],
+                  partialLine: "",
+                  partialIsStderr: false,
+                  totalLineCount: 0,
+                  startTime: Date.now(),
+                },
+              }
+            : {}),
+        });
+      }
+    }
+  }
 }

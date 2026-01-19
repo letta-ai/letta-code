@@ -14,6 +14,9 @@ function isControlSequence(input, key) {
     if (key.tab || (key.ctrl && input === 'c')) return true;
     if (key.shift && key.tab) return true;
 
+    // Modifier+Enter - handled by parent for newline insertion
+    if (key.return && (key.shift || key.meta || key.ctrl)) return true;
+
     // Ctrl+W (delete word) - handled by parent component
     if (key.ctrl && (input === 'w' || input === 'W')) return true;
 
@@ -27,6 +30,14 @@ function isControlSequence(input, key) {
     // Filter specific escape sequences that would insert garbage, but allow plain ESC through
     // CSI sequences (ESC[...), Option+Delete (ESC + DEL), and other multi-char escape sequences
     if (input && typeof input === 'string' && input.startsWith('\x1b') && input.length > 1) return true;
+
+    // Forward delete (fn+Delete on macOS): handled by parent's raw input handler
+    // Check timestamp to avoid double-processing (globalThis.__lettaForwardDeleteTimestamp)
+    // Only forward delete sets this; regular backspace doesn't, so backspace still works here
+    if (key.delete && globalThis.__lettaForwardDeleteTimestamp && 
+        (Date.now() - globalThis.__lettaForwardDeleteTimestamp) < 100) {
+        return true;
+    }
 
     return false;
 }

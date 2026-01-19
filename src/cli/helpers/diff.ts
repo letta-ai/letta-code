@@ -189,3 +189,73 @@ export function computeAdvancedDiff(
 
   return { mode: "advanced", fileName, oldStr, newStr, hunks };
 }
+
+/**
+ * Parse a patch operation's hunks directly into AdvancedDiffSuccess format.
+ * This bypasses the "read file -> find oldString" flow since the patch IS the diff.
+ * Used for ApplyPatch tool previews where multi-hunk patches can't be found as
+ * contiguous blocks in the file.
+ */
+export function parsePatchToAdvancedDiff(
+  patchLines: string[], // Lines for this file operation (after "*** Update File:" or "*** Add File:")
+  filePath: string,
+): AdvancedDiffSuccess | null {
+  const fileName = basename(filePath);
+  const hunks: AdvancedHunk[] = [];
+
+  let currentHunk: AdvancedHunk | null = null;
+  let oldLine = 1;
+  let newLine = 1;
+
+  for (const line of patchLines) {
+    if (line.startsWith("@@")) {
+      // Start new hunk - try to parse line numbers from @@ -old,count +new,count @@
+      if (currentHunk && currentHunk.lines.length > 0) {
+        hunks.push(currentHunk);
+      }
+
+      // Try standard unified diff format: @@ -10,5 +10,7 @@
+      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      currentHunk = {
+        oldStart: match?.[1] ? parseInt(match[1], 10) : oldLine,
+        newStart: match?.[2] ? parseInt(match[2], 10) : newLine,
+        lines: [],
+      };
+      continue;
+    }
+
+    if (!currentHunk) {
+      // Create implicit first hunk if no @@ header seen yet
+      currentHunk = { oldStart: 1, newStart: 1, lines: [] };
+    }
+
+    // Parse diff line (prefix + content)
+    if (line.length === 0) {
+      // Empty line - treat as context
+      currentHunk.lines.push({ raw: " " });
+      oldLine++;
+      newLine++;
+    } else {
+      const prefix = line[0];
+      if (prefix === " " || prefix === "-" || prefix === "+") {
+        currentHunk.lines.push({ raw: line });
+        if (prefix === " " || prefix === "-") oldLine++;
+        if (prefix === " " || prefix === "+") newLine++;
+      }
+    }
+  }
+
+  if (currentHunk && currentHunk.lines.length > 0) {
+    hunks.push(currentHunk);
+  }
+
+  if (hunks.length === 0) return null;
+
+  return {
+    mode: "advanced",
+    fileName,
+    oldStr: "", // Not needed for rendering when hunks are provided
+    newStr: "", // Not needed for rendering when hunks are provided
+    hunks,
+  };
+}

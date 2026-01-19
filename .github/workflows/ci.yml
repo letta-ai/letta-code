@@ -66,7 +66,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun install
 
+      - name: Unlock GNOME Keyring
+        if: runner.os == 'Linux'
+        uses: t1m0thyj/unlock-keyring@v1
+
       - name: Run tests (extended timeout)
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: bun test --timeout 15000
 
       - name: Build bundle
@@ -93,6 +99,24 @@ jobs:
           else
             echo "✓ Bundle size is acceptable"
           fi
+
+      # Test npm install flow with native shell to catch shebang issues
+      # This uses PowerShell on Windows (not Git Bash) to match real user experience
+      - name: Test npm install flow (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm pack
+          npm install -g (Get-Item letta-ai-letta-code-*.tgz).FullName
+          letta --help
+
+      - name: Test npm install flow (Unix)
+        if: runner.os != 'Windows'
+        shell: sh
+        run: |
+          npm pack
+          npm install -g ./letta-ai-letta-code-*.tgz
+          letta --help
 
       - name: Headless smoke test (API)
         # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
@@ -126,8 +150,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: gemini-3-flash temporarily disabled due to instability
-        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, glm-4.6, haiku]
+        # Note: gemini-3-flash / glm-4.7 temporarily disabled due to instability
+        model: [gpt-5-minimal, gpt-4.1, sonnet-4.5, gemini-pro, haiku]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -48,6 +48,7 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "strings",
   "xxd",
   "hexdump",
+  "cd",
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -60,7 +61,47 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "remote",
 ]);
 
-const DANGEROUS_OPERATOR_PATTERN = /(>>|>|&&|\|\||;|\$\(|`)/;
+// gh CLI read-only commands: category -> allowed actions
+// null means any action is allowed for that category
+const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
+  pr: new Set(["list", "status", "checks", "diff", "view"]),
+  issue: new Set(["list", "status", "view"]),
+  repo: new Set(["list", "view", "gitignore", "license"]),
+  run: new Set(["list", "view", "watch", "download"]),
+  release: new Set(["list", "view", "download"]),
+  search: null, // all search subcommands are read-only
+  api: null, // usually GET requests for exploration
+  status: null, // top-level command, no action needed
+};
+
+/**
+ * Read-only bundled skill scripts that are safe to execute without approval.
+ * Only scripts from the bundled searching-messages skill are allowed.
+ * We check for specific path patterns to prevent malicious scripts in user directories.
+ */
+const BUNDLED_READ_ONLY_SCRIPTS = [
+  // Bundled skills path (production): /path/to/skills/searching-messages/scripts/...
+  "/skills/searching-messages/scripts/search-messages.ts",
+  "/skills/searching-messages/scripts/get-messages.ts",
+  // Source path (development): /path/to/src/skills/builtin/searching-messages/scripts/...
+  "/skills/builtin/searching-messages/scripts/search-messages.ts",
+  "/skills/builtin/searching-messages/scripts/get-messages.ts",
+];
+
+/**
+ * Check if a script path is a known read-only bundled skill script
+ */
+function isReadOnlySkillScript(scriptPath: string): boolean {
+  // Normalize path separators for cross-platform
+  const normalized = scriptPath.replace(/\\/g, "/");
+  return BUNDLED_READ_ONLY_SCRIPTS.some((pattern) =>
+    normalized.endsWith(pattern),
+  );
+}
+
+// Operators that are always dangerous (file redirects, command substitution)
+// Note: &&, ||, ; are handled by splitting and checking each segment
+const DANGEROUS_OPERATOR_PATTERN = /(>>|>|\$\(|`)/;
 
 export function isReadOnlyShellCommand(
   command: string | string[] | undefined | null,
@@ -94,8 +135,10 @@ export function isReadOnlyShellCommand(
     return false;
   }
 
+  // Split on command separators: |, &&, ||, ;
+  // Each segment must be safe for the whole command to be safe
   const segments = trimmed
-    .split("|")
+    .split(/\||&&|\|\||;/)
     .map((segment) => segment.trim())
     .filter(Boolean);
 
@@ -138,11 +181,42 @@ function isSafeSegment(segment: string): boolean {
       }
       return SAFE_GIT_SUBCOMMANDS.has(subcommand);
     }
+    if (command === "gh") {
+      const category = tokens[1];
+      if (!category) {
+        return false;
+      }
+      if (!(category in SAFE_GH_COMMANDS)) {
+        return false;
+      }
+      const allowedActions = SAFE_GH_COMMANDS[category];
+      // null means any action is allowed (e.g., gh search, gh api, gh status)
+      if (allowedActions === null) {
+        return true;
+      }
+      // undefined means category not in map (shouldn't happen after 'in' check)
+      if (allowedActions === undefined) {
+        return false;
+      }
+      const action = tokens[2];
+      if (!action) {
+        return false;
+      }
+      return allowedActions.has(action);
+    }
     if (command === "find") {
       return !/-delete|\s-exec\b/.test(segment);
     }
     if (command === "sort") {
       return !/\s-o\b/.test(segment);
+    }
+    // Allow npx tsx for read-only skill scripts (searching-messages)
+    if (command === "npx" && tokens[1] === "tsx") {
+      const scriptPath = tokens[2];
+      if (scriptPath && isReadOnlySkillScript(scriptPath)) {
+        return true;
+      }
+      return false;
     }
     return false;
   }

@@ -1,21 +1,60 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
+import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
+import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { ConversationSelector } from "./cli/components/ConversationSelector";
+import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
-import {
-  forceUpsertTools,
-  isToolsNotFoundError,
-  loadTools,
-  upsertToolsIfNeeded,
-} from "./tools/manager";
+import { loadTools } from "./tools/manager";
+import { markMilestone } from "./utils/timing";
+
+// Stable empty array constants to prevent new references on every render
+// These are used as fallbacks when resumeData is null, avoiding the React
+// anti-pattern of creating new [] on every render which triggers useEffect re-runs
+const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
+const EMPTY_MESSAGE_ARRAY: Message[] = [];
+
+/**
+ * Check if pinned agents consist only of default agents (Memo + Incognito).
+ * Used to auto-select Memo for fresh users without showing a selector.
+ */
+async function hasOnlyDefaultAgents(
+  pinnedIds: string[],
+): Promise<{ onlyDefaults: boolean; memoId: string | null }> {
+  if (pinnedIds.length === 0) return { onlyDefaults: true, memoId: null };
+  if (pinnedIds.length > 2) return { onlyDefaults: false, memoId: null };
+
+  const client = await getClient();
+  let memoId: string | null = null;
+
+  for (const id of pinnedIds) {
+    try {
+      const agent = await client.agents.retrieve(id);
+      const tags = agent.tags || [];
+      if (tags.includes(MEMO_TAG)) {
+        memoId = agent.id;
+      } else if (!tags.includes(INCOGNITO_TAG)) {
+        // Found a non-default agent
+        return { onlyDefaults: false, memoId: null };
+      }
+    } catch {
+      // Agent doesn't exist, skip it
+    }
+  }
+
+  return { onlyDefaults: true, memoId };
+}
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -24,8 +63,11 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Resume from profile or create new agent (shows selector)
-  letta --new           Create a new agent directly (skip profile selector)
+  letta                 Resume default conversation (OG single-threaded experience)
+  letta --new           Create a new conversation (for concurrent sessions)
+  letta --continue      Resume last session (agent + conversation) directly
+  letta --resume        Open agent selector UI to pick agent/conversation
+  letta --new-agent     Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -38,16 +80,24 @@ OPTIONS
   -h, --help            Show this help and exit
   -v, --version         Print version and exit
   --info                Show current directory, skills, and pinned agents
-  --new                 Create new agent directly (skip profile selection)
-  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
-  --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
+  --continue            Resume last session (agent + conversation) directly
+  -r, --resume          Open agent selector UI after loading
+  --new                 Create new conversation (for concurrent sessions)
+  --new-agent           Create new agent directly (skip profile selection)
+  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")
+  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,conversation_search")
   -a, --agent <id>      Use a specific agent ID
+  -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
   -s, --system <id>     System prompt ID or subagent name (applies to new or existing agent)
   --toolset <name>      Force toolset: "codex", "default", or "gemini" (overrides model-based auto-selection)
   -p, --prompt          Headless prompt mode
   --output-format <fmt> Output format for headless mode (text, json, stream-json)
                         Default: text
+  --input-format <fmt>  Input format for headless mode (stream-json)
+                        When set, reads JSON messages from stdin for bidirectional communication
+  --include-partial-messages
+                        Emit stream_event wrappers for each chunk (stream-json only)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
@@ -59,7 +109,7 @@ BEHAVIOR
   - Use /profile save <name> to bookmark your current agent
 
   Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
+  - Global: ~/.config/letta/settings.json (available everywhere)
   - Local: .letta/settings.local.json (pinned to project)
 
   If no credentials are configured, you'll be prompted to authenticate via
@@ -211,10 +261,99 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
+/**
+ * Resolve an agent ID by name from pinned agents.
+ * Case-insensitive exact match. If multiple matches, picks the most recently used.
+ */
+async function resolveAgentByName(
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const client = await getClient();
+
+  // Get all pinned agents (local first, then global, deduplicated)
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const allPinned = [...new Set([...localPinned, ...globalPinned])];
+
+  if (allPinned.length === 0) {
+    return null;
+  }
+
+  // Fetch names for all pinned agents and find matches
+  const matches: { id: string; name: string }[] = [];
+  const normalizedSearchName = name.toLowerCase();
+
+  await Promise.all(
+    allPinned.map(async (id) => {
+      try {
+        const agent = await client.agents.retrieve(id);
+        if (agent.name?.toLowerCase() === normalizedSearchName) {
+          matches.push({ id, name: agent.name });
+        }
+      } catch {
+        // Agent not found or error, skip
+      }
+    }),
+  );
+
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0] ?? null;
+
+  // Multiple matches - pick most recently used
+  // Check local LRU first
+  const localSettings = settingsManager.getLocalProjectSettings();
+  const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
+  if (localMatch) return localMatch;
+
+  // Then global LRU
+  const settings = settingsManager.getSettings();
+  const globalMatch = matches.find((m) => m.id === settings.lastAgent);
+  if (globalMatch) return globalMatch;
+
+  // Fallback to first match (preserves local pinned order)
+  return matches[0] ?? null;
+}
+
+/**
+ * Get all pinned agent names for error messages
+ */
+async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
+  const client = await getClient();
+  const localPinned = settingsManager.getLocalPinnedAgents();
+  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const allPinned = [...new Set([...localPinned, ...globalPinned])];
+
+  const agents: { id: string; name: string }[] = [];
+  await Promise.all(
+    allPinned.map(async (id) => {
+      try {
+        const agent = await client.agents.retrieve(id);
+        agents.push({ id, name: agent.name || "(unnamed)" });
+      } catch {
+        // Agent not found, skip
+      }
+    }),
+  );
+  return agents;
+}
+
 async function main(): Promise<void> {
+  markMilestone("CLI_START");
+
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
-  const settings = settingsManager.getSettings();
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  markMilestone("SETTINGS_LOADED");
+
+  // Initialize LSP infrastructure for type checking
+  if (process.env.LETTA_ENABLE_LSP) {
+    try {
+      const { lspManager } = await import("./lsp/manager.js");
+      await lspManager.initialize(process.cwd());
+    } catch (error) {
+      console.error("[LSP] Failed to initialize:", error);
+    }
+  }
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   telemetry.init();
@@ -225,23 +364,47 @@ async function main(): Promise<void> {
     // Silently ignore update failures
   });
 
+  // Clean up old overflow files (non-blocking, 24h retention)
+  const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
+  Promise.resolve().then(() => {
+    try {
+      cleanupOldOverflowFiles(process.cwd());
+    } catch {
+      // Silently ignore cleanup failures
+    }
+  });
+
   // Parse command-line arguments (Bun-idiomatic approach using parseArgs)
+  // Preprocess args to support --conv as alias for --conversation
+  const processedArgs = process.argv.map((arg) =>
+    arg === "--conv" ? "--conversation" : arg,
+  );
+
   let values: Record<string, unknown>;
   let positionals: string[];
   try {
     const parsed = parseArgs({
-      args: process.argv,
+      args: processedArgs,
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         info: { type: "boolean" },
-        continue: { type: "boolean", short: "c" },
-        new: { type: "boolean" },
+        continue: { type: "boolean" }, // Deprecated - kept for error message
+        resume: { type: "boolean", short: "r" }, // Resume last session (or specific conversation with --conversation)
+        conversation: { type: "string", short: "C" }, // Specific conversation ID to resume (--conv alias supported)
+        default: { type: "boolean" }, // Alias for --conv default (use agent's default conversation)
+        "new-agent": { type: "boolean" }, // Force create a new agent
+        new: { type: "boolean" }, // Deprecated - kept for helpful error message
         "init-blocks": { type: "string" },
         "base-tools": { type: "string" },
         agent: { type: "string", short: "a" },
+        name: { type: "string", short: "n" },
         model: { type: "string", short: "m" },
         system: { type: "string", short: "s" },
+        "system-custom": { type: "string" },
+        "system-append": { type: "string" },
+        "memory-blocks": { type: "string" },
+        "block-value": { type: "string", multiple: true },
         toolset: { type: "string" },
         prompt: { type: "boolean", short: "p" },
         run: { type: "boolean" },
@@ -251,11 +414,12 @@ async function main(): Promise<void> {
         "permission-mode": { type: "string" },
         yolo: { type: "boolean" },
         "output-format": { type: "string" },
+        "input-format": { type: "string" },
+        "include-partial-messages": { type: "boolean" },
         skills: { type: "string" },
-        link: { type: "boolean" },
-        unlink: { type: "boolean" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
+        "no-skills": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -307,13 +471,61 @@ async function main(): Promise<void> {
     process.exit(result.success ? 0 : 1);
   }
 
+  // --continue: Resume last session (agent + conversation) automatically
   const shouldContinue = (values.continue as boolean | undefined) ?? false;
-  const forceNew = (values.new as boolean | undefined) ?? false;
+  // --resume: Open agent selector UI after loading
+  const shouldResume = (values.resume as boolean | undefined) ?? false;
+  let specifiedConversationId =
+    (values.conversation as string | undefined) ?? null; // Specific conversation to resume
+  const useDefaultConv = (values.default as boolean | undefined) ?? false; // --default flag
+  const forceNew = (values["new-agent"] as boolean | undefined) ?? false;
+
+  // Handle --default flag (alias for --conv default)
+  if (useDefaultConv) {
+    if (specifiedConversationId && specifiedConversationId !== "default") {
+      console.error(
+        "Error: --default cannot be used with --conversation (they're mutually exclusive)",
+      );
+      process.exit(1);
+    }
+    specifiedConversationId = "default";
+  }
+
+  // --new: Create a new conversation (for concurrent sessions)
+  const forceNewConversation = (values.new as boolean | undefined) ?? false;
+
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
-  const specifiedAgentId = (values.agent as string | undefined) ?? null;
+  let specifiedAgentId = (values.agent as string | undefined) ?? null;
+
+  // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
+  if (specifiedConversationId?.startsWith("agent-")) {
+    if (specifiedAgentId && specifiedAgentId !== specifiedConversationId) {
+      console.error(
+        `Error: Conflicting agent IDs: --agent ${specifiedAgentId} vs --conv ${specifiedConversationId}`,
+      );
+      process.exit(1);
+    }
+    specifiedAgentId = specifiedConversationId;
+    specifiedConversationId = "default";
+  }
+
+  // Validate --conv default requires --agent
+  if (specifiedConversationId === "default" && !specifiedAgentId) {
+    console.error("Error: --conv default requires --agent <agent-id>");
+    console.error("Usage: letta --agent agent-xyz --conv default");
+    console.error("   or: letta --conv agent-xyz (shorthand)");
+    process.exit(1);
+  }
+
+  const specifiedAgentName = (values.name as string | undefined) ?? null;
   const specifiedModel = (values.model as string | undefined) ?? undefined;
-  const systemPromptId = (values.system as string | undefined) ?? undefined;
+  const systemPromptPreset = (values.system as string | undefined) ?? undefined;
+  const systemCustom =
+    (values["system-custom"] as string | undefined) ?? undefined;
+  // Note: systemAppend is also parsed but only used in headless mode (headless.ts handles it)
+  const memoryBlocksJson =
+    (values["memory-blocks"] as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
@@ -383,8 +595,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate system prompt if provided (can be a system prompt ID or subagent name)
-  if (systemPromptId) {
+  // Validate system prompt options (--system and --system-custom are mutually exclusive)
+  if (systemPromptPreset && systemCustom) {
+    console.error(
+      "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
+    );
+    process.exit(1);
+  }
+
+  // Validate system prompt preset if provided (can be a system prompt ID or subagent name)
+  if (systemPromptPreset) {
     const { SYSTEM_PROMPTS } = await import("./agent/promptAssets");
     const { getAllSubagentConfigs } = await import("./agent/subagents");
 
@@ -392,14 +612,88 @@ async function main(): Promise<void> {
     const subagentConfigs = await getAllSubagentConfigs();
     const validSubagentNames = Object.keys(subagentConfigs);
 
-    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptId);
-    const isValidSubagent = validSubagentNames.includes(systemPromptId);
+    const isValidSystemPrompt = validSystemPrompts.includes(systemPromptPreset);
+    const isValidSubagent = validSubagentNames.includes(systemPromptPreset);
 
     if (!isValidSystemPrompt && !isValidSubagent) {
       const allValid = [...validSystemPrompts, ...validSubagentNames];
       console.error(
-        `Error: Invalid system prompt "${systemPromptId}". Must be one of: ${allValid.join(", ")}.`,
+        `Error: Invalid system prompt "${systemPromptPreset}". Must be one of: ${allValid.join(", ")}.`,
       );
+      process.exit(1);
+    }
+  }
+
+  // Parse memory blocks JSON if provided
+  let memoryBlocks:
+    | Array<{ label: string; value: string; description?: string }>
+    | undefined;
+  if (memoryBlocksJson) {
+    try {
+      memoryBlocks = JSON.parse(memoryBlocksJson);
+      if (!Array.isArray(memoryBlocks)) {
+        throw new Error("memory-blocks must be a JSON array");
+      }
+      // Validate each block has required fields
+      for (const block of memoryBlocks) {
+        if (
+          typeof block.label !== "string" ||
+          typeof block.value !== "string"
+        ) {
+          throw new Error(
+            "Each memory block must have 'label' and 'value' string fields",
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        `Error: Invalid --memory-blocks JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // Validate --conversation flag (mutually exclusive with agent-selection flags)
+  // Exception: --conv default requires --agent
+  if (specifiedConversationId && specifiedConversationId !== "default") {
+    if (specifiedAgentId) {
+      console.error("Error: --conversation cannot be used with --agent");
+      process.exit(1);
+    }
+    if (specifiedAgentName) {
+      console.error("Error: --conversation cannot be used with --name");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --conversation cannot be used with --new-agent");
+      process.exit(1);
+    }
+    if (fromAfFile) {
+      console.error("Error: --conversation cannot be used with --from-af");
+      process.exit(1);
+    }
+    if (shouldResume) {
+      console.error("Error: --conversation cannot be used with --resume");
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
+  // Validate --new flag (create new conversation)
+  if (forceNewConversation) {
+    if (shouldContinue) {
+      console.error("Error: --new cannot be used with --continue");
+      process.exit(1);
+    }
+    if (specifiedConversationId) {
+      console.error("Error: --new cannot be used with --conversation");
+      process.exit(1);
+    }
+    if (shouldResume) {
+      console.error("Error: --new cannot be used with --resume");
       process.exit(1);
     }
   }
@@ -410,8 +704,12 @@ async function main(): Promise<void> {
       console.error("Error: --from-af cannot be used with --agent");
       process.exit(1);
     }
-    if (shouldContinue) {
-      console.error("Error: --from-af cannot be used with --continue");
+    if (specifiedAgentName) {
+      console.error("Error: --from-af cannot be used with --name");
+      process.exit(1);
+    }
+    if (shouldResume) {
+      console.error("Error: --from-af cannot be used with --resume");
       process.exit(1);
     }
     if (forceNew) {
@@ -424,6 +722,18 @@ async function main(): Promise<void> {
     const resolvedPath = resolve(fromAfFile);
     if (!existsSync(resolvedPath)) {
       console.error(`Error: AgentFile not found: ${resolvedPath}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate --name flag
+  if (specifiedAgentName) {
+    if (specifiedAgentId) {
+      console.error("Error: --name cannot be used with --agent");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --name cannot be used with --new");
       process.exit(1);
     }
   }
@@ -480,6 +790,7 @@ async function main(): Promise<void> {
   // Validate credentials by checking health endpoint
   const { validateCredentials } = await import("./auth/oauth");
   const isValid = await validateCredentials(baseURL, apiKey ?? "");
+  markMilestone("CREDENTIALS_VALIDATED");
 
   if (!isValid) {
     // For headless mode, error out with helpful message
@@ -490,7 +801,7 @@ async function main(): Promise<void> {
         "Your credentials may be invalid or the server may be unreachable.",
       );
       console.error(
-        "Delete ~/.letta/settings.json then run 'letta' to re-authenticate",
+        "Delete ~/.config/letta/settings.json then run 'letta' to re-authenticate",
       );
       process.exit(1);
     }
@@ -506,6 +817,33 @@ async function main(): Promise<void> {
     await runSetup();
     // After setup, restart main flow
     return main();
+  }
+
+  // Resolve --name to agent ID if provided
+  if (specifiedAgentName) {
+    // Load local settings for LRU priority
+    await settingsManager.loadLocalProjectSettings();
+
+    const resolved = await resolveAgentByName(specifiedAgentName);
+    if (!resolved) {
+      console.error(
+        `Error: No pinned agent found with name "${specifiedAgentName}"`,
+      );
+      console.error("");
+      const pinnedAgents = await getPinnedAgentNames();
+      if (pinnedAgents.length > 0) {
+        console.error("Available pinned agents:");
+        for (const agent of pinnedAgents) {
+          console.error(`  - "${agent.name}" (${agent.id})`);
+        }
+      } else {
+        console.error(
+          "No pinned agents available. Use /pin to pin an agent first.",
+        );
+      }
+      process.exit(1);
+    }
+    specifiedAgentId = resolved.id;
   }
 
   // Set tool filter if provided (controls which tools are loaded)
@@ -553,38 +891,36 @@ async function main(): Promise<void> {
     }
   }
 
-  // Handle --link and --unlink flags (modify tools before starting session)
-  const shouldLink = values.link as boolean | undefined;
-  const shouldUnlink = values.unlink as boolean | undefined;
-
-  // Validate --link/--unlink flags require --agent
-  // Validate --link/--unlink flags require --agent
-  if (shouldLink || shouldUnlink) {
-    if (!specifiedAgentId) {
-      console.error(
-        `Error: --${shouldLink ? "link" : "unlink"} requires --agent <id>`,
-      );
-      process.exit(1);
-    }
-    // Implementation is in InteractiveSession init()
-  }
-
   if (isHeadless) {
+    markMilestone("HEADLESS_MODE_START");
     // For headless mode, load tools synchronously (respecting model/toolset when provided)
     const modelForTools = getModelForToolLoading(
       specifiedModel,
       specifiedToolset as "codex" | "default" | undefined,
     );
     await loadTools(modelForTools);
-    const client = await getClient();
-    await upsertToolsIfNeeded(client, baseURL);
+    markMilestone("TOOLS_LOADED");
 
     const { handleHeadlessCommand } = await import("./headless");
     await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
     return;
   }
 
+  markMilestone("TUI_MODE_START");
+
+  // Enable enhanced key reporting (Shift+Enter, etc.) BEFORE Ink initializes.
+  // In VS Code/xterm.js this typically requires a short handshake (query + enable).
+  try {
+    const { detectAndEnableKittyProtocol } = await import(
+      "./cli/utils/kittyProtocolDetector"
+    );
+    await detectAndEnableKittyProtocol();
+  } catch {
+    // Best-effort: if this fails, the app still runs (Option+Enter remains supported).
+  }
+
   // Interactive: lazy-load React/Ink + App
+  markMilestone("REACT_IMPORT_START");
   const React = await import("react");
   const { render } = await import("ink");
   const { useState, useEffect } = React;
@@ -598,7 +934,7 @@ async function main(): Promise<void> {
     baseTools,
     agentIdArg,
     model,
-    systemPromptId,
+    systemPromptPreset,
     toolset,
     skillsDirectory,
     fromAfFile,
@@ -609,17 +945,19 @@ async function main(): Promise<void> {
     baseTools?: string[];
     agentIdArg: string | null;
     model?: string;
-    systemPromptId?: string;
+    systemPromptPreset?: string;
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
   }) {
+    const [showKeybindingSetup, setShowKeybindingSetup] = useState<
+      boolean | null
+    >(null);
     const [loadingState, setLoadingState] = useState<
       | "selecting"
       | "selecting_global"
+      | "selecting_conversation"
       | "assembling"
-      | "upserting"
-      | "updating_tools"
       | "importing"
       | "initializing"
       | "checking"
@@ -627,13 +965,110 @@ async function main(): Promise<void> {
     >("selecting");
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
+    const [conversationId, setConversationId] = useState<string | null>(null);
     const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
+    const [resumedExistingConversation, setResumedExistingConversation] =
+      useState(false);
     const [agentProvenance, setAgentProvenance] =
       useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
+    // Track agent and conversation for conversation selector (--resume flag)
+    const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
+    const [resumeAgentName, setResumeAgentName] = useState<string | null>(null);
+    const [selectedConversationId, setSelectedConversationId] = useState<
+      string | null
+    >(null);
+    // Track when user explicitly requested new agent from selector (not via --new flag)
+    const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
+
+    // Release notes to display (checked once on mount)
+    const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+
+    // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
+    useEffect(() => {
+      async function autoInstallKeybinding() {
+        const {
+          detectTerminalType,
+          getKeybindingsPath,
+          keybindingExists,
+          installKeybinding,
+        } = await import("./cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("./settings");
+
+        const terminal = detectTerminalType();
+        if (!terminal) {
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        const settings = await loadSettings();
+        const keybindingsPath = getKeybindingsPath(terminal);
+
+        // Skip if already installed or no valid path
+        if (!keybindingsPath || settings.shiftEnterKeybindingInstalled) {
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        // Check if keybinding already exists (user might have added it manually)
+        if (keybindingExists(keybindingsPath)) {
+          await updateSettings({ shiftEnterKeybindingInstalled: true });
+          setShowKeybindingSetup(false);
+          return;
+        }
+
+        // Silently install keybinding (no prompt, just like Claude Code)
+        const result = installKeybinding(keybindingsPath);
+        if (result.success) {
+          await updateSettings({ shiftEnterKeybindingInstalled: true });
+        }
+
+        setShowKeybindingSetup(false);
+      }
+
+      async function autoInstallWezTermFix() {
+        const {
+          isWezTerm,
+          wezTermDeleteFixExists,
+          getWezTermConfigPath,
+          installWezTermDeleteFix,
+        } = await import("./cli/utils/terminalKeybindingInstaller");
+        const { loadSettings, updateSettings } = await import("./settings");
+
+        if (!isWezTerm()) return;
+
+        const settings = await loadSettings();
+        if (settings.wezTermDeleteFixInstalled) return;
+
+        const configPath = getWezTermConfigPath();
+        if (wezTermDeleteFixExists(configPath)) {
+          await updateSettings({ wezTermDeleteFixInstalled: true });
+          return;
+        }
+
+        // Silently install the fix
+        const result = installWezTermDeleteFix();
+        if (result.success) {
+          await updateSettings({ wezTermDeleteFixInstalled: true });
+        }
+      }
+
+      autoInstallKeybinding();
+      autoInstallWezTermFix();
+    }, []);
+
+    // Check for release notes to display (runs once on mount)
+    useEffect(() => {
+      async function checkNotes() {
+        const { checkReleaseNotes } = await import("./release-notes");
+        const notes = await checkReleaseNotes();
+        setReleaseNotes(notes);
+      }
+      checkNotes();
+    }, []);
 
     // Initialize on mount - check if we should show global agent selector
     useEffect(() => {
@@ -641,21 +1076,222 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
+        let globalPinned = settingsManager.getGlobalPinnedAgents();
+        const client = await getClient();
 
-        // Show selector if:
-        // 1. No lastAgent in this project (fresh directory)
-        // 2. No explicit flags that bypass selection (--new, --agent, --from-af, --continue)
-        // 3. Has global pinned agents available
-        const shouldShowSelector =
-          !localSettings.lastAgent &&
-          !forceNew &&
-          !agentIdArg &&
-          !fromAfFile &&
-          !continueSession &&
-          globalPinned.length > 0;
+        // =====================================================================
+        // TOP-LEVEL PATH: --conversation <id>
+        // Conversation ID is unique, so we can derive the agent from it
+        // (except for "default" which requires --agent flag, validated above)
+        // =====================================================================
+        if (specifiedConversationId) {
+          if (specifiedConversationId === "default") {
+            // "default" requires --agent (validated in flag preprocessing above)
+            // Use the specified agent directly, skip conversation validation
+            // TypeScript can't see the validation above, but specifiedAgentId is guaranteed
+            if (!specifiedAgentId) {
+              throw new Error("Unreachable: --conv default requires --agent");
+            }
+            setSelectedGlobalAgentId(specifiedAgentId);
+            setSelectedConversationId("default");
+            setLoadingState("assembling");
+            return;
+          }
 
-        if (shouldShowSelector) {
+          // For explicit conversations, derive agent from conversation
+          try {
+            const conversation = await client.conversations.retrieve(
+              specifiedConversationId,
+            );
+            // Use the agent that owns this conversation
+            setSelectedGlobalAgentId(conversation.agent_id);
+            setSelectedConversationId(specifiedConversationId);
+            setLoadingState("assembling");
+            return;
+          } catch (error) {
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(
+                `Conversation ${specifiedConversationId} not found`,
+              );
+              process.exit(1);
+            }
+            throw error;
+          }
+        }
+
+        // =====================================================================
+        // TOP-LEVEL PATH: --resume
+        // Show conversation selector for last-used agent (local → global fallback)
+        // =====================================================================
+        if (shouldResume) {
+          const localSession = settingsManager.getLocalLastSession(
+            process.cwd(),
+          );
+          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
+
+          // Try local LRU first
+          if (localAgentId) {
+            try {
+              const agent = await client.agents.retrieve(localAgentId);
+              setResumeAgentId(localAgentId);
+              setResumeAgentName(agent.name ?? null);
+              setLoadingState("selecting_conversation");
+              return;
+            } catch {
+              // Local agent doesn't exist, try global
+              console.log(
+                `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
+              );
+            }
+          } else {
+            console.log("No recent agent in .letta/, using global (~/.letta)");
+          }
+
+          // Try global LRU
+          const globalSession = settingsManager.getGlobalLastSession();
+          const globalAgentId = globalSession?.agentId;
+          if (globalAgentId) {
+            try {
+              const agent = await client.agents.retrieve(globalAgentId);
+              setResumeAgentId(globalAgentId);
+              setResumeAgentName(agent.name ?? null);
+              setLoadingState("selecting_conversation");
+              return;
+            } catch {
+              // Global agent also doesn't exist
+            }
+          }
+
+          // No valid agent found anywhere
+          console.error("No recent session found in .letta/ or ~/.letta.");
+          console.error("Run 'letta' to get started.");
+          process.exit(1);
+        }
+
+        // =====================================================================
+        // TOP-LEVEL PATH: --continue
+        // Resume last session directly (local → global fallback)
+        // =====================================================================
+        if (continueSession) {
+          const localSession = settingsManager.getLocalLastSession(
+            process.cwd(),
+          );
+          const localAgentId = localSession?.agentId ?? localSettings.lastAgent;
+
+          // Try local LRU first
+          if (localAgentId) {
+            try {
+              await client.agents.retrieve(localAgentId);
+              setSelectedGlobalAgentId(localAgentId);
+              if (localSession?.conversationId) {
+                setSelectedConversationId(localSession.conversationId);
+              }
+              setLoadingState("assembling");
+              return;
+            } catch {
+              // Local agent doesn't exist, try global
+              console.log(
+                `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
+              );
+            }
+          } else {
+            console.log("No recent agent in .letta/, using global (~/.letta)");
+          }
+
+          // Try global LRU
+          const globalSession = settingsManager.getGlobalLastSession();
+          const globalAgentId = globalSession?.agentId;
+          if (globalAgentId) {
+            try {
+              await client.agents.retrieve(globalAgentId);
+              setSelectedGlobalAgentId(globalAgentId);
+              if (globalSession?.conversationId) {
+                setSelectedConversationId(globalSession.conversationId);
+              }
+              setLoadingState("assembling");
+              return;
+            } catch {
+              // Global agent also doesn't exist
+            }
+          }
+
+          // No valid agent found anywhere
+          console.error("No recent session found in .letta/ or ~/.letta.");
+          console.error("Run 'letta' to get started.");
+          process.exit(1);
+        }
+
+        // =====================================================================
+        // DEFAULT PATH: No special flags
+        // Check local LRU, then selector, then defaults
+        // =====================================================================
+
+        // Check if user would see selector (fresh dir, no bypass flags)
+        const wouldShowSelector =
+          !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
+
+        // Ensure default agents (Memo/Incognito) exist for all users
+        const { ensureDefaultAgents } = await import("./agent/defaults");
+
+        if (wouldShowSelector && globalPinned.length === 0) {
+          // New user with no agents - create defaults first, then trigger init
+          // NOTE: Don't set loadingState to "assembling" until we have the agent ID,
+          // otherwise init will run before we've set selectedGlobalAgentId
+          try {
+            const memoAgent = await ensureDefaultAgents(client);
+            // Refresh pinned list after defaults created
+            globalPinned = settingsManager.getGlobalPinnedAgents();
+            // Auto-select Memo for fresh users
+            if (memoAgent) {
+              setSelectedGlobalAgentId(memoAgent.id);
+              setLoadingState("assembling");
+              return;
+            }
+            // If memoAgent is null (createDefaultAgents disabled), fall through
+          } catch (err) {
+            console.error(
+              `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(1);
+          }
+        } else {
+          // Existing user - fire and forget, don't block startup
+          ensureDefaultAgents(client).catch(() => {
+            // Silently ignore - defaults may already exist
+          });
+        }
+
+        // If there's a local LRU, use it directly
+        if (localSettings.lastAgent) {
+          try {
+            await client.agents.retrieve(localSettings.lastAgent);
+            setLoadingState("assembling");
+            return;
+          } catch {
+            // LRU agent doesn't exist, show message and fall through to selector
+            console.log(
+              `Unable to locate recently used agent ${localSettings.lastAgent}`,
+            );
+          }
+        }
+
+        // Check if we should show selector or auto-select Memo
+        if (wouldShowSelector && globalPinned.length > 0) {
+          // Check if only default agents are pinned
+          const { onlyDefaults, memoId } =
+            await hasOnlyDefaultAgents(globalPinned);
+
+          if (onlyDefaults && memoId) {
+            // Only defaults pinned - auto-select Memo
+            setSelectedGlobalAgentId(memoId);
+            setLoadingState("assembling");
+            return;
+          }
+
+          // Has custom agents - show selector
           setLoadingState("selecting_global");
           return;
         }
@@ -663,7 +1299,14 @@ async function main(): Promise<void> {
         setLoadingState("assembling");
       }
       checkAndStart();
-    }, [forceNew, agentIdArg, fromAfFile, continueSession]);
+    }, [
+      forceNew,
+      agentIdArg,
+      fromAfFile,
+      continueSession,
+      shouldResume,
+      specifiedConversationId,
+    ]);
 
     // Main initialization effect - runs after profile selection
     useEffect(() => {
@@ -685,8 +1328,27 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 2: LRU from local settings (if not --new)
-        if (!resumingAgentId && !forceNew) {
+        // Priority 1.5: Use agent from conversation selector (--resume flag)
+        if (!resumingAgentId && resumeAgentId) {
+          resumingAgentId = resumeAgentId;
+        }
+
+        // Priority 2: Use agent selected from global selector (user just picked one)
+        // This takes precedence over stale LRU since user explicitly chose it
+        const shouldCreateNew = forceNew || userRequestedNewAgent;
+        if (!resumingAgentId && !shouldCreateNew && selectedGlobalAgentId) {
+          try {
+            await client.agents.retrieve(selectedGlobalAgentId);
+            resumingAgentId = selectedGlobalAgentId;
+          } catch {
+            // Selected agent doesn't exist - show selector again
+            setLoadingState("selecting_global");
+            return;
+          }
+        }
+
+        // Priority 3: LRU from local settings (if not --new or user explicitly requested new from selector)
+        if (!resumingAgentId && !shouldCreateNew) {
           const localProjectSettings =
             settingsManager.getLocalProjectSettings();
           if (localProjectSettings?.lastAgent) {
@@ -694,27 +1356,22 @@ async function main(): Promise<void> {
               await client.agents.retrieve(localProjectSettings.lastAgent);
               resumingAgentId = localProjectSettings.lastAgent;
             } catch {
-              // Agent no longer exists, will create new
+              // LRU agent doesn't exist (wrong org, deleted, etc.)
+              // Show selector instead of silently creating a new agent
+              setLoadingState("selecting_global");
+              return;
             }
           }
 
-          // Priority 3: Try global settings if --continue flag
+          // Priority 4: Try global settings if --continue flag
           if (!resumingAgentId && continueSession && settings.lastAgent) {
             try {
               await client.agents.retrieve(settings.lastAgent);
               resumingAgentId = settings.lastAgent;
             } catch {
-              // Agent no longer exists
-            }
-          }
-
-          // Priority 4: Use agent selected from global selector
-          if (!resumingAgentId && selectedGlobalAgentId) {
-            try {
-              await client.agents.retrieve(selectedGlobalAgentId);
-              resumingAgentId = selectedGlobalAgentId;
-            } catch {
-              // Agent doesn't exist, will create new
+              // Global agent doesn't exist - show selector
+              setLoadingState("selecting_global");
+              return;
             }
           }
         }
@@ -722,59 +1379,14 @@ async function main(): Promise<void> {
         // Set resuming state early so loading messages are accurate
         setIsResumingSession(!!resumingAgentId);
 
-        // If resuming an existing agent, load the exact tools attached to it
-        // Otherwise, load a full toolset based on model/toolset preference
-        if (resumingAgentId && !toolset) {
-          try {
-            const { getAttachedLettaTools } = await import("./tools/toolset");
-            const { loadSpecificTools } = await import("./tools/manager");
-            const attachedTools = await getAttachedLettaTools(
-              client,
-              resumingAgentId,
-            );
-            if (attachedTools.length > 0) {
-              // Load only the specific tools attached to this agent
-              await loadSpecificTools(attachedTools);
-            } else {
-              // No Letta Code tools attached, load default based on model
-              const modelForTools = getModelForToolLoading(model, undefined);
-              await loadTools(modelForTools);
-            }
-          } catch {
-            // Detection failed, use model-based default
-            const modelForTools = getModelForToolLoading(model, undefined);
-            await loadTools(modelForTools);
-          }
-        } else {
-          // Creating new agent or explicit toolset specified - load full toolset
-          const modelForTools = getModelForToolLoading(model, toolset);
-          await loadTools(modelForTools);
-        }
-
-        setLoadingState("upserting");
-        await upsertToolsIfNeeded(client, baseURL);
-
-        // Handle --link/--unlink after upserting tools
-        if (shouldLink || shouldUnlink) {
-          if (!agentIdArg) {
-            console.error("Error: --link/--unlink requires --agent <id>");
-            process.exit(1);
-          }
-
-          setLoadingState("updating_tools");
-          const { linkToolsToAgent, unlinkToolsFromAgent } = await import(
-            "./agent/modify"
-          );
-
-          const result = shouldLink
-            ? await linkToolsToAgent(agentIdArg)
-            : await unlinkToolsFromAgent(agentIdArg);
-
-          if (!result.success) {
-            console.error(`✗ ${result.message}`);
-            process.exit(1);
-          }
-        }
+        // Load toolset: use explicit --toolset flag if provided, otherwise derive from model
+        // NOTE: We don't persist toolset per-agent. On resume, toolset is re-derived from model.
+        // If explicit toolset overrides need to persist, see comment in tools/toolset.ts
+        const modelForTools = getModelForToolLoading(
+          model,
+          toolset as "codex" | "default" | undefined,
+        );
+        await loadTools(modelForTools);
 
         setLoadingState("initializing");
         const { createAgent } = await import("./agent/create");
@@ -804,13 +1416,13 @@ async function main(): Promise<void> {
             agent = await client.agents.retrieve(agentIdArg);
 
             // Apply --system flag to existing agent if provided
-            if (systemPromptId) {
+            if (systemPromptPreset) {
               const { updateAgentSystemPrompt } = await import(
                 "./agent/modify"
               );
               const result = await updateAgentSystemPrompt(
                 agent.id,
-                systemPromptId,
+                systemPromptPreset,
               );
               if (!result.success || !result.agent) {
                 console.error(
@@ -832,127 +1444,64 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 3: Check if --new flag was passed - create new agent
-        if (!agent && forceNew) {
+        // Priority 3: Check if --new flag was passed or user requested new from selector
+        if (!agent && shouldCreateNew) {
           const updateArgs = getModelUpdateArgs(model);
-          try {
-            const result = await createAgent(
-              undefined,
-              model,
-              undefined,
-              updateArgs,
-              skillsDirectory,
-              true, // parallelToolCalls always enabled
-              sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptId,
-              initBlocks,
-              baseTools,
-            );
-            agent = result.agent;
-            setAgentProvenance(result.provenance);
-          } catch (err) {
-            // Check if tools are missing on server (stale hash cache)
-            if (isToolsNotFoundError(err)) {
-              console.warn(
-                "Tools missing on server, re-uploading and retrying...",
-              );
-              await forceUpsertTools(client, baseURL);
-              // Retry agent creation
-              const result = await createAgent(
-                undefined,
-                model,
-                undefined,
-                updateArgs,
-                skillsDirectory,
-                true,
-                sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptId,
-                initBlocks,
-                baseTools,
-              );
-              agent = result.agent;
-              setAgentProvenance(result.provenance);
-            } else {
-              throw err;
-            }
-          }
+          const result = await createAgent(
+            undefined,
+            model,
+            undefined,
+            updateArgs,
+            skillsDirectory,
+            true, // parallelToolCalls always enabled
+            sleeptimeFlag ?? settings.enableSleeptime,
+            systemPromptPreset,
+            initBlocks,
+            baseTools,
+          );
+          agent = result.agent;
+          setAgentProvenance(result.provenance);
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
-        if (!agent) {
-          await settingsManager.loadLocalProjectSettings();
-          const localProjectSettings =
-            settingsManager.getLocalProjectSettings();
-          if (localProjectSettings?.lastAgent) {
-            try {
-              agent = await client.agents.retrieve(
-                localProjectSettings.lastAgent,
-              );
-              // console.log(`Resuming project agent ${localProjectSettings.lastAgent}...`);
-            } catch (error) {
-              console.error(
-                `Project agent ${localProjectSettings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
-              );
-            }
+        // Note: If LRU retrieval failed in early validation, we already showed selector and returned
+        // This block handles the case where we have a valid resumingAgentId from early validation
+        if (!agent && resumingAgentId) {
+          try {
+            agent = await client.agents.retrieve(resumingAgentId);
+          } catch (error) {
+            // Agent disappeared between validation and now - show selector
+            console.error(
+              `Agent ${resumingAgentId} not found (error: ${JSON.stringify(error)})`,
+            );
+            setLoadingState("selecting_global");
+            return;
           }
         }
 
         // Priority 6: Try to reuse global lastAgent if --continue flag is passed
+        // Note: If global lastAgent retrieval failed in early validation (with --continue),
+        // we already showed selector and returned. This is a safety fallback.
         if (!agent && continueSession && settings.lastAgent) {
           try {
             agent = await client.agents.retrieve(settings.lastAgent);
-            // console.log(`Continuing previous agent ${settings.lastAgent}...`);
           } catch (error) {
+            // Agent disappeared - show selector instead of silently creating
             console.error(
-              `Previous agent ${settings.lastAgent} not found (error: ${JSON.stringify(error)}), creating new one...`,
+              `Previous agent ${settings.lastAgent} not found (error: ${JSON.stringify(error)})`,
             );
+            setLoadingState("selecting_global");
+            return;
           }
         }
 
-        // Priority 7: Create a new agent
+        // All paths should have resolved to an agent by now
+        // If not, it's an unexpected state - error out instead of auto-creating
         if (!agent) {
-          const updateArgs = getModelUpdateArgs(model);
-          try {
-            const result = await createAgent(
-              undefined,
-              model,
-              undefined,
-              updateArgs,
-              skillsDirectory,
-              true, // parallelToolCalls always enabled
-              sleeptimeFlag ?? settings.enableSleeptime,
-              systemPromptId,
-              undefined,
-              undefined,
-            );
-            agent = result.agent;
-            setAgentProvenance(result.provenance);
-          } catch (err) {
-            // Check if tools are missing on server (stale hash cache)
-            if (isToolsNotFoundError(err)) {
-              console.warn(
-                "Tools missing on server, re-uploading and retrying...",
-              );
-              await forceUpsertTools(client, baseURL);
-              // Retry agent creation
-              const result = await createAgent(
-                undefined,
-                model,
-                undefined,
-                updateArgs,
-                skillsDirectory,
-                true,
-                sleeptimeFlag ?? settings.enableSleeptime,
-                systemPromptId,
-                undefined,
-                undefined,
-              );
-              agent = result.agent;
-              setAgentProvenance(result.provenance);
-            } else {
-              throw err;
-            }
-          }
+          console.error(
+            "No agent found. Use --new-agent to create a new agent.",
+          );
+          process.exit(1);
         }
 
         // Ensure local project settings are loaded before updating
@@ -967,54 +1516,53 @@ async function main(): Promise<void> {
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
 
+        // Ensure the agent has the required skills blocks (for backwards compatibility)
+        const createdBlocks = await ensureSkillsBlocks(agent.id);
+        if (createdBlocks.length > 0) {
+          console.log("Created missing skills blocks for agent compatibility");
+        }
+
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
-        await initializeLoadedSkillsFlag();
 
-        // Re-discover skills and update the skills memory block
+        // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+        // Don't await - this is just for the skill unload reminder
+        initializeLoadedSkillsFlag().catch(() => {
+          // Ignore errors - not critical
+        });
+
+        // Fire-and-forget: Sync skills in background (LET-7101)
         // This ensures new skills added after agent creation are available
-        try {
-          const { discoverSkills, formatSkillsForMemory, SKILLS_DIR } =
-            await import("./agent/skills");
-          const { join } = await import("node:path");
+        // Don't await - user can start typing immediately
+        (async () => {
+          try {
+            const { syncSkillsToAgent, SKILLS_DIR } = await import(
+              "./agent/skills"
+            );
+            const { join } = await import("node:path");
 
-          const resolvedSkillsDirectory =
-            skillsDirectory || join(process.cwd(), SKILLS_DIR);
-          const { skills, errors } = await discoverSkills(
-            resolvedSkillsDirectory,
-          );
+            const resolvedSkillsDirectory =
+              skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
-          if (errors.length > 0) {
-            console.warn("Errors encountered during skill discovery:");
-            for (const error of errors) {
-              console.warn(`  ${error.path}: ${error.message}`);
-            }
+            await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+              skipIfUnchanged: true,
+            });
+          } catch (error) {
+            console.warn(
+              `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-
-          // Update the skills memory block with freshly discovered skills
-          const formattedSkills = formatSkillsForMemory(
-            skills,
-            resolvedSkillsDirectory,
-          );
-          await client.agents.blocks.update("skills", {
-            agent_id: agent.id,
-            value: formattedSkills,
-          });
-        } catch (error) {
-          console.warn(
-            `Failed to update skills: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+        })();
 
         // Check if we're resuming an existing agent
         // We're resuming if:
         // 1. We specified an agent ID via --agent flag (agentIdArg)
-        // 2. We used --continue flag (continueSession)
+        // 2. We used --resume flag (continueSession)
         // 3. We're reusing a project agent (detected early as resumingAgentId)
         // 4. We retrieved an agent from LRU (detected by checking if agent already existed)
-        const isResumingProject = !forceNew && !!resumingAgentId;
+        const isResumingProject = !shouldCreateNew && !!resumingAgentId;
         const isReusingExistingAgent =
-          !forceNew && !fromAfFile && agent && agent.id;
+          !shouldCreateNew && !fromAfFile && agent && agent.id;
         const resuming = !!(
           continueSession ||
           agentIdArg ||
@@ -1024,7 +1572,7 @@ async function main(): Promise<void> {
         setIsResumingSession(resuming);
 
         // If resuming and a model or system prompt was specified, apply those changes
-        if (resuming && (model || systemPromptId)) {
+        if (resuming && (model || systemPromptPreset)) {
           if (model) {
             const { resolveModel } = await import("./agent/model");
             const modelHandle = resolveModel(model);
@@ -1048,11 +1596,11 @@ async function main(): Promise<void> {
             }
           }
 
-          if (systemPromptId) {
+          if (systemPromptPreset) {
             const { updateAgentSystemPrompt } = await import("./agent/modify");
             const result = await updateAgentSystemPrompt(
               agent.id,
-              systemPromptId,
+              systemPromptPreset,
             );
             if (!result.success || !result.agent) {
               console.error(`Error: ${result.message}`);
@@ -1062,15 +1610,163 @@ async function main(): Promise<void> {
           }
         }
 
-        // Get resume data (pending approval + message history) if resuming
-        if (resuming) {
+        // Handle conversation: either resume existing or create new
+        // Using definite assignment assertion - all branches below either set this or exit/throw
+        let conversationIdToUse!: string;
+
+        // Debug: log resume flag status
+        if (process.env.DEBUG) {
+          console.log(`[DEBUG] shouldContinue=${shouldContinue}`);
+          console.log(`[DEBUG] shouldResume=${shouldResume}`);
+          console.log(
+            `[DEBUG] specifiedConversationId=${specifiedConversationId}`,
+          );
+        }
+
+        if (specifiedConversationId) {
+          // Use the explicitly specified conversation ID
+          // User explicitly requested this conversation, so error if it doesn't exist
+          conversationIdToUse = specifiedConversationId;
+          setResumedExistingConversation(true);
+          try {
+            // Load message history and pending approvals from the conversation
+            // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+            setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
+            const data = await getResumeData(
+              client,
+              freshAgent,
+              specifiedConversationId,
+            );
+            setResumeData(data);
+          } catch (error) {
+            // Only treat 404/422 as "not found", rethrow other errors
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(
+                `Conversation ${specifiedConversationId} not found`,
+              );
+              process.exit(1);
+            }
+            throw error;
+          }
+        } else if (shouldContinue) {
+          // Try to load the last session for this agent
+          const lastSession =
+            settingsManager.getLocalLastSession(process.cwd()) ??
+            settingsManager.getGlobalLastSession();
+
+          if (process.env.DEBUG) {
+            console.log(`[DEBUG] lastSession=${JSON.stringify(lastSession)}`);
+            console.log(`[DEBUG] agent.id=${agent.id}`);
+          }
+
+          let resumedSuccessfully = false;
+          if (lastSession && lastSession.agentId === agent.id) {
+            // Try to resume the exact last conversation
+            // If it no longer exists, fall back to creating new
+            try {
+              // Load message history and pending approvals from the conversation
+              // Re-fetch agent to get fresh message_ids for accurate pending approval detection
+              setLoadingState("checking");
+              const freshAgent = await client.agents.retrieve(agent.id);
+              const data = await getResumeData(
+                client,
+                freshAgent,
+                lastSession.conversationId,
+              );
+              // Only set state after validation succeeds
+              conversationIdToUse = lastSession.conversationId;
+              setResumedExistingConversation(true);
+              setResumeData(data);
+              resumedSuccessfully = true;
+            } catch (error) {
+              // Only treat 404/422 as "not found", rethrow other errors
+              if (
+                error instanceof APIError &&
+                (error.status === 404 || error.status === 422)
+              ) {
+                // Conversation no longer exists, will create new below
+                console.warn(
+                  `Previous conversation ${lastSession.conversationId} not found, creating new`,
+                );
+              } else {
+                throw error;
+              }
+            }
+          }
+
+          if (!resumedSuccessfully) {
+            // No valid session to resume - error with helpful message
+            console.error(
+              `Attempting to resume conversation ${lastSession?.conversationId ?? "(unknown)"}, but conversation was not found.`,
+            );
+            console.error(
+              "Resume the default conversation with 'letta', view recent conversations with 'letta --resume', or start a new conversation with 'letta --new'.",
+            );
+            process.exit(1);
+          }
+        } else if (selectedConversationId) {
+          // User selected a specific conversation from the --resume selector
+          try {
+            setLoadingState("checking");
+            const freshAgent = await client.agents.retrieve(agent.id);
+            const data = await getResumeData(
+              client,
+              freshAgent,
+              selectedConversationId,
+            );
+            conversationIdToUse = selectedConversationId;
+            setResumedExistingConversation(true);
+            setResumeData(data);
+          } catch (error) {
+            if (
+              error instanceof APIError &&
+              (error.status === 404 || error.status === 422)
+            ) {
+              console.error(`Conversation ${selectedConversationId} not found`);
+              process.exit(1);
+            }
+            throw error;
+          }
+        } else if (forceNewConversation) {
+          // --new flag: create a new conversation (for concurrent sessions)
+          const conversation = await client.conversations.create({
+            agent_id: agent.id,
+            isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
+          });
+          conversationIdToUse = conversation.id;
+        } else {
+          // Default (including --new-agent): use the agent's "default" conversation
+          conversationIdToUse = "default";
+
+          // Load message history from the default conversation
           setLoadingState("checking");
-          const data = await getResumeData(client, agent);
+          const freshAgent = await client.agents.retrieve(agent.id);
+          const data = await getResumeData(client, freshAgent, "default");
           setResumeData(data);
+          setResumedExistingConversation(true);
+        }
+
+        // Save the session (agent + conversation) to settings
+        // Skip for subagents - they shouldn't pollute the LRU settings
+        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+        if (!isSubagent) {
+          settingsManager.setLocalLastSession(
+            { agentId: agent.id, conversationId: conversationIdToUse },
+            process.cwd(),
+          );
+          settingsManager.setGlobalLastSession({
+            agentId: agent.id,
+            conversationId: conversationIdToUse,
+          });
         }
 
         setAgentId(agent.id);
         setAgentState(agent);
+        setConversationId(conversationIdToUse);
         setLoadingState("ready");
       }
 
@@ -1087,17 +1783,46 @@ async function main(): Promise<void> {
     }, [
       continueSession,
       forceNew,
+      userRequestedNewAgent,
       agentIdArg,
       model,
-      systemPromptId,
+      systemPromptPreset,
       fromAfFile,
       loadingState,
       selectedGlobalAgentId,
+      shouldContinue,
+      resumeAgentId,
+      selectedConversationId,
     ]);
+
+    // Wait for keybinding auto-install to complete before showing UI
+    if (showKeybindingSetup === null) {
+      return null;
+    }
 
     // Don't render anything during initial "selecting" phase - wait for checkAndStart
     if (loadingState === "selecting") {
       return null;
+    }
+
+    // Show conversation selector for --resume flag
+    if (loadingState === "selecting_conversation" && resumeAgentId) {
+      return React.createElement(ConversationSelector, {
+        agentId: resumeAgentId,
+        agentName: resumeAgentName ?? undefined,
+        currentConversationId: "", // No current conversation yet
+        onSelect: (conversationId: string) => {
+          setSelectedConversationId(conversationId);
+          setLoadingState("assembling");
+        },
+        onNewConversation: () => {
+          // Start with a new conversation for this agent
+          setLoadingState("assembling");
+        },
+        onCancel: () => {
+          process.exit(0);
+        },
+      });
     }
 
     // Show global agent selector in fresh repos with global pinned agents
@@ -1107,13 +1832,11 @@ async function main(): Promise<void> {
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         onSelect: (agentId: string) => {
-          // Auto-pin the selected global agent to this project
-          settingsManager.pinLocal(agentId);
-
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");
         },
         onCreateNew: () => {
+          setUserRequestedNewAgent(true);
           setLoadingState("assembling");
         },
         onExit: () => {
@@ -1122,32 +1845,46 @@ async function main(): Promise<void> {
       });
     }
 
-    if (!agentId) {
+    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
+    // (those are handled above), so it's safe to pass to App
+    const appLoadingState = loadingState as Exclude<
+      typeof loadingState,
+      "selecting" | "selecting_global" | "selecting_conversation"
+    >;
+
+    if (!agentId || !conversationId) {
       return React.createElement(App, {
         agentId: "loading",
-        loadingState,
+        conversationId: "loading",
+        loadingState: appLoadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
-        startupApprovals: resumeData?.pendingApprovals ?? [],
-        messageHistory: resumeData?.messageHistory ?? [],
+        startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
+        messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+        resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
+        releaseNotes,
       });
     }
 
     return React.createElement(App, {
       agentId,
       agentState,
-      loadingState,
+      conversationId,
+      loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,
-      startupApprovals: resumeData?.pendingApprovals ?? [],
-      messageHistory: resumeData?.messageHistory ?? [],
+      startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
+      messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
+      resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
+      releaseNotes,
     });
   }
 
+  markMilestone("REACT_RENDER_START");
   render(
     React.createElement(LoadingApp, {
       continueSession: shouldContinue,
@@ -1156,7 +1893,7 @@ async function main(): Promise<void> {
       baseTools: baseTools,
       agentIdArg: specifiedAgentId,
       model: specifiedModel,
-      systemPromptId: systemPromptId,
+      systemPromptPreset: systemPromptPreset,
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,

@@ -6,18 +6,19 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
 }
 
 export const commands: Record<string, Command> = {
   // === Page 1: Most commonly used (order 10-19) ===
-  "/pinned": {
-    desc: "Browse pinned agents",
+  "/agents": {
+    desc: "Browse agents (pinned, Letta Code, all)",
     order: 10,
     handler: () => {
-      // Handled specially in App.tsx to open pinned agents selector
-      return "Opening pinned agents...";
+      // Handled specially in App.tsx to open agent browser
+      return "Opening agent browser...";
     },
   },
   "/model": {
@@ -67,30 +68,30 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
-  "/clear": {
-    desc: "Clear conversation history",
+  "/plan": {
+    desc: "Enter plan mode",
     order: 17,
     handler: () => {
-      // Handled specially in App.tsx to access client and agent ID
-      return "Clearing messages...";
+      // Handled specially in App.tsx
+      return "Entering plan mode...";
+    },
+  },
+  "/clear": {
+    desc: "Clear in-context messages",
+    order: 18,
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Clearing in-context messages...";
     },
   },
 
   // === Page 2: Agent management (order 20-29) ===
   "/new": {
-    desc: "Create a new agent and switch to it",
+    desc: "Start a new conversation (keep agent memory)",
     order: 20,
     handler: () => {
-      // Handled specially in App.tsx
-      return "Creating new agent...";
-    },
-  },
-  "/agents": {
-    desc: "Browse all agents",
-    order: 21,
-    handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
+      // Handled specially in App.tsx to create new conversation
+      return "Starting new conversation...";
     },
   },
   "/pin": {
@@ -141,6 +142,14 @@ export const commands: Record<string, Command> = {
       return "Opening toolset selector...";
     },
   },
+  "/ade": {
+    desc: "Open agent in ADE (browser)",
+    order: 28,
+    handler: () => {
+      // Handled specially in App.tsx to access agent ID and open browser
+      return "Opening ADE...";
+    },
+  },
 
   // === Page 3: Advanced features (order 30-39) ===
   "/system": {
@@ -160,7 +169,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/mcp": {
-    desc: "Manage MCP servers",
+    desc: "Manage MCP servers (add, connect with OAuth)",
     order: 32,
     handler: () => {
       // Handled specially in App.tsx to show MCP server selector
@@ -192,18 +201,70 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/terminal": {
+    desc: "Setup terminal shortcuts [--revert]",
+    order: 36,
+    handler: async (args: string[]) => {
+      const {
+        detectTerminalType,
+        getKeybindingsPath,
+        installKeybinding,
+        removeKeybinding,
+      } = await import("../utils/terminalKeybindingInstaller");
+      const { updateSettings } = await import("../../settings");
+
+      const isRevert = args.includes("--revert") || args.includes("--remove");
+      const terminal = detectTerminalType();
+
+      if (!terminal) {
+        return "Not running in a VS Code-like terminal. Shift+Enter keybinding is not needed.";
+      }
+
+      const terminalName = {
+        vscode: "VS Code",
+        cursor: "Cursor",
+        windsurf: "Windsurf",
+      }[terminal];
+
+      const keybindingsPath = getKeybindingsPath(terminal);
+      if (!keybindingsPath) {
+        return `Could not determine keybindings.json path for ${terminalName}`;
+      }
+
+      if (isRevert) {
+        const result = removeKeybinding(keybindingsPath);
+        if (!result.success) {
+          return `Failed to remove keybinding: ${result.error}`;
+        }
+        await updateSettings({ shiftEnterKeybindingInstalled: false });
+        return `Removed Shift+Enter keybinding from ${terminalName}`;
+      }
+
+      const result = installKeybinding(keybindingsPath);
+      if (!result.success) {
+        return `Failed to install keybinding: ${result.error}`;
+      }
+
+      if (result.alreadyExists) {
+        return `Shift+Enter keybinding already exists in ${terminalName}`;
+      }
+
+      await updateSettings({ shiftEnterKeybindingInstalled: true });
+      return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
+    },
+  },
 
   // === Session management (order 40-49) ===
   "/connect": {
-    desc: "Connect an existing Claude account (/connect claude)",
+    desc: "Connect an existing account (/connect codex or /connect zai <api-key>)",
     order: 40,
     handler: () => {
       // Handled specially in App.tsx
-      return "Initiating OAuth connection...";
+      return "Initiating account connection...";
     },
   },
   "/disconnect": {
-    desc: "Disconnect from Claude OAuth",
+    desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx
@@ -235,6 +296,24 @@ export const commands: Record<string, Command> = {
     },
   },
 
+  // === Ralph Wiggum mode (order 45-46) ===
+  "/ralph": {
+    desc: 'Start Ralph Wiggum loop (/ralph [prompt] [--completion-promise "X"] [--max-iterations N])',
+    order: 45,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating ralph mode...";
+    },
+  },
+  "/yolo-ralph": {
+    desc: "Start Ralph loop with bypass permissions (yolo + ralph)",
+    order: 46,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Activating yolo-ralph mode...";
+    },
+  },
+
   // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
     desc: "Toggle token streaming on/off",
@@ -246,7 +325,6 @@ export const commands: Record<string, Command> = {
   },
   "/compact": {
     desc: "Summarize conversation history (compaction)",
-    hidden: true,
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
@@ -269,11 +347,26 @@ export const commands: Record<string, Command> = {
     },
   },
   "/resume": {
-    desc: "Browse and switch to another agent",
-    hidden: true, // Backwards compatibility alias for /agents
+    desc: "Resume a previous conversation",
+    args: "[conversation_id]",
+    order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
+      // Handled specially in App.tsx to show conversation selector or switch directly
+      return "Opening conversation selector...";
+    },
+  },
+  "/pinned": {
+    desc: "Browse pinned agents",
+    hidden: true, // Alias for /agents (opens to Pinned tab)
+    handler: () => {
+      return "Opening agent browser...";
+    },
+  },
+  "/profiles": {
+    desc: "Browse pinned agents",
+    hidden: true, // Alias for /agents (opens to Pinned tab)
+    handler: () => {
+      return "Opening agent browser...";
     },
   },
 };

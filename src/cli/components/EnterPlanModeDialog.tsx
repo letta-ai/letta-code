@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { memo, useState } from "react";
+import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { colors } from "./colors";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 
 export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
   const [selectedOption, setSelectedOption] = useState(0);
+  useProgressIndicator();
 
   const options = [
     { label: "Yes, enter plan mode", action: onApprove },
@@ -16,6 +18,18 @@ export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
   ];
 
   useInput((input, key) => {
+    // CTRL-C: immediately reject (cancel)
+    if (key.ctrl && input === "c") {
+      onReject();
+      return;
+    }
+
+    // ESC: reject (cancel) - was missing!
+    if (key.escape) {
+      onReject();
+      return;
+    }
+
     if (key.upArrow) {
       setSelectedOption((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
@@ -39,11 +53,11 @@ export const EnterPlanModeDialog = memo(({ onApprove, onReject }: Props) => {
 
       <Box marginBottom={1} flexDirection="column">
         <Text>
-          Letta wants to enter plan mode to explore and design an implementation
-          approach.
+          Letta Code wants to enter plan mode to explore and design an
+          implementation approach.
         </Text>
         <Text> </Text>
-        <Text>In plan mode, Letta will:</Text>
+        <Text>In plan mode, Letta Code will:</Text>
         <Text> • Explore the codebase thoroughly</Text>
         <Text> • Identify existing patterns</Text>
         <Text> • Design an implementation strategy</Text>

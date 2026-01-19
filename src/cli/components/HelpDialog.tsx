@@ -69,6 +69,8 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
       { keys: "Tab", description: "Autocomplete command or file path" },
       { keys: "↓", description: "Navigate down / next command in history" },
       { keys: "↑", description: "Navigate up / previous command in history" },
+      { keys: "Shift+Enter", description: "Insert newline (multi-line input)" },
+      { keys: "Opt+Enter", description: "Insert newline (alternative)" },
       {
         keys: "Ctrl+C",
         description: "Interrupt operation / exit (double press)",
@@ -98,6 +100,12 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   useInput(
     useCallback(
       (input, key) => {
+        // CTRL-C: immediately close
+        if (key.ctrl && input === "c") {
+          onClose();
+          return;
+        }
+
         if (key.escape) {
           onClose();
         } else if (key.tab) {

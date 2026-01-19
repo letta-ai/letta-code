@@ -3,7 +3,12 @@ import { Box, Text, useInput } from "ink";
 import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
-import { type AdvancedDiffSuccess, computeAdvancedDiff } from "../helpers/diff";
+import {
+  type AdvancedDiffSuccess,
+  computeAdvancedDiff,
+  parsePatchToAdvancedDiff,
+} from "../helpers/diff";
+import { parsePatchOperations } from "../helpers/formatArgsDisplay";
 import { resolvePlaceholders } from "../helpers/pasteRegistry";
 import type { ApprovalRequest } from "../helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
@@ -16,8 +21,11 @@ type Props = {
   progress?: { current: number; total: number };
   totalTools?: number;
   isExecuting?: boolean;
-  onApproveAll: () => void;
-  onApproveAlways: (scope?: "project" | "session") => void;
+  onApproveAll: (diffs?: Map<string, AdvancedDiffSuccess>) => void;
+  onApproveAlways: (
+    scope?: "project" | "session",
+    diffs?: Map<string, AdvancedDiffSuccess>,
+  ) => void;
   onDenyAll: (reason: string) => void;
   onCancel?: () => void; // Cancel all approvals without sending to server
 };
@@ -27,6 +35,8 @@ type DynamicPreviewProps = {
   toolArgs: string;
   parsedArgs: Record<string, unknown> | null;
   precomputedDiff: AdvancedDiffSuccess | null;
+  allDiffs: Map<string, AdvancedDiffSuccess>;
+  toolCallId: string | undefined;
 };
 
 // Options renderer - memoized to prevent unnecessary re-renders
@@ -69,6 +79,8 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
   toolArgs,
   parsedArgs,
   precomputedDiff,
+  allDiffs,
+  toolCallId,
 }) => {
   const t = toolName.toLowerCase();
 
@@ -185,16 +197,78 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
 
   if (t === "apply_patch" || t === "applypatch") {
     const inputVal = parsedArgs?.input;
-    const patchPreview =
-      typeof inputVal === "string" && inputVal.length > 100
-        ? `${inputVal.slice(0, 100)}...`
-        : typeof inputVal === "string"
-          ? inputVal
-          : "(no patch content)";
+    if (typeof inputVal === "string") {
+      const operations = parsePatchOperations(inputVal);
+      if (operations.length > 0) {
+        const { relative } = require("node:path");
+        const cwd = process.cwd();
+        return (
+          <Box flexDirection="column" paddingLeft={2}>
+            {operations.map((op, idx) => {
+              const relPath = relative(cwd, op.path);
+              const displayPath = relPath.startsWith("..") ? op.path : relPath;
+              // Look up precomputed diff from allDiffs using toolCallId:path key
+              const diffKey = toolCallId
+                ? `${toolCallId}:${op.path}`
+                : undefined;
+              const opDiff = diffKey ? allDiffs.get(diffKey) : undefined;
+              if (op.kind === "add") {
+                return (
+                  <Box key={`patch-add-${op.path}`} flexDirection="column">
+                    {idx > 0 && <Box height={1} />}
+                    <Text dimColor>{displayPath}</Text>
+                    <AdvancedDiffRenderer
+                      precomputed={opDiff}
+                      kind="write"
+                      filePath={op.path}
+                      content={op.content}
+                      showHeader={false}
+                    />
+                  </Box>
+                );
+              }
+              if (op.kind === "update") {
+                return (
+                  <Box key={`patch-update-${op.path}`} flexDirection="column">
+                    {idx > 0 && <Box height={1} />}
+                    <Text dimColor>{displayPath}</Text>
+                    <AdvancedDiffRenderer
+                      precomputed={opDiff}
+                      kind="edit"
+                      filePath={op.path}
+                      oldString={op.oldString}
+                      newString={op.newString}
+                      showHeader={false}
+                    />
+                  </Box>
+                );
+              }
+              if (op.kind === "delete") {
+                return (
+                  <Box key={`patch-delete-${op.path}`} flexDirection="column">
+                    {idx > 0 && <Box height={1} />}
+                    <Text dimColor>{displayPath}</Text>
+                    <Text color="red">File will be deleted</Text>
+                  </Box>
+                );
+              }
+              return null;
+            })}
+          </Box>
+        );
+      }
+    }
 
+    // Fallback for unparseable patches
     return (
       <Box flexDirection="column" paddingLeft={2}>
-        <Text dimColor>{patchPreview}</Text>
+        <Text dimColor>
+          {typeof inputVal === "string" && inputVal.length > 100
+            ? `${inputVal.slice(0, 100)}...`
+            : typeof inputVal === "string"
+              ? inputVal
+              : "(no patch content)"}
+        </Text>
       </Box>
     );
   }
@@ -471,103 +545,72 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     setDenyReason("");
   }, [progress?.current]);
 
-  // Build options based on approval context
-  const options = useMemo(() => {
-    const approvalLabel =
-      progress && progress.total > 1
-        ? "Yes, approve this tool"
-        : "Yes, just this once";
-    const opts = [{ label: approvalLabel, action: onApproveAll }];
+  // Main input handler - disabled when entering denial reason to let PasteAwareTextInput handle input
+  useInput(
+    (_input, key) => {
+      if (isExecuting) return;
 
-    // Add context-aware approval option if available (only for single approvals)
-    if (approvalContext?.allowPersistence) {
-      opts.push({
-        label: approvalContext.approveAlwaysText,
-        action: () =>
-          onApproveAlways(
-            approvalContext.defaultScope === "user"
-              ? "session"
-              : approvalContext.defaultScope,
-          ),
-      });
-    }
-
-    // Add deny option
-    const denyLabel =
-      progress && progress.total > 1
-        ? "No, deny this tool (esc)"
-        : "No, and tell Letta what to do differently (esc)";
-    opts.push({
-      label: denyLabel,
-      action: () => {}, // Handled separately via setIsEnteringReason
-    });
-
-    return opts;
-  }, [progress, approvalContext, onApproveAll, onApproveAlways]);
-
-  useInput((_input, key) => {
-    if (isExecuting) return;
-
-    // Handle CTRL-C to cancel all approvals
-    if (key.ctrl && _input === "c") {
-      if (onCancel) {
-        onCancel();
+      // Handle CTRL-C to cancel all approvals
+      if (key.ctrl && _input === "c") {
+        if (onCancel) {
+          onCancel();
+        }
+        return;
       }
-      return;
-    }
 
-    if (isEnteringReason) {
-      // When entering reason, only handle enter/escape
-      if (key.return) {
-        // Resolve placeholders before sending denial reason
-        const resolvedReason = resolvePlaceholders(denyReason);
-        onDenyAll(resolvedReason);
-      } else if (key.escape) {
+      if (key.escape) {
+        // Shortcut: ESC immediately opens the deny reason prompt
+        setSelectedOption(options.length - 1);
+        setIsEnteringReason(true);
+        return;
+      }
+
+      // Navigate with arrow keys
+      if (key.upArrow) {
+        setSelectedOption((prev) => (prev > 0 ? prev - 1 : options.length - 1));
+      } else if (key.downArrow) {
+        setSelectedOption((prev) => (prev < options.length - 1 ? prev + 1 : 0));
+      } else if (key.return) {
+        // Handle selection
+        const selected = options[selectedOption];
+        if (selected) {
+          // Check if this is the deny option (last option)
+          if (selectedOption === options.length - 1) {
+            setIsEnteringReason(true);
+          } else {
+            selected.action();
+          }
+        }
+      }
+
+      // Number key shortcuts
+      const num = parseInt(_input, 10);
+      if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
+        const selected = options[num - 1];
+        if (selected) {
+          // Check if this is the deny option (last option)
+          if (num === options.length) {
+            setIsEnteringReason(true);
+          } else {
+            selected.action();
+          }
+        }
+      }
+    },
+    { isActive: !isEnteringReason },
+  );
+
+  // Handle escape when entering denial reason - minimal handler to avoid interfering with paste
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
         setIsEnteringReason(false);
         setDenyReason("");
       }
-      return;
-    }
-
-    if (key.escape) {
-      // Shortcut: ESC immediately opens the deny reason prompt
-      setSelectedOption(options.length - 1);
-      setIsEnteringReason(true);
-      return;
-    }
-
-    // Navigate with arrow keys
-    if (key.upArrow) {
-      setSelectedOption((prev) => (prev > 0 ? prev - 1 : options.length - 1));
-    } else if (key.downArrow) {
-      setSelectedOption((prev) => (prev < options.length - 1 ? prev + 1 : 0));
-    } else if (key.return) {
-      // Handle selection
-      const selected = options[selectedOption];
-      if (selected) {
-        // Check if this is the deny option (last option)
-        if (selectedOption === options.length - 1) {
-          setIsEnteringReason(true);
-        } else {
-          selected.action();
-        }
-      }
-    }
-
-    // Number key shortcuts
-    const num = parseInt(_input, 10);
-    if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
-      const selected = options[num - 1];
-      if (selected) {
-        // Check if this is the deny option (last option)
-        if (num === options.length) {
-          setIsEnteringReason(true);
-        } else {
-          selected.action();
-        }
-      }
-    }
-  });
+      // Don't handle any other keys - let PasteAwareTextInput handle them
+    },
+    { isActive: isEnteringReason },
+  );
 
   // Parse JSON args
   let parsedArgs: Record<string, unknown> | null = null;
@@ -623,13 +666,186 @@ export const ApprovalDialog = memo(function ApprovalDialog({
     return null;
   }, [approvalRequest, parsedArgs]);
 
+  // Build map of all diffs (for Edit/Write AND Patch operations)
+  const allDiffs = useMemo((): Map<string, AdvancedDiffSuccess> => {
+    const diffs = new Map<string, AdvancedDiffSuccess>();
+    const toolCallId = approvalRequest?.toolCallId;
+    if (!toolCallId) return diffs;
+
+    // For Edit/Write/MultiEdit - single file diff
+    if (precomputedDiff) {
+      diffs.set(toolCallId, precomputedDiff);
+      return diffs;
+    }
+
+    // For Patch tools - parse hunks directly (patches ARE diffs, no need to recompute)
+    const t = approvalRequest.toolName.toLowerCase();
+    if ((t === "apply_patch" || t === "applypatch") && parsedArgs?.input) {
+      const operations = parsePatchOperations(parsedArgs.input as string);
+      for (const op of operations) {
+        const key = `${toolCallId}:${op.path}`;
+
+        if (op.kind === "add" || op.kind === "update") {
+          // Parse patch hunks directly instead of trying to find oldString in file
+          const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
+          if (result) {
+            diffs.set(key, result);
+          }
+        }
+        // Delete operations don't need diffs
+      }
+    }
+
+    return diffs;
+  }, [approvalRequest, parsedArgs, precomputedDiff]);
+
+  // Build options based on approval context
+  const options = useMemo(() => {
+    const approvalLabel =
+      progress && progress.total > 1
+        ? "Yes, approve this tool"
+        : "Yes, just this once";
+    const opts = [
+      {
+        label: approvalLabel,
+        action: () => onApproveAll(allDiffs.size > 0 ? allDiffs : undefined),
+      },
+    ];
+
+    // Add context-aware approval option if available (only for single approvals)
+    if (approvalContext?.allowPersistence) {
+      opts.push({
+        label: approvalContext.approveAlwaysText,
+        action: () =>
+          onApproveAlways(
+            approvalContext.defaultScope === "user"
+              ? "session"
+              : approvalContext.defaultScope,
+            allDiffs.size > 0 ? allDiffs : undefined,
+          ),
+      });
+    }
+
+    // Add deny option
+    const denyLabel =
+      progress && progress.total > 1
+        ? "No, deny this tool (esc)"
+        : "No, and tell Letta Code what to do differently (esc)";
+    opts.push({
+      label: denyLabel,
+      action: () => {}, // Handled separately via setIsEnteringReason
+    });
+
+    return opts;
+  }, [progress, approvalContext, onApproveAll, onApproveAlways, allDiffs]);
+
+  // Get the human-readable header label
+  const headerLabel = useMemo(() => {
+    if (!approvalRequest) return "";
+    const t = approvalRequest.toolName.toLowerCase();
+    // For patch tools, determine header from operation type
+    if (t === "apply_patch" || t === "applypatch") {
+      if (parsedArgs?.input && typeof parsedArgs.input === "string") {
+        const operations = parsePatchOperations(parsedArgs.input);
+        if (operations.length > 0) {
+          const isMulti = operations.length > 1;
+          const firstOp = operations[0];
+          if (firstOp?.kind === "add")
+            return isMulti ? "Write Files" : "Write File";
+          if (firstOp?.kind === "update")
+            return isMulti ? "Edit Files" : "Edit File";
+          if (firstOp?.kind === "delete")
+            return isMulti ? "Delete Files" : "Delete File";
+        }
+      }
+      return "Apply Patch"; // Fallback
+    }
+    // For write tools, check if file exists to show "Overwrite File" vs "Write File"
+    if (
+      t === "write" ||
+      t === "write_file" ||
+      t === "writefile" ||
+      t === "write_file_gemini" ||
+      t === "writefilegemini"
+    ) {
+      const filePath = parsedArgs?.file_path as string | undefined;
+      if (filePath) {
+        try {
+          const { existsSync } = require("node:fs");
+          if (existsSync(filePath)) {
+            return "Overwrite File";
+          }
+        } catch {
+          // Ignore errors, fall through to default
+        }
+      }
+      return "Write File";
+    }
+    return getHeaderLabel(approvalRequest.toolName);
+  }, [approvalRequest, parsedArgs]);
+
+  // Compute the question text (customized for write tools to show filepath)
+  const questionText = useMemo((): { text: string; boldPath?: string } => {
+    if (!approvalRequest || !parsedArgs) {
+      return { text: "Do you want to proceed?" };
+    }
+    const t = approvalRequest.toolName.toLowerCase();
+    // For write tools, show "Write to {path}?" or "Overwrite {path}?"
+    if (
+      t === "write" ||
+      t === "write_file" ||
+      t === "writefile" ||
+      t === "write_file_gemini" ||
+      t === "writefilegemini"
+    ) {
+      const filePath = parsedArgs.file_path as string | undefined;
+      if (filePath) {
+        const { existsSync } = require("node:fs");
+        const { relative } = require("node:path");
+        const cwd = process.cwd();
+        const relPath = relative(cwd, filePath);
+        const displayPath = relPath.startsWith("..") ? filePath : relPath;
+        try {
+          if (existsSync(filePath)) {
+            return { text: "Overwrite", boldPath: `${displayPath}?` };
+          }
+        } catch {
+          // Ignore errors
+        }
+        return { text: "Write to", boldPath: `${displayPath}?` };
+      }
+    }
+    // For patch tools, show file path(s) being modified
+    if ((t === "apply_patch" || t === "applypatch") && parsedArgs.input) {
+      const operations = parsePatchOperations(parsedArgs.input as string);
+      if (operations.length > 0) {
+        const { relative } = require("node:path");
+        const cwd = process.cwd();
+        const paths = operations.map((op) => {
+          const relPath = relative(cwd, op.path);
+          return relPath.startsWith("..") ? op.path : relPath;
+        });
+        if (paths.length === 1) {
+          const op = operations[0];
+          if (op?.kind === "add") {
+            return { text: "Write to", boldPath: `${paths[0]}?` };
+          } else if (op?.kind === "update") {
+            return { text: "Update", boldPath: `${paths[0]}?` };
+          } else if (op?.kind === "delete") {
+            return { text: "Delete", boldPath: `${paths[0]}?` };
+          }
+        } else {
+          return { text: "Apply patch to", boldPath: `${paths.length} files?` };
+        }
+      }
+    }
+    return { text: "Do you want to proceed?" };
+  }, [approvalRequest, parsedArgs]);
+
   // Guard: should never happen as parent checks length, but satisfies TypeScript
   if (!approvalRequest) {
     return null;
   }
-
-  // Get the human-readable header label
-  const headerLabel = getHeaderLabel(approvalRequest.toolName);
 
   if (isEnteringReason) {
     return (
@@ -641,11 +857,18 @@ export const ApprovalDialog = memo(function ApprovalDialog({
           flexDirection="column"
           paddingX={1}
         >
-          <Text bold>What should Letta do differently? (esc to cancel):</Text>
+          <Text bold>What should I do differently? (esc to cancel):</Text>
           <Box height={1} />
           <Box>
             <Text dimColor>{"> "}</Text>
-            <PasteAwareTextInput value={denyReason} onChange={setDenyReason} />
+            <PasteAwareTextInput
+              value={denyReason}
+              onChange={setDenyReason}
+              onSubmit={(value) => {
+                const resolvedReason = resolvePlaceholders(value);
+                onDenyAll(resolvedReason);
+              }}
+            />
           </Box>
         </Box>
         <Box height={1} />
@@ -685,11 +908,21 @@ export const ApprovalDialog = memo(function ApprovalDialog({
           toolArgs={approvalRequest.toolArgs}
           parsedArgs={parsedArgs}
           precomputedDiff={precomputedDiff}
+          allDiffs={allDiffs}
+          toolCallId={approvalRequest.toolCallId}
         />
         <Box height={1} />
 
         {/* Prompt */}
-        <Text bold>Do you want to proceed?</Text>
+        <Text bold>
+          {questionText.text}
+          {questionText.boldPath ? (
+            <>
+              {" "}
+              <Text bold>{questionText.boldPath}</Text>
+            </>
+          ) : null}
+        </Text>
         <Box height={1} />
 
         {/* Options selector (single line per option) */}

@@ -41,7 +41,7 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated after 30,000 characters");
+        expect(output).toContain("[Output truncated: showing 30,000");
         expect(output.length).toBeLessThan(35000); // Truncated + notice
       },
     );
@@ -64,7 +64,7 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated after 30,000 characters");
+        expect(output).toContain("[Output truncated: showing 30,000");
         expect(result.status).toBe("error");
       },
     );
@@ -143,9 +143,7 @@ describe("tool truncation integration tests", () => {
       });
 
       expect(result.output.length).toBeLessThanOrEqual(15000); // 10K + notice
-      expect(result.output).toContain(
-        "[Output truncated after 10,000 characters",
-      );
+      expect(result.output).toContain("[Output truncated: showing 10,000");
     });
 
     test("truncates file list exceeding 10K characters", async () => {
@@ -165,9 +163,7 @@ describe("tool truncation integration tests", () => {
 
       expect(result.output.length).toBeLessThanOrEqual(15000);
       if (result.output.length > 10000) {
-        expect(result.output).toContain(
-          "[Output truncated after 10,000 characters",
-        );
+        expect(result.output).toContain("[Output truncated: showing 10,000");
       }
     });
 
@@ -196,15 +192,11 @@ describe("tool truncation integration tests", () => {
 
         const result = await glob({ pattern: "**/*.txt", path: testDir });
 
-        expect(result.files.length).toBeLessThanOrEqual(
-          LIMITS.GLOB_MAX_FILES + 1,
-        ); // +1 for notice
         expect(result.truncated).toBe(true);
         expect(result.totalFiles).toBe(2500);
-        // Last entry should be the truncation notice
-        expect(result.files[result.files.length - 1]).toContain(
-          "showing 2,000 of 2,500 files",
-        );
+        // Should contain the truncation notice
+        const filesString = result.files.join("\n");
+        expect(filesString).toContain("showing 2,000 of 2,500 files");
       },
       { timeout: 15000 },
     ); // Increased timeout for Windows CI where file creation is slower
@@ -286,7 +278,7 @@ describe("tool truncation integration tests", () => {
         expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
         if (outputResult.message.length > 30000) {
           expect(outputResult.message).toContain(
-            "[Output truncated after 30,000 characters",
+            "[Output truncated: showing 30,000",
           );
         }
       },

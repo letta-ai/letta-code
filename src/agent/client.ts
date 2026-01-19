@@ -2,11 +2,24 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
-import { ensureAnthropicProviderToken } from "../providers/anthropic-provider";
 import { settingsManager } from "../settings-manager";
+import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
+
+/**
+ * Get the current Letta server URL from environment or settings.
+ * Used for cache keys and API operations.
+ */
+export function getServerUrl(): string {
+  const settings = settingsManager.getSettings();
+  return (
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL
+  );
+}
 
 export async function getClient() {
-  const settings = settingsManager.getSettings();
+  const settings = await settingsManager.getSettingsWithSecureTokens();
 
   let apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
@@ -32,12 +45,9 @@ export async function getClient() {
           deviceName,
         );
 
-        // Update settings with new token
-        const updatedEnv = { ...settings.env };
-        updatedEnv.LETTA_API_KEY = tokens.access_token;
-
+        // Update settings with new token (secrets handles secure storage automatically)
         settingsManager.updateSettings({
-          env: updatedEnv,
+          env: { ...settings.env, LETTA_API_KEY: tokens.access_token },
           refreshToken: tokens.refresh_token || settings.refreshToken,
           tokenExpiresAt: now + tokens.expires_in * 1000,
         });
@@ -65,9 +75,8 @@ export async function getClient() {
     process.exit(1);
   }
 
-  // Ensure Anthropic OAuth token is valid and provider is updated
-  // This checks if token is expired, refreshes it, and updates the provider
-  await ensureAnthropicProviderToken();
+  // Note: ChatGPT OAuth token refresh is handled by the Letta backend
+  // when using the chatgpt_oauth provider type
 
   return new Letta({
     apiKey,
@@ -76,5 +85,7 @@ export async function getClient() {
       "X-Letta-Source": "letta-code",
       "User-Agent": `letta-code/${packageJson.version}`,
     },
+    // Use instrumented fetch for timing logs when LETTA_DEBUG_TIMINGS is enabled
+    ...(isTimingsEnabled() && { fetch: createTimingFetch(fetch) }),
   });
 }

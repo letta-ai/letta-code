@@ -5,7 +5,14 @@ import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, Text, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
-import { type ComponentType, useEffect, useRef, useState } from "react";
+import {
+  type ComponentType,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -13,9 +20,9 @@ import {
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
-import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
+import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
-import { getVersion } from "../../version";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -26,10 +33,79 @@ import { ShimmerText } from "./ShimmerText";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
-const appVersion = getVersion();
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+
+/**
+ * Memoized footer component to prevent re-renders during high-frequency
+ * shimmer/timer updates. Only updates when its specific props change.
+ */
+const InputFooter = memo(function InputFooter({
+  ctrlCPressed,
+  escapePressed,
+  isBashMode,
+  modeName,
+  modeColor,
+  showExitHint,
+  agentName,
+  currentModel,
+  isOpenAICodexProvider,
+  isAutocompleteActive,
+}: {
+  ctrlCPressed: boolean;
+  escapePressed: boolean;
+  isBashMode: boolean;
+  modeName: string | null;
+  modeColor: string | null;
+  showExitHint: boolean;
+  agentName: string | null | undefined;
+  currentModel: string | null | undefined;
+  isOpenAICodexProvider: boolean;
+  isAutocompleteActive: boolean;
+}) {
+  // Hide footer when autocomplete is showing
+  if (isAutocompleteActive) {
+    return null;
+  }
+
+  return (
+    <Box justifyContent="space-between" marginBottom={1}>
+      {ctrlCPressed ? (
+        <Text dimColor>Press CTRL-C again to exit</Text>
+      ) : escapePressed ? (
+        <Text dimColor>Press Esc again to clear</Text>
+      ) : isBashMode ? (
+        <Text>
+          <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+          <Text color={colors.bash.prompt} dimColor>
+            {" "}
+            (backspace to exit)
+          </Text>
+        </Text>
+      ) : modeName && modeColor ? (
+        <Text>
+          <Text color={modeColor}>⏵⏵ {modeName}</Text>
+          <Text color={modeColor} dimColor>
+            {" "}
+            (shift+tab to {showExitHint ? "exit" : "cycle"})
+          </Text>
+        </Text>
+      ) : (
+        <Text dimColor>Press / for commands</Text>
+      )}
+      <Text>
+        <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
+        <Text
+          dimColor={!isOpenAICodexProvider}
+          color={isOpenAICodexProvider ? "#74AA9C" : undefined}
+        >
+          {` [${currentModel ?? "unknown"}]`}
+        </Text>
+      </Text>
+    </Box>
+  );
+});
 
 // Increase max listeners to accommodate multiple useInput hooks
 // (5 in this component + autocomplete components)
@@ -58,6 +134,11 @@ export function Input({
   messageQueue,
   onEnterQueueEditMode,
   onEscapeCancel,
+  ralphActive = false,
+  ralphPending = false,
+  ralphPendingYolo = false,
+  onRalphExit,
+  conversationId,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -77,6 +158,11 @@ export function Input({
   messageQueue?: string[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
+  ralphActive?: boolean;
+  ralphPending?: boolean;
+  ralphPendingYolo?: boolean;
+  onRalphExit?: () => void;
+  conversationId?: string;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -175,6 +261,13 @@ export function Input({
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
+    // Debug logging for escape key detection
+    if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:InputRich:escape] escape=${key.escape} visible=${visible} onEscapeCancel=${!!onEscapeCancel} streaming=${streaming}`,
+      );
+    }
     // Skip if onEscapeCancel is provided - handled by the confirmation handler above
     if (onEscapeCancel) return;
 
@@ -231,10 +324,23 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling
+  // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
   useInput((_input, key) => {
     if (!visible) return;
+    // Debug logging for shift+tab detection
+    if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:InputRich] shift=${key.shift} tab=${key.tab} visible=${visible}`,
+      );
+    }
     if (key.shift && key.tab) {
+      // If ralph mode is active, exit it first (goes to default mode)
+      if (ralphActive && onRalphExit) {
+        onRalphExit();
+        return;
+      }
+
       // Cycle through permission modes
       const modes: PermissionMode[] = [
         "default",
@@ -260,8 +366,9 @@ export function Input({
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!visible) return;
-    // Don't interfere with autocomplete navigation
-    if (isAutocompleteActive) {
+    // Don't interfere with autocomplete navigation, BUT allow history navigation
+    // when we're already browsing history (historyIndex !== -1)
+    if (isAutocompleteActive && historyIndex === -1) {
       return;
     }
 
@@ -334,10 +441,12 @@ export function Input({
           // Go to most recent command
           setHistoryIndex(history.length - 1);
           setValue(history[history.length - 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         } else if (historyIndex > 0) {
           // Go to older command
           setHistoryIndex(historyIndex - 1);
           setValue(history[historyIndex - 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         }
       } else if (key.downArrow) {
         if (currentWrappedLine < totalWrappedLines - 1) {
@@ -377,10 +486,12 @@ export function Input({
           // Go to newer command
           setHistoryIndex(historyIndex + 1);
           setValue(history[historyIndex + 1] ?? "");
+          setCursorPos(0); // Ensure cursor at start for consistent navigation
         } else {
           // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
+          setCursorPos(temporaryInput.length); // Cursor at end for user's draft
         }
       }
     }
@@ -478,7 +589,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      // Stay in bash mode after submitting (don't exit)
+      setIsBashMode(false); // Exit bash mode after submitting
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
@@ -558,8 +669,44 @@ export function Input({
     setCursorPos(selectedCommand.length);
   };
 
-  // Get display name and color for permission mode
-  const getModeInfo = () => {
+  // Get display name and color for permission mode (ralph modes take precedence)
+  // Memoized to prevent unnecessary footer re-renders
+  const modeInfo = useMemo(() => {
+    // Check ralph pending first (waiting for task input)
+    if (ralphPending) {
+      if (ralphPendingYolo) {
+        return {
+          name: "yolo-ralph (waiting)",
+          color: "#FF8C00", // dark orange
+        };
+      }
+      return {
+        name: "ralph (waiting)",
+        color: "#FEE19C", // yellow (brandColors.statusWarning)
+      };
+    }
+
+    // Check ralph mode active (using prop for reactivity)
+    if (ralphActive) {
+      const ralph = ralphMode.getState();
+      const iterDisplay =
+        ralph.maxIterations > 0
+          ? `${ralph.currentIteration}/${ralph.maxIterations}`
+          : `${ralph.currentIteration}`;
+
+      if (ralph.isYolo) {
+        return {
+          name: `yolo-ralph (iter ${iterDisplay})`,
+          color: "#FF8C00", // dark orange
+        };
+      }
+      return {
+        name: `ralph (iter ${iterDisplay})`,
+        color: "#FEE19C", // yellow (brandColors.statusWarning)
+      };
+    }
+
+    // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
@@ -573,9 +720,7 @@ export function Input({
       default:
         return null;
     }
-  };
-
-  const modeInfo = getModeInfo();
+  }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   const estimatedTokens = charsToTokens(tokenCount);
   const shouldShowTokenCount =
@@ -585,7 +730,9 @@ export function Input({
   const elapsedMinutes = Math.floor(elapsedMs / 60000);
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
-  const statusHintText = (() => {
+  // Uses chalk.dim to match reasoning text styling
+  // Memoized to prevent unnecessary re-renders during shimmer updates
+  const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
     const suffix =
@@ -598,10 +745,17 @@ export function Input({
     return (
       hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
-  })();
+  }, [
+    shouldShowElapsed,
+    elapsedMinutes,
+    shouldShowTokenCount,
+    estimatedTokens,
+    interruptRequested,
+  ]);
 
   // Create a horizontal line using box-drawing characters
-  const horizontalLine = "─".repeat(columns);
+  // Memoized since it only changes when terminal width changes
+  const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
 
   // If not visible, render nothing but keep component mounted to preserve state
   if (!visible) {
@@ -684,37 +838,23 @@ export function Input({
           agentName={agentName}
           serverUrl={serverUrl}
           workingDirectory={process.cwd()}
+          conversationId={conversationId}
         />
 
-        <Box justifyContent="space-between" marginBottom={1}>
-          {ctrlCPressed ? (
-            <Text dimColor>Press CTRL-C again to exit</Text>
-          ) : escapePressed ? (
-            <Text dimColor>Press Esc again to clear</Text>
-          ) : isBashMode ? (
-            <Text>
-              <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-              <Text color={colors.bash.prompt} dimColor>
-                {" "}
-                (backspace to exit)
-              </Text>
-            </Text>
-          ) : modeInfo ? (
-            <Text>
-              <Text color={modeInfo.color}>⏵⏵ {modeInfo.name}</Text>
-              <Text color={modeInfo.color} dimColor>
-                {" "}
-                (shift+tab to cycle)
-              </Text>
-            </Text>
-          ) : (
-            <Text dimColor>Press / for commands or @ for files</Text>
-          )}
-          <Text dimColor>
-            {`Letta Code v${appVersion} `}
-            {`[${currentModel ?? "unknown"}${currentModelProvider === ANTHROPIC_PROVIDER_NAME ? ` ${chalk.rgb(255, 199, 135)("claude pro/max")}` : ""}]`}
-          </Text>
-        </Box>
+        <InputFooter
+          ctrlCPressed={ctrlCPressed}
+          escapePressed={escapePressed}
+          isBashMode={isBashMode}
+          modeName={modeInfo?.name ?? null}
+          modeColor={modeInfo?.color ?? null}
+          showExitHint={ralphActive || ralphPending}
+          agentName={agentName}
+          currentModel={currentModel}
+          isOpenAICodexProvider={
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isAutocompleteActive={isAutocompleteActive}
+        />
       </Box>
     </Box>
   );

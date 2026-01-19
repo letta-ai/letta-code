@@ -1,153 +1,119 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { backgroundProcesses, getNextBashId } from "./process_manager.js";
 import { getShellEnv } from "./shellEnv.js";
+import { buildShellLaunchers } from "./shellLaunchers.js";
+import { spawnWithLauncher } from "./shellRunner.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
-// Cache the shell configuration
-let cachedShellConfig: {
-  executable: string;
-  args: (cmd: string) => string[];
-} | null = null;
+// Cache the working shell launcher after first successful spawn
+let cachedWorkingLauncher: string[] | null = null;
 
 /**
- * Get shell configuration for the current platform.
- * Uses spawn with explicit shell executable + args to avoid double-shell parsing issues.
- * This approach (like gemini-cli and codex) passes the command directly to the shell
- * as an argument, avoiding issues with HEREDOC and special characters.
- *
- * On macOS, we prefer zsh because bash 3.2 (shipped with macOS due to GPL licensing)
- * has a bug with HEREDOC parsing when there's an odd number of apostrophes.
- * zsh handles this correctly and is the default shell on modern macOS.
+ * Get the first working shell launcher for background processes.
+ * Uses cached launcher if available, otherwise returns first launcher from buildShellLaunchers.
+ * For background processes, we can't easily do async fallback, so we rely on cached launcher
+ * from previous foreground commands or the default launcher order.
  */
-function getShellConfig(): {
-  executable: string;
-  args: (cmd: string) => string[];
-} {
-  if (cachedShellConfig) {
-    return cachedShellConfig;
+function getBackgroundLauncher(command: string): string[] {
+  if (cachedWorkingLauncher) {
+    const [executable, ...launcherArgs] = cachedWorkingLauncher;
+    if (executable) {
+      return [executable, ...launcherArgs.slice(0, -1), command];
+    }
   }
-
-  if (process.platform === "win32") {
-    // Windows: use PowerShell
-    cachedShellConfig = {
-      executable: "powershell.exe",
-      args: (cmd) => ["-NoProfile", "-Command", cmd],
-    };
-    return cachedShellConfig;
-  }
-
-  // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
-  if (process.platform === "darwin" && existsSync("/bin/zsh")) {
-    cachedShellConfig = {
-      executable: "/bin/zsh",
-      args: (cmd) => ["-c", cmd],
-    };
-    return cachedShellConfig;
-  }
-
-  // Linux or macOS without zsh: use bash
-  cachedShellConfig = {
-    executable: "bash",
-    args: (cmd) => ["-c", cmd],
-  };
-  return cachedShellConfig;
+  const launchers = buildShellLaunchers(command);
+  return launchers[0] || [];
 }
 
 /**
  * Execute a command using spawn with explicit shell.
  * This avoids the double-shell parsing that exec() does.
+ * Uses buildShellLaunchers() to try multiple shells with ENOENT fallback.
  * Exported for use by bash mode in the CLI.
  */
-export function spawnCommand(
+export async function spawnCommand(
   command: string,
   options: {
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeout: number;
     signal?: AbortSignal;
+    onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const { executable, args } = getShellConfig();
-    const childProcess = spawn(executable, args(command), {
+  // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
+  // This avoids the complexity of fallback logic which caused issues on ARM64 CI
+  if (process.platform !== "win32") {
+    // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
+    const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
+    return spawnWithLauncher([executable, "-c", command], {
       cwd: options.cwd,
       env: options.env,
-      shell: false, // Don't use another shell layer
-      stdio: ["ignore", "pipe", "pipe"],
+      timeoutMs: options.timeout,
+      signal: options.signal,
+      onOutput: options.onOutput,
     });
+  }
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let timedOut = false;
-
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      childProcess.kill("SIGTERM");
-    }, options.timeout);
-
-    const abortHandler = () => {
-      childProcess.kill("SIGTERM");
-    };
-    if (options.signal) {
-      options.signal.addEventListener("abort", abortHandler, { once: true });
+  // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
+  if (cachedWorkingLauncher) {
+    const [executable, ...launcherArgs] = cachedWorkingLauncher;
+    if (executable) {
+      const newLauncher = [executable, ...launcherArgs.slice(0, -1), command];
+      try {
+        const result = await spawnWithLauncher(newLauncher, {
+          cwd: options.cwd,
+          env: options.env,
+          timeoutMs: options.timeout,
+          signal: options.signal,
+          onOutput: options.onOutput,
+        });
+        return result;
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+        cachedWorkingLauncher = null;
+      }
     }
+  }
 
-    childProcess.stdout?.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-    });
+  const launchers = buildShellLaunchers(command);
+  if (launchers.length === 0) {
+    throw new Error("No shell launchers available");
+  }
 
-    childProcess.stderr?.on("data", (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-    });
+  const tried: string[] = [];
+  let lastError: Error | null = null;
 
-    childProcess.on("error", (err) => {
-      clearTimeout(timeoutId);
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
+  for (const launcher of launchers) {
+    try {
+      const result = await spawnWithLauncher(launcher, {
+        cwd: options.cwd,
+        env: options.env,
+        timeoutMs: options.timeout,
+        signal: options.signal,
+        onOutput: options.onOutput,
+      });
+      cachedWorkingLauncher = launcher;
+      return result;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        tried.push(launcher[0] || "unknown");
+        lastError = err;
+        continue;
       }
-      reject(err);
-    });
+      throw error;
+    }
+  }
 
-    childProcess.on("close", (code) => {
-      clearTimeout(timeoutId);
-      if (options.signal) {
-        options.signal.removeEventListener("abort", abortHandler);
-      }
-
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-
-      if (timedOut) {
-        reject(
-          Object.assign(new Error("Command timed out"), {
-            killed: true,
-            signal: "SIGTERM",
-            stdout,
-            stderr,
-            code,
-          }),
-        );
-        return;
-      }
-
-      if (options.signal?.aborted) {
-        reject(
-          Object.assign(new Error("The operation was aborted"), {
-            name: "AbortError",
-            code: "ABORT_ERR",
-            stdout,
-            stderr,
-          }),
-        );
-        return;
-      }
-
-      resolve({ stdout, stderr, exitCode: code });
-    });
-  });
+  const suffix = tried.filter(Boolean).join(", ");
+  const reason = lastError?.message || "Shell unavailable";
+  throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
 }
 
 interface BashArgs {
@@ -156,6 +122,7 @@ interface BashArgs {
   description?: string;
   run_in_background?: boolean;
   signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
 interface BashResult {
@@ -174,6 +141,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     description: _description,
     run_in_background = false,
     signal,
+    onOutput,
   } = args;
   const userCwd = process.env.USER_CWD || process.cwd();
 
@@ -200,8 +168,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
 
   if (run_in_background) {
     const bashId = getNextBashId();
-    const { executable, args } = getShellConfig();
-    const childProcess = spawn(executable, args(command), {
+    const launcher = getBackgroundLauncher(command);
+    const [executable, ...launcherArgs] = launcher;
+    if (!executable) {
+      return {
+        content: [{ type: "text", text: "No shell available" }],
+        status: "error",
+      };
+    }
+    const childProcess = spawn(executable, launcherArgs, {
       shell: false,
       cwd: userCwd,
       env: getShellEnv(),
@@ -263,6 +238,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       env: getShellEnv(),
       timeout: effectiveTimeout,
       signal,
+      onOutput,
     });
 
     let output = stdout;
@@ -273,6 +249,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       output || "(Command completed with no output)",
       LIMITS.BASH_OUTPUT_CHARS,
       "Bash",
+      { workingDirectory: userCwd, toolName: "Bash" },
     );
 
     // Non-zero exit code is an error
@@ -325,6 +302,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       errorMessage.trim() || "Command failed with unknown error",
       LIMITS.BASH_OUTPUT_CHARS,
       "Bash",
+      { workingDirectory: userCwd, toolName: "Bash" },
     );
 
     return {

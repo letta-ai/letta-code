@@ -16,7 +16,7 @@ npm install -g @letta-ai/letta-code
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
 > [!NOTE]
->  By default, Letta Code will connect to the [Letta Developer Platform](https://app.letta.com/) (includes a free tier), which you can connect to via OAuth or setting a `LETTA_API_KEY`. You can also connect it to a [self-hosted Letta server](https://docs.letta.com/letta-code/configuration#self-hosted-server) by setting `LETTA_BASE_URL`
+>  By default, Letta Code will connect to the [Letta API](https://app.letta.com/) (includes a free tier), which you can connect to via OAuth or setting a `LETTA_API_KEY`. You can also connect it to a [Docker server](https://docs.letta.com/letta-code/configuration#docker) by setting `LETTA_BASE_URL`
 
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
@@ -30,7 +30,7 @@ Letta Code is built around long-lived agents that persist across sessions and im
 **Letta Code** (Agent-Based)
 - Same agent across sessions
 - Persistent memory and learning over time
-- `/clear` resets the session (clears current in-context messages), but memory persists
+- `/clear` starts a new conversation (aka "thread" or "session"), but memory persists
 - Relationship: Like having a coworker or mentee that learns and remembers
 
 ## Agent Memory & Learning

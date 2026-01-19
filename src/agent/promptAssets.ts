@@ -1,5 +1,6 @@
 // Additional system prompts for /system command
 
+import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
@@ -13,6 +14,7 @@ import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
+import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
@@ -28,11 +30,13 @@ export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
+export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
   "persona_claude.mdx": personaClaudePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
+  "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,
@@ -54,47 +58,48 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
   {
     id: "default",
     label: "Default",
-    description: "Standard Letta Code system prompt (Claude-optimized)",
+    description: "Alias for letta-claude",
     content: lettaAnthropicPrompt,
     isDefault: true,
     isFeatured: true,
   },
   {
-    id: "legacy",
-    label: "Legacy",
-    description: "Original system prompt",
-    content: systemPrompt,
+    id: "letta-claude",
+    label: "Letta Claude",
+    description: "Full Letta Code system prompt (Claude-optimized)",
+    content: lettaAnthropicPrompt,
+    isFeatured: true,
   },
   {
     id: "letta-codex",
-    label: "Codex",
-    description: "For Codex models",
+    label: "Letta Codex",
+    description: "Full Letta Code system prompt (Codex-optimized)",
     content: lettaCodexPrompt,
     isFeatured: true,
   },
   {
     id: "letta-gemini",
-    label: "Gemini",
-    description: "For Gemini models",
+    label: "Letta Gemini",
+    description: "Full Letta Code system prompt (Gemini-optimized)",
     content: lettaGeminiPrompt,
     isFeatured: true,
   },
   {
-    id: "anthropic",
+    id: "claude",
     label: "Claude (basic)",
-    description: "For Claude models (no skills/memory instructions)",
+    description: "Basic Claude prompt (no skills/memory instructions)",
     content: anthropicPrompt,
   },
   {
     id: "codex",
     label: "Codex (basic)",
-    description: "For Codex models (no skills/memory instructions)",
+    description: "Basic Codex prompt (no skills/memory instructions)",
     content: codexPrompt,
   },
   {
     id: "gemini",
     label: "Gemini (basic)",
-    description: "For Gemini models (no skills/memory instructions)",
+    description: "Basic Gemini prompt (no skills/memory instructions)",
     content: geminiPrompt,
   },
 ];
@@ -107,19 +112,19 @@ export const SYSTEM_PROMPTS: SystemPromptOption[] = [
  * 2. If it matches a subagent name, use that subagent's system prompt
  * 3. Otherwise, use the default system prompt
  *
- * @param systemPromptId - The system prompt ID (e.g., "codex") or subagent name (e.g., "explore")
+ * @param systemPromptPreset - The system prompt preset (e.g., "letta-claude") or subagent name (e.g., "explore")
  * @returns The resolved system prompt content
  */
 export async function resolveSystemPrompt(
-  systemPromptId: string | undefined,
+  systemPromptPreset: string | undefined,
 ): Promise<string> {
   // No input - use default
-  if (!systemPromptId) {
+  if (!systemPromptPreset) {
     return SYSTEM_PROMPT;
   }
 
   // 1. Check if it matches a system prompt ID
-  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptId);
+  const matchedPrompt = SYSTEM_PROMPTS.find((p) => p.id === systemPromptPreset);
   if (matchedPrompt) {
     return matchedPrompt.content;
   }
@@ -127,7 +132,7 @@ export async function resolveSystemPrompt(
   // 2. Check if it matches a subagent name
   const { getAllSubagentConfigs } = await import("./subagents");
   const subagentConfigs = await getAllSubagentConfigs();
-  const matchedSubagent = subagentConfigs[systemPromptId];
+  const matchedSubagent = subagentConfigs[systemPromptPreset];
   if (matchedSubagent) {
     return matchedSubagent.systemPrompt;
   }

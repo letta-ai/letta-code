@@ -39,8 +39,8 @@ export function MemoryDiffRenderer({
 
     switch (command) {
       case "str_replace": {
-        const oldStr = args.old_str || "";
-        const newStr = args.new_str || "";
+        const oldStr = args.old_string || args.old_str || "";
+        const newStr = args.new_string || args.new_str || "";
         return (
           <MemoryStrReplaceDiff
             blockName={blockName}
@@ -58,12 +58,23 @@ export function MemoryDiffRenderer({
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Inserted into memory block{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-              {insertLine !== undefined && ` at line ${insertLine}`}
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Inserted into memory block{" "}
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
+                  {insertLine !== undefined && ` at line ${insertLine}`}
+                </Text>
+              </Box>
+            </Box>
             {insertText.split("\n").map((line: string, i: number) => (
               <Box
                 key={`insert-${i}-${line.substring(0, 20)}`}
@@ -94,14 +105,25 @@ export function MemoryDiffRenderer({
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Created memory block{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-              {description && (
-                <Text dimColor> - {truncate(description, 40)}</Text>
-              )}
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Created memory block{" "}
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
+                  {description && (
+                    <Text dimColor> - {truncate(description, 40)}</Text>
+                  )}
+                </Text>
+              </Box>
+            </Box>
             {fileText
               ?.split("\n")
               .slice(0, 3)
@@ -134,12 +156,25 @@ export function MemoryDiffRenderer({
       }
 
       case "delete": {
+        const prefixWidth = 4;
+        const contentWidth = Math.max(0, columns - prefixWidth);
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Deleted memory block{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap">
+                Deleted memory block{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>
+              </Text>
+            </Box>
+          </Box>
         );
       }
 
@@ -147,33 +182,74 @@ export function MemoryDiffRenderer({
         const newPath = args.new_path || "";
         const newBlockName = newPath.split("/").pop() || newPath;
         const description = args.description;
+        const prefixWidth = 4;
+        const contentWidth = Math.max(0, columns - prefixWidth);
         if (description) {
           return (
-            <Text>
-              {"  "}
-              <Text dimColor>⎿</Text> Updated description of{" "}
-              <Text color={colors.tool.memoryName}>{blockName}</Text>
-            </Text>
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>
+                  {"  "}
+                  <Text dimColor>⎿</Text>
+                </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  Updated description of{" "}
+                  <Text bold color={colors.tool.memoryName}>
+                    {blockName}
+                  </Text>
+                </Text>
+              </Box>
+            </Box>
           );
         }
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Renamed{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text> to{" "}
-            <Text color={colors.tool.memoryName}>{newBlockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={prefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text wrap="wrap">
+                Renamed{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>{" "}
+                to{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {newBlockName}
+                </Text>
+              </Text>
+            </Box>
+          </Box>
         );
       }
 
-      default:
+      default: {
+        const defaultPrefixWidth = 4;
+        const defaultContentWidth = Math.max(0, columns - defaultPrefixWidth);
         return (
-          <Text>
-            {"  "}
-            <Text dimColor>⎿</Text> Memory operation: {command} on{" "}
-            <Text color={colors.tool.memoryName}>{blockName}</Text>
-          </Text>
+          <Box flexDirection="row">
+            <Box width={defaultPrefixWidth} flexShrink={0}>
+              <Text>
+                {"  "}
+                <Text dimColor>⎿</Text>
+              </Text>
+            </Box>
+            <Box flexGrow={1} width={defaultContentWidth}>
+              <Text wrap="wrap">
+                Memory operation: {command} on{" "}
+                <Text bold color={colors.tool.memoryName}>
+                  {blockName}
+                </Text>
+              </Text>
+            </Box>
+          </Box>
         );
+      }
     }
   } catch {
     // If parsing fails, return null to fall through to regular handling
@@ -182,7 +258,9 @@ export function MemoryDiffRenderer({
 }
 
 /**
- * Renders a str_replace diff with word-level highlighting
+ * Renders a str_replace diff with line-level diffing and word-level highlighting.
+ * Uses Diff.diffLines() to only show lines that actually changed,
+ * instead of showing all old lines then all new lines.
  */
 function MemoryStrReplaceDiff({
   blockName,
@@ -195,47 +273,111 @@ function MemoryStrReplaceDiff({
   newStr: string;
   columns: number;
 }) {
-  const oldLines = oldStr.split("\n");
-  const newLines = newStr.split("\n");
-  const singleLine = oldLines.length === 1 && newLines.length === 1;
+  // Use line-level diff to find what actually changed
+  const lineDiffs = Diff.diffLines(oldStr, newStr);
+
+  // Build display rows: only show added/removed lines, not unchanged
+  // For adjacent remove/add pairs, enable word-level highlighting
+  type DiffRow = {
+    type: "add" | "remove";
+    content: string;
+    pairContent?: string; // For word-level diff when remove is followed by add
+  };
+  const rows: DiffRow[] = [];
+
+  for (let i = 0; i < lineDiffs.length; i++) {
+    const part = lineDiffs[i];
+    if (!part) continue;
+
+    // Skip unchanged lines (context)
+    if (!part.added && !part.removed) continue;
+
+    // Split the value into individual lines (remove trailing newline)
+    const lines = part.value.replace(/\n$/, "").split("\n");
+
+    if (part.removed) {
+      // Check if next part is an addition (for word-level diff pairing)
+      const nextPart = lineDiffs[i + 1];
+      const nextIsAdd = nextPart?.added;
+      const nextLines = nextIsAdd
+        ? nextPart.value.replace(/\n$/, "").split("\n")
+        : [];
+
+      lines.forEach((line, lineIdx) => {
+        rows.push({
+          type: "remove",
+          content: line,
+          // Pair with corresponding add line for word-level diff (if same count)
+          pairContent:
+            nextIsAdd && lines.length === nextLines.length
+              ? nextLines[lineIdx]
+              : undefined,
+        });
+      });
+    } else if (part.added) {
+      // Check if previous part was a removal (already handled pairing above)
+      const prevPart = lineDiffs[i - 1];
+      const prevIsRemove = prevPart?.removed;
+      const prevLines = prevIsRemove
+        ? prevPart.value.replace(/\n$/, "").split("\n")
+        : [];
+
+      lines.forEach((line, lineIdx) => {
+        rows.push({
+          type: "add",
+          content: line,
+          // Pair with corresponding remove line for word-level diff (if same count)
+          pairContent:
+            prevIsRemove && lines.length === prevLines.length
+              ? prevLines[lineIdx]
+              : undefined,
+        });
+      });
+    }
+  }
 
   // Limit display to avoid huge diffs
-  const maxLines = 5;
-  const oldTruncated = oldLines.slice(0, maxLines);
-  const newTruncated = newLines.slice(0, maxLines);
-  const hasMore = oldLines.length > maxLines || newLines.length > maxLines;
+  const maxRows = 10;
+  const displayRows = rows.slice(0, maxRows);
+  const hasMore = rows.length > maxRows;
+
+  const prefixWidth = 4;
+  const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Updated memory block{" "}
-        <Text color={colors.tool.memoryName}>{blockName}</Text>
-      </Text>
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Updated memory block{" "}
+            <Text bold color={colors.tool.memoryName}>
+              {blockName}
+            </Text>
+          </Text>
+        </Box>
+      </Box>
 
-      {/* Removals */}
-      {oldTruncated.map((line, i) => (
+      {displayRows.map((row, i) => (
         <DiffLine
-          key={`old-${i}-${line.substring(0, 20)}`}
-          type="remove"
-          content={line}
-          compareContent={singleLine ? newLines[0] : undefined}
+          key={`diff-${i}-${row.type}-${row.content.substring(0, 20)}`}
+          type={row.type}
+          content={row.content}
+          compareContent={row.pairContent}
           columns={columns}
         />
       ))}
 
-      {/* Additions */}
-      {newTruncated.map((line, i) => (
-        <DiffLine
-          key={`new-${i}-${line.substring(0, 20)}`}
-          type="add"
-          content={line}
-          compareContent={singleLine ? oldLines[0] : undefined}
-          columns={columns}
-        />
-      ))}
-
-      {hasMore && <Text dimColor>{"    "}... diff truncated</Text>}
+      {hasMore && (
+        <Text dimColor>
+          {"    "}... {rows.length - maxRows} more lines
+        </Text>
+      )}
     </Box>
   );
 }
@@ -366,11 +508,22 @@ function PatchDiffRenderer({
 
   return (
     <Box flexDirection="column">
-      <Text>
-        {"  "}
-        <Text dimColor>⎿</Text> Patched memory block{" "}
-        <Text color={colors.tool.memoryName}>{label}</Text>
-      </Text>
+      <Box flexDirection="row">
+        <Box width={prefixWidth} flexShrink={0}>
+          <Text>
+            {"  "}
+            <Text dimColor>⎿</Text>
+          </Text>
+        </Box>
+        <Box flexGrow={1} width={contentWidth}>
+          <Text wrap="wrap">
+            Patched memory block{" "}
+            <Text bold color={colors.tool.memoryName}>
+              {label}
+            </Text>
+          </Text>
+        </Box>
+      </Box>
       {displayLines.map((line, i) => {
         // Skip @@ hunk headers
         if (line.startsWith("@@")) {

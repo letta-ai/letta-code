@@ -14,6 +14,13 @@ import {
 } from "../helpers/clipboard";
 import { allocatePaste, resolvePlaceholders } from "../helpers/pasteRegistry";
 
+// Global timestamp for forward delete coordination
+// Use globalThis to ensure singleton across bundle
+declare global {
+  // eslint-disable-next-line no-var
+  var __lettaForwardDeleteTimestamp: number | undefined;
+}
+
 interface PasteAwareTextInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -175,6 +182,56 @@ export function PasteAwareTextInput({
   // Intercept paste events and macOS fallback for image clipboard imports
   useInput(
     (input, key) => {
+      // Handle Shift/Option/Ctrl + Enter to insert newline
+      if (key.return && (key.shift || key.meta || key.ctrl)) {
+        const at = Math.max(
+          0,
+          Math.min(caretOffsetRef.current, displayValueRef.current.length),
+        );
+
+        // Insert actual \n for visual newline (cursor moves to new line)
+        const newValue =
+          displayValueRef.current.slice(0, at) +
+          "\n" +
+          displayValueRef.current.slice(at);
+
+        setDisplayValue(newValue);
+        setActualValue(newValue); // Display and actual are same (both have \n)
+        onChangeRef.current(newValue);
+
+        const nextCaret = at + 1;
+        setNudgeCursorOffset(nextCaret);
+        caretOffsetRef.current = nextCaret;
+        return;
+      }
+
+      // Handle Ctrl+V to check clipboard for images (works in all terminals)
+      // Native terminals don't send image data via bracketed paste, so we need
+      // to explicitly check the clipboard when Ctrl+V is pressed.
+      if (key.ctrl && input === "v") {
+        const clip = tryImportClipboardImageMac();
+        if (clip) {
+          const at = Math.max(
+            0,
+            Math.min(caretOffsetRef.current, displayValueRef.current.length),
+          );
+          const newDisplay =
+            displayValueRef.current.slice(0, at) +
+            clip +
+            displayValueRef.current.slice(at);
+          displayValueRef.current = newDisplay;
+          setDisplayValue(newDisplay);
+          setActualValue(newDisplay);
+          onChangeRef.current(newDisplay);
+          const nextCaret = at + clip.length;
+          setNudgeCursorOffset(nextCaret);
+          caretOffsetRef.current = nextCaret;
+        }
+        // Don't return - let it fall through to normal paste handling
+        // in case there's also text in the clipboard
+        return;
+      }
+
       // Handle bracketed paste events emitted by vendored Ink
       const isPasted = (key as unknown as { isPasted?: boolean })?.isPasted;
       if (isPasted) {
@@ -317,6 +374,46 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
+    // Forward delete: delete character AFTER cursor
+    const forwardDeleteAtCursor = (cursorPos: number) => {
+      if (cursorPos >= displayValueRef.current.length) return;
+
+      const newDisplay =
+        displayValueRef.current.slice(0, cursorPos) +
+        displayValueRef.current.slice(cursorPos + 1);
+      const resolvedActual = resolvePlaceholders(newDisplay);
+
+      // Update refs synchronously for consecutive operations
+      displayValueRef.current = newDisplay;
+      caretOffsetRef.current = cursorPos;
+
+      setDisplayValue(newDisplay);
+      setActualValue(resolvedActual);
+      onChangeRef.current(newDisplay);
+      // Cursor stays in place, sync it
+      setNudgeCursorOffset(cursorPos);
+    };
+
+    const insertNewlineAtCursor = () => {
+      const at = Math.max(
+        0,
+        Math.min(caretOffsetRef.current, displayValueRef.current.length),
+      );
+
+      const newValue =
+        displayValueRef.current.slice(0, at) +
+        "\n" +
+        displayValueRef.current.slice(at);
+
+      setDisplayValue(newValue);
+      setActualValue(newValue);
+      onChangeRef.current(newValue);
+
+      const nextCaret = at + 1;
+      setNudgeCursorOffset(nextCaret);
+      caretOffsetRef.current = nextCaret;
+    };
+
     const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
@@ -332,6 +429,53 @@ export function PasteAwareTextInput({
         sequence = (payload as { sequence?: string }).sequence ?? null;
       }
       if (!sequence) return;
+
+      // Optional debug logging for raw input bytes
+      if (process.env.LETTA_DEBUG_INPUT === "1") {
+        const debugHex = [...sequence]
+          .map((c) => `0x${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+          .join(" ");
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:raw-input] len=${sequence.length} hex: ${debugHex}`,
+        );
+      }
+
+      // Option+Enter (Alt+Enter): ESC + carriage return
+      // On macOS with "Option as Meta" enabled, this sends \x1b\r
+      // Also check for \x1b\n (ESC + newline) for compatibility
+      if (sequence === "\x1b\r" || sequence === "\x1b\n") {
+        insertNewlineAtCursor();
+        return;
+      }
+
+      // VS Code/Cursor terminal keybinding style:
+      // Often configured to send a literal "\\r" sequence for Shift+Enter.
+      // Treat it as newline.
+      if (sequence === "\\r") {
+        insertNewlineAtCursor();
+        return;
+      }
+
+      // CSI u modifier+Enter (ESC[13;Nu) is now handled by the CSI u fallback
+      // in use-input.js, which parses it as return + shift/ctrl/meta flags.
+      // The useInput handler at line 186 then handles the newline insertion.
+
+      // Note: Arrow keys with modifiers are now handled natively by parseKeypress
+      // since we use kitty protocol flag 1 only (no event types).
+      // With flag 1, arrows come as ESC[1;modifierD which parseKeypress recognizes.
+      // Previously we handled ESC[1;modifier:eventD format (with flag 7) here.
+
+      // fn+Delete (forward delete): ESC[3~ - standard ANSI escape sequence
+      // With kitty flag 1, modifiers come as ESC[3;modifier~ (no event type).
+      // Use caretOffsetRef which is updated synchronously via onCursorOffsetChange
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC sequence matching
+      if (sequence === "\x1b[3~" || /^\x1b\[3;\d+~$/.test(sequence)) {
+        // Set timestamp so ink-text-input skips its delete handling
+        globalThis.__lettaForwardDeleteTimestamp = Date.now();
+        forwardDeleteAtCursor(caretOffsetRef.current);
+        return;
+      }
 
       // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
@@ -469,12 +613,13 @@ export function PasteAwareTextInput({
     }
 
     // Normal typing/edits - update display and compute actual by substituting placeholders
+    // Update displayValueRef synchronously for raw input handlers
+    displayValueRef.current = newValue;
     setDisplayValue(newValue);
     const resolved = resolvePlaceholders(newValue);
     setActualValue(resolved);
     onChange(newValue);
-    // Default: cursor moves to end (most common case)
-    caretOffsetRef.current = newValue.length;
+    // Note: caretOffsetRef is updated by onCursorOffsetChange callback (called before onChange)
   };
 
   const handleSubmit = () => {

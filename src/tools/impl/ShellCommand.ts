@@ -1,5 +1,6 @@
-import { ShellExecutionError, shell } from "./Shell.js";
+import { shell } from "./Shell.js";
 import { buildShellLaunchers } from "./shellLaunchers.js";
+import { ShellExecutionError } from "./shellRunner.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
@@ -8,6 +9,8 @@ interface ShellCommandArgs {
   timeout_ms?: number;
   with_escalated_permissions?: boolean;
   justification?: string;
+  signal?: AbortSignal;
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
 }
 
 interface ShellCommandResult {
@@ -31,6 +34,8 @@ export async function shell_command(
     timeout_ms,
     with_escalated_permissions,
     justification,
+    signal,
+    onOutput,
   } = args;
   const launchers = buildShellLaunchers(command);
   if (launchers.length === 0) {
@@ -48,6 +53,8 @@ export async function shell_command(
         timeout_ms,
         with_escalated_permissions,
         justification,
+        signal,
+        onOutput,
       });
     } catch (error) {
       if (error instanceof ShellExecutionError && error.code === "ENOENT") {

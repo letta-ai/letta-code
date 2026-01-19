@@ -118,6 +118,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
         fullOutput,
         LIMITS.GREP_OUTPUT_CHARS,
         "Grep",
+        { workingDirectory: userCwd, toolName: "Grep" },
       );
 
       return {
@@ -166,6 +167,7 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
         content,
         LIMITS.GREP_OUTPUT_CHARS,
         "Grep",
+        { workingDirectory: userCwd, toolName: "Grep" },
       );
 
       return {

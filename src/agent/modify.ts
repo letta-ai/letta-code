@@ -8,8 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
-import { getAllLettaToolNames, getToolNames } from "../tools/manager";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -26,11 +25,15 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  const isOpenAI = modelHandle.startsWith("openai/");
-  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  const isOpenAI =
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+    modelHandle.startsWith("claude-pro-max/");
+  const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
@@ -71,6 +74,13 @@ function buildModelSettings(
       };
     }
     settings = anthropicSettings;
+  } else if (isZai) {
+    // Zai uses the same model_settings structure as other providers.
+    // Ensure parallel_tool_calls is enabled.
+    settings = {
+      provider_type: "zai",
+      parallel_tool_calls: true,
+    };
   } else if (isGoogleAI) {
     const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
@@ -145,170 +155,6 @@ export async function updateAgentLLMConfig(
 
   const finalAgent = await client.agents.retrieve(agentId);
   return finalAgent.llm_config;
-}
-
-export interface LinkResult {
-  success: boolean;
-  message: string;
-  addedCount?: number;
-}
-
-export interface UnlinkResult {
-  success: boolean;
-  message: string;
-  removedCount?: number;
-}
-
-/**
- * Attach all Letta Code tools to an agent.
- *
- * @param agentId - The agent ID
- * @returns Result with success status and message
- */
-export async function linkToolsToAgent(agentId: string): Promise<LinkResult> {
-  try {
-    const client = await getClient();
-
-    // Get ALL agent tools from agent state
-    const agent = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agent.tools || [];
-    const currentToolIds = currentTools
-      .map((t) => t.id)
-      .filter((id): id is string => typeof id === "string");
-    const currentToolNames = new Set(
-      currentTools
-        .map((t) => t.name)
-        .filter((name): name is string => typeof name === "string"),
-    );
-
-    // Get Letta Code tool names (internal names from registry)
-    const { getServerToolName } = await import("../tools/manager");
-    const lettaCodeToolNames = getToolNames();
-
-    // Find tools to add (tools that aren't already attached)
-    // Compare using server names since that's what the agent has
-    const toolsToAdd = lettaCodeToolNames.filter((internalName) => {
-      const serverName = getServerToolName(internalName);
-      return !currentToolNames.has(serverName);
-    });
-
-    if (toolsToAdd.length === 0) {
-      return {
-        success: true,
-        message: "All Letta Code tools already attached",
-        addedCount: 0,
-      };
-    }
-
-    // Look up tool IDs from global tool list
-    // Use server names when querying, since that's how tools are registered on the server
-    const toolsToAddIds: string[] = [];
-    for (const toolName of toolsToAdd) {
-      const serverName = getServerToolName(toolName);
-      const toolsResponse = await client.tools.list({ name: serverName });
-      const tool = toolsResponse.items[0];
-      if (tool?.id) {
-        toolsToAddIds.push(tool.id);
-      }
-    }
-
-    // Combine current tools with new tools
-    const newToolIds = [...currentToolIds, ...toolsToAddIds];
-
-    // Get current tool_rules and add requires_approval rules for new tools
-    // ALL Letta Code tools need requires_approval to be routed to the client
-    const currentToolRules = agent.tool_rules || [];
-    const newToolRules = [
-      ...currentToolRules,
-      ...toolsToAdd.map((toolName) => ({
-        tool_name: getServerToolName(toolName),
-        type: "requires_approval" as const,
-        prompt_template: null,
-      })),
-    ];
-
-    await client.agents.update(agentId, {
-      tool_ids: newToolIds,
-      tool_rules: newToolRules,
-    });
-
-    return {
-      success: true,
-      message: `Attached ${toolsToAddIds.length} Letta Code tool(s) to agent`,
-      addedCount: toolsToAddIds.length,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
-
-/**
- * Remove all Letta Code tools from an agent.
- *
- * @param agentId - The agent ID
- * @returns Result with success status and message
- */
-export async function unlinkToolsFromAgent(
-  agentId: string,
-): Promise<UnlinkResult> {
-  try {
-    const client = await getClient();
-
-    // Get ALL agent tools from agent state (not tools.list which may be incomplete)
-    const agent = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const allTools = agent.tools || [];
-
-    // Get all possible Letta Code tool names (both internal and server names)
-    const { getServerToolName } = await import("../tools/manager");
-    const lettaCodeToolNames = new Set(getAllLettaToolNames());
-    const lettaCodeServerNames = new Set(
-      Array.from(lettaCodeToolNames).map((name) => getServerToolName(name)),
-    );
-
-    // Filter out Letta Code tools, keep everything else
-    // Check against server names since that's what the agent sees
-    const remainingTools = allTools.filter(
-      (t) => t.name && !lettaCodeServerNames.has(t.name),
-    );
-    const removedCount = allTools.length - remainingTools.length;
-
-    // Extract IDs from remaining tools (filter out any undefined IDs)
-    const remainingToolIds = remainingTools
-      .map((t) => t.id)
-      .filter((id): id is string => typeof id === "string");
-
-    // Remove approval rules for Letta Code tools being unlinked
-    // Check against server names since that's what appears in tool_rules
-    const currentToolRules = agent.tool_rules || [];
-    const remainingToolRules = currentToolRules.filter(
-      (rule) =>
-        rule.type !== "requires_approval" ||
-        !lettaCodeServerNames.has(rule.tool_name),
-    );
-
-    await client.agents.update(agentId, {
-      tool_ids: remainingToolIds,
-      tool_rules: remainingToolRules,
-    });
-
-    return {
-      success: true,
-      message: `Removed ${removedCount} Letta Code tool(s) from agent`,
-      removedCount,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
 }
 
 export interface SystemPromptUpdateResult {

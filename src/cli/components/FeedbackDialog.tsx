@@ -18,6 +18,12 @@ export function FeedbackDialog({
   const [error, setError] = useState("");
 
   useInput((_input, key) => {
+    // CTRL-C: immediately cancel
+    if (key.ctrl && _input === "c") {
+      onCancel();
+      return;
+    }
+
     if (key.escape) {
       onCancel();
     }
@@ -40,7 +46,7 @@ export function FeedbackDialog({
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text color={colors.approval.header} bold>
-          Send Feedback to Letta Team
+          Send Feedback to the Letta Team
         </Text>
       </Box>
 

@@ -1,6 +1,11 @@
 // src/permissions/mode.ts
 // Permission mode management (default, acceptEdits, plan, bypassPermissions)
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import { isReadOnlyShellCommand } from "./readOnlyShell";
+
 export type PermissionMode =
   | "default"
   | "acceptEdits"
@@ -151,27 +156,93 @@ class PermissionModeManager {
           "ReadManyFiles",
         ];
         const writeTools = [
-          // Anthropic toolset
+          // Anthropic toolset (PascalCase only)
           "Write",
           "Edit",
           "MultiEdit",
-          "NotebookEdit",
-          // Codex toolset
+          // Codex toolset (snake_case and PascalCase)
           "apply_patch",
           "ApplyPatch",
+          // Gemini toolset (snake_case and PascalCase)
+          "write_file_gemini",
+          "WriteFileGemini",
+          "replace",
+          "Replace",
         ];
 
         if (allowedInPlan.includes(toolName)) {
           return "allow";
         }
 
-        // Special case: allow writes to the plan file only
+        // Special case: allow writes to any plan file in ~/.letta/plans/
+        // NOTE: We allow writing to ANY plan file, not just the assigned one.
+        // This is intentional - it allows the agent to "resume" planning after
+        // plan mode was exited/reset by simply writing to any plan file.
         if (writeTools.includes(toolName)) {
-          const planFilePath = this.getPlanFilePath();
-          const targetPath =
+          const plansDir = join(homedir(), ".letta", "plans");
+          let targetPath =
             (toolArgs?.file_path as string) || (toolArgs?.path as string);
 
-          if (planFilePath && targetPath && targetPath === planFilePath) {
+          // ApplyPatch/apply_patch: extract file path from patch input
+          if (
+            (toolName === "ApplyPatch" || toolName === "apply_patch") &&
+            toolArgs?.input
+          ) {
+            const input = toolArgs.input as string;
+            // Extract path from "*** Add File: path", "*** Update File: path", or "*** Delete File: path"
+            const match = input.match(
+              /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/,
+            );
+            if (match?.[1]) {
+              targetPath = match[1].trim();
+            }
+          }
+
+          // Allow if target is any .md file in the plans directory
+          if (targetPath?.startsWith(plansDir) && targetPath.endsWith(".md")) {
+            return "allow";
+          }
+        }
+
+        // Allow Task tool with read-only subagent types
+        // These subagents only have access to read-only tools (Glob, Grep, Read, LS, BashOutput)
+        const readOnlySubagentTypes = new Set([
+          "explore",
+          "Explore",
+          "plan",
+          "Plan",
+          "recall",
+          "Recall",
+        ]);
+        if (toolName === "Task" || toolName === "task") {
+          const subagentType = toolArgs?.subagent_type as string | undefined;
+          if (subagentType && readOnlySubagentTypes.has(subagentType)) {
+            return "allow";
+          }
+        }
+
+        // Allow Skill tool with read-only commands (load, unload, refresh)
+        // These commands only modify memory blocks, not files
+        if (toolName === "Skill" || toolName === "skill") {
+          const command = toolArgs?.command as string | undefined;
+          if (command && ["load", "unload", "refresh"].includes(command)) {
+            return "allow";
+          }
+        }
+
+        // Allow read-only shell commands (ls, git status, git log, etc.)
+        const shellTools = [
+          "Bash",
+          "shell",
+          "Shell",
+          "shell_command",
+          "ShellCommand",
+          "run_shell_command",
+          "RunShellCommand",
+        ];
+        if (shellTools.includes(toolName)) {
+          const command = toolArgs?.command as string | string[] | undefined;
+          if (command && isReadOnlyShellCommand(command)) {
             return "allow";
           }
         }

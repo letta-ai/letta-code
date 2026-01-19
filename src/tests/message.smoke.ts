@@ -3,6 +3,7 @@
  * Quick sanity check: create an agent, send a message, log streamed output.
  */
 
+import { getClient } from "../agent/client";
 import { createAgent } from "../agent/create";
 import { sendMessageStream } from "../agent/message";
 
@@ -13,12 +14,20 @@ async function main() {
     process.exit(1);
   }
 
+  const client = await getClient();
+
   console.log("🧠  Creating test agent...");
   const { agent } = await createAgent("smoke-agent", "openai/gpt-4.1");
   console.log(`✅  Agent created: ${agent.id}`);
 
+  console.log("📝  Creating conversation...");
+  const conversation = await client.conversations.create({
+    agent_id: agent.id,
+  });
+  console.log(`✅  Conversation created: ${conversation.id}`);
+
   console.log("💬  Sending test message...");
-  const stream = await sendMessageStream(agent.id, [
+  const stream = await sendMessageStream(conversation.id, [
     {
       role: "user",
       content: "Hello from Bun smoke test! Try calling a tool.",

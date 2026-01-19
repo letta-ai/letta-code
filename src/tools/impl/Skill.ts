@@ -1,5 +1,6 @@
+import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getClient } from "../../agent/client";
 import {
   getCurrentAgentId,
@@ -102,18 +103,33 @@ function extractSkillsDir(skillsBlockValue: string): string | null {
 }
 
 /**
+ * Check if a skill directory has additional files beyond SKILL.md
+ */
+function hasAdditionalFiles(skillMdPath: string): boolean {
+  try {
+    const skillDir = dirname(skillMdPath);
+    const entries = readdirSync(skillDir);
+    return entries.some((e) => e.toUpperCase() !== "SKILL.MD");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read skill content from file or bundled source
+ * Returns both content and the path to the SKILL.md file
  */
 async function readSkillContent(
   skillId: string,
   skillsDir: string,
-): Promise<string> {
+): Promise<{ content: string; path: string }> {
   // 1. Check bundled skills first (they have a path now)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path) {
     try {
-      return await readFile(bundledSkill.path, "utf-8");
+      const content = await readFile(bundledSkill.path, "utf-8");
+      return { content, path: bundledSkill.path };
     } catch {
       // Bundled skill path not found, continue to other sources
     }
@@ -122,24 +138,30 @@ async function readSkillContent(
   // 2. Try global skills directory
   const globalSkillPath = join(GLOBAL_SKILLS_DIR, skillId, "SKILL.md");
   try {
-    return await readFile(globalSkillPath, "utf-8");
+    const content = await readFile(globalSkillPath, "utf-8");
+    return { content, path: globalSkillPath };
   } catch {
     // Not in global, continue
   }
 
   // 3. Try project skills directory
-  const skillPath = join(skillsDir, skillId, "SKILL.md");
+  const projectSkillPath = join(skillsDir, skillId, "SKILL.md");
   try {
-    return await readFile(skillPath, "utf-8");
-  } catch (primaryError) {
+    const content = await readFile(projectSkillPath, "utf-8");
+    return { content, path: projectSkillPath };
+  } catch {
     // Fallback: check for bundled skills in a repo-level skills directory (legacy)
     try {
       const bundledSkillsDir = join(process.cwd(), "skills", "skills");
       const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
-      return await readFile(bundledSkillPath, "utf-8");
+      const content = await readFile(bundledSkillPath, "utf-8");
+      return { content, path: bundledSkillPath };
     } catch {
-      // If all fallbacks fail, rethrow the original error
-      throw primaryError;
+      // If all fallbacks fail, throw a helpful error message (LET-7101)
+      // Suggest refresh in case skills sync is still running in background
+      throw new Error(
+        `Skill "${skillId}" not found. If you recently added this skill, try Skill({ command: "refresh" }) to re-scan the skills directory.`,
+      );
     }
   }
 }
@@ -251,7 +273,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const skillsToProcess = skillIds as string[];
 
     if (command === "load") {
-      // Load skills
+      // Load skills - track which ones were prepared successfully
+      const preparedSkills: string[] = [];
+
       for (const skillId of skillsToProcess) {
         if (loadedSkillIds.includes(skillId)) {
           results.push(`"${skillId}" already loaded`);
@@ -259,18 +283,34 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
         }
 
         try {
-          const skillContent = await readSkillContent(skillId, skillsDir);
+          const { content: skillContent, path: skillPath } =
+            await readSkillContent(skillId, skillsDir);
 
-          // Replace placeholder if this is the first skill
-          if (currentValue === "[CURRENTLY EMPTY]") {
+          // Replace placeholder if this is the first skill (support old and new formats)
+          if (
+            currentValue === "No skills currently loaded." ||
+            currentValue === "[CURRENTLY EMPTY]"
+          ) {
             currentValue = "";
           }
 
+          // Build skill header with optional path info
+          const skillDir = dirname(skillPath);
+          const hasExtras = hasAdditionalFiles(skillPath);
+          const pathLine = hasExtras
+            ? `# Skill Directory: ${skillDir}\n\n`
+            : "";
+
+          // Replace <SKILL_DIR> placeholder with actual path in skill content
+          const processedContent = hasExtras
+            ? skillContent.replace(/<SKILL_DIR>/g, skillDir)
+            : skillContent;
+
           // Append new skill
           const separator = currentValue ? "\n\n---\n\n" : "";
-          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${skillContent}`;
+          currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${processedContent}`;
           loadedSkillIds.push(skillId);
-          results.push(`"${skillId}" loaded`);
+          preparedSkills.push(skillId);
         } catch (error) {
           results.push(
             `"${skillId}" failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -278,14 +318,21 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
         }
       }
 
-      // Update the block
-      await client.agents.blocks.update("loaded_skills", {
-        agent_id: agentId,
-        value: currentValue,
-      });
+      // Update the block - only report success AFTER the update succeeds
+      if (preparedSkills.length > 0) {
+        await client.agents.blocks.update("loaded_skills", {
+          agent_id: agentId,
+          value: currentValue,
+        });
 
-      // Update the cached flag
-      if (loadedSkillIds.length > 0) {
+        // Now we can report success
+        for (const skillId of preparedSkills) {
+          results.push(
+            `"${skillId}" loaded. Contents have been placed into your memory - check your 'loaded_skills' block for instructions.`,
+          );
+        }
+
+        // Update the cached flag
         setHasLoadedSkills(true);
       }
     } else {
@@ -339,7 +386,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       // Clean up the value
       currentValue = currentValue.trim();
       if (currentValue === "") {
-        currentValue = "[CURRENTLY EMPTY]";
+        currentValue = "No skills currently loaded.";
       }
 
       // Update the block
@@ -362,4 +409,47 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     }
     throw new Error(`Failed to ${command} skill(s): ${String(error)}`);
   }
+}
+
+/**
+ * Pre-load skills and return formatted content for the loaded_skills block.
+ * This is used by subagent manager to pre-populate skills before the agent starts.
+ */
+export async function preloadSkillsContent(
+  skillIds: string[],
+  skillsDir: string,
+): Promise<string> {
+  if (skillIds.length === 0) {
+    return "No skills currently loaded.";
+  }
+
+  let content = "";
+
+  for (const skillId of skillIds) {
+    try {
+      const { content: skillContent, path: skillPath } = await readSkillContent(
+        skillId,
+        skillsDir,
+      );
+
+      const skillDir = dirname(skillPath);
+      const hasExtras = hasAdditionalFiles(skillPath);
+      const pathLine = hasExtras ? `# Skill Directory: ${skillDir}\n\n` : "";
+
+      // Replace <SKILL_DIR> placeholder with actual path
+      const processedContent = hasExtras
+        ? skillContent.replace(/<SKILL_DIR>/g, skillDir)
+        : skillContent;
+
+      const separator = content ? "\n\n---\n\n" : "";
+      content = `${content}${separator}# Skill: ${skillId}\n${pathLine}${processedContent}`;
+    } catch (error) {
+      // Skip skills that can't be loaded
+      console.error(
+        `Warning: Could not pre-load skill "${skillId}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return content || "No skills currently loaded.";
 }

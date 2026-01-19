@@ -75,12 +75,12 @@ export const colors = {
 
   link: {
     text: "cyan",
-    url: "blue",
+    url: brandColors.primaryAccent,
   },
 
   heading: {
     primary: "cyan",
-    secondary: "blue",
+    secondary: brandColors.primaryAccent,
   },
 
   // Status indicators
@@ -117,7 +117,7 @@ export const colors = {
 
   // Todo list
   todo: {
-    completed: brandColors.blue,
+    completed: brandColors.primaryAccent, // Same blue as in-progress, with strikethrough
     inProgress: brandColors.primaryAccent,
   },
 
@@ -127,14 +127,14 @@ export const colors = {
     running: brandColors.statusWarning,
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
-    treeChar: brandColors.textDisabled,
-    hint: brandColors.textDisabled,
+    treeChar: brandColors.textSecondary,
+    hint: "#808080", // Grey to match Ink's dimColor
   },
 
   // Info/modal views
   info: {
     border: brandColors.primaryAccent,
-    prompt: "blue",
+    prompt: brandColors.primaryAccent,
   },
 
   // Diff rendering
@@ -145,7 +145,7 @@ export const colors = {
     removedWordBg: "#7a2d2d",
     contextLineBg: undefined,
     textOnDark: "white",
-    textOnHighlight: "black",
+    textOnHighlight: "white",
     symbolAdd: "green",
     symbolRemove: "red",
     symbolContext: undefined,
@@ -162,5 +162,10 @@ export const colors = {
     normal: "white",
     dim: "gray",
     bold: "white",
+  },
+
+  // Footer bar
+  footer: {
+    agentName: brandColors.primaryAccent,
   },
 } as const;
