@@ -4278,9 +4278,8 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /clear and /new commands - start new conversation
-        // (/new used to create a new agent, now it's just an alias for /clear)
-        if (msg.trim() === "/clear" || msg.trim() === "/new") {
+        // Special handling for /new command - start new conversation
+        if (msg.trim() === "/new") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -4347,14 +4346,14 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /clear-messages command - reset all agent messages (destructive)
-        if (msg.trim() === "/clear-messages") {
+        // Special handling for /clear command - reset all agent messages (destructive)
+        if (msg.trim() === "/clear") {
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Resetting agent messages...",
+            output: "Clearing in-context messages...",
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
