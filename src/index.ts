@@ -417,6 +417,7 @@ async function main(): Promise<void> {
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
+        "no-skills": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
