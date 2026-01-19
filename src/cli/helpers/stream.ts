@@ -101,7 +101,7 @@ export async function drainStream(
       // Check if stream was aborted
       if (abortSignal?.aborted) {
         stopReason = "cancelled";
-        markIncompleteToolsAsCancelled(buffers);
+        markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
         queueMicrotask(refresh);
         break;
       }
@@ -135,7 +135,7 @@ export async function drainStream(
       // Check abort signal before processing - don't add data after interrupt
       if (abortSignal?.aborted) {
         stopReason = "cancelled";
-        markIncompleteToolsAsCancelled(buffers);
+        markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
         queueMicrotask(refresh);
         break;
       }
@@ -172,7 +172,7 @@ export async function drainStream(
 
     // Set error stop reason so drainStreamWithResume can try to reconnect
     stopReason = "error";
-    markIncompleteToolsAsCancelled(buffers);
+    markIncompleteToolsAsCancelled(buffers, true, "stream_error");
     queueMicrotask(refresh);
   } finally {
     // Clean up abort listener
@@ -189,7 +189,7 @@ export async function drainStream(
   // (SDK returns gracefully on abort), mark as cancelled
   if (abortedViaListener && !stopReason) {
     stopReason = "cancelled";
-    markIncompleteToolsAsCancelled(buffers);
+    markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
     queueMicrotask(refresh);
   }
 
@@ -200,7 +200,7 @@ export async function drainStream(
 
   // Mark incomplete tool calls as cancelled if stream was cancelled
   if (stopReason === "cancelled") {
-    markIncompleteToolsAsCancelled(buffers);
+    markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
   }
 
   // Mark the final line as finished now that stream has ended

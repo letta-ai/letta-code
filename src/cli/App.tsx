@@ -1737,7 +1737,11 @@ export default function App({
         // If we're sending a new message, old pending state is no longer relevant
         // Pass false to avoid setting interrupted=true, which causes race conditions
         // with concurrent processConversation calls reading the flag
-        markIncompleteToolsAsCancelled(buffersRef.current, false);
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          false,
+          "internal_cancel",
+        );
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
@@ -2169,7 +2173,11 @@ export default function App({
               abortControllerRef.current?.signal.aborted
             ) {
               setStreaming(false);
-              markIncompleteToolsAsCancelled(buffersRef.current);
+              markIncompleteToolsAsCancelled(
+                buffersRef.current,
+                true,
+                "user_interrupt",
+              );
               refreshDerived();
               return;
             }
@@ -2422,7 +2430,11 @@ export default function App({
                     queueApprovalResults(allResults, autoAllowedMetadata);
                   }
                   setStreaming(false);
-                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  markIncompleteToolsAsCancelled(
+                    buffersRef.current,
+                    true,
+                    "user_interrupt",
+                  );
                   refreshDerived();
                   return;
                 }
@@ -2540,7 +2552,11 @@ export default function App({
               abortControllerRef.current?.signal.aborted
             ) {
               setStreaming(false);
-              markIncompleteToolsAsCancelled(buffersRef.current);
+              markIncompleteToolsAsCancelled(
+                buffersRef.current,
+                true,
+                "user_interrupt",
+              );
               refreshDerived();
               return;
             }
@@ -2762,7 +2778,11 @@ export default function App({
           llmApiErrorRetriesRef.current = 0;
 
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
-          markIncompleteToolsAsCancelled(buffersRef.current);
+          markIncompleteToolsAsCancelled(
+            buffersRef.current,
+            true,
+            "stream_error",
+          );
 
           // Track the error in telemetry
           telemetry.trackError(
@@ -2847,7 +2867,11 @@ export default function App({
         }
       } catch (e) {
         // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
-        markIncompleteToolsAsCancelled(buffersRef.current);
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          e instanceof APIUserAbortError ? "user_interrupt" : "stream_error",
+        );
 
         // If using eager cancel and this is an abort error, silently ignore it
         // The user already got "Stream interrupted by user" feedback from handleInterrupt
@@ -2979,7 +3003,11 @@ export default function App({
       // ALSO abort the main stream - don't leave it running
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
-      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+      const toolsCancelled = markIncompleteToolsAsCancelled(
+        buffersRef.current,
+        true,
+        "user_interrupt",
+      );
 
       // Mark any running subagents as interrupted
       interruptActiveSubagents(INTERRUPTED_BY_USER);
@@ -3029,7 +3057,11 @@ export default function App({
       // This ensures onChunk and other guards see interrupted=true immediately.
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
-      const toolsCancelled = markIncompleteToolsAsCancelled(buffersRef.current);
+      const toolsCancelled = markIncompleteToolsAsCancelled(
+        buffersRef.current,
+        true,
+        "user_interrupt",
+      );
 
       // Mark any running subagents as interrupted
       interruptActiveSubagents(INTERRUPTED_BY_USER);
@@ -5931,7 +5963,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                     queueApprovalResults(queuedResults, autoAllowedMetadata);
                   }
                   setStreaming(false);
-                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  markIncompleteToolsAsCancelled(
+                    buffersRef.current,
+                    true,
+                    "user_interrupt",
+                  );
                   refreshDerived();
                   return { submitted: false };
                 }
@@ -6174,7 +6210,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                     queueApprovalResults(queuedResults, autoAllowedMetadata);
                   }
                   setStreaming(false);
-                  markIncompleteToolsAsCancelled(buffersRef.current);
+                  markIncompleteToolsAsCancelled(
+                    buffersRef.current,
+                    true,
+                    "user_interrupt",
+                  );
                   refreshDerived();
                   return { submitted: false };
                 }
@@ -6783,7 +6823,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     queueApprovalResults(denialResults);
 
     // Mark the pending approval tool calls as cancelled in the buffers
-    markIncompleteToolsAsCancelled(buffersRef.current);
+    markIncompleteToolsAsCancelled(buffersRef.current, true, "approval_cancel");
     refreshDerived();
 
     // Clear all approval state
@@ -7340,7 +7380,11 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         queueApprovalResults(denialResults);
 
         // Mark tool as cancelled in buffers
-        markIncompleteToolsAsCancelled(buffersRef.current);
+        markIncompleteToolsAsCancelled(
+          buffersRef.current,
+          true,
+          "internal_cancel",
+        );
         refreshDerived();
 
         // Clear all approval state (same as handleCancelApprovals)
