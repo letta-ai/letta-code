@@ -1456,22 +1456,33 @@ export default function App({
         ? `Resuming conversation with **${agentName}**`
         : `Starting new conversation with **${agentName}**`;
 
-      // Command hints - for pinned agents show /memory, for unpinned show /pin
-      const commandHints = isPinned
+      // Command hints - vary based on agent state:
+      // - Resuming: show /new (they may want a fresh conversation)
+      // - New session + unpinned: show /pin (they should save their agent)
+      // - New session + pinned: show /memory (they're already saved)
+      const commandHints = isResumingConversation
         ? [
             "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory blocks",
+            "→ **/resume**    browse all conversations",
+            "→ **/new**       start a new conversation",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
           ]
-        : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+        : isPinned
+          ? [
+              "→ **/agents**    list all agents",
+              "→ **/resume**    resume a previous conversation",
+              "→ **/memory**    view your agent's memory blocks",
+              "→ **/init**      initialize your agent's memory",
+              "→ **/remember**  teach your agent",
+            ]
+          : [
+              "→ **/agents**    list all agents",
+              "→ **/resume**    resume a previous conversation",
+              "→ **/pin**       save + name your agent",
+              "→ **/init**      initialize your agent's memory",
+              "→ **/remember**  teach your agent",
+            ];
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -3185,13 +3196,9 @@ export default function App({
         // Fetch new agent
         const agent = await client.agents.retrieve(targetAgentId);
 
-        // Always create a new conversation when switching agents
-        // User can /resume to get back to a previous conversation if needed
-        const newConversation = await client.conversations.create({
-          agent_id: targetAgentId,
-          isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
-        });
-        const targetConversationId = newConversation.id;
+        // Use the agent's default conversation when switching agents
+        // User can /new to start a fresh conversation if needed
+        const targetConversationId = "default";
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
@@ -3225,11 +3232,12 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
-        // Build success message - always a new conversation
+        // Build success message - resumed default conversation
         const agentLabel = agent.name || targetAgentId;
         const successOutput = [
-          `Started a new conversation with **${agentLabel}**.`,
-          `⎿  Type /resume to resume a previous conversation`,
+          `Resumed the default conversation with **${agentLabel}**.`,
+          `⎿  Type /resume to browse all conversations`,
+          `⎿  Type /new to start a new conversation`,
         ].join("\n");
         const successItem: StaticItem = {
           kind: "command",
