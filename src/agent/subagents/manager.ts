@@ -328,8 +328,9 @@ function buildSubagentArgs(
       // conversation_id is sufficient (headless derives agent from it)
       args.push("--conv", existingConversationId);
     } else if (existingAgentId) {
-      // agent_id only - headless creates new conversation
-      args.push("--agent", existingAgentId);
+      // agent_id only - use --new to create a new conversation for thread safety
+      // (multiple parallel calls to the same agent need separate conversations)
+      args.push("--agent", existingAgentId, "--new");
     }
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)

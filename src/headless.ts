@@ -641,16 +641,15 @@ export async function handleHeadlessCommand(
       );
       process.exit(1);
     }
-  } else if (forceNewConversation || forceNew) {
-    // --new flag (new conversation) or --new-agent (new agent): create a new conversation
-    // When creating a new agent, always create a new conversation alongside it
+  } else if (forceNewConversation) {
+    // --new flag: create a new conversation (for concurrent sessions)
     const conversation = await client.conversations.create({
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
   } else {
-    // Default: use the agent's "default" conversation (OG single-threaded behavior)
+    // Default (including --new-agent, --agent): use the agent's "default" conversation
     conversationId = "default";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
