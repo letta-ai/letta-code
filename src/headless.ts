@@ -191,14 +191,8 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Check for deprecated --new flag
-  if (values.new) {
-    console.error(
-      "Error: --new has been renamed to --new-agent\n" +
-        'Usage: letta -p "..." --new-agent',
-    );
-    process.exit(1);
-  }
+  // --new: Create a new conversation (for concurrent sessions)
+  const forceNewConversation = (values.new as boolean | undefined) ?? false;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -265,6 +259,18 @@ export async function handleHeadlessCommand(
     }
     if (shouldContinue) {
       console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
+  // Validate --new flag (create new conversation)
+  if (forceNewConversation) {
+    if (shouldContinue) {
+      console.error("Error: --new cannot be used with --continue");
+      process.exit(1);
+    }
+    if (specifiedConversationId) {
+      console.error("Error: --new cannot be used with --conversation");
       process.exit(1);
     }
   }
@@ -617,30 +623,35 @@ export async function handleHeadlessCommand(
           await client.conversations.retrieve(lastSession.conversationId);
           conversationId = lastSession.conversationId;
         } catch {
-          // Conversation no longer exists, create new
-          const conversation = await client.conversations.create({
-            agent_id: agent.id,
-            isolated_block_labels: isolatedBlockLabels,
-          });
-          conversationId = conversation.id;
+          // Conversation no longer exists - error with helpful message
+          console.error(
+            `Attempting to resume conversation ${lastSession.conversationId}, but conversation was not found.`,
+          );
+          console.error(
+            "Resume the default conversation with 'letta -p ...', view recent conversations with 'letta --resume', or start a new conversation with 'letta -p ... --new'.",
+          );
+          process.exit(1);
         }
       }
     } else {
-      // No matching session, create new conversation
-      const conversation = await client.conversations.create({
-        agent_id: agent.id,
-        isolated_block_labels: isolatedBlockLabels,
-      });
-      conversationId = conversation.id;
+      // No matching session - error with helpful message
+      console.error("No previous session found for this agent to resume.");
+      console.error(
+        "Resume the default conversation with 'letta -p ...', or start a new conversation with 'letta -p ... --new'.",
+      );
+      process.exit(1);
     }
-  } else {
-    // Default: create a new conversation
-    // This ensures isolated message history per CLI invocation
+  } else if (forceNewConversation || forceNew) {
+    // --new flag (new conversation) or --new-agent (new agent): create a new conversation
+    // When creating a new agent, always create a new conversation alongside it
     const conversation = await client.conversations.create({
       agent_id: agent.id,
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+  } else {
+    // Default: use the agent's "default" conversation (OG single-threaded behavior)
+    conversationId = "default";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
