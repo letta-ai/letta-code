@@ -583,17 +583,11 @@ export default function App({
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
-  // Helper to cancel current run using the correct API based on conversationId
-  // For "default" conversation (agent's primary message history), use agents API
-  // For explicit conversations, use conversations API
+  // Helper to cancel current run - always use agents API since it works for all cases
+  // The /v1/agents/{id}/messages/cancel endpoint cancels runs associated with the agent
+  // regardless of which conversation they're in
   const cancelCurrentRun = async (client: ReturnType<typeof getClient> extends Promise<infer T> ? T : never) => {
-    if (conversationIdRef.current === "default") {
-      // Use agents API for default conversation
-      await client.agents.messages.cancel(agentIdRef.current);
-    } else {
-      // Use conversations API for explicit conversations
-      await client.conversations.cancel(conversationIdRef.current);
-    }
+    await client.agents.messages.cancel(agentIdRef.current);
   };
 
   const resumeKey = useSuspend();
