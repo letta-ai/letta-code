@@ -1460,7 +1460,7 @@ export async function handleHeadlessCommand(
       }
 
       // Mark incomplete tool calls as cancelled to prevent stuck state
-      markIncompleteToolsAsCancelled(buffers);
+      markIncompleteToolsAsCancelled(buffers, true, "stream_error");
 
       // Extract error details from buffers if available
       const errorLines = toLines(buffers).filter(
@@ -1518,7 +1518,7 @@ export async function handleHeadlessCommand(
     }
   } catch (error) {
     // Mark incomplete tool calls as cancelled
-    markIncompleteToolsAsCancelled(buffers);
+    markIncompleteToolsAsCancelled(buffers, true, "stream_error");
 
     // Use comprehensive error formatting (same as TUI mode)
     const errorDetails = formatErrorDetails(error, agent.id);
