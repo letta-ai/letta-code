@@ -583,6 +583,19 @@ export default function App({
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
+  // Helper to cancel current run using the correct API based on conversationId
+  // For "default" conversation (agent's primary message history), use agents API
+  // For explicit conversations, use conversations API
+  const cancelCurrentRun = async (client: ReturnType<typeof getClient> extends Promise<infer T> ? T : never) => {
+    if (conversationIdRef.current === "default") {
+      // Use agents API for default conversation
+      await client.agents.messages.cancel(agentIdRef.current);
+    } else {
+      // Use conversations API for explicit conversations
+      await client.conversations.cancel(conversationIdRef.current);
+    }
+  };
+
   const resumeKey = useSuspend();
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
@@ -3074,9 +3087,7 @@ export default function App({
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
-        .then((client) =>
-          client.conversations.cancel(conversationIdRef.current),
-        )
+        .then((client) => cancelCurrentRun(client))
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
@@ -3095,7 +3106,7 @@ export default function App({
       setInterruptRequested(true);
       try {
         const client = await getClient();
-        await client.conversations.cancel(conversationIdRef.current);
+        await cancelCurrentRun(client);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -3741,9 +3752,7 @@ export default function App({
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
-              .then((client) =>
-                client.conversations.cancel(conversationIdRef.current),
-              )
+              .then((client) => cancelCurrentRun(client))
               .then(() => {})
               .catch(() => {
                 // Reset flag if cancel fails
