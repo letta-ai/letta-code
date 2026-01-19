@@ -851,6 +851,12 @@ export default function App({
     [],
   );
 
+  // Cache for user message on premature interrupt (cancelled before any response chunks)
+  // On next send, we'll check if the backend has this message and prepend if not
+  const prematureInterruptCacheRef = useRef<Array<
+    MessageCreate | ApprovalCreate
+  > | null>(null);
+
   // Ralph Wiggum mode: config waiting for next message to capture as prompt
   const [pendingRalphConfig, setPendingRalphConfig] = useState<{
     completionPromise: string | null | undefined;
@@ -1892,8 +1898,8 @@ export default function App({
         }, 0);
       };
 
-      // Copy so we can safely mutate for retry recovery flows
-      const currentInput = [...initialInput];
+      // Copy so we can safely mutate for retry recovery flows and premature interrupt recovery
+      let currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
 
       // Use provided generation (from onSubmit) or capture current
@@ -1975,6 +1981,46 @@ export default function App({
               setStreaming(false);
             }
             return;
+          }
+
+          // Handle premature interrupt recovery: if we interrupted before receiving any
+          // chunks, the backend may not have the user's message. Check and prepend if needed.
+          if (prematureInterruptCacheRef.current) {
+            try {
+              const client = await getClient();
+              const lastMessages = await client.conversations.messages.list(
+                conversationIdRef.current,
+                { limit: 1, order: "desc" },
+              );
+              const lastMessage = lastMessages.getPaginatedItems()[0];
+
+              // Extract user content from cached message for comparison
+              const cachedUserMsg = prematureInterruptCacheRef.current.find(
+                (m) => m.type === "message" && m.role === "user",
+              );
+              const cachedContent =
+                cachedUserMsg?.type === "message"
+                  ? typeof cachedUserMsg.content === "string"
+                    ? cachedUserMsg.content
+                    : JSON.stringify(cachedUserMsg.content)
+                  : null;
+
+              // Check if last message matches our cached message
+              const lastIsMatch =
+                lastMessage?.message_type === "user_message" &&
+                lastMessage.content === cachedContent;
+
+              if (!lastIsMatch && cachedContent) {
+                // Backend didn't receive our message - prepend to current input
+                currentInput = [
+                  ...prematureInterruptCacheRef.current,
+                  ...currentInput,
+                ];
+              }
+            } catch {
+              // Silently fail - better to potentially duplicate than lose the message
+            }
+            prematureInterruptCacheRef.current = null;
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -2298,6 +2344,7 @@ export default function App({
             apiDurationMs,
             lastRunId,
             fallbackError,
+            prematureInterrupt,
           } = await drainStreamWithResume(
             stream,
             buffersRef.current,
@@ -2409,6 +2456,12 @@ export default function App({
             }
 
             setStreaming(false);
+
+            // Cache user message on premature interrupt (cancelled before any response)
+            // On next send, we'll check if backend received it and prepend if not
+            if (prematureInterrupt) {
+              prematureInterruptCacheRef.current = currentInput;
+            }
 
             // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {

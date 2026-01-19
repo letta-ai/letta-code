@@ -29,6 +29,7 @@ type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  prematureInterrupt?: boolean; // True if cancelled before any chunks were received
 };
 
 export async function drainStream(
@@ -51,6 +52,7 @@ export async function drainStream(
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
   let fallbackError: string | null = null;
+  let receivedAnyChunk = false;
 
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
@@ -88,6 +90,7 @@ export async function drainStream(
   try {
     for await (const chunk of stream) {
       // console.log("chunk", chunk);
+      receivedAnyChunk = true;
 
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
@@ -247,6 +250,8 @@ export async function drainStream(
 
   const apiDurationMs = performance.now() - startTime;
 
+  const prematureInterrupt = stopReason === "cancelled" && !receivedAnyChunk;
+
   return {
     stopReason,
     approval,
@@ -255,6 +260,7 @@ export async function drainStream(
     lastSeqId: streamProcessor.lastSeqId,
     apiDurationMs,
     fallbackError,
+    prematureInterrupt,
   };
 }
 
