@@ -30,7 +30,8 @@ async function runCli(
   return new Promise((resolve, reject) => {
     const proc = spawn("bun", ["run", "dev", ...args], {
       cwd: projectRoot,
-      env: { ...process.env },
+      // Mark as subagent to prevent polluting user's LRU settings
+      env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
     });
 
     let stdout = "";

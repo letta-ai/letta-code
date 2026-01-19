@@ -63,10 +63,11 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Resume from profile or create new agent (shows selector)
+  letta                 Resume default conversation (OG single-threaded experience)
+  letta --new           Create a new conversation (for concurrent sessions)
   letta --continue      Resume last session (agent + conversation) directly
   letta --resume        Open agent selector UI to pick agent/conversation
-  letta --new           Create a new agent directly (skip profile selector)
+  letta --new-agent     Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -81,9 +82,10 @@ OPTIONS
   --info                Show current directory, skills, and pinned agents
   --continue            Resume last session (agent + conversation) directly
   -r, --resume          Open agent selector UI after loading
-  --new                 Create new agent directly (skip profile selection)
-  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new (e.g., "persona,skills")
-  --base-tools <list>   Comma-separated base tools to attach when using --new (e.g., "memory,web_search,conversation_search")
+  --new                 Create new conversation (for concurrent sessions)
+  --new-agent           Create new agent directly (skip profile selection)
+  --init-blocks <list>  Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")
+  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,conversation_search")
   -a, --agent <id>      Use a specific agent ID
   -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
@@ -489,14 +491,8 @@ async function main(): Promise<void> {
     specifiedConversationId = "default";
   }
 
-  // Check for deprecated --new flag
-  if (values.new) {
-    console.error(
-      "Error: --new has been renamed to --new-agent\n" +
-        "Usage: letta --new-agent",
-    );
-    process.exit(1);
-  }
+  // --new: Create a new conversation (for concurrent sessions)
+  const forceNewConversation = (values.new as boolean | undefined) ?? false;
 
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
@@ -682,6 +678,22 @@ async function main(): Promise<void> {
     }
     if (shouldContinue) {
       console.error("Error: --conversation cannot be used with --continue");
+      process.exit(1);
+    }
+  }
+
+  // Validate --new flag (create new conversation)
+  if (forceNewConversation) {
+    if (shouldContinue) {
+      console.error("Error: --new cannot be used with --continue");
+      process.exit(1);
+    }
+    if (specifiedConversationId) {
+      console.error("Error: --new cannot be used with --conversation");
+      process.exit(1);
+    }
+    if (shouldResume) {
+      console.error("Error: --new cannot be used with --resume");
       process.exit(1);
     }
   }
@@ -1687,12 +1699,14 @@ async function main(): Promise<void> {
           }
 
           if (!resumedSuccessfully) {
-            // No valid session to resume for this agent, or it failed - create new
-            const conversation = await client.conversations.create({
-              agent_id: agent.id,
-              isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
-            });
-            conversationIdToUse = conversation.id;
+            // No valid session to resume - error with helpful message
+            console.error(
+              `Attempting to resume conversation ${lastSession?.conversationId ?? "(unknown)"}, but conversation was not found.`,
+            );
+            console.error(
+              "Resume the default conversation with 'letta', view recent conversations with 'letta --resume', or start a new conversation with 'letta --new'.",
+            );
+            process.exit(1);
           }
         } else if (selectedConversationId) {
           // User selected a specific conversation from the --resume selector
@@ -1717,14 +1731,24 @@ async function main(): Promise<void> {
             }
             throw error;
           }
-        } else {
-          // Default: create a new conversation on startup
-          // This ensures each CLI session has isolated message history
+        } else if (forceNewConversation || forceNew) {
+          // --new flag (new conversation) or --new-agent (new agent): create a new conversation
+          // When creating a new agent, always create a new conversation alongside it
           const conversation = await client.conversations.create({
             agent_id: agent.id,
             isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
+        } else {
+          // Default: use the agent's "default" conversation (OG single-threaded behavior)
+          conversationIdToUse = "default";
+
+          // Load message history from the default conversation
+          setLoadingState("checking");
+          const freshAgent = await client.agents.retrieve(agent.id);
+          const data = await getResumeData(client, freshAgent, "default");
+          setResumeData(data);
+          setResumedExistingConversation(true);
         }
 
         // Save the session (agent + conversation) to settings

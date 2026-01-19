@@ -46,7 +46,8 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env },
+        // Mark as subagent to prevent polluting user's LRU settings
+        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
       },
     );
 
