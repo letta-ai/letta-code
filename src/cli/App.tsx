@@ -700,6 +700,8 @@ export default function App({
   >([]);
   const executingToolCallIdsRef = useRef<string[]>([]);
   const interruptQueuedRef = useRef(false);
+  // Prevents interrupt handler from queueing results while approvals are in-flight.
+  const toolResultsInFlightRef = useRef(false);
   const autoAllowedExecutionRef = useRef<{
     toolCallIds: string[];
     results: ApprovalResult[] | null;
@@ -2447,6 +2449,7 @@ export default function App({
                 setThinkingMessage(getRandomThinkingVerb());
                 refreshDerived();
 
+                toolResultsInFlightRef.current = true;
                 await processConversation(
                   [
                     {
@@ -2456,6 +2459,7 @@ export default function App({
                   ],
                   { allowReentry: true },
                 );
+                toolResultsInFlightRef.current = false;
                 return;
               }
 
@@ -2515,6 +2519,7 @@ export default function App({
                 toolAbortControllerRef.current = null;
                 executingToolCallIdsRef.current = [];
                 autoAllowedExecutionRef.current = null;
+                toolResultsInFlightRef.current = false;
               }
             }
 
@@ -2919,7 +2924,15 @@ export default function App({
 
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them AND the main stream
-    if (isExecutingTool && toolAbortControllerRef.current) {
+    const hasTrackedTools =
+      executingToolCallIdsRef.current.length > 0 ||
+      autoAllowedExecutionRef.current?.results;
+    if (
+      isExecutingTool &&
+      toolAbortControllerRef.current &&
+      hasTrackedTools &&
+      !toolResultsInFlightRef.current
+    ) {
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
@@ -2973,6 +2986,7 @@ export default function App({
       userCancelledRef.current = true; // Prevent dequeue
       setStreaming(false);
       setIsExecutingTool(false);
+      toolResultsInFlightRef.current = false;
       refreshDerived();
 
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
@@ -3029,6 +3043,7 @@ export default function App({
       // Stop streaming and show error message (unless tool calls were cancelled,
       // since the tool result will show "Interrupted by user")
       setStreaming(false);
+      toolResultsInFlightRef.current = false;
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
@@ -3633,9 +3648,11 @@ export default function App({
 
         // Send all results to server if any
         if (allResults.length > 0) {
+          toolResultsInFlightRef.current = true;
           await processConversation([
             { type: "approval", approvals: allResults },
           ]);
+          toolResultsInFlightRef.current = false;
         }
       } finally {
         if (shouldTrackAutoAllowed) {
@@ -3643,6 +3660,7 @@ export default function App({
           toolAbortControllerRef.current = null;
           executingToolCallIdsRef.current = [];
           autoAllowedExecutionRef.current = null;
+          toolResultsInFlightRef.current = false;
         }
       }
 
@@ -5939,7 +5957,9 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   },
                 ];
 
+                toolResultsInFlightRef.current = true;
                 await processConversation(initialInput);
+                toolResultsInFlightRef.current = false;
                 clearPlaceholdersInText(msg);
                 return { submitted: true };
               } finally {
@@ -5948,6 +5968,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
                   toolAbortControllerRef.current = null;
                   executingToolCallIdsRef.current = [];
                   autoAllowedExecutionRef.current = null;
+                  toolResultsInFlightRef.current = false;
                 }
               }
             } else {
@@ -6427,12 +6448,14 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           queueSnapshotRef.current = [];
         } else {
           // Continue conversation with all results
+          toolResultsInFlightRef.current = true;
           await processConversation([
             {
               type: "approval",
               approvals: allResults as ApprovalResult[],
             },
           ]);
+          toolResultsInFlightRef.current = false;
         }
       } finally {
         // Always release the execution guard, even if an error occurred
@@ -6440,6 +6463,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         toolAbortControllerRef.current = null;
         executingToolCallIdsRef.current = [];
         interruptQueuedRef.current = false;
+        toolResultsInFlightRef.current = false;
       }
     },
     [
