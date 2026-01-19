@@ -7925,11 +7925,16 @@ Plan file path: ${planFilePath}`;
                     ? `letta -n "${agentName}"`
                     : `letta --agent ${agentId}`}
                 </Text>
-                <Text> </Text>
-                <Text dimColor>Resume this conversation with:</Text>
-                <Text color={colors.link.url}>
-                  {`letta --conv ${conversationId}`}
-                </Text>
+                {/* Only show conversation hint if not on default (default is resumed automatically) */}
+                {conversationId !== "default" && (
+                  <>
+                    <Text> </Text>
+                    <Text dimColor>Resume this conversation with:</Text>
+                    <Text color={colors.link.url}>
+                      {`letta --conv ${conversationId}`}
+                    </Text>
+                  </>
+                )}
               </Box>
             )}
 
