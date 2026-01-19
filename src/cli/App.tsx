@@ -2988,6 +2988,14 @@ export default function App({
       setIsExecutingTool(false);
       refreshDerived();
 
+      // Send cancel request to backend asynchronously (fire-and-forget)
+      // This ensures the server-side run is cancelled even when interrupting tool execution
+      getClient()
+        .then((client) => cancelCurrentRun(client))
+        .catch(() => {
+          // Silently ignore - cancellation already happened client-side
+        });
+
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
       // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
       // batched state updates have been fully processed before we allow the dequeue effect.
