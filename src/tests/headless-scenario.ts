@@ -76,7 +76,12 @@ async function runCLI(
     "-m",
     model,
   ];
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+  // Mark as subagent to prevent polluting user's LRU settings
+  const proc = Bun.spawn(cmd, {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
+  });
   const out = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();
   const code = await proc.exited;
