@@ -181,6 +181,28 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 - Config files (.eslintrc, tsconfig.json, .prettierrc)
 - CI/CD configs (.github/workflows/, .gitlab-ci.yml)
 
+**Historical session research** (Claude Code / Codex):
+The user may have previous coding sessions from Claude Code (`~/.claude/`) or OpenAI Codex (`~/.codex/`) that contain valuable context about this project. This can reveal:
+- What problems they've worked on before
+- Their coding patterns and preferences
+- Project-specific knowledge from past sessions
+
+To check for and search historical data:
+```bash
+# Check if history exists
+ls ~/.claude/projects 2>/dev/null && echo "Claude Code history found"
+ls ~/.codex/sessions 2>/dev/null && echo "Codex history found"
+
+# Find sessions for this project (Claude - encode path)
+ENCODED=$(pwd | sed 's|/|-|g')
+ls ~/.claude/projects/$ENCODED/ 2>/dev/null
+
+# Search prompts mentioning this project
+cat ~/.claude/history.jsonl | jq -r "select(.project | contains(\"$(basename $(pwd))\")) | .display" | head -20
+```
+
+For detailed guidance on searching historical sessions, load the `migrating-from-codex-and-claude-code` skill which includes ready-to-use scripts.
+
 **Git-based research** (if in a git repo):
 - `git log --oneline -20` - Recent commit history and patterns
 - `git branch -a` - Branching strategy
@@ -227,13 +249,15 @@ You should ask these questions at the start (bundle them together in one AskUser
 1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
-5. **Communication style**: "Terse or detailed responses?"
-6. **Any specific rules**: "Rules I should always follow?"
+4. **Historical sessions**: "Should I search your Claude Code or Codex history for context about this project?" (Check if `~/.claude` or `~/.codex` exist first - only ask if they do)
+5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
+6. **Communication style**: "Terse or detailed responses?"
+7. **Any specific rules**: "Rules I should always follow?"
 
 **Why these matter:**
 - Identity lets you correlate git history to the user (their commits, PRs, coding style)
 - Related repos provide crucial context (many projects span multiple repos)
+- Historical sessions from Claude Code/Codex can reveal past work, preferences, and project knowledge the user has already discussed with other AI assistants
 - Workflow/communication style should be stored in the `human` block
 - Rules go in `persona` block
 
