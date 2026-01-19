@@ -104,6 +104,7 @@ export async function handleHeadlessCommand(
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
+      "no-skills": { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -554,15 +555,33 @@ export async function handleHeadlessCommand(
   // Determine which conversation to use
   let conversationId: string;
 
-  // Only isolate blocks that actually exist on this agent
-  // If initBlocks is undefined, agent has default blocks (all ISOLATED_BLOCK_LABELS exist)
-  // If initBlocks is defined, only isolate blocks that are in both lists
-  const isolatedBlockLabels: string[] =
-    initBlocks === undefined
-      ? [...ISOLATED_BLOCK_LABELS]
-      : ISOLATED_BLOCK_LABELS.filter((label) =>
-          initBlocks.includes(label as string),
-        );
+  // Check flags early
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+
+  // Ensure skills blocks exist BEFORE conversation creation (for non-subagent, non-no-skills)
+  // This prevents "block not found" errors when creating conversations with isolated_block_labels
+  // Note: ensureSkillsBlocks already calls blocks.list internally, so no extra API call
+  if (!noSkillsFlag && !isSubagent) {
+    const createdBlocks = await ensureSkillsBlocks(agent.id);
+    if (createdBlocks.length > 0) {
+      console.log("Created missing skills blocks for agent compatibility");
+    }
+  }
+
+  // Determine which blocks to isolate for the conversation
+  let isolatedBlockLabels: string[] = [];
+  if (!noSkillsFlag) {
+    // After ensureSkillsBlocks, we know all standard blocks exist
+    // Use the full list, optionally filtered by initBlocks
+    isolatedBlockLabels =
+      initBlocks === undefined
+        ? [...ISOLATED_BLOCK_LABELS]
+        : ISOLATED_BLOCK_LABELS.filter((label) =>
+            initBlocks.includes(label as string),
+          );
+  }
+  // If --no-skills is set, isolatedBlockLabels stays empty (no isolation)
 
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
@@ -627,7 +646,6 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   if (!isSubagent) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.setLocalLastSession(
@@ -640,41 +658,40 @@ export async function handleHeadlessCommand(
     });
   }
 
-  // Ensure the agent has the required skills blocks (for backwards compatibility)
-  const createdBlocks = await ensureSkillsBlocks(agent.id);
-  if (createdBlocks.length > 0) {
-    console.log("Created missing skills blocks for agent compatibility");
-  }
-
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
 
-  // Fire-and-forget: Initialize loaded skills flag (LET-7101)
-  // Don't await - this is just for the skill unload reminder
-  initializeLoadedSkillsFlag().catch(() => {
-    // Ignore errors - not critical
-  });
+  // Skills-related fire-and-forget operations (skip for subagents/--no-skills)
+  if (!noSkillsFlag && !isSubagent) {
+    // Fire-and-forget: Initialize loaded skills flag (LET-7101)
+    // Don't await - this is just for the skill unload reminder
+    initializeLoadedSkillsFlag().catch(() => {
+      // Ignore errors - not critical
+    });
 
-  // Fire-and-forget: Sync skills in background (LET-7101)
-  // This ensures new skills added after agent creation are available
-  // Don't await - proceed to message sending immediately
-  (async () => {
-    try {
-      const { syncSkillsToAgent, SKILLS_DIR } = await import("./agent/skills");
-      const { join } = await import("node:path");
+    // Fire-and-forget: Sync skills in background (LET-7101)
+    // This ensures new skills added after agent creation are available
+    // Don't await - proceed to message sending immediately
+    (async () => {
+      try {
+        const { syncSkillsToAgent, SKILLS_DIR } = await import(
+          "./agent/skills"
+        );
+        const { join } = await import("node:path");
 
-      const resolvedSkillsDirectory =
-        skillsDirectory || join(process.cwd(), SKILLS_DIR);
+        const resolvedSkillsDirectory =
+          skillsDirectory || join(process.cwd(), SKILLS_DIR);
 
-      await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
-        skipIfUnchanged: true,
-      });
-    } catch (error) {
-      console.warn(
-        `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  })();
+        await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
+          skipIfUnchanged: true,
+        });
+      } catch (error) {
+        console.warn(
+          `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+  }
 
   // Validate output format
   const outputFormat =
