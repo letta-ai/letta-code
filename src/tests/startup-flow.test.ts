@@ -187,7 +187,6 @@ describe("Startup Flow - Invalid Inputs", () => {
 describe("Startup Flow - Integration", () => {
   // Store created agent/conversation IDs for cleanup and reuse
   let testAgentId: string | null = null;
-  let testConversationId: string | null = null;
 
   test(
     "--new-agent creates agent and responds",
@@ -214,7 +213,6 @@ describe("Startup Flow - Integration", () => {
 
       // Save for later tests
       testAgentId = output.agent_id;
-      testConversationId = output.conversation_id;
     },
     { timeout: 130000 },
   );
@@ -253,16 +251,41 @@ describe("Startup Flow - Integration", () => {
   test(
     "--conversation with valid ID derives agent and uses conversation",
     async () => {
-      // Skip if previous test didn't create an agent/conversation
-      if (!testAgentId || !testConversationId) {
-        console.log("Skipping: no test conversation available");
+      // Skip if previous test didn't create an agent
+      if (!testAgentId) {
+        console.log("Skipping: no test agent available");
         return;
       }
 
+      // First, create a real conversation with --new (since --new-agent uses "default")
+      const createResult = await runCli(
+        [
+          "--agent",
+          testAgentId,
+          "--new",
+          "-m",
+          "haiku",
+          "-p",
+          "Say CREATED",
+          "--output-format",
+          "json",
+        ],
+        { timeoutMs: 120000 },
+      );
+      expect(createResult.exitCode).toBe(0);
+      const createJsonStart = createResult.stdout.indexOf("{");
+      const createOutput = JSON.parse(
+        createResult.stdout.slice(createJsonStart),
+      );
+      const realConversationId = createOutput.conversation_id;
+      expect(realConversationId).toBeDefined();
+      expect(realConversationId).not.toBe("default");
+
+      // Now test that --conversation can derive the agent from this conversation
       const result = await runCli(
         [
           "--conversation",
-          testConversationId,
+          realConversationId,
           "-m",
           "haiku",
           "-p",
@@ -279,9 +302,9 @@ describe("Startup Flow - Integration", () => {
       // Should use the same agent that owns the conversation
       expect(output.agent_id).toBe(testAgentId);
       // Should use the specified conversation
-      expect(output.conversation_id).toBe(testConversationId);
+      expect(output.conversation_id).toBe(realConversationId);
     },
-    { timeout: 130000 },
+    { timeout: 180000 },
   );
 
   test(
