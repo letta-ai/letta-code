@@ -91,7 +91,6 @@ const logoFrames = [
   █████▓  `,
 ];
 
-
 interface AnimatedLogoProps {
 	color?: string;
 }
@@ -102,7 +101,7 @@ export function AnimatedLogo({ color = colors.welcome.accent }: AnimatedLogoProp
 	useEffect(() => {
 		const timer = setInterval(() => {
 			setFrame((prev) => (prev + 1) % logoFrames.length);
-		}, 75); // Change frame every 75ms for smooth rotation
+		}, 100);
 
 		return () => clearInterval(timer);
 	}, []);
