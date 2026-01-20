@@ -15,7 +15,6 @@ import type {
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
-import { killBashModeShell } from "./helpers/persistentShell";
 import {
   useCallback,
   useEffect,
@@ -2949,9 +2948,6 @@ export default function App({
   const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
-    // Ensure bash mode shell is stopped
-    killBashModeShell();
-
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
@@ -3437,7 +3433,7 @@ export default function App({
   );
 
   // Handle bash mode command submission
-  // Uses a persistent interactive shell for alias support
+  // Expands aliases from shell config files, then runs with spawnCommand
   const handleBashSubmit = useCallback(
     async (command: string) => {
       const cmdId = uid("bash");
@@ -3462,28 +3458,60 @@ export default function App({
       refreshDerived();
 
       try {
-        const { getBashModeShell } = await import("./helpers/persistentShell");
-        const shell = getBashModeShell();
+        // Expand aliases before running
+        const { expandAliases } = await import("./helpers/shellAliases");
+        const expandedCommand = expandAliases(command);
 
-        const output = await shell.runCommand(command, 30000);
+        // Use spawnCommand for actual execution
+        const { spawnCommand } = await import("../tools/impl/Bash.js");
+        const { getShellEnv } = await import("../tools/impl/shellEnv.js");
+
+        const result = await spawnCommand(expandedCommand, {
+          cwd: process.cwd(),
+          env: getShellEnv(),
+          timeout: 30000,
+          onOutput: (chunk, stream) => {
+            const entry = buffersRef.current.byId.get(cmdId);
+            if (entry && entry.kind === "bash_command") {
+              const newStreaming = appendStreamingOutput(
+                entry.streaming,
+                chunk,
+                startTime,
+                stream === "stderr",
+              );
+              buffersRef.current.byId.set(cmdId, {
+                ...entry,
+                streaming: newStreaming,
+              });
+              refreshDerivedStreaming();
+            }
+          },
+        });
+
+        const output = (result.stdout + result.stderr).trim();
+        const success = result.exitCode === 0;
 
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
           input: command,
-          output: output || "",
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
           phase: "finished",
-          success: true,
+          success,
           streaming: undefined,
         });
 
         bashCommandCacheRef.current.push({
           input: command,
-          output: output || "",
+          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
         });
       } catch (error: unknown) {
         const errOutput =
-          error instanceof Error ? error.message : String(error);
+          error instanceof Error
+            ? (error as { stderr?: string; stdout?: string }).stderr ||
+              (error as { stdout?: string }).stdout ||
+              error.message
+            : String(error);
 
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
@@ -3500,7 +3528,7 @@ export default function App({
 
       refreshDerived();
     },
-    [refreshDerived],
+    [refreshDerived, refreshDerivedStreaming],
   );
 
   /**
@@ -8074,7 +8102,6 @@ Plan file path: ${planFilePath}`;
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
-                onBashExit={() => killBashModeShell()}
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}
