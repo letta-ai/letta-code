@@ -2,22 +2,8 @@ import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { telemetry } from "../telemetry";
+import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
-
-// Tool execution context - allows tools to access execution metadata
-interface ToolExecutionContext {
-  toolCallId?: string;
-}
-
-let currentToolContext: ToolExecutionContext | null = null;
-
-/**
- * Get the current tool execution context.
- * Called by tools that need access to execution metadata (e.g., Read for image queuing).
- */
-export function getToolExecutionContext(): ToolExecutionContext | null {
-  return currentToolContext;
-}
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
 const STREAMING_SHELL_TOOLS = new Set([
@@ -770,12 +756,12 @@ export async function executeTool(
     }
 
     // Set execution context for tools that need it (e.g., Read for image queuing)
-    currentToolContext = { toolCallId: options?.toolCallId };
+    setToolExecutionContext({ toolCallId: options?.toolCallId });
     let result: unknown;
     try {
       result = await tool.fn(enhancedArgs);
     } finally {
-      currentToolContext = null;
+      setToolExecutionContext(null);
     }
     const duration = Date.now() - startTime;
 

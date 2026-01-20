@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
 import { queueToolImage } from "../../cli/helpers/toolImageRegistry.js";
-import { getToolExecutionContext } from "../manager.js";
+import { getToolExecutionContext } from "../toolContext.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
