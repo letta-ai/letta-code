@@ -567,6 +567,11 @@ export default function App({
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
 
+  // Helper to update agent name (updates agentState, which is the single source of truth)
+  const updateAgentName = useCallback((name: string) => {
+    setAgentState((prev) => (prev ? { ...prev, name } : prev));
+  }, []);
+
   // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
 
@@ -902,7 +907,8 @@ export default function App({
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
-  const [agentName, setAgentName] = useState<string | null>(null);
+  // Derive agentName from agentState (single source of truth)
+  const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
   const currentModelLabel =
@@ -1527,8 +1533,8 @@ export default function App({
           const { getClient } = await import("../agent/client");
           const client = await getClient();
           const agent = await client.agents.retrieve(agentId);
+          setAgentState(agent);
           setLlmConfig(agent.llm_config);
-          setAgentName(agent.name);
           setAgentDescription(agent.description ?? null);
           // Get last message timestamp from agent state if available
           const lastRunCompletion = (agent as { last_run_completion?: string })
@@ -1926,7 +1932,7 @@ export default function App({
                 }
 
                 // Also update agent state if other fields changed
-                setAgentName(agent.name);
+                setAgentState(agent);
                 setAgentDescription(agent.description ?? null);
                 const lastRunCompletion = (
                   agent as { last_run_completion?: string }
@@ -3260,7 +3266,6 @@ export default function App({
         agentIdRef.current = targetAgentId;
         setAgentId(targetAgentId);
         setAgentState(agent);
-        setAgentName(agent.name);
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
@@ -3352,7 +3357,6 @@ export default function App({
         agentIdRef.current = agent.id;
         setAgentId(agent.id);
         setAgentState(agent);
-        setAgentName(agent.name);
         setLlmConfig(agent.llm_config);
 
         // Build success message with hints
@@ -4585,7 +4589,7 @@ export default function App({
           try {
             const client = await getClient();
             await client.agents.update(agentId, { name: newName });
-            setAgentName(newName);
+            updateAgentName(newName);
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -4888,7 +4892,7 @@ export default function App({
             agentId,
             agentName: agentName || "",
             setCommandRunning,
-            setAgentName,
+            updateAgentName,
           };
 
           // /profile - open agent browser (now points to /agents)
@@ -4984,7 +4988,7 @@ export default function App({
             agentId,
             agentName: agentName || "",
             setCommandRunning,
-            setAgentName,
+            updateAgentName,
           };
           await handlePin(profileCtx, msg, argsStr);
           return { submitted: true };
@@ -4998,7 +5002,7 @@ export default function App({
             agentId,
             agentName: agentName || "",
             setCommandRunning,
-            setAgentName,
+            updateAgentName,
           };
           const argsStr = msg.trim().slice(6).trim();
           handleUnpin(profileCtx, msg, argsStr);
@@ -8447,7 +8451,7 @@ Plan file path: ${planFilePath}`;
                     // Rename if new name provided
                     if (newName && newName !== agentName) {
                       await client.agents.update(agentId, { name: newName });
-                      setAgentName(newName);
+                      updateAgentName(newName);
                     }
 
                     // Pin the agent
