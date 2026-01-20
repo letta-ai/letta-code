@@ -5,86 +5,86 @@ import { colors } from "./colors";
 // Define animation frames - 3D rotation effect with gradient (█ → ▓ → ▒ → ░)
 // Each frame is ~10 chars wide, 5 lines tall - matches login dialog asciiLogo size
 const logoFrames = [
-	// 1. Front view (fully facing)
-`  ██████  
+  // 1. Front view (fully facing)
+  `  ██████  
 ██      ██
 ██  ██  ██
 ██      ██
   ██████  `,
-	// 2. Just starting to turn right
-`  ▓█████  
+  // 2. Just starting to turn right
+  `  ▓█████  
 ▓█      ▓█
 ▓█  ▓█  ▓█
 ▓█      ▓█
   ▓█████  `,
-	// 3. Slight right turn
-`  ▓▓████  
+  // 3. Slight right turn
+  `  ▓▓████  
 ▓▓      ▓▓
 ▓▓  ▓▓  ▓▓
 ▓▓      ▓▓
   ▓▓████  `,
-	// 4. More right (gradient deepening)
-`  ░▓▓███  
+  // 4. More right (gradient deepening)
+  `  ░▓▓███  
 ░▓▓    ░▓▓
 ░▓▓ ░▓ ░▓▓
 ░▓▓    ░▓▓
   ░▓▓███  `,
-	// 5. Even more right
-`  ░░▓▓██  
+  // 5. Even more right
+  `  ░░▓▓██  
  ░▓▓  ░▓▓ 
  ░▓▓░▓░▓▓ 
  ░▓▓  ░▓▓ 
   ░░▓▓██  `,
-	// 6. Approaching side
-`   ░▓▓█   
+  // 6. Approaching side
+  `   ░▓▓█   
   ░░▓░░▓  
   ░░▓▓░▓  
   ░░▓░░▓  
    ░▓▓█   `,
-	// 7. Almost side
-`   ░▓▓▓   
+  // 7. Almost side
+  `   ░▓▓▓   
    ░▓░▓   
    ░▓▓▓   
    ░▓░▓   
    ░▓▓▓   `,
-	// 8. Side view
-`   ▓▓▓▓   
+  // 8. Side view
+  `   ▓▓▓▓   
    ▓▓▓▓   
    ▓▓▓▓   
    ▓▓▓▓   
    ▓▓▓▓   `,
-	// 9. Leaving side (mirror of 7)
-`   ▓▓▓░   
+  // 9. Leaving side (mirror of 7)
+  `   ▓▓▓░   
    ▓░▓░   
    ▓▓▓░   
    ▓░▓░   
    ▓▓▓░   `,
-	// 10. Past side (mirror of 6)
-`   █▓▓░   
+  // 10. Past side (mirror of 6)
+  `   █▓▓░   
   ▓░░▓░░  
   ▓░▓▓░░  
   ▓░░▓░░  
    █▓▓░   `,
-	// 11. More past side (mirror of 5)
-`  ██▓▓░░  
+  // 11. More past side (mirror of 5)
+  `  ██▓▓░░  
  ▓▓░  ▓▓░ 
  ▓▓░▓░▓▓░ 
  ▓▓░  ▓▓░ 
   ██▓▓░░  `,
-	// 12. Returning (mirror of 4)
-`  ███▓▓░  
+  // 12. Returning (mirror of 4)
+  `  ███▓▓░  
 ▓▓░    ▓▓░
 ▓▓░ ▓░ ▓▓░
 ▓▓░    ▓▓░
   ███▓▓░  `,
-	// 13. Almost front (mirror of 3)
-`  ████▓▓  
+  // 13. Almost front (mirror of 3)
+  `  ████▓▓  
 ▓▓      ▓▓
 ▓▓  ▓▓  ▓▓
 ▓▓      ▓▓
   ████▓▓  `,
-	// 14. Nearly front (mirror of 2)
-`  █████▓  
+  // 14. Nearly front (mirror of 2)
+  `  █████▓  
 █▓      █▓
 █▓  █▓  █▓
 █▓      █▓
@@ -92,30 +92,32 @@ const logoFrames = [
 ];
 
 interface AnimatedLogoProps {
-	color?: string;
+  color?: string;
 }
 
-export function AnimatedLogo({ color = colors.welcome.accent }: AnimatedLogoProps) {
-	const [frame, setFrame] = useState(0);
+export function AnimatedLogo({
+  color = colors.welcome.accent,
+}: AnimatedLogoProps) {
+  const [frame, setFrame] = useState(0);
 
-	useEffect(() => {
-		const timer = setInterval(() => {
-			setFrame((prev) => (prev + 1) % logoFrames.length);
-		}, 100);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((prev) => (prev + 1) % logoFrames.length);
+    }, 100);
 
-		return () => clearInterval(timer);
-	}, []);
+    return () => clearInterval(timer);
+  }, []);
 
-	const logoLines = logoFrames[frame].split("\n");
+  const logoLines = logoFrames[frame].split("\n");
 
-	return (
-		<>
-			{logoLines.map((line, idx) => (
-				// biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
-				<Text key={idx} bold color={color}>
-					{line}
-				</Text>
-			))}
-		</>
-	);
+  return (
+    <>
+      {logoLines.map((line, idx) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
+        <Text key={idx} bold color={color}>
+          {line}
+        </Text>
+      ))}
+    </>
+  );
 }
