@@ -1,7 +1,9 @@
 // Clipboard utilities for detecting and importing images from system clipboard
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { resizeImageIfNeeded } from "./imageResize";
 import { allocateImage } from "./pasteRegistry";
 
 /**
@@ -11,7 +13,7 @@ import { allocateImage } from "./pasteRegistry";
  * - null: No image in clipboard
  */
 export type ClipboardImageResult =
-  | { placeholder: string }
+  | { placeholder: string; resized: boolean; width: number; height: number }
   | { error: string }
   | null;
 
@@ -169,60 +171,116 @@ export function translatePasteForImages(paste: string): string {
   return s;
 }
 
-// Attempt to import an image directly from OS clipboard on macOS via JXA (built-in)
-export function tryImportClipboardImageMac(): ClipboardImageResult {
+/**
+ * Read image from macOS clipboard to a temp file.
+ * Returns the temp file path and UTI, or null if no image in clipboard.
+ */
+function getClipboardImageToTempFile(): {
+  tempPath: string;
+  uti: string;
+} | null {
   if (process.platform !== "darwin") return null;
+
+  const tempPath = join(tmpdir(), `letta-clipboard-${Date.now()}.bin`);
+
   try {
+    // JXA script that writes clipboard image to temp file and returns UTI
+    // This avoids stdout buffer limits for large images
     const jxa = `
       ObjC.import('AppKit');
+      ObjC.import('Foundation');
       (function() {
         var pb = $.NSPasteboard.generalPasteboard;
-        var types = ['public.png','public.jpeg','public.tiff','public.heic','public.heif','public.bmp','public.gif','public.svg-image'];
+        var types = ['public.png','public.jpeg','public.tiff','public.heic','public.heif','public.bmp','public.gif'];
         for (var i = 0; i < types.length; i++) {
           var t = types[i];
           var d = pb.dataForType(t);
-          if (d) {
-            var b64 = d.base64EncodedStringWithOptions(0).js;
-            return t + '|' + b64;
+          if (d && d.length > 0) {
+            d.writeToFileAtomically($('${tempPath}'), true);
+            return t;
           }
         }
         return '';
       })();
     `;
-    const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxa], {
+
+    const uti = execFileSync("osascript", ["-l", "JavaScript", "-e", jxa], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 100 * 1024 * 1024, // 100MB to handle large images
     }).trim();
-    if (!out) return null;
-    const idx = out.indexOf("|");
-    if (idx <= 0) return null;
-    const uti = out.slice(0, idx);
-    const b64 = out.slice(idx + 1);
-    if (!b64) return null;
-    const map: Record<string, string> = {
-      "public.png": "image/png",
-      "public.jpeg": "image/jpeg",
-      "public.tiff": "image/tiff",
-      "public.heic": "image/heic",
-      "public.heif": "image/heif",
-      "public.bmp": "image/bmp",
-      "public.gif": "image/gif",
-      "public.svg-image": "image/svg+xml",
-    };
-    const mediaType = map[uti] || "image/png";
-    const id = allocateImage({ data: b64, mediaType });
-    return { placeholder: `[Image #${id}]` };
-  } catch (err) {
-    // Check for specific error types
-    const message = err instanceof Error ? err.message : String(err);
 
-    // Buffer overflow - image too large
-    if (message.includes("maxBuffer") || message.includes("ENOBUFS")) {
-      return { error: "Image too large to paste (try a smaller screenshot)" };
+    if (!uti || !existsSync(tempPath)) return null;
+
+    return { tempPath, uti };
+  } catch {
+    // Clean up temp file on error
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+    }
+    return null;
+  }
+}
+
+const UTI_TO_MEDIA_TYPE: Record<string, string> = {
+  "public.png": "image/png",
+  "public.jpeg": "image/jpeg",
+  "public.tiff": "image/tiff",
+  "public.heic": "image/heic",
+  "public.heif": "image/heif",
+  "public.bmp": "image/bmp",
+  "public.gif": "image/gif",
+};
+
+/**
+ * Import image from macOS clipboard, resize if needed, return placeholder.
+ * Uses temp file approach to avoid stdout buffer limits.
+ * Resizes large images to fit within API limits (2048x2048).
+ */
+export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
+  if (process.platform !== "darwin") return null;
+
+  const clipboardResult = getClipboardImageToTempFile();
+  if (!clipboardResult) return null;
+
+  const { tempPath, uti } = clipboardResult;
+
+  try {
+    // Read the temp file
+    const buffer = readFileSync(tempPath);
+
+    // Clean up temp file immediately after reading
+    try {
+      unlinkSync(tempPath);
+    } catch {}
+
+    const mediaType = UTI_TO_MEDIA_TYPE[uti] || "image/png";
+
+    // Resize if needed (handles large retina screenshots, HEIC conversion, etc.)
+    const resized = await resizeImageIfNeeded(buffer, mediaType);
+
+    // Store in registry
+    const id = allocateImage({
+      data: resized.data,
+      mediaType: resized.mediaType,
+    });
+
+    return {
+      placeholder: `[Image #${id}]`,
+      resized: resized.resized,
+      width: resized.width,
+      height: resized.height,
+    };
+  } catch (err) {
+    // Clean up temp file on error
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+      } catch {}
     }
 
-    // Generic error
+    const message = err instanceof Error ? err.message : String(err);
     return { error: `Image paste failed: ${message}` };
   }
 }

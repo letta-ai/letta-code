@@ -215,33 +215,34 @@ export function PasteAwareTextInput({
       // Native terminals don't send image data via bracketed paste, so we need
       // to explicitly check the clipboard when Ctrl+V is pressed.
       if (key.ctrl && input === "v") {
-        const result = tryImportClipboardImageMac();
-        if (result) {
-          if ("error" in result) {
-            // Report the error via callback
-            onPasteErrorRef.current?.(result.error);
-            return;
+        // Fire async handler (can't await in useInput callback)
+        (async () => {
+          const result = await tryImportClipboardImageMac();
+          if (result) {
+            if ("error" in result) {
+              // Report the error via callback
+              onPasteErrorRef.current?.(result.error);
+              return;
+            }
+            // Success - insert the placeholder
+            const clip = result.placeholder;
+            const at = Math.max(
+              0,
+              Math.min(caretOffsetRef.current, displayValueRef.current.length),
+            );
+            const newDisplay =
+              displayValueRef.current.slice(0, at) +
+              clip +
+              displayValueRef.current.slice(at);
+            displayValueRef.current = newDisplay;
+            setDisplayValue(newDisplay);
+            setActualValue(newDisplay);
+            onChangeRef.current(newDisplay);
+            const nextCaret = at + clip.length;
+            setNudgeCursorOffset(nextCaret);
+            caretOffsetRef.current = nextCaret;
           }
-          // Success - insert the placeholder
-          const clip = result.placeholder;
-          const at = Math.max(
-            0,
-            Math.min(caretOffsetRef.current, displayValueRef.current.length),
-          );
-          const newDisplay =
-            displayValueRef.current.slice(0, at) +
-            clip +
-            displayValueRef.current.slice(at);
-          displayValueRef.current = newDisplay;
-          setDisplayValue(newDisplay);
-          setActualValue(newDisplay);
-          onChangeRef.current(newDisplay);
-          const nextCaret = at + clip.length;
-          setNudgeCursorOffset(nextCaret);
-          caretOffsetRef.current = nextCaret;
-        }
-        // Don't return - let it fall through to normal paste handling
-        // in case there's also text in the clipboard
+        })();
         return;
       }
 
@@ -252,33 +253,22 @@ export function PasteAwareTextInput({
 
         const payload = typeof input === "string" ? input : "";
         // Translate any image payloads in the paste (OSC 1337, data URLs, file paths)
-        let translated = translatePasteForImages(payload);
-        // If paste event carried no text (common for image-only clipboard), try macOS import
-        if ((!translated || translated.length === 0) && payload.length === 0) {
-          const clipResult = tryImportClipboardImageMac();
-          if (clipResult) {
-            if ("error" in clipResult) {
-              onPasteErrorRef.current?.(clipResult.error);
-              return;
-            }
-            translated = clipResult.placeholder;
-          }
-        }
+        const translated = translatePasteForImages(payload);
 
-        if (translated && translated.length > 0) {
-          // Insert at current caret position
+        // Helper to insert translated content
+        const insertTranslated = (text: string) => {
           const at = Math.max(
             0,
             Math.min(caretOffsetRef.current, displayValue.length),
           );
-          const isLarge = countLines(translated) > 5 || translated.length > 500;
+          const isLarge = countLines(text) > 5 || text.length > 500;
           if (isLarge) {
-            const pasteId = allocatePaste(translated);
-            const placeholder = `[Pasted text #${pasteId} +${countLines(translated)} lines]`;
+            const pasteId = allocatePaste(text);
+            const placeholder = `[Pasted text #${pasteId} +${countLines(text)} lines]`;
             const newDisplay =
               displayValue.slice(0, at) + placeholder + displayValue.slice(at);
             const newActual =
-              actualValue.slice(0, at) + translated + actualValue.slice(at);
+              actualValue.slice(0, at) + text + actualValue.slice(at);
             setDisplayValue(newDisplay);
             setActualValue(newActual);
             onChange(newDisplay);
@@ -286,11 +276,11 @@ export function PasteAwareTextInput({
             setNudgeCursorOffset(nextCaret);
             caretOffsetRef.current = nextCaret;
           } else {
-            const displayText = sanitizeForDisplay(translated);
+            const displayText = sanitizeForDisplay(text);
             const newDisplay =
               displayValue.slice(0, at) + displayText + displayValue.slice(at);
             const newActual =
-              actualValue.slice(0, at) + translated + actualValue.slice(at);
+              actualValue.slice(0, at) + text + actualValue.slice(at);
             setDisplayValue(newDisplay);
             setActualValue(newActual);
             onChange(newDisplay);
@@ -298,6 +288,26 @@ export function PasteAwareTextInput({
             setNudgeCursorOffset(nextCaret);
             caretOffsetRef.current = nextCaret;
           }
+        };
+
+        // If paste event carried no text (common for image-only clipboard), try macOS import
+        if ((!translated || translated.length === 0) && payload.length === 0) {
+          // Fire async handler
+          (async () => {
+            const clipResult = await tryImportClipboardImageMac();
+            if (clipResult) {
+              if ("error" in clipResult) {
+                onPasteErrorRef.current?.(clipResult.error);
+                return;
+              }
+              insertTranslated(clipResult.placeholder);
+            }
+          })();
+          return;
+        }
+
+        if (translated && translated.length > 0) {
+          insertTranslated(translated);
           return;
         }
         // If nothing to insert, fall through
@@ -307,28 +317,31 @@ export function PasteAwareTextInput({
         (key.meta && (input === "v" || input === "V")) ||
         (key.ctrl && key.shift && (input === "v" || input === "V"))
       ) {
-        const result = tryImportClipboardImageMac();
-        if (result) {
-          if ("error" in result) {
-            onPasteErrorRef.current?.(result.error);
-            return;
+        // Fire async handler
+        (async () => {
+          const result = await tryImportClipboardImageMac();
+          if (result) {
+            if ("error" in result) {
+              onPasteErrorRef.current?.(result.error);
+              return;
+            }
+            const placeholder = result.placeholder;
+            const at = Math.max(
+              0,
+              Math.min(caretOffsetRef.current, displayValue.length),
+            );
+            const newDisplay =
+              displayValue.slice(0, at) + placeholder + displayValue.slice(at);
+            const newActual =
+              actualValue.slice(0, at) + placeholder + actualValue.slice(at);
+            setDisplayValue(newDisplay);
+            setActualValue(newActual);
+            onChange(newDisplay);
+            const nextCaret = at + placeholder.length;
+            setNudgeCursorOffset(nextCaret);
+            caretOffsetRef.current = nextCaret;
           }
-          const placeholder = result.placeholder;
-          const at = Math.max(
-            0,
-            Math.min(caretOffsetRef.current, displayValue.length),
-          );
-          const newDisplay =
-            displayValue.slice(0, at) + placeholder + displayValue.slice(at);
-          const newActual =
-            actualValue.slice(0, at) + placeholder + actualValue.slice(at);
-          setDisplayValue(newDisplay);
-          setActualValue(newActual);
-          onChange(newDisplay);
-          const nextCaret = at + placeholder.length;
-          setNudgeCursorOffset(nextCaret);
-          caretOffsetRef.current = nextCaret;
-        }
+        })();
       }
 
       // Backspace on empty input - handle here since handleChange won't fire
