@@ -161,6 +161,7 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   return (
     <Box flexDirection="column" padding={1}>
       <AnimatedLogo color={colors.welcome.accent} />
+      <Text> </Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
       <Text>Let's get you authenticated:</Text>

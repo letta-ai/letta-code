@@ -11,6 +11,16 @@ const logoFrames = [
 ██  ██  ██
 ██      ██
   ██████  `,
+`  ██████  
+██      ██
+██  ██  ██
+██      ██
+  ██████  `,
+`  ██████  
+██      ██
+██  ██  ██
+██      ██
+  ██████  `,
 	// 2. Just starting to turn right
 `  ▓█████  
 ▓█      ▓█
@@ -26,69 +36,69 @@ const logoFrames = [
 	// 4. More right (gradient deepening)
 `  ░▓▓███  
 ░▓▓    ░▓▓
-░▓▓ ▓▓ ░▓▓
+░▓▓ ░▓ ░▓▓
 ░▓▓    ░▓▓
   ░▓▓███  `,
 	// 5. Even more right
 `  ░░▓▓██  
-░░▓▓  ░░▓▓
-░░▓▓░▓░░▓▓
-░░▓▓  ░░▓▓
+ ░▓▓  ░▓▓ 
+ ░▓▓░▓░▓▓ 
+ ░▓▓  ░▓▓ 
   ░░▓▓██ `,
 	// 6. Approaching side
 `   ░▓▓█    
-  ░▓▓ ░▓▓
-  ░▓▓▓░▓▓
-  ░▓▓ ░▓▓
+  ░░▓░░▓
+  ░░▓▓░▓
+  ░░▓░░▓
    ░▓▓█   `,
 	// 7. Almost side
 `   ░▓▓▓ 
-   ░▓░▓▓
-   ░▓▓▓▓
-   ░▓░▓▓
+   ░▓░▓
+   ░▓▓▓
+   ░▓░▓
    ░▓▓▓ `,
 	// 8. Side view
 `   ▓▓▓▓   
-   ████
-   ████
-   ████
+   ▓▓▓▓
+   ▓▓▓▓
+   ▓▓▓▓
    ▓▓▓▓   `,
 	// 9. Leaving side (mirror of 7)
-`   ██▓░   
-  ▓▓░▓░  
-  ▓▓▓▓░  
-  ▓▓░▓░  
-  ██▓░   `,
+`   ▓▓▓░
+   ▓░▓░
+   ▓▓▓░
+   ▓░▓░
+   ▓▓▓░   `,
 	// 10. Past side (mirror of 6)
-`  ██▓▓░  
- ▓▓░ ▓▓░ 
- ▓▓▓░▓▓░ 
- ▓▓░ ▓▓░ 
-  ██▓▓░  `,
+`   █▓▓░
+  ▓░░▓░░
+  ▓░▓▓░░
+  ▓░░▓░░
+   █▓▓░   `,
 	// 11. More past side (mirror of 5)
-`  ██▓▓░░ 
-▓▓░░  ▓▓░░
-▓▓░░░░▓▓░░
-▓▓░░  ▓▓░░
-  ██▓▓░░ `,
+`  ██▓▓░░
+ ▓▓░  ▓▓░
+ ▓▓░▓░▓▓░
+ ▓▓░  ▓▓░
+  ██▓▓░░  `,
 	// 12. Returning (mirror of 4)
-`  ███▓▓░ 
+`  ███▓▓░
 ▓▓░    ▓▓░
 ▓▓░ ▓░ ▓▓░
 ▓▓░    ▓▓░
-  ███▓▓░ `,
+  ███▓▓░  `,
 	// 13. Almost front (mirror of 3)
-`  ████▓▓ 
+`  ████▓▓
 ▓▓      ▓▓
 ▓▓  ▓▓  ▓▓
 ▓▓      ▓▓
-  ████▓▓ `,
+  ████▓▓  `,
 	// 14. Nearly front (mirror of 2)
-`  █████▓ 
+`  █████▓
 █▓      █▓
 █▓  █▓  █▓
 █▓      █▓
-  █████▓ `,
+  █████▓  `,
 ];
 
 
@@ -102,7 +112,7 @@ export function AnimatedLogo({ color = colors.welcome.accent }: AnimatedLogoProp
 	useEffect(() => {
 		const timer = setInterval(() => {
 			setFrame((prev) => (prev + 1) % logoFrames.length);
-		}, 200); // Change frame every 120ms for smooth rotation
+		}, 75); // Change frame every 75ms for smooth rotation
 
 		return () => clearInterval(timer);
 	}, []);
