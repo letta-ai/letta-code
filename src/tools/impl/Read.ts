@@ -1,8 +1,77 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
+import { queueToolImage } from "../../cli/helpers/toolImageRegistry.js";
+import { getToolExecutionContext } from "../manager.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+
+// Supported image extensions (lowercase)
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+]);
+
+/**
+ * Check if a file path is an image based on extension.
+ */
+function isImageFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Get MIME type from file extension.
+ */
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+  };
+  return mimeTypes[ext] || "image/png";
+}
+
+/**
+ * Read an image file, resize if needed, and queue for display.
+ * Returns a placeholder message - actual image is sent in the next user message.
+ */
+async function readImageFile(filePath: string): Promise<ReadResult> {
+  const buffer = await fs.readFile(filePath);
+  const inputMimeType = getMimeType(filePath);
+  const resized = await resizeImageIfNeeded(buffer, inputMimeType);
+
+  // Get tool call ID from execution context
+  const context = getToolExecutionContext();
+  const toolCallId = context?.toolCallId || "unknown";
+
+  // Queue for next turn
+  queueToolImage({
+    toolCallId,
+    filePath,
+    data: resized.data,
+    mediaType: resized.mediaType,
+    width: resized.width,
+    height: resized.height,
+  });
+
+  const resizeNote = resized.resized
+    ? ` (resized to ${resized.width}x${resized.height})`
+    : ` (${resized.width}x${resized.height})`;
+
+  return {
+    content: `[Image: ${filePath}${resizeNote} - queued for display]`,
+  };
+}
 
 interface ReadArgs {
   file_path: string;
@@ -145,6 +214,12 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
       throw new Error(
         `File too large: ${stats.size} bytes (max ${maxSize} bytes)`,
       );
+
+    // Handle image files specially - read, resize, and queue for display
+    if (isImageFile(resolvedPath)) {
+      return await readImageFile(resolvedPath);
+    }
+
     if (await isBinaryFile(resolvedPath))
       throw new Error(`Cannot read binary file: ${resolvedPath}`);
     const content = await fs.readFile(resolvedPath, "utf-8");
