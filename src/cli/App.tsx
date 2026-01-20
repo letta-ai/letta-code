@@ -3460,16 +3460,21 @@ export default function App({
       try {
         // Expand aliases before running
         const { expandAliases } = await import("./helpers/shellAliases");
-        const expandedCommand = expandAliases(command);
+        const expanded = expandAliases(command);
+
+        // If command uses a shell function, prepend the function definition
+        const finalCommand = expanded.functionDef
+          ? `${expanded.functionDef}\n${expanded.command}`
+          : expanded.command;
 
         // Use spawnCommand for actual execution
         const { spawnCommand } = await import("../tools/impl/Bash.js");
         const { getShellEnv } = await import("../tools/impl/shellEnv.js");
 
-        const result = await spawnCommand(expandedCommand, {
+        const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),
           env: getShellEnv(),
-          timeout: 30000,
+          timeout: 30000, // 30 second timeout
           onOutput: (chunk, stream) => {
             const entry = buffersRef.current.byId.get(cmdId);
             if (entry && entry.kind === "bash_command") {
@@ -3488,9 +3493,11 @@ export default function App({
           },
         });
 
+        // Combine stdout and stderr for output
         const output = (result.stdout + result.stderr).trim();
         const success = result.exitCode === 0;
 
+        // Update line with output, clear streaming state
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
@@ -3501,11 +3508,13 @@ export default function App({
           streaming: undefined,
         });
 
+        // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
           output: output || (success ? "" : `Exit code: ${result.exitCode}`),
         });
       } catch (error: unknown) {
+        // Handle command errors (timeout, abort, etc.)
         const errOutput =
           error instanceof Error
             ? (error as { stderr?: string; stdout?: string }).stderr ||
@@ -3523,6 +3532,7 @@ export default function App({
           streaming: undefined,
         });
 
+        // Still cache for next user message (even failures are visible to agent)
         bashCommandCacheRef.current.push({ input: command, output: errOutput });
       }
 

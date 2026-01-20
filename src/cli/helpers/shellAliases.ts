@@ -23,11 +23,11 @@ const ALIAS_FILES = [
 ];
 
 /**
- * Parse alias definitions from a shell config file.
+ * Parse alias and function definitions from a shell config file.
  * Handles formats like:
  *   alias gco='git checkout'
  *   alias gco="git checkout"
- *   alias gco=git\ checkout
+ *   function_name() { ... }
  */
 function parseAliasesFromFile(filePath: string): Map<string, string> {
   const aliases = new Map<string, string>();
@@ -40,11 +40,52 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
     const content = readFileSync(filePath, "utf-8");
     const lines = content.split("\n");
 
+    let inFunction = false;
+    let functionName = "";
+    let functionBody = "";
+    let braceDepth = 0;
+
     for (const line of lines) {
       const trimmed = line.trim();
+
+      // Track function body parsing
+      if (inFunction) {
+        functionBody += line + "\n";
+        braceDepth += (line.match(/{/g) || []).length;
+        braceDepth -= (line.match(/}/g) || []).length;
+        
+        if (braceDepth === 0) {
+          // Function complete - store it
+          // Functions are stored with a special marker so we know to source them
+          aliases.set(functionName, `__LETTA_FUNC__${functionBody}`);
+          inFunction = false;
+          functionName = "";
+          functionBody = "";
+        }
+        continue;
+      }
       
       // Skip comments and empty lines
       if (trimmed.startsWith("#") || !trimmed) {
+        continue;
+      }
+
+      // Match function definitions: name() { or function name {
+      const funcMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?/) ||
+                        trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{?/);
+      if (funcMatch) {
+        functionName = funcMatch[1];
+        functionBody = line + "\n";
+        braceDepth = (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+        
+        if (braceDepth > 0) {
+          inFunction = true;
+        } else if (braceDepth === 0 && line.includes("{") && line.includes("}")) {
+          // One-liner function
+          aliases.set(functionName, `__LETTA_FUNC__${functionBody}`);
+          functionName = "";
+          functionBody = "";
+        }
         continue;
       }
 
@@ -102,37 +143,67 @@ export function loadAliases(forceReload = false): Map<string, string> {
 }
 
 /**
+ * Result of alias expansion
+ */
+export interface ExpandedCommand {
+  /** The expanded command to run */
+  command: string;
+  /** If the command uses a function, this contains the function definition to prepend */
+  functionDef?: string;
+}
+
+/**
  * Expand aliases in a command.
  * Only expands the first word if it's an alias.
  * Handles recursive alias expansion (up to a limit).
+ * For functions, returns the function definition to prepend to the command.
  */
-export function expandAliases(command: string, maxDepth = 10): string {
+export function expandAliases(command: string, maxDepth = 10): ExpandedCommand {
   const aliases = loadAliases();
   
   if (aliases.size === 0) {
-    return command;
+    return { command };
   }
 
-  let expanded = command;
-  let depth = 0;
+  const trimmed = command.trim();
+  const firstSpaceIdx = trimmed.indexOf(" ");
+  const firstWord = firstSpaceIdx === -1 ? trimmed : trimmed.slice(0, firstSpaceIdx);
+  const rest = firstSpaceIdx === -1 ? "" : trimmed.slice(firstSpaceIdx);
 
+  const aliasValue = aliases.get(firstWord);
+  
+  // Check if it's a function
+  if (aliasValue?.startsWith("__LETTA_FUNC__")) {
+    const functionDef = aliasValue.slice("__LETTA_FUNC__".length);
+    // Return the original command but with function def to prepend
+    return { command, functionDef };
+  }
+
+  // Regular alias expansion
+  if (!aliasValue) {
+    return { command };
+  }
+
+  let expanded = aliasValue + rest;
+  let depth = 1;
+
+  // Continue expanding if the result starts with another alias
   while (depth < maxDepth) {
-    const trimmed = expanded.trim();
-    const firstSpaceIdx = trimmed.indexOf(" ");
-    const firstWord = firstSpaceIdx === -1 ? trimmed : trimmed.slice(0, firstSpaceIdx);
-    const rest = firstSpaceIdx === -1 ? "" : trimmed.slice(firstSpaceIdx);
+    const expandedTrimmed = expanded.trim();
+    const expandedFirstSpace = expandedTrimmed.indexOf(" ");
+    const expandedFirstWord = expandedFirstSpace === -1 ? expandedTrimmed : expandedTrimmed.slice(0, expandedFirstSpace);
+    const expandedRest = expandedFirstSpace === -1 ? "" : expandedTrimmed.slice(expandedFirstSpace);
 
-    const aliasValue = aliases.get(firstWord);
-    if (!aliasValue) {
+    const nextAlias = aliases.get(expandedFirstWord);
+    if (!nextAlias || nextAlias.startsWith("__LETTA_FUNC__")) {
       break;
     }
 
-    // Expand the alias
-    expanded = aliasValue + rest;
+    expanded = nextAlias + expandedRest;
     depth++;
   }
 
-  return expanded;
+  return { command: expanded };
 }
 
 /**
