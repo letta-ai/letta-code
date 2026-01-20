@@ -15,6 +15,7 @@ import type {
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { Box, Static, Text } from "ink";
+import { killBashModeShell } from "./helpers/persistentShell";
 import {
   useCallback,
   useEffect,
@@ -2944,6 +2945,9 @@ export default function App({
   const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
+    // Ensure bash mode shell is stopped
+    killBashModeShell();
+
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
@@ -3426,7 +3430,7 @@ export default function App({
   );
 
   // Handle bash mode command submission
-  // Uses the same shell runner as the Bash tool for consistency
+  // Uses a persistent interactive shell for alias support
   const handleBashSubmit = useCallback(
     async (command: string) => {
       const cmdId = uid("bash");
@@ -3451,60 +3455,28 @@ export default function App({
       refreshDerived();
 
       try {
-        // Use the same spawnCommand as the Bash tool for consistent behavior
-        const { spawnCommand } = await import("../tools/impl/Bash.js");
-        const { getShellEnv } = await import("../tools/impl/shellEnv.js");
+        const { getBashModeShell } = await import("./helpers/persistentShell");
+        const shell = getBashModeShell();
 
-        const result = await spawnCommand(command, {
-          cwd: process.cwd(),
-          env: getShellEnv(),
-          timeout: 30000, // 30 second timeout
-          onOutput: (chunk, stream) => {
-            const entry = buffersRef.current.byId.get(cmdId);
-            if (entry && entry.kind === "bash_command") {
-              const newStreaming = appendStreamingOutput(
-                entry.streaming,
-                chunk,
-                startTime,
-                stream === "stderr",
-              );
-              buffersRef.current.byId.set(cmdId, {
-                ...entry,
-                streaming: newStreaming,
-              });
-              refreshDerivedStreaming();
-            }
-          },
-        });
+        const output = await shell.runCommand(command, 30000);
 
-        // Combine stdout and stderr for output
-        const output = (result.stdout + result.stderr).trim();
-        const success = result.exitCode === 0;
-
-        // Update line with output, clear streaming state
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: output || "",
           phase: "finished",
-          success,
+          success: true,
           streaming: undefined,
         });
 
-        // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: output || "",
         });
       } catch (error: unknown) {
-        // Handle command errors (timeout, abort, etc.)
         const errOutput =
-          error instanceof Error
-            ? (error as { stderr?: string; stdout?: string }).stderr ||
-              (error as { stdout?: string }).stdout ||
-              error.message
-            : String(error);
+          error instanceof Error ? error.message : String(error);
 
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
@@ -3516,13 +3488,12 @@ export default function App({
           streaming: undefined,
         });
 
-        // Still cache for next user message (even failures are visible to agent)
         bashCommandCacheRef.current.push({ input: command, output: errOutput });
       }
 
       refreshDerived();
     },
-    [refreshDerived, refreshDerivedStreaming],
+    [refreshDerived],
   );
 
   /**
@@ -8028,6 +7999,7 @@ Plan file path: ${planFilePath}`;
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
+                onBashExit={() => killBashModeShell()}
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}

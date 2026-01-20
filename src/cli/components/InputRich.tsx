@@ -122,6 +122,7 @@ export function Input({
   thinkingMessage,
   onSubmit,
   onBashSubmit,
+  onBashExit,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -147,6 +148,7 @@ export function Input({
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
+  onBashExit?: () => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -200,6 +202,7 @@ export function Input({
   const handleBackspaceAtEmpty = () => {
     if (!isBashMode) return false;
     setIsBashMode(false);
+    onBashExit?.();
     return true;
   };
 
@@ -591,7 +594,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      setIsBashMode(false); // Exit bash mode after submitting
+      // Stay in bash mode - user exits with backspace on empty input
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
