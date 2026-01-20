@@ -5,6 +5,17 @@ import { basename, extname, isAbsolute, resolve } from "node:path";
 import { allocateImage } from "./pasteRegistry";
 
 /**
+ * Result type for clipboard image import.
+ * - placeholder: Successfully imported, contains [Image #N]
+ * - error: Failed with an error message
+ * - null: No image in clipboard
+ */
+export type ClipboardImageResult =
+  | { placeholder: string }
+  | { error: string }
+  | null;
+
+/**
  * Copy text to system clipboard
  * Returns true if successful, false otherwise
  */
@@ -159,7 +170,7 @@ export function translatePasteForImages(paste: string): string {
 }
 
 // Attempt to import an image directly from OS clipboard on macOS via JXA (built-in)
-export function tryImportClipboardImageMac(): string | null {
+export function tryImportClipboardImageMac(): ClipboardImageResult {
   if (process.platform !== "darwin") return null;
   try {
     const jxa = `
@@ -181,6 +192,7 @@ export function tryImportClipboardImageMac(): string | null {
     const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxa], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 100 * 1024 * 1024, // 100MB to handle large images
     }).trim();
     if (!out) return null;
     const idx = out.indexOf("|");
@@ -200,8 +212,17 @@ export function tryImportClipboardImageMac(): string | null {
     };
     const mediaType = map[uti] || "image/png";
     const id = allocateImage({ data: b64, mediaType });
-    return `[Image #${id}]`;
-  } catch {
-    return null;
+    return { placeholder: `[Image #${id}]` };
+  } catch (err) {
+    // Check for specific error types
+    const message = err instanceof Error ? err.message : String(err);
+
+    // Buffer overflow - image too large
+    if (message.includes("maxBuffer") || message.includes("ENOBUFS")) {
+      return { error: "Image too large to paste (try a smaller screenshot)" };
+    }
+
+    // Generic error
+    return { error: `Image paste failed: ${message}` };
   }
 }

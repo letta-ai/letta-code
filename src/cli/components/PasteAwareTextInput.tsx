@@ -41,6 +41,11 @@ interface PasteAwareTextInputProps {
    * Return true to consume the keystroke.
    */
   onBackspaceAtEmpty?: () => boolean;
+
+  /**
+   * Called when an image paste fails (e.g., image too large).
+   */
+  onPasteError?: (message: string) => void;
 }
 
 function countLines(text: string): number {
@@ -122,6 +127,7 @@ export function PasteAwareTextInput({
   onCursorMove,
   onBangAtEmpty,
   onBackspaceAtEmpty,
+  onPasteError,
 }: PasteAwareTextInputProps) {
   const { internal_eventEmitter } = useStdin();
   const [displayValue, setDisplayValue] = useState(value);
@@ -209,8 +215,15 @@ export function PasteAwareTextInput({
       // Native terminals don't send image data via bracketed paste, so we need
       // to explicitly check the clipboard when Ctrl+V is pressed.
       if (key.ctrl && input === "v") {
-        const clip = tryImportClipboardImageMac();
-        if (clip) {
+        const result = tryImportClipboardImageMac();
+        if (result) {
+          if ("error" in result) {
+            // Report the error via callback
+            onPasteErrorRef.current?.(result.error);
+            return;
+          }
+          // Success - insert the placeholder
+          const clip = result.placeholder;
           const at = Math.max(
             0,
             Math.min(caretOffsetRef.current, displayValueRef.current.length),
@@ -242,8 +255,14 @@ export function PasteAwareTextInput({
         let translated = translatePasteForImages(payload);
         // If paste event carried no text (common for image-only clipboard), try macOS import
         if ((!translated || translated.length === 0) && payload.length === 0) {
-          const clip = tryImportClipboardImageMac();
-          if (clip) translated = clip;
+          const clipResult = tryImportClipboardImageMac();
+          if (clipResult) {
+            if ("error" in clipResult) {
+              onPasteErrorRef.current?.(clipResult.error);
+              return;
+            }
+            translated = clipResult.placeholder;
+          }
         }
 
         if (translated && translated.length > 0) {
@@ -288,8 +307,13 @@ export function PasteAwareTextInput({
         (key.meta && (input === "v" || input === "V")) ||
         (key.ctrl && key.shift && (input === "v" || input === "V"))
       ) {
-        const placeholder = tryImportClipboardImageMac();
-        if (placeholder) {
+        const result = tryImportClipboardImageMac();
+        if (result) {
+          if ("error" in result) {
+            onPasteErrorRef.current?.(result.error);
+            return;
+          }
+          const placeholder = result.placeholder;
           const at = Math.max(
             0,
             Math.min(caretOffsetRef.current, displayValue.length),
@@ -329,6 +353,11 @@ export function PasteAwareTextInput({
   useEffect(() => {
     onBackspaceAtEmptyRef.current = onBackspaceAtEmpty;
   }, [onBackspaceAtEmpty]);
+
+  const onPasteErrorRef = useRef(onPasteError);
+  useEffect(() => {
+    onPasteErrorRef.current = onPasteError;
+  }, [onPasteError]);
 
   // Consolidated raw stdin handler for Option+Arrow navigation and Option+Delete
   // Uses internal_eventEmitter (Ink's private API) for escape sequences that useInput doesn't parse correctly.

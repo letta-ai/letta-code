@@ -139,6 +139,7 @@ export function Input({
   ralphPendingYolo = false,
   onRalphExit,
   conversationId,
+  onPasteError,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -163,6 +164,7 @@ export function Input({
   ralphPendingYolo?: boolean;
   onRalphExit?: () => void;
   conversationId?: string;
+  onPasteError?: (message: string) => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -815,6 +817,7 @@ export function Input({
               focus={!onEscapeCancel}
               onBangAtEmpty={handleBangAtEmpty}
               onBackspaceAtEmpty={handleBackspaceAtEmpty}
+              onPasteError={onPasteError}
             />
           </Box>
         </Box>
