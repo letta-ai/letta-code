@@ -108,7 +108,7 @@ export function AnimatedLogo({
     return () => clearInterval(timer);
   }, []);
 
-  const logoLines = logoFrames[frame].split("\n");
+  const logoLines = logoFrames[frame]?.split("\n") ?? [];
 
   return (
     <>
