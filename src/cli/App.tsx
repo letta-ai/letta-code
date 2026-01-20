@@ -159,6 +159,10 @@ import {
 } from "./helpers/subagentState";
 import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import {
+  clearQueuedToolImages,
+  getAndClearQueuedToolImages,
+} from "./helpers/toolImageRegistry";
+import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
@@ -3239,6 +3243,9 @@ export default function App({
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
 
+      // Clear any queued tool images from the previous agent context
+      clearQueuedToolImages();
+
       const inputCmd = "/agents";
       const cmdId = uid("cmd");
 
@@ -3717,9 +3724,44 @@ export default function App({
         // Send all results to server if any
         if (allResults.length > 0) {
           toolResultsInFlightRef.current = true;
-          await processConversation([
+
+          // Check for queued tool images (from Read tool reading image files)
+          const toolImages = getAndClearQueuedToolImages();
+          const input: Array<MessageCreate | ApprovalCreate> = [
             { type: "approval", approvals: allResults },
-          ]);
+          ];
+
+          // If there are queued images, add them as a user message
+          if (toolImages.length > 0) {
+            const imageContentParts: Array<
+              | { type: "text"; text: string }
+              | {
+                  type: "image";
+                  source: { type: "base64"; media_type: string; data: string };
+                }
+            > = [];
+            for (const img of toolImages) {
+              imageContentParts.push({
+                type: "text",
+                text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
+              });
+              imageContentParts.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: img.mediaType,
+                  data: img.data,
+                },
+              });
+            }
+            input.push({
+              type: "message",
+              role: "user",
+              content: imageContentParts as unknown as MessageCreate["content"],
+            });
+          }
+
+          await processConversation(input);
           toolResultsInFlightRef.current = false;
         }
       } finally {
@@ -4356,6 +4398,9 @@ export default function App({
           refreshDerived();
 
           setCommandRunning(true);
+
+          // Clear any queued tool images from the previous conversation
+          clearQueuedToolImages();
 
           try {
             const client = await getClient();
@@ -5577,7 +5622,37 @@ ${gitContext}
       }
 
       // Build message content from display value (handles placeholders for text/images)
-      const contentParts = buildMessageContentFromDisplay(msg);
+      let contentParts = buildMessageContentFromDisplay(msg);
+
+      // Prepend any queued tool images (from Read tool reading image files)
+      const queuedToolImages = getAndClearQueuedToolImages();
+      if (queuedToolImages.length > 0) {
+        const imageParts: Array<
+          | { type: "text"; text: string }
+          | {
+              type: "image";
+              source: { type: "base64"; media_type: string; data: string };
+            }
+        > = [];
+        for (const img of queuedToolImages) {
+          // Add system reminder text
+          imageParts.push({
+            type: "text",
+            text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
+          });
+          // Add image content
+          imageParts.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: img.mediaType,
+              data: img.data,
+            },
+          });
+        }
+        // Prepend to contentParts
+        contentParts = [...imageParts, ...contentParts];
+      }
 
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
