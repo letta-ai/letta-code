@@ -2957,6 +2957,21 @@ export default function App({
     setMessageQueue([]);
   }, []);
 
+  // Handle paste errors (e.g., image too large)
+  const handlePasteError = useCallback(
+    (message: string) => {
+      const statusId = uid("status");
+      buffersRef.current.byId.set(statusId, {
+        kind: "status",
+        id: statusId,
+        lines: [`⚠️ ${message}`],
+      });
+      buffersRef.current.order.push(statusId);
+      refreshDerived();
+    },
+    [refreshDerived],
+  );
+
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
@@ -8028,6 +8043,7 @@ Plan file path: ${planFilePath}`;
                 ralphPendingYolo={pendingRalphConfig?.isYolo ?? false}
                 onRalphExit={handleRalphExit}
                 conversationId={conversationId}
+                onPasteError={handlePasteError}
               />
             </Box>
 

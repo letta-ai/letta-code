@@ -33,7 +33,8 @@
     "@letta-ai/letta-client": "^1.6.8",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
-    "open": "^10.2.0"
+    "open": "^10.2.0",
+    "sharp": "^0.34.5"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
