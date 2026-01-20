@@ -770,7 +770,7 @@ export async function handleHeadlessCommand(
 
       let resume: Awaited<ReturnType<typeof getResumeData>>;
       try {
-        resume = await getResumeData(client, freshAgent);
+        resume = await getResumeData(client, freshAgent, conversationId);
       } catch (error) {
         // Treat 404/422 as "no approvals" - stale message/conversation state
         if (
