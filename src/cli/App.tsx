@@ -583,6 +583,13 @@ export default function App({
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
+  // Helper to cancel current run - always use agents API since it works for all cases
+  // The /v1/agents/{id}/messages/cancel endpoint cancels runs associated with the agent
+  // regardless of which conversation they're in
+  const cancelCurrentRun = async (client: ReturnType<typeof getClient> extends Promise<infer T> ? T : never) => {
+    await client.agents.messages.cancel(agentIdRef.current);
+  };
+
   const resumeKey = useSuspend();
 
   // Track previous prop values to detect actual prop changes (not internal state changes)
@@ -3028,6 +3035,14 @@ export default function App({
       toolResultsInFlightRef.current = false;
       refreshDerived();
 
+      // Send cancel request to backend asynchronously (fire-and-forget)
+      // This ensures the server-side run is cancelled even when interrupting tool execution
+      getClient()
+        .then((client) => cancelCurrentRun(client))
+        .catch(() => {
+          // Silently ignore - cancellation already happened client-side
+        });
+
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
       // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
       // batched state updates have been fully processed before we allow the dequeue effect.
@@ -3132,9 +3147,7 @@ export default function App({
       // Send cancel request to backend asynchronously (fire-and-forget)
       // Don't wait for it or show errors since user already got feedback
       getClient()
-        .then((client) =>
-          client.conversations.cancel(conversationIdRef.current),
-        )
+        .then((client) => cancelCurrentRun(client))
         .catch(() => {
           // Silently ignore - cancellation already happened client-side
         });
@@ -3153,7 +3166,7 @@ export default function App({
       setInterruptRequested(true);
       try {
         const client = await getClient();
-        await client.conversations.cancel(conversationIdRef.current);
+        await cancelCurrentRun(client);
 
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
@@ -3799,9 +3812,7 @@ export default function App({
 
             // Send cancel request to backend (fire-and-forget)
             getClient()
-              .then((client) =>
-                client.conversations.cancel(conversationIdRef.current),
-              )
+              .then((client) => cancelCurrentRun(client))
               .then(() => {})
               .catch(() => {
                 // Reset flag if cancel fails
