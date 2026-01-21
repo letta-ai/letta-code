@@ -2,7 +2,6 @@ import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { telemetry } from "../telemetry";
-import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -755,14 +754,7 @@ export async function executeTool(
       }
     }
 
-    // Set execution context for tools that need it (e.g., Read for image queuing)
-    setToolExecutionContext({ toolCallId: options?.toolCallId });
-    let result: unknown;
-    try {
-      result = await tool.fn(enhancedArgs);
-    } finally {
-      setToolExecutionContext(null);
-    }
+    const result = await tool.fn(enhancedArgs);
     const duration = Date.now() - startTime;
 
     // Extract stdout/stderr if present (for bash tools)
