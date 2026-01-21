@@ -225,7 +225,7 @@ export async function runStopHooks(
 
 /**
  * Run SubagentStop hooks when a subagent task completes
- * These run in parallel and cannot block
+ * Can block stoppage (exit 2), stderr shown to subagent
  */
 export async function runSubagentStopHooks(
   subagentType: string,
@@ -256,13 +256,13 @@ export async function runSubagentStopHooks(
     conversation_id: conversationId,
   };
 
-  // Run in parallel - SubagentStop cannot block
-  return executeHooksParallel(hooks, input, workingDirectory);
+  // Run sequentially - SubagentStop can block
+  return executeHooks(hooks, input, workingDirectory);
 }
 
 /**
  * Run PreCompact hooks before a compact operation
- * Can block the compact operation
+ * Cannot block, stderr shown to user only
  */
 export async function runPreCompactHooks(
   contextLength?: number,
@@ -289,7 +289,8 @@ export async function runPreCompactHooks(
     conversation_id: conversationId,
   };
 
-  return executeHooks(hooks, input, workingDirectory);
+  // Run in parallel - PreCompact cannot block
+  return executeHooksParallel(hooks, input, workingDirectory);
 }
 
 /**

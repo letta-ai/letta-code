@@ -6,16 +6,16 @@
  */
 export type HookEvent =
   | "PreToolUse" // Runs before tool calls (can block them)
-  | "PostToolUse" // Runs after tool calls complete
+  | "PostToolUse" // Runs after tool calls complete (cannot block)
   | "PermissionRequest" // Runs when a permission dialog is shown (can allow or deny)
-  | "UserPromptSubmit" // Runs when the user submits a prompt, before processing
-  | "Notification" // Runs when a notification is sent
-  | "Stop" // Runs when the agent finishes responding
-  | "SubagentStop" // Runs when subagent tasks complete
-  | "PreCompact" // Runs before a compact operation
+  | "UserPromptSubmit" // Runs when the user submits a prompt (can block)
+  | "Notification" // Runs when a notification is sent (cannot block)
+  | "Stop" // Runs when the agent finishes responding (can block)
+  | "SubagentStop" // Runs when subagent tasks complete (can block)
+  | "PreCompact" // Runs before a compact operation (cannot block)
   | "Setup" // Runs when invoked with --init, --init-only, or --maintenance flags
   | "SessionStart" // Runs when a new session starts or is resumed
-  | "SessionEnd"; // Runs when session ends
+  | "SessionEnd"; // Runs when session ends (cannot block)
 
 /**
  * Individual hook command configuration
