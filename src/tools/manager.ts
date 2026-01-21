@@ -1,3 +1,4 @@
+import { getDisplayableToolReturn } from "../agent/approval-execution";
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
@@ -827,7 +828,10 @@ export async function executeTool(
     runPostToolUseHooks(
       internalName,
       args as Record<string, unknown>,
-      { status: toolStatus, output: flattenedResponse },
+      {
+        status: toolStatus,
+        output: getDisplayableToolReturn(flattenedResponse),
+      },
       options?.toolCallId,
     ).catch(() => {
       // Silently ignore hook errors - don't affect tool execution

@@ -4,7 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { exists, readFile } from "../utils/fs.js";
-import type { HookCommand, HookEvent, HookMatcher, HooksConfig } from "./types";
+import type { HookCommand, HookEvent, HooksConfig } from "./types";
 
 /**
  * Cache for loaded hooks configurations

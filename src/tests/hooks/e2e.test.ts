@@ -576,7 +576,7 @@ describe("Hooks E2E Tests", () => {
           ],
         });
 
-        const result = await runCli(
+        await runCli(
           ["--new-agent", "-m", "haiku", "-p", "This should be blocked"],
           env,
         );
