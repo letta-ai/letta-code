@@ -50,7 +50,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
 
       // Track function body parsing
       if (inFunction) {
-        functionBody += line + "\n";
+        functionBody += `${line}\n`;
         braceDepth += (line.match(/{/g) || []).length;
         braceDepth -= (line.match(/}/g) || []).length;
 
@@ -76,7 +76,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{?/);
       if (funcMatch) {
         functionName = funcMatch[1];
-        functionBody = line + "\n";
+        functionBody = `${line}\n`;
         braceDepth =
           (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
 
@@ -117,7 +117,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         }
       }
     }
-  } catch (error) {
+  } catch (_error) {
     // Silently ignore read errors
   }
 
