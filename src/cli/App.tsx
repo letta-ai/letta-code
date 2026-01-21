@@ -876,6 +876,7 @@ export default function App({
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
     filterProvider?: string;
     forceRefresh?: boolean;
@@ -883,6 +884,7 @@ export default function App({
   const closeOverlay = useCallback(() => {
     setActiveOverlay(null);
     setFeedbackPrefill("");
+    setSearchQuery("");
     setModelSelectorOptions({});
   }, []);
 
@@ -4957,7 +4959,11 @@ export default function App({
         }
 
         // Special handling for /search command - show message search
-        if (msg.trim() === "/search") {
+        if (trimmed.startsWith("/search")) {
+          // Extract optional query after /search
+          const [, ...rest] = trimmed.split(/\s+/);
+          const query = rest.join(" ").trim();
+          setSearchQuery(query);
           setActiveOverlay("search");
           return { submitted: true };
         }
@@ -8462,7 +8468,10 @@ Plan file path: ${planFilePath}`;
 
             {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
-              <MessageSearch onClose={closeOverlay} />
+              <MessageSearch
+                onClose={closeOverlay}
+                initialQuery={searchQuery || undefined}
+              />
             )}
 
             {/* Feedback Dialog - conditionally mounted as overlay */}
