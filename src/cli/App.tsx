@@ -2020,7 +2020,7 @@ export default function App({
             } catch {
               // Silently fail - better to potentially duplicate than lose the message
             }
-            prematureInterruptCacheRef.current = null;
+            // Cache cleared after drainStreamWithResume if we received any chunks
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -2353,6 +2353,11 @@ export default function App({
             syncAgentState,
           );
 
+          // Clear premature interrupt cache if we received any chunks (message was received)
+          if (!prematureInterrupt) {
+            prematureInterruptCacheRef.current = null;
+          }
+
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
 
@@ -2458,9 +2463,13 @@ export default function App({
             setStreaming(false);
 
             // Cache user message on premature interrupt (cancelled before any response)
+            // Stack messages so multiple premature interrupts accumulate
             // On next send, we'll check if backend received it and prepend if not
             if (prematureInterrupt) {
-              prematureInterruptCacheRef.current = currentInput;
+              prematureInterruptCacheRef.current = [
+                ...(prematureInterruptCacheRef.current || []),
+                ...currentInput,
+              ];
             }
 
             // Check if this cancel was triggered by queue threshold
