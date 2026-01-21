@@ -140,6 +140,8 @@ export function Input({
   onRalphExit,
   conversationId,
   onPasteError,
+  restoredInput,
+  onRestoredInputConsumed,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -165,6 +167,8 @@ export function Input({
   onRalphExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
+  restoredInput?: string | null;
+  onRestoredInputConsumed?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -190,6 +194,17 @@ export function Input({
 
   // Bash mode state
   const [isBashMode, setIsBashMode] = useState(false);
+
+  // Restore input from error (only if current value is empty)
+  useEffect(() => {
+    if (restoredInput && value === "") {
+      setValue(restoredInput);
+      onRestoredInputConsumed?.();
+    } else if (restoredInput && value !== "") {
+      // Input has content, don't clobber - just consume the restored value
+      onRestoredInputConsumed?.();
+    }
+  }, [restoredInput, value, onRestoredInputConsumed]);
 
   const handleBangAtEmpty = () => {
     if (isBashMode) return false;

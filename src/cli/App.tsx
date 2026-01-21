@@ -33,6 +33,7 @@ import {
   fetchRunErrorDetail,
   isApprovalPendingError,
   isApprovalStateDesyncError,
+  isConversationBusyError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -192,9 +193,17 @@ const EAGER_CANCEL = true;
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
+// Retry config for 409 "conversation busy" errors
+const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
+const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
+
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
   "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report the issue.";
+
+// Hint shown after errors to encourage feedback
+const ERROR_FEEDBACK_HINT =
+  "Something went wrong? Use /feedback to report issues.";
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -982,6 +991,9 @@ export default function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
 
+  // Retry counter for 409 "conversation busy" errors
+  const conversationBusyRetriesRef = useRef(0);
+
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
@@ -997,6 +1009,13 @@ export default function App({
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
+
+  // Track last dequeued message for restoration on error
+  // If an error occurs after dequeue, we restore this to the input field (if input is empty)
+  const lastDequeuedMessageRef = useRef<string | null>(null);
+
+  // Restored input value - set when we need to restore a message to the input after error
+  const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -1729,9 +1748,10 @@ export default function App({
       }
       processingConversationRef.current += 1;
 
-      // Reset retry counter for new conversation turns (fresh budget per user message)
+      // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
+        conversationBusyRetriesRef.current = 0;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -1796,41 +1816,93 @@ export default function App({
               { agentId: agentIdRef.current },
             );
           } catch (preStreamError) {
+            // Extract error detail from APIError (handles both direct and nested structures)
+            // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
+            let errorDetail = "";
+            if (
+              preStreamError instanceof APIError &&
+              preStreamError.error &&
+              typeof preStreamError.error === "object"
+            ) {
+              const errObj = preStreamError.error as Record<string, unknown>;
+              // Check nested structure first: e.error.error.detail
+              if (
+                errObj.error &&
+                typeof errObj.error === "object" &&
+                "detail" in errObj.error
+              ) {
+                const nested = errObj.error as Record<string, unknown>;
+                errorDetail =
+                  typeof nested.detail === "string" ? nested.detail : "";
+              }
+              // Fallback to direct structure: e.error.detail
+              if (!errorDetail && typeof errObj.detail === "string") {
+                errorDetail = errObj.detail;
+              }
+            }
+            // Final fallback: use Error.message
+            if (!errorDetail && preStreamError instanceof Error) {
+              errorDetail = preStreamError.message;
+            }
+
+            // Check for 409 "conversation busy" error - retry once with delay
+            if (
+              isConversationBusyError(errorDetail) &&
+              conversationBusyRetriesRef.current < CONVERSATION_BUSY_MAX_RETRIES
+            ) {
+              conversationBusyRetriesRef.current += 1;
+
+              // Show status message
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: ["Conversation is busy, waiting and retrying…"],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              // Wait with abort checking (same pattern as LLM API error retry)
+              let cancelled = false;
+              const startTime = Date.now();
+              while (
+                Date.now() - startTime <
+                CONVERSATION_BUSY_RETRY_DELAY_MS
+              ) {
+                if (
+                  abortControllerRef.current?.signal.aborted ||
+                  userCancelledRef.current
+                ) {
+                  cancelled = true;
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+
+              // Remove status message
+              buffersRef.current.byId.delete(statusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== statusId,
+              );
+              refreshDerived();
+
+              if (!cancelled) {
+                // Reset interrupted flag so retry stream chunks are processed
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+              // User pressed ESC - fall through to error handling
+            }
+
+            // Reset conversation busy retry counter on non-busy error
+            conversationBusyRetriesRef.current = 0;
+
             // Check if this is a pre-stream approval desync error
             const hasApprovalInPayload = currentInput.some(
               (item) => item?.type === "approval",
             );
 
             if (hasApprovalInPayload) {
-              // Extract error detail from APIError (handles both direct and nested structures)
-              // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
-              let errorDetail = "";
-              if (
-                preStreamError instanceof APIError &&
-                preStreamError.error &&
-                typeof preStreamError.error === "object"
-              ) {
-                const errObj = preStreamError.error as Record<string, unknown>;
-                // Check nested structure first: e.error.error.detail
-                if (
-                  errObj.error &&
-                  typeof errObj.error === "object" &&
-                  "detail" in errObj.error
-                ) {
-                  const nested = errObj.error as Record<string, unknown>;
-                  errorDetail =
-                    typeof nested.detail === "string" ? nested.detail : "";
-                }
-                // Fallback to direct structure: e.error.detail
-                if (!errorDetail && typeof errObj.detail === "string") {
-                  errorDetail = errObj.detail;
-                }
-              }
-              // Final fallback: use Error.message
-              if (!errorDetail && preStreamError instanceof Error) {
-                errorDetail = preStreamError.message;
-              }
-
               // If desync detected and retries available, recover with keep-alive prompt
               if (
                 isApprovalStateDesyncError(errorDetail) &&
@@ -2012,6 +2084,8 @@ export default function App({
           if (stopReasonToHandle === "end_turn") {
             setStreaming(false);
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
+            conversationBusyRetriesRef.current = 0;
+            lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
 
             // Disable eager approval check after first successful message (LET-7101)
             // Any new approvals from here on are from our own turn, not orphaned
@@ -2650,6 +2724,16 @@ export default function App({
               lastFailureMessage ||
               `An error occurred during agent execution\n(run_id: ${lastRunId ?? "unknown"}, stop_reason: ${stopReasonToHandle})`;
             appendError(errorToShow, true);
+            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Restore dequeued message to input on error
+            if (lastDequeuedMessageRef.current) {
+              setRestoredInput(lastDequeuedMessageRef.current);
+              lastDequeuedMessageRef.current = null;
+            }
+            // Clear any remaining queue on error
+            setMessageQueue([]);
+
             setStreaming(false);
             sendDesktopNotification();
             refreshDerived();
@@ -2761,8 +2845,9 @@ export default function App({
             // User pressed ESC - fall through to error handling
           }
 
-          // Reset retry counter on non-retriable error (or max retries exceeded)
+          // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
+          conversationBusyRetriesRef.current = 0;
 
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(
@@ -2792,6 +2877,16 @@ export default function App({
               ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
               : `Stream error: ${fallbackError}`;
             appendError(errorMsg, true); // Skip telemetry - already tracked above
+            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Restore dequeued message to input on error
+            if (lastDequeuedMessageRef.current) {
+              setRestoredInput(lastDequeuedMessageRef.current);
+              lastDequeuedMessageRef.current = null;
+            }
+            // Clear any remaining queue on error
+            setMessageQueue([]);
+
             setStreaming(false);
             sendDesktopNotification(); // Notify user of error
             refreshDerived();
@@ -2824,12 +2919,14 @@ export default function App({
                   agentIdRef.current,
                 );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
+                appendError(ERROR_FEEDBACK_HINT, true);
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   true, // Skip telemetry - already tracked above
                 );
+                appendError(ERROR_FEEDBACK_HINT, true);
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -2837,6 +2934,19 @@ export default function App({
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 true, // Skip telemetry - already tracked above
               );
+              appendError(ERROR_FEEDBACK_HINT, true);
+
+              // Restore dequeued message to input on error
+              if (lastDequeuedMessageRef.current) {
+                setRestoredInput(lastDequeuedMessageRef.current);
+                lastDequeuedMessageRef.current = null;
+              }
+              // Clear any remaining queue on error
+              setMessageQueue([]);
+
+              setStreaming(false);
+              sendDesktopNotification();
+              refreshDerived();
               return;
             }
           } else {
@@ -2845,7 +2955,16 @@ export default function App({
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               true, // Skip telemetry - already tracked above
             );
+            appendError(ERROR_FEEDBACK_HINT, true);
           }
+
+          // Restore dequeued message to input on error
+          if (lastDequeuedMessageRef.current) {
+            setRestoredInput(lastDequeuedMessageRef.current);
+            lastDequeuedMessageRef.current = null;
+          }
+          // Clear any remaining queue on error
+          setMessageQueue([]);
 
           setStreaming(false);
           sendDesktopNotification(); // Notify user of error
@@ -2891,6 +3010,16 @@ export default function App({
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
+        appendError(ERROR_FEEDBACK_HINT, true);
+
+        // Restore dequeued message to input on error (Input component will only use if empty)
+        if (lastDequeuedMessageRef.current) {
+          setRestoredInput(lastDequeuedMessageRef.current);
+          lastDequeuedMessageRef.current = null;
+        }
+        // Clear any remaining queue on error
+        setMessageQueue([]);
+
         setStreaming(false);
         sendDesktopNotification(); // Notify user of error
         refreshDerived();
@@ -6394,6 +6523,9 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         "queue",
         `Dequeuing ${messageQueue.length} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
       );
+
+      // Store the message before clearing queue - allows restoration on error
+      lastDequeuedMessageRef.current = concatenatedMessage;
       setMessageQueue([]);
 
       // Submit the concatenated message using the normal submit flow
@@ -8097,6 +8229,8 @@ Plan file path: ${planFilePath}`;
                 onRalphExit={handleRalphExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
+                restoredInput={restoredInput}
+                onRestoredInputConsumed={() => setRestoredInput(null)}
               />
             </Box>
 
