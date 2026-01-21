@@ -981,8 +981,8 @@ export default function App({
       runSessionStartHooks(
         isNewSession,
         agentId,
-        agentName,
-        conversationIdRef.current,
+        agentName ?? undefined,
+        conversationIdRef.current ?? undefined,
       ).catch(() => {
         // Silently ignore hook errors
       });
@@ -992,14 +992,13 @@ export default function App({
   // Run SessionEnd hooks on unmount
   useEffect(() => {
     return () => {
-      const stats = sessionStatsRef.current.getSnapshot();
       const durationMs = Date.now() - sessionStartTimeRef.current;
       runSessionEndHooks(
         durationMs,
-        stats.messageCount || 0,
-        stats.toolCallCount || 0,
-        agentIdRef.current,
-        conversationIdRef.current,
+        undefined, // messageCount not tracked in SessionStats
+        undefined, // toolCallCount not tracked in SessionStats
+        agentIdRef.current ?? undefined,
+        conversationIdRef.current ?? undefined,
       ).catch(() => {
         // Silently ignore hook errors
       });
@@ -2063,7 +2062,7 @@ export default function App({
               stopReasonToHandle,
               buffersRef.current.order.length,
               Array.from(buffersRef.current.byId.values()).filter(
-                (item) => item.kind === "toolResult",
+                (item) => item.kind === "tool_call",
               ).length,
             ).catch(() => {
               // Silently ignore hook errors
