@@ -2,7 +2,7 @@
  * LSP-enhanced Read tool - wraps the base Read tool and adds LSP diagnostics
  * This is used when LETTA_ENABLE_LSP is set
  */
-import { read as baseRead } from "./Read.js";
+import { read as baseRead, type ToolReturnContent } from "./Read.js";
 
 // Format a single diagnostic in opencode style: "ERROR [line:col] message"
 function formatDiagnostic(diag: {
@@ -30,7 +30,7 @@ interface ReadLSPArgs {
 }
 
 interface ReadLSPResult {
-  content: string;
+  content: ToolReturnContent;
 }
 
 export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
@@ -39,6 +39,11 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
 
   // Skip LSP if not enabled (shouldn't happen since we only load this when enabled)
   if (!process.env.LETTA_ENABLE_LSP) {
+    return result;
+  }
+
+  // If content is multimodal (image), skip LSP processing - only applies to text files
+  if (typeof result.content !== "string") {
     return result;
   }
 
