@@ -1,6 +1,7 @@
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
+import { runPreToolUseHooks, runPostToolUseHooks } from "../hooks";
 import { telemetry } from "../telemetry";
 import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
@@ -732,6 +733,20 @@ export async function executeTool(
 
   const startTime = Date.now();
 
+  // Run PreToolUse hooks - can block tool execution
+  const preHookResult = await runPreToolUseHooks(
+    internalName,
+    args as Record<string, unknown>,
+    options?.toolCallId,
+  );
+  if (preHookResult.blocked) {
+    const feedback = preHookResult.feedback.join("\n") || "Blocked by hook";
+    return {
+      toolReturn: `Error: Tool execution blocked by hook. ${feedback}`,
+      status: "error",
+    };
+  }
+
   try {
     // Inject options for tools that support them without altering schemas
     let enhancedArgs = args;
@@ -788,6 +803,16 @@ export async function executeTool(
       stderr ? stderr.join("\n") : undefined,
     );
 
+    // Run PostToolUse hooks (async, non-blocking)
+    runPostToolUseHooks(
+      internalName,
+      args as Record<string, unknown>,
+      { status: toolStatus, output: flattenedResponse },
+      options?.toolCallId,
+    ).catch(() => {
+      // Silently ignore hook errors - don't affect tool execution
+    });
+
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
@@ -823,6 +848,16 @@ export async function executeTool(
       errorType,
       errorMessage,
     );
+
+    // Run PostToolUse hooks for error case (async, non-blocking)
+    runPostToolUseHooks(
+      internalName,
+      args as Record<string, unknown>,
+      { status: "error", output: errorMessage },
+      options?.toolCallId,
+    ).catch(() => {
+      // Silently ignore hook errors
+    });
 
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
