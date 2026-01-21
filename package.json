@@ -30,7 +30,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@letta-ai/letta-client": "^1.6.8",
+    "@letta-ai/letta-client": "^1.7.2",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "open": "^10.2.0",
@@ -43,6 +43,7 @@
     "@types/bun": "latest",
     "@types/diff": "^8.0.0",
     "@types/picomatch": "^4.0.2",
+    "@types/react": "^19.2.9",
     "diff": "^8.0.2",
     "husky": "9.1.7",
     "ink": "^5.0.0",

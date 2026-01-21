@@ -3,12 +3,27 @@
  * Uses Gemini's exact schema and description
  */
 
-import { read } from "./Read";
+import type { TextContent } from "@letta-ai/letta-client/resources/agents/messages";
+import { read, type ToolReturnContent } from "./Read";
 
 interface ReadFileGeminiArgs {
   file_path: string;
   offset?: number;
   limit?: number;
+}
+
+/**
+ * Extract text from tool return content (for Gemini wrapper)
+ */
+function extractText(content: ToolReturnContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  // Extract text from multimodal content (Gemini doesn't support images via this tool)
+  return content
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
 export async function read_file_gemini(
@@ -24,6 +39,6 @@ export async function read_file_gemini(
 
   const result = await read(lettaArgs);
 
-  // Read returns { content: string }
-  return { message: result.content };
+  // Read returns { content: ToolReturnContent } - extract text for Gemini
+  return { message: extractText(result.content) };
 }

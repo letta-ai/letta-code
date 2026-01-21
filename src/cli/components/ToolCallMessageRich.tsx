@@ -594,12 +594,30 @@ export const ToolCallMessage = memo(
         }
       }
 
-      // Check if this is a file read tool - show line count summary
+      // Check if this is a file read tool - show line count or image summary
       if (
         isFileReadTool(rawName) &&
         line.resultOk !== false &&
         line.resultText
       ) {
+        // Check if this is an image result (starts with "[Image: filename]")
+        const isImageResult = line.resultText.startsWith("[Image: ");
+
+        if (isImageResult) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Read <Text bold>1</Text> image
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+
         // Count lines in the result (the content returned by Read tool)
         const lineCount = line.resultText.split("\n").length;
         return (
@@ -609,7 +627,8 @@ export const ToolCallMessage = memo(
             </Box>
             <Box flexGrow={1} width={contentWidth}>
               <Text>
-                Read <Text bold>{lineCount}</Text> lines
+                Read <Text bold>{lineCount}</Text> line
+                {lineCount !== 1 ? "s" : ""}
               </Text>
             </Box>
           </Box>

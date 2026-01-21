@@ -26,6 +26,7 @@ import {
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
+  getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
   buildApprovalRecoveryMessage,
@@ -7333,7 +7334,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           id: "dummy",
           date: new Date().toISOString(),
           tool_call_id: approval.toolCallId,
-          tool_return: toolResult.toolReturn,
+          tool_return: getDisplayableToolReturn(toolResult.toolReturn),
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
