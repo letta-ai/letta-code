@@ -17,32 +17,51 @@ export function loadHooksFromLocation(
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
 ): HooksConfig {
-  switch (location) {
-    case "user":
-      return settingsManager.getSettings().hooks || {};
-    case "project":
-      return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
-    case "project-local":
-      return settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {};
+  try {
+    switch (location) {
+      case "user":
+        return settingsManager.getSettings().hooks || {};
+      case "project":
+        return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
+      case "project-local":
+        return settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {};
+    }
+  } catch {
+    // Settings not loaded yet, return empty
+    return {};
   }
 }
 
 /**
  * Save hooks config to a specific location
+ * Note: This is async because it may need to load settings first
  */
-export function saveHooksToLocation(
+export async function saveHooksToLocation(
   hooks: HooksConfig,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
-): void {
+): Promise<void> {
+  // Ensure settings are loaded before updating
   switch (location) {
     case "user":
       settingsManager.updateSettings({ hooks });
       break;
     case "project":
+      // Load project settings if not already loaded
+      try {
+        settingsManager.getProjectSettings(workingDirectory);
+      } catch {
+        await settingsManager.loadProjectSettings(workingDirectory);
+      }
       settingsManager.updateProjectSettings({ hooks }, workingDirectory);
       break;
     case "project-local":
+      // Load local project settings if not already loaded
+      try {
+        settingsManager.getLocalProjectSettings(workingDirectory);
+      } catch {
+        await settingsManager.loadLocalProjectSettings(workingDirectory);
+      }
       settingsManager.updateLocalProjectSettings({ hooks }, workingDirectory);
       break;
   }
@@ -54,12 +73,12 @@ export function saveHooksToLocation(
 /**
  * Add a new hook matcher to an event
  */
-export function addHookMatcher(
+export async function addHookMatcher(
   event: HookEvent,
   matcher: HookMatcher,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
-): void {
+): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
   // Initialize event array if needed
@@ -73,18 +92,18 @@ export function addHookMatcher(
     eventMatchers.push(matcher);
   }
 
-  saveHooksToLocation(hooks, location, workingDirectory);
+  await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**
  * Remove a hook matcher from an event by index
  */
-export function removeHookMatcher(
+export async function removeHookMatcher(
   event: HookEvent,
   matcherIndex: number,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
-): void {
+): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event];
 
@@ -100,19 +119,19 @@ export function removeHookMatcher(
     delete hooks[event];
   }
 
-  saveHooksToLocation(hooks, location, workingDirectory);
+  await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**
  * Update a hook matcher at a specific index
  */
-export function updateHookMatcher(
+export async function updateHookMatcher(
   event: HookEvent,
   matcherIndex: number,
   matcher: HookMatcher,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
-): void {
+): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event];
 
@@ -123,7 +142,7 @@ export function updateHookMatcher(
   // Update the matcher at the given index
   eventMatchers[matcherIndex] = matcher;
 
-  saveHooksToLocation(hooks, location, workingDirectory);
+  await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**

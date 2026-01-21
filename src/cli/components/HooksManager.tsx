@@ -158,7 +158,7 @@ export const HooksManager = memo(function HooksManager({
   }, []);
 
   // Handle adding a hook
-  const handleAddHook = useCallback(() => {
+  const handleAddHook = useCallback(async () => {
     if (!selectedEvent || !newCommand.trim()) return;
 
     const location = SAVE_LOCATIONS[selectedLocation]?.location;
@@ -169,7 +169,7 @@ export const HooksManager = memo(function HooksManager({
       hooks: [{ type: "command", command: newCommand.trim() }],
     };
 
-    addHookMatcher(selectedEvent, matcher, location);
+    await addHookMatcher(selectedEvent, matcher, location);
     loadMatchers(selectedEvent);
     refreshCounts();
 
@@ -182,13 +182,13 @@ export const HooksManager = memo(function HooksManager({
   }, [selectedEvent, newMatcher, newCommand, selectedLocation, loadMatchers, refreshCounts]);
 
   // Handle deleting a hook
-  const handleDeleteHook = useCallback(() => {
+  const handleDeleteHook = useCallback(async () => {
     if (deleteMatcherIndex < 0 || !selectedEvent) return;
 
     const matcher = matchers[deleteMatcherIndex];
     if (!matcher) return;
 
-    removeHookMatcher(selectedEvent, matcher.sourceIndex, matcher.source);
+    await removeHookMatcher(selectedEvent, matcher.sourceIndex, matcher.source);
     loadMatchers(selectedEvent);
     refreshCounts();
 
