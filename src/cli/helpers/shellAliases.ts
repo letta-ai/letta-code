@@ -74,7 +74,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
       const funcMatch =
         trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?/) ||
         trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{?/);
-      if (funcMatch) {
+      if (funcMatch && funcMatch[1]) {
         functionName = funcMatch[1];
         functionBody = `${line}\n`;
         braceDepth =
@@ -99,6 +99,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
       const aliasMatch = trimmed.match(/^alias\s+([a-zA-Z0-9_-]+)=(.+)$/);
       if (aliasMatch) {
         const [, name, rawValue] = aliasMatch;
+        if (!name || !rawValue) continue;
         let value = rawValue.trim();
 
         // Remove surrounding quotes if present
