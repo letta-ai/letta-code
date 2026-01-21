@@ -234,8 +234,22 @@ export function ModelSelector({
         return;
       }
 
-      if (key.tab) {
+      // Tab or left/right arrows to switch categories
+      if (key.tab || key.rightArrow) {
         cycleCategory();
+        return;
+      }
+
+      if (key.leftArrow) {
+        // Cycle backwards through categories
+        setCategory((current) => {
+          const idx = MODEL_CATEGORIES.indexOf(current);
+          return MODEL_CATEGORIES[
+            idx === 0 ? MODEL_CATEGORIES.length - 1 : idx - 1
+          ] as ModelCategory;
+        });
+        setSelectedIndex(0);
+        setSearchQuery("");
         return;
       }
 
@@ -403,7 +417,7 @@ export function ModelSelector({
             refresh
           </Text>
           <Text dimColor>
-            {"  "}Enter select · ↑↓ navigate · Tab switch · Esc cancel
+            {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
           </Text>
         </Box>
       )}

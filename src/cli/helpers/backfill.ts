@@ -1,9 +1,29 @@
 import type {
+  ImageContent,
   LettaAssistantMessageContentUnion,
   LettaUserMessageContentUnion,
   Message,
+  TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Buffers } from "./accumulator";
+
+/**
+ * Extract displayable text from tool return content.
+ * Multimodal content returns the text parts concatenated.
+ */
+function getDisplayableToolReturn(
+  content: string | Array<TextContent | ImageContent> | undefined,
+): string {
+  if (!content) return "";
+  if (typeof content === "string") {
+    return content;
+  }
+  // Extract text from multimodal content
+  return content
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
 
 // const PASTE_LINE_THRESHOLD = 5;
 // const PASTE_CHAR_THRESHOLD = 500;
@@ -238,7 +258,8 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
           // Update the existing line with the result
           // Handle both func_response (streaming) and tool_return (SDK) properties
-          const resultText =
+          // tool_return can be multimodal (string or array of content parts)
+          const rawResult =
             ("func_response" in toolReturn
               ? toolReturn.func_response
               : undefined) ||
@@ -246,6 +267,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
               ? toolReturn.tool_return
               : undefined) ||
             "";
+          const resultText = getDisplayableToolReturn(rawResult);
           buffers.byId.set(toolCallLineId, {
             ...existingLine,
             resultText,

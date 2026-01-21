@@ -236,7 +236,7 @@ const UTI_TO_MEDIA_TYPE: Record<string, string> = {
 /**
  * Import image from macOS clipboard, resize if needed, return placeholder.
  * Uses temp file approach to avoid stdout buffer limits.
- * Resizes large images to fit within API limits (2048x2048).
+ * Resizes large images to fit within API limits (2000x2000).
  */
 export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
   if (process.platform !== "darwin") return null;

@@ -13,6 +13,7 @@ import {
   fetchRunErrorDetail,
   isApprovalPendingError,
   isApprovalStateDesyncError,
+  isConversationBusyError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
 import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
@@ -31,7 +32,6 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { StreamProcessor } from "./cli/helpers/streamProcessor";
-import { getAndClearQueuedToolImages } from "./cli/helpers/toolImageRegistry";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
 import type {
@@ -59,6 +59,10 @@ import {
 // over transient LLM/backend issues without requiring the
 // caller to manually resubmit the prompt.
 const LLM_API_ERROR_MAX_RETRIES = 3;
+
+// Retry config for 409 "conversation busy" errors
+const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
+const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -935,57 +939,94 @@ export async function handleHeadlessCommand(
   // Add user prompt
   messageContent += prompt;
 
-  // Build content parts (text + any queued tool images from Read tool)
-  type ContentPart =
-    | { type: "text"; text: string }
-    | {
-        type: "image";
-        source: { type: "base64"; media_type: string; data: string };
-      };
-  const contentParts: ContentPart[] = [];
-
-  // Check for queued tool images (from Read tool reading image files)
-  const queuedToolImages = getAndClearQueuedToolImages();
-  if (queuedToolImages.length > 0) {
-    for (const img of queuedToolImages) {
-      contentParts.push({
-        type: "text",
-        text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-      });
-      contentParts.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: img.mediaType,
-          data: img.data,
-        },
-      });
-    }
-  }
-
-  // Add the text message content
-  contentParts.push({ type: "text", text: messageContent });
-
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
-      content: contentParts as unknown as MessageCreate["content"],
+      content: [{ type: "text", text: messageContent }],
     },
   ];
 
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
+  let conversationBusyRetries = 0;
 
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
   try {
     while (true) {
-      const stream = await sendMessageStream(conversationId, currentInput, {
-        agentId: agent.id,
-      });
+      // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
+      let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+      try {
+        stream = await sendMessageStream(conversationId, currentInput, {
+          agentId: agent.id,
+        });
+      } catch (preStreamError) {
+        // Extract error detail from APIError
+        let errorDetail = "";
+        if (
+          preStreamError instanceof APIError &&
+          preStreamError.error &&
+          typeof preStreamError.error === "object"
+        ) {
+          const errObj = preStreamError.error as Record<string, unknown>;
+          if (
+            errObj.error &&
+            typeof errObj.error === "object" &&
+            "detail" in errObj.error
+          ) {
+            const nested = errObj.error as Record<string, unknown>;
+            errorDetail =
+              typeof nested.detail === "string" ? nested.detail : "";
+          }
+          if (!errorDetail && typeof errObj.detail === "string") {
+            errorDetail = errObj.detail;
+          }
+        }
+        if (!errorDetail && preStreamError instanceof Error) {
+          errorDetail = preStreamError.message;
+        }
+
+        // Check for 409 "conversation busy" error - retry once with delay
+        if (
+          isConversationBusyError(errorDetail) &&
+          conversationBusyRetries < CONVERSATION_BUSY_MAX_RETRIES
+        ) {
+          conversationBusyRetries += 1;
+
+          // Emit retry message for stream-json mode
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "error", // 409 conversation busy is a pre-stream error
+              attempt: conversationBusyRetries,
+              max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
+              delay_ms: CONVERSATION_BUSY_RETRY_DELAY_MS,
+              session_id: sessionId,
+              uuid: `retry-conversation-busy-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            console.error(
+              `Conversation is busy, waiting ${CONVERSATION_BUSY_RETRY_DELAY_MS / 1000}s and retrying...`,
+            );
+          }
+
+          // Wait before retry
+          await new Promise((resolve) =>
+            setTimeout(resolve, CONVERSATION_BUSY_RETRY_DELAY_MS),
+          );
+          continue;
+        }
+
+        // Reset conversation busy retry counter on other errors
+        conversationBusyRetries = 0;
+
+        // Re-throw to outer catch for other errors
+        throw preStreamError;
+      }
 
       // For stream-json, output each chunk as it arrives
       let stopReason: StopReasonType | null = null;
@@ -1179,6 +1220,9 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        // Reset retry counters on success
+        llmApiErrorRetries = 0;
+        conversationBusyRetries = 0;
         break;
       }
 
@@ -1273,9 +1317,6 @@ export async function handleHeadlessCommand(
         );
         const executedResults = await executeApprovalBatch(decisions);
 
-        // Check for queued tool images (from Read tool reading image files)
-        const toolImages = getAndClearQueuedToolImages();
-
         // Send all results in one batch
         currentInput = [
           {
@@ -1283,36 +1324,6 @@ export async function handleHeadlessCommand(
             approvals: executedResults as ApprovalResult[],
           },
         ];
-
-        // If there are queued images, add them as a user message
-        if (toolImages.length > 0) {
-          const imageContentParts: Array<
-            | { type: "text"; text: string }
-            | {
-                type: "image";
-                source: { type: "base64"; media_type: string; data: string };
-              }
-          > = [];
-          for (const img of toolImages) {
-            imageContentParts.push({
-              type: "text",
-              text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-            });
-            imageContentParts.push({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: img.mediaType,
-                data: img.data,
-              },
-            });
-          }
-          currentInput.push({
-            role: "user",
-            content: imageContentParts as unknown as MessageCreate["content"],
-          });
-        }
-
         continue;
       }
 

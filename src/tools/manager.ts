@@ -3,7 +3,6 @@ import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../hooks";
 import { telemetry } from "../telemetry";
-import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -212,8 +211,16 @@ interface ToolDefinition {
   fn: (args: ToolArgs) => Promise<unknown>;
 }
 
+import type {
+  ImageContent,
+  TextContent,
+} from "@letta-ai/letta-client/resources/agents/messages";
+
+// Tool return content can be a string or array of text/image content parts
+export type ToolReturnContent = string | Array<TextContent | ImageContent>;
+
 export type ToolExecutionResult = {
-  toolReturn: string;
+  toolReturn: ToolReturnContent;
   status: "success" | "error";
   stdout?: string[];
   stderr?: string[];
@@ -630,7 +637,18 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-function flattenToolResponse(result: unknown): string {
+/**
+ * Check if an array contains multimodal content (text + images)
+ */
+function isMultimodalContent(
+  arr: unknown[],
+): arr is Array<TextContent | ImageContent> {
+  return arr.every(
+    (item) => isRecord(item) && (item.type === "text" || item.type === "image"),
+  );
+}
+
+function flattenToolResponse(result: unknown): ToolReturnContent {
   if (result === null || result === undefined) {
     return "";
   }
@@ -645,6 +663,11 @@ function flattenToolResponse(result: unknown): string {
 
   if (typeof result.message === "string") {
     return result.message;
+  }
+
+  // Check for multimodal content (images) - return as-is without flattening
+  if (Array.isArray(result.content) && isMultimodalContent(result.content)) {
+    return result.content;
   }
 
   if (typeof result.content === "string") {
@@ -770,14 +793,7 @@ export async function executeTool(
       }
     }
 
-    // Set execution context for tools that need it (e.g., Read for image queuing)
-    setToolExecutionContext({ toolCallId: options?.toolCallId });
-    let result: unknown;
-    try {
-      result = await tool.fn(enhancedArgs);
-    } finally {
-      setToolExecutionContext(null);
-    }
+    const result = await tool.fn(enhancedArgs);
     const duration = Date.now() - startTime;
 
     // Extract stdout/stderr if present (for bash tools)
@@ -793,12 +809,16 @@ export async function executeTool(
     // Flatten the response to plain text
     const flattenedResponse = flattenToolResponse(result);
 
-    // Track tool usage
+    // Track tool usage (calculate size for multimodal content)
+    const responseSize =
+      typeof flattenedResponse === "string"
+        ? flattenedResponse.length
+        : JSON.stringify(flattenedResponse).length;
     telemetry.trackToolUsage(
       internalName,
       toolStatus === "success",
       duration,
-      flattenedResponse.length,
+      responseSize,
       toolStatus === "error" ? "tool_error" : undefined,
       stderr ? stderr.join("\n") : undefined,
     );

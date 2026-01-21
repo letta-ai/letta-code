@@ -10,6 +10,11 @@ const APPROVAL_RECOVERY_DETAIL_FRAGMENT =
 // This is the CONFLICT error - opposite of desync
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "cannot send a new message";
 
+// Error when conversation is busy (another request is being processed)
+// This is a 409 CONFLICT when trying to send while a run is active
+const CONVERSATION_BUSY_DETAIL_FRAGMENT =
+  "another request is currently being processed";
+
 type RunErrorMetadata =
   | {
       error_type?: string;
@@ -36,6 +41,18 @@ export function isApprovalStateDesyncError(detail: unknown): boolean {
 export function isApprovalPendingError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
+}
+
+/**
+ * Check if error indicates the conversation is busy (another request is being processed).
+ * This is a 409 CONFLICT when trying to send a message while a run is still active.
+ *
+ * Error format:
+ * { detail: "CONFLICT: Cannot send a new message: Another request is currently being processed..." }
+ */
+export function isConversationBusyError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
 }
 
 export async function fetchRunErrorDetail(

@@ -26,12 +26,14 @@ import {
 import {
   type ApprovalResult,
   executeAutoAllowedTools,
+  getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
   buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
   isApprovalPendingError,
   isApprovalStateDesyncError,
+  isConversationBusyError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -70,6 +72,7 @@ import {
   savePermissionRule,
   type ToolExecutionResult,
 } from "../tools/manager";
+import { debugLog } from "../utils/debug";
 import {
   handleMcpAdd,
   handleMcpUsage,
@@ -168,10 +171,6 @@ import {
 } from "./helpers/subagentState";
 import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
 import {
-  clearQueuedToolImages,
-  getAndClearQueuedToolImages,
-} from "./helpers/toolImageRegistry";
-import {
   isFileEditTool,
   isFileWriteTool,
   isPatchTool,
@@ -203,9 +202,17 @@ const EAGER_CANCEL = true;
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
+// Retry config for 409 "conversation busy" errors
+const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
+const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
+
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
-  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report the issue.";
+  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report issues.";
+
+// Hint shown after errors to encourage feedback
+const ERROR_FEEDBACK_HINT =
+  "Something went wrong? Use /feedback to report issues.";
 
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
@@ -894,6 +901,7 @@ export default function App({
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
     filterProvider?: string;
     forceRefresh?: boolean;
@@ -901,6 +909,7 @@ export default function App({
   const closeOverlay = useCallback(() => {
     setActiveOverlay(null);
     setFeedbackPrefill("");
+    setSearchQuery("");
     setModelSelectorOptions({});
   }, []);
 
@@ -1035,6 +1044,9 @@ export default function App({
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
 
+  // Retry counter for 409 "conversation busy" errors
+  const conversationBusyRetriesRef = useRef(0);
+
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
@@ -1046,6 +1058,17 @@ export default function App({
   useEffect(() => {
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
+
+  // Epoch counter to force dequeue effect re-run when refs change but state doesn't
+  // Incremented when userCancelledRef is reset while messages are queued
+  const [dequeueEpoch, setDequeueEpoch] = useState(0);
+
+  // Track last dequeued message for restoration on error
+  // If an error occurs after dequeue, we restore this to the input field (if input is empty)
+  const lastDequeuedMessageRef = useRef<string | null>(null);
+
+  // Restored input value - set when we need to restore a message to the input after error
+  const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
   // Helper to check if agent is busy (streaming, executing tool, or running command)
   // Uses refs for synchronous access outside React's closure system
@@ -1286,6 +1309,11 @@ export default function App({
 
   // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
+
+  // Keep buffers in sync with tokenStreamingEnabled state for aggressive static promotion
+  useEffect(() => {
+    buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
+  }, [tokenStreamingEnabled]);
 
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
@@ -1773,9 +1801,10 @@ export default function App({
       }
       processingConversationRef.current += 1;
 
-      // Reset retry counter for new conversation turns (fresh budget per user message)
+      // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
+        conversationBusyRetriesRef.current = 0;
       }
 
       // Track last run ID for error reporting (accessible in catch block)
@@ -1800,11 +1829,16 @@ export default function App({
         // If we're sending a new message, old pending state is no longer relevant
         // Pass false to avoid setting interrupted=true, which causes race conditions
         // with concurrent processConversation calls reading the flag
-        markIncompleteToolsAsCancelled(
-          buffersRef.current,
-          false,
-          "internal_cancel",
-        );
+        // IMPORTANT: Skip this when allowReentry=true (continuing after tool execution)
+        // because server-side tools (like memory) may still be pending and their results
+        // will arrive in this stream. Cancelling them prematurely shows "Cancelled" in UI.
+        if (!allowReentry) {
+          markIncompleteToolsAsCancelled(
+            buffersRef.current,
+            false,
+            "internal_cancel",
+          );
+        }
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
@@ -1840,41 +1874,93 @@ export default function App({
               { agentId: agentIdRef.current },
             );
           } catch (preStreamError) {
+            // Extract error detail from APIError (handles both direct and nested structures)
+            // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
+            let errorDetail = "";
+            if (
+              preStreamError instanceof APIError &&
+              preStreamError.error &&
+              typeof preStreamError.error === "object"
+            ) {
+              const errObj = preStreamError.error as Record<string, unknown>;
+              // Check nested structure first: e.error.error.detail
+              if (
+                errObj.error &&
+                typeof errObj.error === "object" &&
+                "detail" in errObj.error
+              ) {
+                const nested = errObj.error as Record<string, unknown>;
+                errorDetail =
+                  typeof nested.detail === "string" ? nested.detail : "";
+              }
+              // Fallback to direct structure: e.error.detail
+              if (!errorDetail && typeof errObj.detail === "string") {
+                errorDetail = errObj.detail;
+              }
+            }
+            // Final fallback: use Error.message
+            if (!errorDetail && preStreamError instanceof Error) {
+              errorDetail = preStreamError.message;
+            }
+
+            // Check for 409 "conversation busy" error - retry once with delay
+            if (
+              isConversationBusyError(errorDetail) &&
+              conversationBusyRetriesRef.current < CONVERSATION_BUSY_MAX_RETRIES
+            ) {
+              conversationBusyRetriesRef.current += 1;
+
+              // Show status message
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: ["Conversation is busy, waiting and retrying…"],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              // Wait with abort checking (same pattern as LLM API error retry)
+              let cancelled = false;
+              const startTime = Date.now();
+              while (
+                Date.now() - startTime <
+                CONVERSATION_BUSY_RETRY_DELAY_MS
+              ) {
+                if (
+                  abortControllerRef.current?.signal.aborted ||
+                  userCancelledRef.current
+                ) {
+                  cancelled = true;
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+
+              // Remove status message
+              buffersRef.current.byId.delete(statusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== statusId,
+              );
+              refreshDerived();
+
+              if (!cancelled) {
+                // Reset interrupted flag so retry stream chunks are processed
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+              // User pressed ESC - fall through to error handling
+            }
+
+            // Reset conversation busy retry counter on non-busy error
+            conversationBusyRetriesRef.current = 0;
+
             // Check if this is a pre-stream approval desync error
             const hasApprovalInPayload = currentInput.some(
               (item) => item?.type === "approval",
             );
 
             if (hasApprovalInPayload) {
-              // Extract error detail from APIError (handles both direct and nested structures)
-              // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
-              let errorDetail = "";
-              if (
-                preStreamError instanceof APIError &&
-                preStreamError.error &&
-                typeof preStreamError.error === "object"
-              ) {
-                const errObj = preStreamError.error as Record<string, unknown>;
-                // Check nested structure first: e.error.error.detail
-                if (
-                  errObj.error &&
-                  typeof errObj.error === "object" &&
-                  "detail" in errObj.error
-                ) {
-                  const nested = errObj.error as Record<string, unknown>;
-                  errorDetail =
-                    typeof nested.detail === "string" ? nested.detail : "";
-                }
-                // Fallback to direct structure: e.error.detail
-                if (!errorDetail && typeof errObj.detail === "string") {
-                  errorDetail = errObj.detail;
-                }
-              }
-              // Final fallback: use Error.message
-              if (!errorDetail && preStreamError instanceof Error) {
-                errorDetail = preStreamError.message;
-              }
-
               // If desync detected and retries available, recover with keep-alive prompt
               if (
                 isApprovalStateDesyncError(errorDetail) &&
@@ -2056,6 +2142,8 @@ export default function App({
           if (stopReasonToHandle === "end_turn") {
             setStreaming(false);
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
+            conversationBusyRetriesRef.current = 0;
+            lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
 
             // Run Stop hooks (fire-and-forget)
             runStopHooks(
@@ -2082,24 +2170,18 @@ export default function App({
 
             // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
+              // Queue-cancel completed - let dequeue effect handle the messages
+              // We don't call onSubmit here because isAgentBusy() would return true
+              // (abortControllerRef is still set until finally block), causing re-queue
+              debugLog(
+                "queue",
+                "Queue-cancel completed (end_turn): messages will be processed by dequeue effect",
+              );
               if (restoreQueueOnCancelRef.current) {
-                // User hit ESC during queue cancel - abort the auto-send
                 setRestoreQueueOnCancel(false);
-                // Don't clear queue, don't send - let dequeue effect handle them one by one
-              } else {
-                // Auto-send concatenated message
-                // Clear the queue
-                setMessageQueue([]);
-
-                // Concatenate the snapshot
-                const concatenatedMessage = queueSnapshotRef.current.join("\n");
-
-                if (concatenatedMessage.trim()) {
-                  onSubmitRef.current(concatenatedMessage);
-                }
               }
 
-              // Reset flags
+              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
@@ -2121,24 +2203,18 @@ export default function App({
 
             // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {
+              // Queue-cancel completed - let dequeue effect handle the messages
+              // We don't call onSubmit here because isAgentBusy() would return true
+              // (abortControllerRef is still set until finally block), causing re-queue
+              debugLog(
+                "queue",
+                "Queue-cancel completed (cancelled): messages will be processed by dequeue effect",
+              );
               if (restoreQueueOnCancelRef.current) {
-                // User hit ESC during queue cancel - abort the auto-send
                 setRestoreQueueOnCancel(false);
-                // Don't clear queue, don't send - let dequeue effect handle them one by one
-              } else {
-                // Auto-send concatenated message
-                // Clear the queue
-                setMessageQueue([]);
-
-                // Concatenate the snapshot
-                const concatenatedMessage = queueSnapshotRef.current.join("\n");
-
-                if (concatenatedMessage.trim()) {
-                  onSubmitRef.current(concatenatedMessage);
-                }
               }
 
-              // Reset flags
+              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             } else {
@@ -2193,48 +2269,40 @@ export default function App({
             // If in quietCancel mode (user queued messages), auto-reject all approvals
             // and send denials + queued messages together
             if (waitingForQueueCancelRef.current) {
+              // Create denial results for all approvals
+              const denialResults = approvalsToProcess.map((approvalItem) => ({
+                type: "approval" as const,
+                tool_call_id: approvalItem.toolCallId,
+                approve: false,
+                reason: "User cancelled - new message queued",
+              }));
+
+              // Update buffers to show tools as cancelled
+              for (const approvalItem of approvalsToProcess) {
+                onChunk(buffersRef.current, {
+                  message_type: "tool_return_message",
+                  id: "dummy",
+                  date: new Date().toISOString(),
+                  tool_call_id: approvalItem.toolCallId,
+                  tool_return: "Cancelled - user sent new message",
+                  status: "error",
+                });
+              }
+              refreshDerived();
+
+              // Queue denial results - dequeue effect will pick them up via onSubmit
+              queueApprovalResults(denialResults);
+
+              debugLog(
+                "queue",
+                `Queue-cancel completed (requires_approval): ${denialResults.length} denial(s) queued, messages will be processed by dequeue effect`,
+              );
+
               if (restoreQueueOnCancelRef.current) {
-                // User hit ESC during queue cancel - abort the auto-send
                 setRestoreQueueOnCancel(false);
-                // Don't clear queue, don't send - let dequeue effect handle them one by one
-              } else {
-                // Create denial results for all approvals
-                const denialResults = approvalsToProcess.map(
-                  (approvalItem) => ({
-                    type: "approval" as const,
-                    tool_call_id: approvalItem.toolCallId,
-                    approve: false,
-                    reason: "User cancelled - new message queued",
-                  }),
-                );
-
-                // Update buffers to show tools as cancelled
-                for (const approvalItem of approvalsToProcess) {
-                  onChunk(buffersRef.current, {
-                    message_type: "tool_return_message",
-                    id: "dummy",
-                    date: new Date().toISOString(),
-                    tool_call_id: approvalItem.toolCallId,
-                    tool_return: "Cancelled - user sent new message",
-                    status: "error",
-                  });
-                }
-                refreshDerived();
-
-                // Queue denial results to be sent with the queued message
-                queueApprovalResults(denialResults);
-
-                // Get queued messages and clear queue
-                const concatenatedMessage = queueSnapshotRef.current.join("\n");
-                setMessageQueue([]);
-
-                // Send via onSubmit which will combine queuedApprovalResults + message
-                if (concatenatedMessage.trim()) {
-                  onSubmitRef.current(concatenatedMessage);
-                }
               }
 
-              // Reset flags
+              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
@@ -2515,27 +2583,21 @@ export default function App({
 
                 // Check if user queued messages during auto-allowed tool execution
                 if (waitingForQueueCancelRef.current) {
-                  if (restoreQueueOnCancelRef.current) {
-                    // User hit ESC during queue cancel - abort the auto-send
-                    setRestoreQueueOnCancel(false);
-                  } else {
-                    // Queue results to be sent with the queued message
-                    if (allResults.length > 0) {
-                      queueApprovalResults(allResults, autoAllowedMetadata);
-                    }
-
-                    // Get queued messages and clear queue
-                    const concatenatedMessage =
-                      queueSnapshotRef.current.join("\n");
-                    setMessageQueue([]);
-
-                    // Send via onSubmit
-                    if (concatenatedMessage.trim()) {
-                      onSubmitRef.current(concatenatedMessage);
-                    }
+                  // Queue results - dequeue effect will pick them up via onSubmit
+                  if (allResults.length > 0) {
+                    queueApprovalResults(allResults, autoAllowedMetadata);
                   }
 
-                  // Reset flags
+                  debugLog(
+                    "queue",
+                    `Queue-cancel completed (auto-allowed): ${allResults.length} result(s) queued, messages will be processed by dequeue effect`,
+                  );
+
+                  if (restoreQueueOnCancelRef.current) {
+                    setRestoreQueueOnCancel(false);
+                  }
+
+                  // Reset flags - dequeue effect will fire when streaming=false commits
                   waitingForQueueCancelRef.current = false;
                   queueSnapshotRef.current = [];
                   setStreaming(false);
@@ -2562,49 +2624,43 @@ export default function App({
 
               // Check again if user queued messages during auto-allowed tool execution
               if (waitingForQueueCancelRef.current) {
-                if (restoreQueueOnCancelRef.current) {
-                  // User hit ESC during queue cancel - abort the auto-send
-                  setRestoreQueueOnCancel(false);
-                } else {
-                  // Create denial results for tools that need user input
-                  const denialResults = needsUserInput.map((ac) => ({
-                    type: "approval" as const,
+                // Create denial results for tools that need user input
+                const denialResults = needsUserInput.map((ac) => ({
+                  type: "approval" as const,
+                  tool_call_id: ac.approval.toolCallId,
+                  approve: false,
+                  reason: "User cancelled - new message queued",
+                }));
+
+                // Update buffers to show tools as cancelled
+                for (const ac of needsUserInput) {
+                  onChunk(buffersRef.current, {
+                    message_type: "tool_return_message",
+                    id: "dummy",
+                    date: new Date().toISOString(),
                     tool_call_id: ac.approval.toolCallId,
-                    approve: false,
-                    reason: "User cancelled - new message queued",
-                  }));
+                    tool_return: "Cancelled - user sent new message",
+                    status: "error",
+                  });
+                }
+                refreshDerived();
 
-                  // Update buffers to show tools as cancelled
-                  for (const ac of needsUserInput) {
-                    onChunk(buffersRef.current, {
-                      message_type: "tool_return_message",
-                      id: "dummy",
-                      date: new Date().toISOString(),
-                      tool_call_id: ac.approval.toolCallId,
-                      tool_return: "Cancelled - user sent new message",
-                      status: "error",
-                    });
-                  }
-                  refreshDerived();
-
-                  // Combine with auto-handled results and queue for sending
-                  const queuedResults = [...allResults, ...denialResults];
-                  if (queuedResults.length > 0) {
-                    queueApprovalResults(queuedResults, autoAllowedMetadata);
-                  }
-
-                  // Get queued messages and clear queue
-                  const concatenatedMessage =
-                    queueSnapshotRef.current.join("\n");
-                  setMessageQueue([]);
-
-                  // Send via onSubmit
-                  if (concatenatedMessage.trim()) {
-                    onSubmitRef.current(concatenatedMessage);
-                  }
+                // Combine with auto-handled results and queue for sending
+                const queuedResults = [...allResults, ...denialResults];
+                if (queuedResults.length > 0) {
+                  queueApprovalResults(queuedResults, autoAllowedMetadata);
                 }
 
-                // Reset flags
+                debugLog(
+                  "queue",
+                  `Queue-cancel completed (auto-allowed+approvals): ${queuedResults.length} result(s) queued, messages will be processed by dequeue effect`,
+                );
+
+                if (restoreQueueOnCancelRef.current) {
+                  setRestoreQueueOnCancel(false);
+                }
+
+                // Reset flags - dequeue effect will fire when streaming=false commits
                 waitingForQueueCancelRef.current = false;
                 queueSnapshotRef.current = [];
                 setStreaming(false);
@@ -2737,6 +2793,16 @@ export default function App({
               lastFailureMessage ||
               `An error occurred during agent execution\n(run_id: ${lastRunId ?? "unknown"}, stop_reason: ${stopReasonToHandle})`;
             appendError(errorToShow, true);
+            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Restore dequeued message to input on error
+            if (lastDequeuedMessageRef.current) {
+              setRestoredInput(lastDequeuedMessageRef.current);
+              lastDequeuedMessageRef.current = null;
+            }
+            // Clear any remaining queue on error
+            setMessageQueue([]);
+
             setStreaming(false);
             sendDesktopNotification("Agent execution error", "error");
             refreshDerived();
@@ -2848,8 +2914,9 @@ export default function App({
             // User pressed ESC - fall through to error handling
           }
 
-          // Reset retry counter on non-retriable error (or max retries exceeded)
+          // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
+          conversationBusyRetriesRef.current = 0;
 
           // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(
@@ -2879,6 +2946,16 @@ export default function App({
               ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
               : `Stream error: ${fallbackError}`;
             appendError(errorMsg, true); // Skip telemetry - already tracked above
+            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Restore dequeued message to input on error
+            if (lastDequeuedMessageRef.current) {
+              setRestoredInput(lastDequeuedMessageRef.current);
+              lastDequeuedMessageRef.current = null;
+            }
+            // Clear any remaining queue on error
+            setMessageQueue([]);
+
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
             refreshDerived();
@@ -2911,12 +2988,14 @@ export default function App({
                   agentIdRef.current,
                 );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
+                appendError(ERROR_FEEDBACK_HINT, true);
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   true, // Skip telemetry - already tracked above
                 );
+                appendError(ERROR_FEEDBACK_HINT, true);
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -2924,6 +3003,19 @@ export default function App({
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 true, // Skip telemetry - already tracked above
               );
+              appendError(ERROR_FEEDBACK_HINT, true);
+
+              // Restore dequeued message to input on error
+              if (lastDequeuedMessageRef.current) {
+                setRestoredInput(lastDequeuedMessageRef.current);
+                lastDequeuedMessageRef.current = null;
+              }
+              // Clear any remaining queue on error
+              setMessageQueue([]);
+
+              setStreaming(false);
+              sendDesktopNotification();
+              refreshDerived();
               return;
             }
           } else {
@@ -2932,7 +3024,16 @@ export default function App({
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               true, // Skip telemetry - already tracked above
             );
+            appendError(ERROR_FEEDBACK_HINT, true);
           }
+
+          // Restore dequeued message to input on error
+          if (lastDequeuedMessageRef.current) {
+            setRestoredInput(lastDequeuedMessageRef.current);
+            lastDequeuedMessageRef.current = null;
+          }
+          // Clear any remaining queue on error
+          setMessageQueue([]);
 
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
@@ -2978,6 +3079,16 @@ export default function App({
         // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, true); // Skip telemetry - already tracked above with more context
+        appendError(ERROR_FEEDBACK_HINT, true);
+
+        // Restore dequeued message to input on error (Input component will only use if empty)
+        if (lastDequeuedMessageRef.current) {
+          setRestoredInput(lastDequeuedMessageRef.current);
+          lastDequeuedMessageRef.current = null;
+        }
+        // Clear any remaining queue on error
+        setMessageQueue([]);
+
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error
         refreshDerived();
@@ -3306,9 +3417,6 @@ export default function App({
 
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
-
-      // Clear any queued tool images from the previous agent context
-      clearQueuedToolImages();
 
       const inputCmd = "/agents";
       const cmdId = uid("cmd");
@@ -3797,44 +3905,9 @@ export default function App({
         // Send all results to server if any
         if (allResults.length > 0) {
           toolResultsInFlightRef.current = true;
-
-          // Check for queued tool images (from Read tool reading image files)
-          const toolImages = getAndClearQueuedToolImages();
-          const input: Array<MessageCreate | ApprovalCreate> = [
+          await processConversation([
             { type: "approval", approvals: allResults },
-          ];
-
-          // If there are queued images, add them as a user message
-          if (toolImages.length > 0) {
-            const imageContentParts: Array<
-              | { type: "text"; text: string }
-              | {
-                  type: "image";
-                  source: { type: "base64"; media_type: string; data: string };
-                }
-            > = [];
-            for (const img of toolImages) {
-              imageContentParts.push({
-                type: "text",
-                text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-              });
-              imageContentParts.push({
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: img.mediaType,
-                  data: img.data,
-                },
-              });
-            }
-            input.push({
-              type: "message",
-              role: "user",
-              content: imageContentParts as unknown as MessageCreate["content"],
-            });
-          }
-
-          await processConversation(input);
+          ]);
           toolResultsInFlightRef.current = false;
         }
       } finally {
@@ -3942,6 +4015,17 @@ export default function App({
       // userCancelledRef.current, so we must clear it here to prevent blocking.
       userCancelledRef.current = false;
 
+      // If there are queued messages and agent is not busy, bump epoch to trigger
+      // dequeue effect. Without this, the effect won't re-run because refs aren't
+      // in its deps array (only state values are).
+      if (!isAgentBusy() && messageQueue.length > 0) {
+        debugLog(
+          "queue",
+          `Bumping dequeueEpoch: userCancelledRef was reset, ${messageQueue.length} message(s) queued, agent not busy`,
+        );
+        setDequeueEpoch((e) => e + 1);
+      }
+
       if (isAgentBusy()) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
@@ -3957,6 +4041,10 @@ export default function App({
           ) {
             waitingForQueueCancelRef.current = true;
             queueSnapshotRef.current = [...newQueue];
+            debugLog(
+              "queue",
+              `Initiating queue-cancel: queueing "${msg.slice(0, 50)}${msg.length > 50 ? "..." : ""}", sending cancel to server`,
+            );
 
             // Abort client-side tool execution if in progress
             // This makes tool interruption visible immediately instead of waiting for completion
@@ -3978,6 +4066,28 @@ export default function App({
                 // Reset flag if cancel fails
                 waitingForQueueCancelRef.current = false;
               });
+
+            // Timeout fallback: if server cancel is slow or fails, abort client-side
+            // after 3 seconds to prevent "Thinking..." from hanging forever
+            setTimeout(() => {
+              // Only abort if we're still waiting AND stream is still active
+              // (If stream ended naturally or user pressed ESC, these will be false/null)
+              if (
+                waitingForQueueCancelRef.current &&
+                abortControllerRef.current
+              ) {
+                debugLog(
+                  "queue",
+                  "Timeout fallback: aborting stream after 3s (server cancel was slow/failed)",
+                );
+                abortControllerRef.current.abort();
+
+                // Reset flags here because the abort may cause early returns
+                // in processConversation that skip the completion handlers
+                waitingForQueueCancelRef.current = false;
+                queueSnapshotRef.current = [];
+              }
+            }, 3000);
           }
 
           return newQueue;
@@ -4502,9 +4612,6 @@ export default function App({
 
           setCommandRunning(true);
 
-          // Clear any queued tool images from the previous conversation
-          clearQueuedToolImages();
-
           try {
             const client = await getClient();
 
@@ -4604,7 +4711,8 @@ export default function App({
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "All agent messages reset",
+              output:
+                "Agent's in-context messages cleared & moved to conversation history",
               phase: "finished",
               success: true,
             });
@@ -5074,7 +5182,11 @@ export default function App({
         }
 
         // Special handling for /search command - show message search
-        if (msg.trim() === "/search") {
+        if (trimmed.startsWith("/search")) {
+          // Extract optional query after /search
+          const [, ...rest] = trimmed.split(/\s+/);
+          const query = rest.join(" ").trim();
+          setSearchQuery(query);
           setActiveOverlay("search");
           return { submitted: true };
         }
@@ -5748,37 +5860,7 @@ ${gitContext}
       }
 
       // Build message content from display value (handles placeholders for text/images)
-      let contentParts = buildMessageContentFromDisplay(msg);
-
-      // Prepend any queued tool images (from Read tool reading image files)
-      const queuedToolImages = getAndClearQueuedToolImages();
-      if (queuedToolImages.length > 0) {
-        const imageParts: Array<
-          | { type: "text"; text: string }
-          | {
-              type: "image";
-              source: { type: "base64"; media_type: string; data: string };
-            }
-        > = [];
-        for (const img of queuedToolImages) {
-          // Add system reminder text
-          imageParts.push({
-            type: "text",
-            text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-          });
-          // Add image content
-          imageParts.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: img.mediaType,
-              data: img.data,
-            },
-          });
-        }
-        // Prepend to contentParts
-        contentParts = [...imageParts, ...contentParts];
-      }
+      const contentParts = buildMessageContentFromDisplay(msg);
 
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
@@ -6542,6 +6624,10 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
   // Process queued messages when streaming ends
   useEffect(() => {
+    // Reference dequeueEpoch to satisfy exhaustive-deps - it's used to force
+    // re-runs when userCancelledRef is reset (refs aren't in deps)
+    void dequeueEpoch;
+
     if (
       !streaming &&
       messageQueue.length > 0 &&
@@ -6552,12 +6638,27 @@ DO NOT respond to these messages or otherwise consider them in your response unl
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current // Don't dequeue if user just cancelled
     ) {
-      const [firstMessage, ...rest] = messageQueue;
-      setMessageQueue(rest);
+      // Concatenate all queued messages into one (better UX when user types multiple
+      // messages quickly - they get combined into one context for the agent)
+      const concatenatedMessage = messageQueue.join("\n");
+      debugLog(
+        "queue",
+        `Dequeuing ${messageQueue.length} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
+      );
 
-      // Submit the first message using the normal submit flow
+      // Store the message before clearing queue - allows restoration on error
+      lastDequeuedMessageRef.current = concatenatedMessage;
+      setMessageQueue([]);
+
+      // Submit the concatenated message using the normal submit flow
       // This ensures all setup (reminders, UI updates, etc.) happens correctly
-      onSubmitRef.current(firstMessage);
+      onSubmitRef.current(concatenatedMessage);
+    } else if (messageQueue.length > 0) {
+      // Log why dequeue was blocked (useful for debugging stuck queues)
+      debugLog(
+        "queue",
+        `Dequeue blocked: streaming=${streaming}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}`,
+      );
     }
   }, [
     streaming,
@@ -6566,6 +6667,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
     commandRunning,
     isExecutingTool,
     anySelectorOpen,
+    dequeueEpoch, // Triggered when userCancelledRef is reset while messages are queued
   ]);
 
   // Helper to send all approval results when done
@@ -7513,7 +7615,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
           id: "dummy",
           date: new Date().toISOString(),
           tool_call_id: approval.toolCallId,
-          tool_return: toolResult.toolReturn,
+          tool_return: getDisplayableToolReturn(toolResult.toolReturn),
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
@@ -8249,6 +8351,8 @@ Plan file path: ${planFilePath}`;
                 onRalphExit={handleRalphExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
+                restoredInput={restoredInput}
+                onRestoredInputConsumed={() => setRestoredInput(null)}
               />
             </Box>
 
@@ -8579,7 +8683,10 @@ Plan file path: ${planFilePath}`;
 
             {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
-              <MessageSearch onClose={closeOverlay} />
+              <MessageSearch
+                onClose={closeOverlay}
+                initialQuery={searchQuery || undefined}
+              />
             )}
 
             {/* Feedback Dialog - conditionally mounted as overlay */}

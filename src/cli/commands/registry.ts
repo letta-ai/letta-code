@@ -61,7 +61,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/search": {
-    desc: "Search messages across all agents",
+    desc: "Search messages across all agents (/search [query])",
     order: 16,
     handler: () => {
       // Handled specially in App.tsx to show message search
