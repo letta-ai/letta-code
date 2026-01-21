@@ -8,8 +8,10 @@ import {
   mergeHooksConfigs,
   matchesTool,
   getMatchingHooks,
+  hasHooksForEvent,
+  getHooksForEvent,
 } from "../../hooks/loader";
-import type { HooksConfig } from "../../hooks/types";
+import type { HooksConfig, HookEvent } from "../../hooks/types";
 
 describe("Hooks Loader", () => {
   let tempDir: string;
@@ -263,6 +265,255 @@ describe("Hooks Loader", () => {
 
       const hooks = getMatchingHooks(config, "SessionStart", undefined);
       expect(hooks).toHaveLength(1);
+    });
+
+    test("returns hooks from multiple matchers in order", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "Bash|Edit",
+            hooks: [{ type: "command", command: "multi tool" }],
+          },
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "bash specific" }],
+          },
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "wildcard" }],
+          },
+        ],
+      };
+
+      const hooks = getMatchingHooks(config, "PreToolUse", "Bash");
+      expect(hooks).toHaveLength(3);
+      expect(hooks[0]?.command).toBe("multi tool");
+      expect(hooks[1]?.command).toBe("bash specific");
+      expect(hooks[2]?.command).toBe("wildcard");
+    });
+  });
+
+  describe("hasHooksForEvent", () => {
+    test("returns true when hooks exist for event", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "test" }],
+          },
+        ],
+      };
+
+      expect(hasHooksForEvent(config, "PreToolUse")).toBe(true);
+    });
+
+    test("returns false when no hooks for event", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "test" }],
+          },
+        ],
+      };
+
+      expect(hasHooksForEvent(config, "PostToolUse")).toBe(false);
+    });
+
+    test("returns false for empty matchers array", () => {
+      const config: HooksConfig = {
+        PreToolUse: [],
+      };
+
+      expect(hasHooksForEvent(config, "PreToolUse")).toBe(false);
+    });
+
+    test("returns false for matcher with empty hooks", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "*",
+            hooks: [],
+          },
+        ],
+      };
+
+      expect(hasHooksForEvent(config, "PreToolUse")).toBe(false);
+    });
+
+    test("returns true if any matcher has hooks", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          { matcher: "Bash", hooks: [] },
+          { matcher: "Edit", hooks: [{ type: "command", command: "test" }] },
+        ],
+      };
+
+      expect(hasHooksForEvent(config, "PreToolUse")).toBe(true);
+    });
+  });
+
+  describe("getHooksForEvent", () => {
+    test("loads and returns matching hooks", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      const settings = {
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "bash hook" }],
+            },
+          ],
+        },
+      };
+
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify(settings),
+      );
+
+      const hooks = await getHooksForEvent("PreToolUse", "Bash", tempDir);
+      expect(hooks).toHaveLength(1);
+      expect(hooks[0]?.command).toBe("bash hook");
+    });
+
+    test("returns empty for non-matching tool", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      const settings = {
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "bash hook" }],
+            },
+          ],
+        },
+      };
+
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify(settings),
+      );
+
+      const hooks = await getHooksForEvent("PreToolUse", "Edit", tempDir);
+      expect(hooks).toHaveLength(0);
+    });
+  });
+
+  describe("All 11 hook events", () => {
+    const allEvents: HookEvent[] = [
+      "PreToolUse",
+      "PostToolUse",
+      "PermissionRequest",
+      "UserPromptSubmit",
+      "Notification",
+      "Stop",
+      "SubagentStop",
+      "PreCompact",
+      "Setup",
+      "SessionStart",
+      "SessionEnd",
+    ];
+
+    test("config can have all 11 event types", () => {
+      const config: HooksConfig = {};
+      for (const event of allEvents) {
+        config[event] = [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: `echo ${event}` }],
+          },
+        ];
+      }
+
+      for (const event of allEvents) {
+        expect(hasHooksForEvent(config, event)).toBe(true);
+        const hooks = getMatchingHooks(config, event);
+        expect(hooks).toHaveLength(1);
+      }
+    });
+
+    test("merging preserves all event types", () => {
+      const global: HooksConfig = {
+        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "g1" }] }],
+        SessionStart: [{ matcher: "*", hooks: [{ type: "command", command: "g2" }] }],
+      };
+
+      const project: HooksConfig = {
+        PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "p1" }] }],
+        SessionEnd: [{ matcher: "*", hooks: [{ type: "command", command: "p2" }] }],
+      };
+
+      const merged = mergeHooksConfigs(global, project);
+
+      expect(merged.PreToolUse).toHaveLength(1);
+      expect(merged.PostToolUse).toHaveLength(1);
+      expect(merged.SessionStart).toHaveLength(1);
+      expect(merged.SessionEnd).toHaveLength(1);
+    });
+  });
+
+  describe("Edge cases", () => {
+    test("handles malformed JSON gracefully", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+      writeFileSync(join(settingsDir, "settings.json"), "{ invalid json }");
+
+      // Should not throw, returns empty config
+      const hooks = await loadProjectHooks(tempDir);
+      expect(hooks).toEqual({});
+    });
+
+    test("handles settings without hooks field", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({ someOtherSetting: true }),
+      );
+
+      const hooks = await loadProjectHooks(tempDir);
+      expect(hooks).toEqual({});
+    });
+
+    test("clearHooksCache resets cache", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "v1" }] }],
+          },
+        }),
+      );
+
+      const hooks1 = await loadProjectHooks(tempDir);
+      expect(hooks1.PreToolUse?.[0]?.hooks[0]?.command).toBe("v1");
+
+      // Update the file
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "v2" }] }],
+          },
+        }),
+      );
+
+      // Without clearing cache, should still return v1
+      const hooks2 = await loadProjectHooks(tempDir);
+      expect(hooks2.PreToolUse?.[0]?.hooks[0]?.command).toBe("v1");
+
+      // After clearing cache, should return v2
+      clearHooksCache();
+      const hooks3 = await loadProjectHooks(tempDir);
+      expect(hooks3.PreToolUse?.[0]?.hooks[0]?.command).toBe("v2");
     });
   });
 });
