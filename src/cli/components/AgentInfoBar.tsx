@@ -22,6 +22,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   serverUrl,
   conversationId,
 }: AgentInfoBarProps) {
+  const isTmux = Boolean(process.env.TMUX);
   // Check if current agent is pinned
   const isPinned = useMemo(() => {
     if (!agentId) return false;
@@ -31,6 +32,10 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   }, [agentId]);
 
   const isCloudUser = serverUrl?.includes("api.letta.com");
+  const adeUrl =
+    agentId && agentId !== "loading"
+      ? `https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`
+      : "";
   const showBottomBar = agentId && agentId !== "loading";
 
   if (!showBottomBar) {
@@ -77,13 +82,12 @@ export const AgentInfoBar = memo(function AgentInfoBar({
       </Box>
       <Box>
         <Text dimColor>{"  "}</Text>
-        {isCloudUser && (
-          <Link
-            url={`https://app.letta.com/agents/${agentId}${conversationId && conversationId !== "default" ? `?conversation=${conversationId}` : ""}`}
-          >
+        {isCloudUser && adeUrl && !isTmux && (
+          <Link url={adeUrl}>
             <Text>Open in ADE ↗</Text>
           </Link>
         )}
+        {isCloudUser && adeUrl && isTmux && <Text>Open in ADE: {adeUrl}</Text>}
         {isCloudUser && <Text dimColor>{" · "}</Text>}
         {isCloudUser && (
           <Link url="https://app.letta.com/settings/organization/usage">
