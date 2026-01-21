@@ -3,9 +3,9 @@
 
 import { spawn } from "node:child_process";
 import {
-  HookExitCode,
   type HookCommand,
   type HookExecutionResult,
+  HookExitCode,
   type HookInput,
   type HookResult,
 } from "./types";
@@ -65,6 +65,10 @@ export async function executeHookCommand(
 
       // Write JSON input to stdin
       if (child.stdin) {
+        // Handle stdin errors (e.g., EPIPE if process exits before reading)
+        child.stdin.on("error", () => {
+          // Silently ignore - process may have exited before reading stdin
+        });
         child.stdin.write(inputJson);
         child.stdin.end();
       }

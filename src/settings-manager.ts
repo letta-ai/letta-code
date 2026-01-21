@@ -56,6 +56,7 @@ export interface Settings {
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>;
+  hooks?: HooksConfig; // Project-specific hook commands (checked in)
 }
 
 export interface LocalProjectSettings {

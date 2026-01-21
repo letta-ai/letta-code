@@ -492,7 +492,12 @@ export async function checkPermissionWithHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<PermissionCheckResult> {
   // First, check permission using normal rules
-  const result = checkPermission(toolName, toolArgs, permissions, workingDirectory);
+  const result = checkPermission(
+    toolName,
+    toolArgs,
+    permissions,
+    workingDirectory,
+  );
 
   // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
   if (result.decision === "ask") {

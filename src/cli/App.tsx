@@ -44,12 +44,12 @@ import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import { INTERRUPTED_BY_USER } from "../constants";
 import {
-  runUserPromptSubmitHooks,
   runNotificationHooks,
-  runStopHooks,
   runPreCompactHooks,
-  runSessionStartHooks,
   runSessionEndHooks,
+  runSessionStartHooks,
+  runStopHooks,
+  runUserPromptSubmitHooks,
 } from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
@@ -98,6 +98,7 @@ import { colors } from "./components/colors";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
+import { HooksManager } from "./components/HooksManager";
 import { Input } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
@@ -889,6 +890,7 @@ export default function App({
     | "mcp"
     | "mcp-connect"
     | "help"
+    | "hooks"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
@@ -3911,7 +3913,9 @@ export default function App({
         buffersRef.current.byId.set(feedbackId, {
           kind: "status",
           id: feedbackId,
-          lines: [`<user-prompt-submit-hook>${feedback}</user-prompt-submit-hook>`],
+          lines: [
+            `<user-prompt-submit-hook>${feedback}</user-prompt-submit-hook>`,
+          ],
         });
         buffersRef.current.order.push(feedbackId);
         refreshDerived();
@@ -4167,6 +4171,12 @@ export default function App({
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
           setActiveOverlay("help");
+          return { submitted: true };
+        }
+
+        // Special handling for /hooks command - opens hooks manager
+        if (trimmed === "/hooks") {
+          setActiveOverlay("hooks");
           return { submitted: true };
         }
 
@@ -8631,6 +8641,11 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Hooks Manager - for managing hooks configuration */}
+            {activeOverlay === "hooks" && (
+              <HooksManager onClose={closeOverlay} />
+            )}
 
             {/* New Agent Dialog - for naming new agent before creation */}
             {activeOverlay === "new" && (

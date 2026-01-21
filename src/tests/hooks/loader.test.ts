@@ -1,30 +1,45 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   clearHooksCache,
-  loadProjectHooks,
-  mergeHooksConfigs,
-  matchesTool,
+  getHooksForEvent,
   getMatchingHooks,
   hasHooksForEvent,
-  getHooksForEvent,
+  loadHooks,
+  loadProjectHooks,
+  loadProjectLocalHooks,
+  matchesTool,
+  mergeHooksConfigs,
 } from "../../hooks/loader";
-import type { HooksConfig, HookEvent } from "../../hooks/types";
+import type { HookEvent, HooksConfig } from "../../hooks/types";
 
 describe("Hooks Loader", () => {
   let tempDir: string;
+  let fakeHome: string;
+  let originalHome: string | undefined;
 
   beforeEach(() => {
-    tempDir = join(tmpdir(), `hooks-loader-test-${Date.now()}`);
+    const baseDir = join(tmpdir(), `hooks-loader-test-${Date.now()}`);
+    // Create separate directories for HOME and project to avoid double-loading
+    fakeHome = join(baseDir, "home");
+    tempDir = join(baseDir, "project");
+    mkdirSync(fakeHome, { recursive: true });
     mkdirSync(tempDir, { recursive: true });
+    // Override HOME to isolate from real global hooks
+    originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
     clearHooksCache();
   });
 
   afterEach(() => {
+    // Restore HOME
+    process.env.HOME = originalHome;
     try {
-      rmSync(tempDir, { recursive: true, force: true });
+      // Clean up the parent directory
+      const baseDir = join(tempDir, "..");
+      rmSync(baseDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
@@ -439,13 +454,21 @@ describe("Hooks Loader", () => {
 
     test("merging preserves all event types", () => {
       const global: HooksConfig = {
-        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "g1" }] }],
-        SessionStart: [{ matcher: "*", hooks: [{ type: "command", command: "g2" }] }],
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "g1" }] },
+        ],
+        SessionStart: [
+          { matcher: "*", hooks: [{ type: "command", command: "g2" }] },
+        ],
       };
 
       const project: HooksConfig = {
-        PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "p1" }] }],
-        SessionEnd: [{ matcher: "*", hooks: [{ type: "command", command: "p2" }] }],
+        PostToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "p1" }] },
+        ],
+        SessionEnd: [
+          { matcher: "*", hooks: [{ type: "command", command: "p2" }] },
+        ],
       };
 
       const merged = mergeHooksConfigs(global, project);
@@ -488,7 +511,9 @@ describe("Hooks Loader", () => {
         join(settingsDir, "settings.json"),
         JSON.stringify({
           hooks: {
-            PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "v1" }] }],
+            PreToolUse: [
+              { matcher: "*", hooks: [{ type: "command", command: "v1" }] },
+            ],
           },
         }),
       );
@@ -501,7 +526,9 @@ describe("Hooks Loader", () => {
         join(settingsDir, "settings.json"),
         JSON.stringify({
           hooks: {
-            PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "v2" }] }],
+            PreToolUse: [
+              { matcher: "*", hooks: [{ type: "command", command: "v2" }] },
+            ],
           },
         }),
       );
@@ -514,6 +541,206 @@ describe("Hooks Loader", () => {
       clearHooksCache();
       const hooks3 = await loadProjectHooks(tempDir);
       expect(hooks3.PreToolUse?.[0]?.hooks[0]?.command).toBe("v2");
+    });
+  });
+
+  // ============================================================================
+  // Project-Local Hooks Tests (settings.local.json)
+  // ============================================================================
+
+  describe("loadProjectLocalHooks", () => {
+    test("returns empty config when no local settings file exists", async () => {
+      const hooks = await loadProjectLocalHooks(tempDir);
+      expect(hooks).toEqual({});
+    });
+
+    test("loads hooks from .letta/settings.local.json", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      const settings = {
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "echo local" }],
+            },
+          ],
+        },
+      };
+
+      writeFileSync(
+        join(settingsDir, "settings.local.json"),
+        JSON.stringify(settings),
+      );
+
+      const hooks = await loadProjectLocalHooks(tempDir);
+      expect(hooks.PreToolUse).toHaveLength(1);
+      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("echo local");
+    });
+
+    test("caches loaded local hooks", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      writeFileSync(
+        join(settingsDir, "settings.local.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: "*", hooks: [{ type: "command", command: "cached" }] },
+            ],
+          },
+        }),
+      );
+
+      const hooks1 = await loadProjectLocalHooks(tempDir);
+      const hooks2 = await loadProjectLocalHooks(tempDir);
+
+      // Should return same object from cache
+      expect(hooks1).toBe(hooks2);
+    });
+  });
+
+  describe("Merged hooks priority (local > project > global)", () => {
+    test("project-local hooks run before project hooks", () => {
+      const global: HooksConfig = {};
+      const project: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "project" }] },
+        ],
+      };
+      const projectLocal: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "local" }] },
+        ],
+      };
+
+      const merged = mergeHooksConfigs(global, project, projectLocal);
+
+      expect(merged.PreToolUse).toHaveLength(2);
+      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local"); // Local first
+      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("project"); // Project second
+    });
+
+    test("project-local hooks run before global hooks", () => {
+      const global: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "global" }] },
+        ],
+      };
+      const project: HooksConfig = {};
+      const projectLocal: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "local" }] },
+        ],
+      };
+
+      const merged = mergeHooksConfigs(global, project, projectLocal);
+
+      expect(merged.PreToolUse).toHaveLength(2);
+      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local"); // Local first
+      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("global"); // Global last
+    });
+
+    test("all three levels merge correctly", () => {
+      const global: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "global" }] },
+        ],
+        SessionEnd: [
+          { matcher: "*", hooks: [{ type: "command", command: "global-end" }] },
+        ],
+      };
+      const project: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "project" }] },
+        ],
+        PostToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "project-post" }] },
+        ],
+      };
+      const projectLocal: HooksConfig = {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "local" }] },
+        ],
+        SessionStart: [
+          { matcher: "*", hooks: [{ type: "command", command: "local-start" }] },
+        ],
+      };
+
+      const merged = mergeHooksConfigs(global, project, projectLocal);
+
+      // PreToolUse: local -> project -> global
+      expect(merged.PreToolUse).toHaveLength(3);
+      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local");
+      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("project");
+      expect(merged.PreToolUse?.[2]?.hooks[0]?.command).toBe("global");
+
+      // Others only have one source
+      expect(merged.PostToolUse).toHaveLength(1);
+      expect(merged.SessionStart).toHaveLength(1);
+      expect(merged.SessionEnd).toHaveLength(1);
+    });
+  });
+
+  describe("loadHooks (full merge)", () => {
+    test("loads and merges all three config sources", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      // Create project settings
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: "*", hooks: [{ type: "command", command: "project" }] },
+            ],
+          },
+        }),
+      );
+
+      // Create project-local settings
+      writeFileSync(
+        join(settingsDir, "settings.local.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: "*", hooks: [{ type: "command", command: "local" }] },
+            ],
+          },
+        }),
+      );
+
+      const hooks = await loadHooks(tempDir);
+
+      // Local should come before project
+      expect(hooks.PreToolUse).toHaveLength(2);
+      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("local");
+      expect(hooks.PreToolUse?.[1]?.hooks[0]?.command).toBe("project");
+    });
+
+    test("handles missing local settings gracefully", async () => {
+      const settingsDir = join(tempDir, ".letta");
+      mkdirSync(settingsDir, { recursive: true });
+
+      // Only create project settings (no local)
+      writeFileSync(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: "Bash", hooks: [{ type: "command", command: "project" }] },
+            ],
+          },
+        }),
+      );
+
+      const hooks = await loadHooks(tempDir);
+
+      expect(hooks.PreToolUse).toHaveLength(1);
+      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("project");
     });
   });
 });

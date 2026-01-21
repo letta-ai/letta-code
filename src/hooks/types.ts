@@ -10,7 +10,7 @@ export type HookEvent =
   | "PermissionRequest" // Runs when a permission dialog is shown (can allow or deny)
   | "UserPromptSubmit" // Runs when the user submits a prompt, before processing
   | "Notification" // Runs when a notification is sent
-  | "Stop" // Runs when Claude finishes responding
+  | "Stop" // Runs when the agent finishes responding
   | "SubagentStop" // Runs when subagent tasks complete
   | "PreCompact" // Runs before a compact operation
   | "Setup" // Runs when invoked with --init, --init-only, or --maintenance flags

@@ -9,10 +9,10 @@ import {
   loadHooks,
 } from "./loader";
 import {
-  HookExitCode,
   type HookCommand,
   type HookEvent,
   type HookExecutionResult,
+  HookExitCode,
   type HookInput,
   type HooksConfig,
   type NotificationHookInput,
@@ -28,9 +28,9 @@ import {
   type UserPromptSubmitHookInput,
 } from "./types";
 
+export { clearHooksCache } from "./loader";
 // Re-export types for convenience
 export * from "./types";
-export { clearHooksCache } from "./loader";
 
 // ============================================================================
 // High-level hook runner functions
@@ -46,7 +46,11 @@ export async function runPreToolUseHooks(
   toolCallId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("PreToolUse", toolName, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "PreToolUse",
+    toolName,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -74,7 +78,11 @@ export async function runPostToolUseHooks(
   toolCallId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("PostToolUse", toolName, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "PostToolUse",
+    toolName,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -103,7 +111,11 @@ export async function runPermissionRequestHooks(
   scope?: "session" | "project" | "user",
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("PermissionRequest", toolName, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "PermissionRequest",
+    toolName,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -134,7 +146,11 @@ export async function runUserPromptSubmitHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("UserPromptSubmit", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "UserPromptSubmit",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -160,7 +176,11 @@ export async function runNotificationHooks(
   level: "info" | "warning" | "error" = "info",
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("Notification", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "Notification",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -177,7 +197,7 @@ export async function runNotificationHooks(
 }
 
 /**
- * Run Stop hooks when Claude finishes responding
+ * Run Stop hooks when the agent finishes responding
  * These run in parallel and cannot block
  */
 export async function runStopHooks(
@@ -216,7 +236,11 @@ export async function runSubagentStopHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("SubagentStop", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "SubagentStop",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -247,7 +271,11 @@ export async function runPreCompactHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("PreCompact", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "PreCompact",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -295,7 +323,11 @@ export async function runSessionStartHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("SessionStart", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "SessionStart",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -323,7 +355,11 @@ export async function runSessionEndHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("SessionEnd", undefined, workingDirectory);
+  const hooks = await getHooksForEvent(
+    "SessionEnd",
+    undefined,
+    workingDirectory,
+  );
   if (hooks.length === 0) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }

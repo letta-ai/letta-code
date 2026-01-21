@@ -1,7 +1,7 @@
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
-import { runPreToolUseHooks, runPostToolUseHooks } from "../hooks";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../hooks";
 import { telemetry } from "../telemetry";
 import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";

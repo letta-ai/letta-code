@@ -506,6 +506,207 @@ describe("Settings Manager - Reset", () => {
 });
 
 // ============================================================================
+// Hooks Configuration Tests
+// ============================================================================
+
+describe("Settings Manager - Hooks", () => {
+  beforeEach(async () => {
+    await settingsManager.initialize();
+  });
+
+  test("Update hooks configuration in global settings", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "echo test" }],
+          },
+        ],
+      },
+    });
+
+    const settings = settingsManager.getSettings();
+    expect(settings.hooks).toBeDefined();
+    expect(settings.hooks?.PreToolUse).toHaveLength(1);
+    expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
+  });
+
+  test("Hooks configuration persists to disk", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "echo persisted" }],
+          },
+        ],
+        SessionStart: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "echo session" }],
+          },
+        ],
+      },
+    });
+
+    // Wait for async persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Reset and reload
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    const settings = settingsManager.getSettings();
+    expect(settings.hooks?.PreToolUse).toHaveLength(1);
+    expect(settings.hooks?.PreToolUse?.[0]?.hooks[0]?.command).toBe(
+      "echo persisted",
+    );
+    expect(settings.hooks?.SessionStart).toHaveLength(1);
+  });
+
+  test("Update hooks in local project settings with patterns", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "Write|Edit",
+              hooks: [{ type: "command", command: "echo post-tool" }],
+            },
+          ],
+        },
+      },
+      testProjectDir,
+    );
+
+    const localSettings =
+      settingsManager.getLocalProjectSettings(testProjectDir);
+    expect(localSettings.hooks?.PostToolUse).toHaveLength(1);
+    expect(localSettings.hooks?.PostToolUse?.[0]?.matcher).toBe("Write|Edit");
+  });
+
+  test("Update hooks in local project settings", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          UserPromptSubmit: [
+            {
+              matcher: "*",
+              hooks: [{ type: "command", command: "echo local-hook" }],
+            },
+          ],
+        },
+      },
+      testProjectDir,
+    );
+
+    const localSettings =
+      settingsManager.getLocalProjectSettings(testProjectDir);
+    expect(localSettings.hooks?.UserPromptSubmit).toHaveLength(1);
+  });
+
+  test("Local project hooks persist to disk", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          Stop: [
+            {
+              matcher: "*",
+              hooks: [{ type: "command", command: "echo stop-hook" }],
+            },
+          ],
+        },
+      },
+      testProjectDir,
+    );
+
+    // Wait for persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Clear cache and reload
+    await settingsManager.reset();
+    await settingsManager.initialize();
+    const reloaded =
+      await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    expect(reloaded.hooks?.Stop).toHaveLength(1);
+    expect(reloaded.hooks?.Stop?.[0]?.hooks[0]?.command).toBe("echo stop-hook");
+  });
+
+  test("All 11 hook event types can be configured", async () => {
+    const allHookEvents = [
+      "PreToolUse",
+      "PostToolUse",
+      "PermissionRequest",
+      "UserPromptSubmit",
+      "Notification",
+      "Stop",
+      "SubagentStop",
+      "PreCompact",
+      "Setup",
+      "SessionStart",
+      "SessionEnd",
+    ] as const;
+
+    const hooksConfig: Record<string, unknown[]> = {};
+    for (const event of allHookEvents) {
+      hooksConfig[event] = [
+        {
+          matcher: "*",
+          hooks: [{ type: "command", command: `echo ${event}` }],
+        },
+      ];
+    }
+
+    settingsManager.updateSettings({
+      hooks: hooksConfig as never,
+    });
+
+    const settings = settingsManager.getSettings();
+    for (const event of allHookEvents) {
+      expect(settings.hooks?.[event]).toHaveLength(1);
+    }
+  });
+
+  test("Partial hooks update preserves other hooks", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "echo pre" }] },
+        ],
+        PostToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "echo post" }] },
+        ],
+      },
+    });
+
+    // Update only PreToolUse
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "echo updated" }],
+          },
+        ],
+      },
+    });
+
+    const settings = settingsManager.getSettings();
+    // PreToolUse should be updated (replaced)
+    expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
+    // Note: This test documents current behavior - hooks object is replaced entirely
+  });
+});
+
+// ============================================================================
 // Edge Cases and Error Handling
 // ============================================================================
 

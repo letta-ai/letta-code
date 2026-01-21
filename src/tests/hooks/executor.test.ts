@@ -1,15 +1,19 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { executeHookCommand, executeHooks, executeHooksParallel } from "../../hooks/executor";
+import { join } from "node:path";
 import {
-  HookExitCode,
+  executeHookCommand,
+  executeHooks,
+  executeHooksParallel,
+} from "../../hooks/executor";
+import {
   type HookCommand,
-  type PreToolUseHookInput,
+  HookExitCode,
   type PostToolUseHookInput,
-  type StopHookInput,
+  type PreToolUseHookInput,
   type SessionStartHookInput,
+  type StopHookInput,
 } from "../../hooks/types";
 
 describe("Hooks Executor", () => {
@@ -237,7 +241,10 @@ describe("Hooks Executor", () => {
 
     test("collects feedback from blocking hooks", async () => {
       const hooks: HookCommand[] = [
-        { type: "command", command: "echo 'Reason: file is dangerous' && exit 2" },
+        {
+          type: "command",
+          command: "echo 'Reason: file is dangerous' && exit 2",
+        },
       ];
 
       const input: PreToolUseHookInput = {
@@ -255,7 +262,10 @@ describe("Hooks Executor", () => {
 
     test("collects error feedback from stderr", async () => {
       const hooks: HookCommand[] = [
-        { type: "command", command: "echo 'Configuration error' >&2 && exit 1" },
+        {
+          type: "command",
+          command: "echo 'Configuration error' >&2 && exit 1",
+        },
       ];
 
       const input: PreToolUseHookInput = {
@@ -268,7 +278,9 @@ describe("Hooks Executor", () => {
       const result = await executeHooks(hooks, input, tempDir);
 
       expect(result.errored).toBe(true);
-      expect(result.feedback.some(f => f.includes("Configuration error"))).toBe(true);
+      expect(
+        result.feedback.some((f) => f.includes("Configuration error")),
+      ).toBe(true);
     });
   });
 
@@ -420,7 +432,8 @@ describe("Hooks Executor", () => {
       // Generate a command that outputs 10KB of data
       const hook: HookCommand = {
         type: "command",
-        command: "for i in $(seq 1 1000); do echo 'line $i: some data here'; done",
+        command:
+          "for i in $(seq 1 1000); do echo 'line $i: some data here'; done",
       };
 
       const input: PreToolUseHookInput = {
@@ -496,7 +509,11 @@ exit 0`,
         tool_name: "SafeTool",
         tool_input: {},
       };
-      const allowedResult = await executeHookCommand(hook, allowedInput, tempDir);
+      const allowedResult = await executeHookCommand(
+        hook,
+        allowedInput,
+        tempDir,
+      );
       expect(allowedResult.exitCode).toBe(HookExitCode.ALLOW);
       expect(allowedResult.stdout).toContain("Allowed: SafeTool");
 
@@ -507,7 +524,11 @@ exit 0`,
         tool_name: "DangerousTool",
         tool_input: {},
       };
-      const blockedResult = await executeHookCommand(hook, blockedInput, tempDir);
+      const blockedResult = await executeHookCommand(
+        hook,
+        blockedInput,
+        tempDir,
+      );
       expect(blockedResult.exitCode).toBe(HookExitCode.BLOCK);
       expect(blockedResult.stdout).toContain("Blocked: DangerousTool");
     });

@@ -1,21 +1,17 @@
 // src/hooks/loader.ts
 // Loads and matches hooks from settings
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { exists, readFile } from "../utils/fs.js";
-import type {
-  HookCommand,
-  HookEvent,
-  HookMatcher,
-  HooksConfig,
-} from "./types";
+import type { HookCommand, HookEvent, HookMatcher, HooksConfig } from "./types";
 
 /**
  * Cache for loaded hooks configurations
  */
 let globalHooksCache: HooksConfig | null = null;
 const projectHooksCache: Map<string, HooksConfig> = new Map();
+const projectLocalHooksCache: Map<string, HooksConfig> = new Map();
 
 /**
  * Clear hooks cache (useful for testing or when settings change)
@@ -23,6 +19,7 @@ const projectHooksCache: Map<string, HooksConfig> = new Map();
 export function clearHooksCache(): void {
   globalHooksCache = null;
   projectHooksCache.clear();
+  projectLocalHooksCache.clear();
 }
 
 /**
@@ -38,6 +35,13 @@ function getGlobalSettingsPath(): string {
  */
 function getProjectSettingsPath(workingDirectory: string): string {
   return join(workingDirectory, ".letta", "settings.json");
+}
+
+/**
+ * Get the path to project-local hooks settings (gitignored)
+ */
+function getProjectLocalSettingsPath(workingDirectory: string): string {
+  return join(workingDirectory, ".letta", "settings.local.json");
 }
 
 /**
@@ -92,41 +96,64 @@ export async function loadProjectHooks(
 }
 
 /**
- * Merge hooks configurations (project hooks take precedence)
- * For each event, project matchers are prepended to global matchers
+ * Load project-local hooks configuration from .letta/settings.local.json
+ */
+export async function loadProjectLocalHooks(
+  workingDirectory: string = process.cwd(),
+): Promise<HooksConfig> {
+  const cached = projectLocalHooksCache.get(workingDirectory);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const path = getProjectLocalSettingsPath(workingDirectory);
+  const hooks = await loadHooksFromFile(path);
+  const result = hooks || {};
+  projectLocalHooksCache.set(workingDirectory, result);
+  return result;
+}
+
+/**
+ * Merge hooks configurations
+ * Priority order: project-local > project > global
+ * For each event, matchers are ordered by priority (local first, global last)
  */
 export function mergeHooksConfigs(
   global: HooksConfig,
   project: HooksConfig,
+  projectLocal: HooksConfig = {},
 ): HooksConfig {
   const merged: HooksConfig = {};
   const allEvents = new Set([
     ...Object.keys(global),
     ...Object.keys(project),
+    ...Object.keys(projectLocal),
   ]) as Set<HookEvent>;
 
   for (const event of allEvents) {
     const globalMatchers = global[event] || [];
     const projectMatchers = project[event] || [];
-    // Project matchers run first, then global
-    merged[event] = [...projectMatchers, ...globalMatchers];
+    const projectLocalMatchers = projectLocal[event] || [];
+    // Project-local matchers run first, then project, then global
+    merged[event] = [...projectLocalMatchers, ...projectMatchers, ...globalMatchers];
   }
 
   return merged;
 }
 
 /**
- * Load merged hooks configuration (global + project)
+ * Load merged hooks configuration (global + project + project-local)
  */
 export async function loadHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<HooksConfig> {
-  const [global, project] = await Promise.all([
+  const [global, project, projectLocal] = await Promise.all([
     loadGlobalHooks(),
     loadProjectHooks(workingDirectory),
+    loadProjectLocalHooks(workingDirectory),
   ]);
 
-  return mergeHooksConfigs(global, project);
+  return mergeHooksConfigs(global, project, projectLocal);
 }
 
 /**

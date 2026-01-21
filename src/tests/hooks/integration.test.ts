@@ -1,38 +1,54 @@
 // src/tests/hooks/integration.test.ts
 // Integration tests for all 11 hook types
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  runPreToolUseHooks,
-  runPostToolUseHooks,
-  runPermissionRequestHooks,
-  runUserPromptSubmitHooks,
+  clearHooksCache,
+  hasHooks,
   runNotificationHooks,
+  runPermissionRequestHooks,
+  runPostToolUseHooks,
+  runPreCompactHooks,
+  runPreToolUseHooks,
+  runSessionEndHooks,
+  runSessionStartHooks,
+  runSetupHooks,
   runStopHooks,
   runSubagentStopHooks,
-  runPreCompactHooks,
-  runSetupHooks,
-  runSessionStartHooks,
-  runSessionEndHooks,
-  hasHooks,
-  clearHooksCache,
+  runUserPromptSubmitHooks,
 } from "../../hooks";
 
 describe("Hooks Integration Tests", () => {
   let tempDir: string;
+  let fakeHome: string;
+  let originalHome: string | undefined;
 
   beforeEach(() => {
-    tempDir = join(tmpdir(), `hooks-integration-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    const baseDir = join(
+      tmpdir(),
+      `hooks-integration-${process.pid}-${Math.random().toString(36).slice(2)}`,
+    );
+    // Create separate directories for HOME and project to avoid double-loading
+    fakeHome = join(baseDir, "home");
+    tempDir = join(baseDir, "project");
+    mkdirSync(fakeHome, { recursive: true });
     mkdirSync(tempDir, { recursive: true });
+    // Override HOME to isolate from real global hooks
+    originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
     clearHooksCache();
   });
 
   afterEach(() => {
+    // Restore HOME
+    process.env.HOME = originalHome;
     try {
-      rmSync(tempDir, { recursive: true, force: true });
+      // Clean up the parent directory
+      const baseDir = join(tempDir, "..");
+      rmSync(baseDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
@@ -81,7 +97,10 @@ describe("Hooks Integration Tests", () => {
           {
             matcher: "Write",
             hooks: [
-              { type: "command", command: "echo 'Blocked: write to sensitive file' && exit 2" },
+              {
+                type: "command",
+                command: "echo 'Blocked: write to sensitive file' && exit 2",
+              },
             ],
           },
         ],
@@ -108,10 +127,20 @@ describe("Hooks Integration Tests", () => {
         ],
       });
 
-      const editResult = await runPreToolUseHooks("Edit", {}, undefined, tempDir);
+      const editResult = await runPreToolUseHooks(
+        "Edit",
+        {},
+        undefined,
+        tempDir,
+      );
       expect(editResult.results).toHaveLength(1);
 
-      const writeResult = await runPreToolUseHooks("Write", {}, undefined, tempDir);
+      const writeResult = await runPreToolUseHooks(
+        "Write",
+        {},
+        undefined,
+        tempDir,
+      );
       expect(writeResult.results).toHaveLength(1);
     });
 
@@ -233,7 +262,12 @@ describe("Hooks Integration Tests", () => {
         PermissionRequest: [
           {
             matcher: "Bash",
-            hooks: [{ type: "command", command: "echo 'Denied: dangerous command' && exit 2" }],
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Denied: dangerous command' && exit 2",
+              },
+            ],
           },
         ],
       });
@@ -306,7 +340,12 @@ describe("Hooks Integration Tests", () => {
         UserPromptSubmit: [
           {
             matcher: "*",
-            hooks: [{ type: "command", command: "echo 'Blocked: contains sensitive info' && exit 2" }],
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Blocked: contains sensitive info' && exit 2",
+              },
+            ],
           },
         ],
       });
@@ -356,12 +395,18 @@ describe("Hooks Integration Tests", () => {
         Notification: [
           {
             matcher: "*",
-            hooks: [{ type: "command", command: "echo 'notification received'" }],
+            hooks: [
+              { type: "command", command: "echo 'notification received'" },
+            ],
           },
         ],
       });
 
-      const result = await runNotificationHooks("Task completed", "info", tempDir);
+      const result = await runNotificationHooks(
+        "Task completed",
+        "info",
+        tempDir,
+      );
 
       expect(result.blocked).toBe(false);
       expect(result.results[0]?.stdout).toBe("notification received");
@@ -377,7 +422,11 @@ describe("Hooks Integration Tests", () => {
         ],
       });
 
-      const result = await runNotificationHooks("Error occurred", "error", tempDir);
+      const result = await runNotificationHooks(
+        "Error occurred",
+        "error",
+        tempDir,
+      );
 
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
       expect(parsed.message).toBe("Error occurred");
@@ -511,7 +560,9 @@ describe("Hooks Integration Tests", () => {
         PreCompact: [
           {
             matcher: "*",
-            hooks: [{ type: "command", command: "echo 'preparing to compact'" }],
+            hooks: [
+              { type: "command", command: "echo 'preparing to compact'" },
+            ],
           },
         ],
       });
@@ -532,7 +583,12 @@ describe("Hooks Integration Tests", () => {
         PreCompact: [
           {
             matcher: "*",
-            hooks: [{ type: "command", command: "echo 'Cannot compact now' && exit 2" }],
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Cannot compact now' && exit 2",
+              },
+            ],
           },
         ],
       });
@@ -559,7 +615,13 @@ describe("Hooks Integration Tests", () => {
         ],
       });
 
-      const result = await runPreCompactHooks(75000, 100000, undefined, undefined, tempDir);
+      const result = await runPreCompactHooks(
+        75000,
+        100000,
+        undefined,
+        undefined,
+        tempDir,
+      );
 
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
       expect(parsed.context_length).toBe(75000);
@@ -736,7 +798,14 @@ describe("Hooks Integration Tests", () => {
       });
 
       const start = Date.now();
-      const result = await runSessionEndHooks(1000, 1, 1, undefined, undefined, tempDir);
+      const result = await runSessionEndHooks(
+        1000,
+        1,
+        1,
+        undefined,
+        undefined,
+        tempDir,
+      );
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
