@@ -135,7 +135,11 @@ export function mergeHooksConfigs(
     const projectMatchers = project[event] || [];
     const projectLocalMatchers = projectLocal[event] || [];
     // Project-local matchers run first, then project, then global
-    merged[event] = [...projectLocalMatchers, ...projectMatchers, ...globalMatchers];
+    merged[event] = [
+      ...projectLocalMatchers,
+      ...projectMatchers,
+      ...globalMatchers,
+    ];
   }
 
   return merged;

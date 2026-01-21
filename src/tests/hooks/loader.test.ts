@@ -657,7 +657,10 @@ describe("Hooks Loader", () => {
           { matcher: "*", hooks: [{ type: "command", command: "project" }] },
         ],
         PostToolUse: [
-          { matcher: "*", hooks: [{ type: "command", command: "project-post" }] },
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "project-post" }],
+          },
         ],
       };
       const projectLocal: HooksConfig = {
@@ -665,7 +668,10 @@ describe("Hooks Loader", () => {
           { matcher: "*", hooks: [{ type: "command", command: "local" }] },
         ],
         SessionStart: [
-          { matcher: "*", hooks: [{ type: "command", command: "local-start" }] },
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "local-start" }],
+          },
         ],
       };
 
@@ -695,7 +701,10 @@ describe("Hooks Loader", () => {
         JSON.stringify({
           hooks: {
             PreToolUse: [
-              { matcher: "*", hooks: [{ type: "command", command: "project" }] },
+              {
+                matcher: "*",
+                hooks: [{ type: "command", command: "project" }],
+              },
             ],
           },
         }),
@@ -731,7 +740,10 @@ describe("Hooks Loader", () => {
         JSON.stringify({
           hooks: {
             PreToolUse: [
-              { matcher: "Bash", hooks: [{ type: "command", command: "project" }] },
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: "project" }],
+              },
             ],
           },
         }),

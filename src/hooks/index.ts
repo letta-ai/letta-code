@@ -2,30 +2,21 @@
 // Main hooks module - provides high-level API for running hooks
 
 import { executeHooks, executeHooksParallel } from "./executor";
-import {
-  clearHooksCache,
-  getHooksForEvent,
-  hasHooksForEvent,
-  loadHooks,
-} from "./loader";
-import {
-  type HookCommand,
-  type HookEvent,
-  type HookExecutionResult,
-  HookExitCode,
-  type HookInput,
-  type HooksConfig,
-  type NotificationHookInput,
-  type PermissionRequestHookInput,
-  type PostToolUseHookInput,
-  type PreCompactHookInput,
-  type PreToolUseHookInput,
-  type SessionEndHookInput,
-  type SessionStartHookInput,
-  type SetupHookInput,
-  type StopHookInput,
-  type SubagentStopHookInput,
-  type UserPromptSubmitHookInput,
+import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
+import type {
+  HookEvent,
+  HookExecutionResult,
+  NotificationHookInput,
+  PermissionRequestHookInput,
+  PostToolUseHookInput,
+  PreCompactHookInput,
+  PreToolUseHookInput,
+  SessionEndHookInput,
+  SessionStartHookInput,
+  SetupHookInput,
+  StopHookInput,
+  SubagentStopHookInput,
+  UserPromptSubmitHookInput,
 } from "./types";
 
 export { clearHooksCache } from "./loader";

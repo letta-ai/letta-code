@@ -22,9 +22,13 @@ export function loadHooksFromLocation(
       case "user":
         return settingsManager.getSettings().hooks || {};
       case "project":
-        return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
+        return (
+          settingsManager.getProjectSettings(workingDirectory)?.hooks || {}
+        );
       case "project-local":
-        return settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {};
+        return (
+          settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {}
+        );
     }
   } catch {
     // Settings not loaded yet, return empty
@@ -107,7 +111,11 @@ export async function removeHookMatcher(
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event];
 
-  if (!eventMatchers || matcherIndex < 0 || matcherIndex >= eventMatchers.length) {
+  if (
+    !eventMatchers ||
+    matcherIndex < 0 ||
+    matcherIndex >= eventMatchers.length
+  ) {
     throw new Error(`Invalid matcher index ${matcherIndex} for event ${event}`);
   }
 
@@ -135,7 +143,11 @@ export async function updateHookMatcher(
   const hooks = loadHooksFromLocation(location, workingDirectory);
   const eventMatchers = hooks[event];
 
-  if (!eventMatchers || matcherIndex < 0 || matcherIndex >= eventMatchers.length) {
+  if (
+    !eventMatchers ||
+    matcherIndex < 0 ||
+    matcherIndex >= eventMatchers.length
+  ) {
     throw new Error(`Invalid matcher index ${matcherIndex} for event ${event}`);
   }
 
@@ -171,11 +183,14 @@ export function loadHooksWithSource(
     const matchers = hooks[event] || [];
 
     for (let i = 0; i < matchers.length; i++) {
-      result.push({
-        ...matchers[i],
-        source: location,
-        sourceIndex: i,
-      });
+      const matcher = matchers[i];
+      if (matcher) {
+        result.push({
+          ...matcher,
+          source: location,
+          sourceIndex: i,
+        });
+      }
     }
   }
 

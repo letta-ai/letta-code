@@ -179,7 +179,14 @@ export const HooksManager = memo(function HooksManager({
     setSelectedLocation(0);
     setScreen("matchers");
     setSelectedIndex(0);
-  }, [selectedEvent, newMatcher, newCommand, selectedLocation, loadMatchers, refreshCounts]);
+  }, [
+    selectedEvent,
+    newMatcher,
+    newCommand,
+    selectedLocation,
+    loadMatchers,
+    refreshCounts,
+  ]);
 
   // Handle deleting a hook
   const handleDeleteHook = useCallback(async () => {
@@ -196,7 +203,13 @@ export const HooksManager = memo(function HooksManager({
     setDeleteMatcherIndex(-1);
     setScreen("matchers");
     setSelectedIndex(0);
-  }, [deleteMatcherIndex, selectedEvent, matchers, loadMatchers, refreshCounts]);
+  }, [
+    deleteMatcherIndex,
+    selectedEvent,
+    matchers,
+    loadMatchers,
+    refreshCounts,
+  ]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel

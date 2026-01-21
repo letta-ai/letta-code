@@ -54,10 +54,7 @@ function cleanup(env: TestEnv): void {
 /**
  * Write hooks config to project settings
  */
-function writeHooksConfig(
-  env: TestEnv,
-  hooks: Record<string, unknown>,
-): void {
+function writeHooksConfig(env: TestEnv, hooks: Record<string, unknown>): void {
   writeFileSync(
     join(env.projectDir, ".letta", "settings.json"),
     JSON.stringify({ hooks }),
@@ -308,14 +305,7 @@ describe("Hooks E2E Tests", () => {
         });
 
         await runCli(
-          [
-            "--new-agent",
-            "-m",
-            "haiku",
-            "--yolo",
-            "-p",
-            "Read /etc/hostname",
-          ],
+          ["--new-agent", "-m", "haiku", "--yolo", "-p", "Read /etc/hostname"],
           env,
         );
 
@@ -360,14 +350,7 @@ describe("Hooks E2E Tests", () => {
         });
 
         await runCli(
-          [
-            "--new-agent",
-            "-m",
-            "haiku",
-            "--yolo",
-            "-p",
-            "Read /etc/hostname",
-          ],
+          ["--new-agent", "-m", "haiku", "--yolo", "-p", "Read /etc/hostname"],
           env,
         );
 
@@ -402,14 +385,7 @@ describe("Hooks E2E Tests", () => {
         });
 
         await runCli(
-          [
-            "--new-agent",
-            "-m",
-            "haiku",
-            "--yolo",
-            "-p",
-            "Read /etc/hostname",
-          ],
+          ["--new-agent", "-m", "haiku", "--yolo", "-p", "Read /etc/hostname"],
           env,
         );
 
@@ -455,10 +431,7 @@ describe("Hooks E2E Tests", () => {
           ],
         });
 
-        await runCli(
-          ["--new-agent", "-m", "haiku", "-p", "Say OK"],
-          env,
-        );
+        await runCli(["--new-agent", "-m", "haiku", "-p", "Say OK"], env);
 
         const marker = readMarker(env);
         expect(marker).toContain("SessionStart:FIRED");
@@ -490,10 +463,7 @@ describe("Hooks E2E Tests", () => {
           ],
         });
 
-        await runCli(
-          ["--new-agent", "-m", "haiku", "-p", "Say OK"],
-          env,
-        );
+        await runCli(["--new-agent", "-m", "haiku", "-p", "Say OK"], env);
 
         if (existsSync(inputFile)) {
           const input = JSON.parse(readFileSync(inputFile, "utf-8"));
@@ -663,14 +633,7 @@ describe("Hooks E2E Tests", () => {
         });
 
         await runCli(
-          [
-            "--new-agent",
-            "-m",
-            "haiku",
-            "--yolo",
-            "-p",
-            "Read /etc/hostname",
-          ],
+          ["--new-agent", "-m", "haiku", "--yolo", "-p", "Read /etc/hostname"],
           env,
         );
 
