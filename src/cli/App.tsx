@@ -3433,7 +3433,7 @@ export default function App({
   );
 
   // Handle bash mode command submission
-  // Uses the same shell runner as the Bash tool for consistency
+  // Expands aliases from shell config files, then runs with spawnCommand
   const handleBashSubmit = useCallback(
     async (command: string) => {
       const cmdId = uid("bash");
@@ -3458,11 +3458,20 @@ export default function App({
       refreshDerived();
 
       try {
-        // Use the same spawnCommand as the Bash tool for consistent behavior
+        // Expand aliases before running
+        const { expandAliases } = await import("./helpers/shellAliases");
+        const expanded = expandAliases(command);
+
+        // If command uses a shell function, prepend the function definition
+        const finalCommand = expanded.functionDef
+          ? `${expanded.functionDef}\n${expanded.command}`
+          : expanded.command;
+
+        // Use spawnCommand for actual execution
         const { spawnCommand } = await import("../tools/impl/Bash.js");
         const { getShellEnv } = await import("../tools/impl/shellEnv.js");
 
-        const result = await spawnCommand(command, {
+        const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),
           env: getShellEnv(),
           timeout: 30000, // 30 second timeout

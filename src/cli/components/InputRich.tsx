@@ -591,7 +591,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      setIsBashMode(false); // Exit bash mode after submitting
+      // Stay in bash mode - user exits with backspace on empty input
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
