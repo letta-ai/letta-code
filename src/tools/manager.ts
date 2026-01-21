@@ -1,6 +1,12 @@
 import { getModelInfo } from "../agent/model";
 import { getAllSubagentConfigs } from "../agent/subagents";
 import { INTERRUPTED_BY_USER } from "../constants";
+import {
+  buildPostToolUseInput,
+  buildPreToolUseInput,
+  hasHooksFor,
+  runHooks,
+} from "../hooks";
 import { telemetry } from "../telemetry";
 import { setToolExecutionContext } from "./toolContext";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
@@ -711,6 +717,7 @@ export async function executeTool(
   options?: {
     signal?: AbortSignal;
     toolCallId?: string;
+    sessionId?: string;
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   },
 ): Promise<ToolExecutionResult> {
@@ -731,6 +738,35 @@ export async function executeTool(
   }
 
   const startTime = Date.now();
+  const sessionId = options?.sessionId || "";
+  const toolCallId = options?.toolCallId || crypto.randomUUID();
+
+  // Run PreToolUse hooks if configured
+  if (sessionId && hasHooksFor("PreToolUse", internalName)) {
+    const hookInput = buildPreToolUseInput(sessionId, internalName, args, toolCallId);
+    const hookResult = await runHooks("PreToolUse", hookInput, internalName);
+
+    // Check if hooks blocked the tool
+    if (hookResult.blocked) {
+      return {
+        toolReturn: `Tool blocked by hook: ${hookResult.blockReason || "No reason provided"}`,
+        status: "error",
+      };
+    }
+
+    // Check permission decision from hooks
+    if (hookResult.permissionDecision === "deny") {
+      return {
+        toolReturn: `Tool denied by hook: ${hookResult.permissionDecisionReason || "No reason provided"}`,
+        status: "error",
+      };
+    }
+
+    // Apply updated input if provided
+    if (hookResult.updatedInput) {
+      args = { ...args, ...hookResult.updatedInput };
+    }
+  }
 
   try {
     // Inject options for tools that support them without altering schemas
@@ -788,9 +824,29 @@ export async function executeTool(
       stderr ? stderr.join("\n") : undefined,
     );
 
+    // Run PostToolUse hooks if configured
+    let additionalFeedback = "";
+    if (sessionId && hasHooksFor("PostToolUse", internalName)) {
+      const hookInput = buildPostToolUseInput(
+        sessionId,
+        internalName,
+        args,
+        result,
+        toolCallId,
+      );
+      const hookResult = await runHooks("PostToolUse", hookInput, internalName);
+
+      // Check if hooks provided feedback to inject
+      if (hookResult.blocked && hookResult.blockReason) {
+        additionalFeedback = `\n\n[Hook feedback]: ${hookResult.blockReason}`;
+      } else if (hookResult.additionalContext) {
+        additionalFeedback = `\n\n[Hook context]: ${hookResult.additionalContext}`;
+      }
+    }
+
     // Return the full response (truncation happens in UI layer only)
     return {
-      toolReturn: flattenedResponse,
+      toolReturn: flattenedResponse + additionalFeedback,
       status: toolStatus,
       ...(stdout && { stdout }),
       ...(stderr && { stderr }),

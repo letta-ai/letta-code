@@ -67,6 +67,12 @@ export async function handleHeadlessCommand(
 ) {
   const settings = settingsManager.getSettings();
 
+  // Initialize hooks system if not already done
+  const { initializeHooks, getHooksConfig } = await import("./hooks/loader");
+  if (Object.keys(getHooksConfig()).length === 0) {
+    await initializeHooks(process.cwd());
+  }
+
   // Parse CLI args
   // Include all flags from index.ts to prevent them from being treated as positionals
   const { values, positionals } = parseArgs({
@@ -915,10 +921,46 @@ export async function handleHeadlessCommand(
     await resolveAllPendingApprovals();
   }
 
+  // Run UserPromptSubmit hooks if configured
+  const { buildUserPromptSubmitInput, hasHooksFor, runHooks } = await import(
+    "./hooks"
+  );
+  let hookContext = "";
+  if (hasHooksFor("UserPromptSubmit")) {
+    const hookInput = buildUserPromptSubmitInput(agent.id, prompt);
+    const hookResult = await runHooks("UserPromptSubmit", hookInput);
+
+    // Check if hooks blocked the prompt
+    if (hookResult.blocked) {
+      console.error(
+        `Prompt blocked by hook: ${hookResult.blockReason || "No reason provided"}`,
+      );
+      process.exit(1);
+    }
+
+    // Check if hooks want to stop processing
+    if (!hookResult.shouldContinue) {
+      console.error(
+        `Prompt processing stopped by hook: ${hookResult.stopReason || "No reason provided"}`,
+      );
+      process.exit(1);
+    }
+
+    // Collect additional context from hooks
+    if (hookResult.additionalContext) {
+      hookContext = hookResult.additionalContext + "\n\n";
+    }
+  }
+
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
   const { hasLoadedSkills } = await import("./agent/context");
   let messageContent = "";
+
+  // Add hook context if any
+  if (hookContext) {
+    messageContent += hookContext;
+  }
 
   // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {
@@ -1179,6 +1221,26 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        // Run Stop hooks to check if agent should continue
+        const { buildStopInput, hasHooksFor: hasStopHooks, runHooks: runStopHooks } = await import(
+          "./hooks"
+        );
+        if (hasStopHooks("Stop")) {
+          const stopHookInput = buildStopInput(agent.id, false);
+          const stopHookResult = await runStopHooks("Stop", stopHookInput);
+
+          // If hooks blocked the stop, continue the agent loop with reason
+          if (stopHookResult.blocked && stopHookResult.blockReason) {
+            // Send a user message to continue the agent with the reason
+            currentInput = [
+              {
+                role: "user",
+                content: `<system-reminder>Stop hook: ${stopHookResult.blockReason}</system-reminder>`,
+              },
+            ];
+            continue;
+          }
+        }
         break;
       }
 

@@ -4551,6 +4551,27 @@ export default function App({
           setCommandRunning(true);
 
           try {
+            // Run PreCompact hooks before compaction
+            const { buildPreCompactInput, hasHooksFor, runHooks } = await import("../hooks");
+            if (hasHooksFor("PreCompact")) {
+              const hookInput = buildPreCompactInput(agentId, "manual", "");
+              const hookResult = await runHooks("PreCompact", hookInput);
+              
+              if (hookResult.blocked) {
+                buffersRef.current.byId.set(cmdId, {
+                  kind: "command",
+                  id: cmdId,
+                  input: msg,
+                  output: `Compaction blocked by hook${hookResult.blockReason ? `: ${hookResult.blockReason}` : ""}`,
+                  phase: "finished",
+                  success: false,
+                });
+                refreshDerived();
+                setCommandRunning(false);
+                return { submitted: true };
+              }
+            }
+
             const client = await getClient();
             // SDK types are out of date - compact returns CompactionResponse, not void
             const result = (await client.agents.messages.compact(

@@ -201,6 +201,37 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/hooks": {
+    desc: "View current hooks configuration",
+    order: 36,
+    handler: async () => {
+      const { getHooksConfig } = await import("../../hooks/loader");
+      const config = getHooksConfig();
+
+      if (Object.keys(config).length === 0) {
+        return "No hooks configured.\n\nHooks can be configured in:\n  - ~/.letta/settings.json (user settings)\n  - .letta/settings.json (project settings)\n  - .letta/settings.local.json (local project settings)";
+      }
+
+      const lines: string[] = ["Current hooks configuration:\n"];
+
+      for (const [eventName, matchers] of Object.entries(config)) {
+        if (!matchers || matchers.length === 0) continue;
+
+        lines.push(`${eventName}:`);
+        for (const matcher of matchers) {
+          const matcherStr = matcher.matcher ? `[${matcher.matcher}]` : "[*]";
+          lines.push(`  ${matcherStr}:`);
+          for (const hook of matcher.hooks) {
+            const timeout = hook.timeout ? ` (${hook.timeout}s timeout)` : "";
+            lines.push(`    - ${hook.command}${timeout}`);
+          }
+        }
+        lines.push("");
+      }
+
+      return lines.join("\n");
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
     order: 36,

@@ -713,7 +713,7 @@ export async function spawnSubagent(
   }
 
   // Execute subagent - state updates are handled via the state store
-  const result = await executeSubagent(
+  let result = await executeSubagent(
     type,
     config,
     model,
@@ -725,6 +725,33 @@ export async function spawnSubagent(
     existingAgentId,
     existingConversationId,
   );
+
+  // Run SubagentStop hooks to check if subagent should continue
+  const { buildSubagentStopInput, hasHooksFor, runHooks } = await import(
+    "../../hooks"
+  );
+  if (result.success && hasHooksFor("SubagentStop")) {
+    const parentAgentId = getCurrentAgentId();
+    const hookInput = buildSubagentStopInput(parentAgentId, false);
+    const hookResult = await runHooks("SubagentStop", hookInput);
+
+    // If hooks blocked the stop, re-execute subagent with reason
+    if (hookResult.blocked && hookResult.blockReason) {
+      const continuationPrompt = `<system-reminder>SubagentStop hook: ${hookResult.blockReason}</system-reminder>\n\nPlease continue your work.`;
+      result = await executeSubagent(
+        type,
+        config,
+        model,
+        continuationPrompt,
+        baseURL,
+        subagentId,
+        false,
+        signal,
+        result.agentId, // Continue with same agent
+        result.conversationId, // Continue same conversation
+      );
+    }
+  }
 
   return result;
 }
