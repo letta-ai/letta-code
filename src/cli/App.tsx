@@ -199,7 +199,7 @@ const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
-  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report the issue.";
+  "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report issues.";
 
 // Hint shown after errors to encourage feedback
 const ERROR_FEEDBACK_HINT =
