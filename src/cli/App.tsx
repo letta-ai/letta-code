@@ -4512,7 +4512,7 @@ export default function App({
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "All agent messages reset",
+              output: "Agent's in-context messages cleared & moved to conversation history",
               phase: "finished",
               success: true,
             });
