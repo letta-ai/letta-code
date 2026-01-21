@@ -31,7 +31,6 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { StreamProcessor } from "./cli/helpers/streamProcessor";
-import { getAndClearQueuedToolImages } from "./cli/helpers/toolImageRegistry";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
 import type {
@@ -935,42 +934,11 @@ export async function handleHeadlessCommand(
   // Add user prompt
   messageContent += prompt;
 
-  // Build content parts (text + any queued tool images from Read tool)
-  type ContentPart =
-    | { type: "text"; text: string }
-    | {
-        type: "image";
-        source: { type: "base64"; media_type: string; data: string };
-      };
-  const contentParts: ContentPart[] = [];
-
-  // Check for queued tool images (from Read tool reading image files)
-  const queuedToolImages = getAndClearQueuedToolImages();
-  if (queuedToolImages.length > 0) {
-    for (const img of queuedToolImages) {
-      contentParts.push({
-        type: "text",
-        text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-      });
-      contentParts.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: img.mediaType,
-          data: img.data,
-        },
-      });
-    }
-  }
-
-  // Add the text message content
-  contentParts.push({ type: "text", text: messageContent });
-
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
-      content: contentParts as unknown as MessageCreate["content"],
+      content: [{ type: "text", text: messageContent }],
     },
   ];
 
@@ -1273,9 +1241,6 @@ export async function handleHeadlessCommand(
         );
         const executedResults = await executeApprovalBatch(decisions);
 
-        // Check for queued tool images (from Read tool reading image files)
-        const toolImages = getAndClearQueuedToolImages();
-
         // Send all results in one batch
         currentInput = [
           {
@@ -1283,36 +1248,6 @@ export async function handleHeadlessCommand(
             approvals: executedResults as ApprovalResult[],
           },
         ];
-
-        // If there are queued images, add them as a user message
-        if (toolImages.length > 0) {
-          const imageContentParts: Array<
-            | { type: "text"; text: string }
-            | {
-                type: "image";
-                source: { type: "base64"; media_type: string; data: string };
-              }
-          > = [];
-          for (const img of toolImages) {
-            imageContentParts.push({
-              type: "text",
-              text: `<system-reminder>Image read from ${img.filePath} (Read tool call: ${img.toolCallId}):</system-reminder>`,
-            });
-            imageContentParts.push({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: img.mediaType,
-                data: img.data,
-              },
-            });
-          }
-          currentInput.push({
-            role: "user",
-            content: imageContentParts as unknown as MessageCreate["content"],
-          });
-        }
-
         continue;
       }
 
