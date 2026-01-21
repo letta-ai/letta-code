@@ -1234,6 +1234,11 @@ export default function App({
   // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
 
+  // Keep buffers in sync with tokenStreamingEnabled state for aggressive static promotion
+  useEffect(() => {
+    buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
+  }, [tokenStreamingEnabled]);
+
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
