@@ -31,7 +31,7 @@ const ALIAS_FILES = [
  */
 function parseAliasesFromFile(filePath: string): Map<string, string> {
   const aliases = new Map<string, string>();
-  
+
   if (!existsSync(filePath)) {
     return aliases;
   }
@@ -53,7 +53,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         functionBody += line + "\n";
         braceDepth += (line.match(/{/g) || []).length;
         braceDepth -= (line.match(/}/g) || []).length;
-        
+
         if (braceDepth === 0) {
           // Function complete - store it
           // Functions are stored with a special marker so we know to source them
@@ -64,23 +64,29 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         }
         continue;
       }
-      
+
       // Skip comments and empty lines
       if (trimmed.startsWith("#") || !trimmed) {
         continue;
       }
 
       // Match function definitions: name() { or function name {
-      const funcMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?/) ||
-                        trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{?/);
+      const funcMatch =
+        trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\)\s*\{?/) ||
+        trimmed.match(/^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{?/);
       if (funcMatch) {
         functionName = funcMatch[1];
         functionBody = line + "\n";
-        braceDepth = (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
-        
+        braceDepth =
+          (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+
         if (braceDepth > 0) {
           inFunction = true;
-        } else if (braceDepth === 0 && line.includes("{") && line.includes("}")) {
+        } else if (
+          braceDepth === 0 &&
+          line.includes("{") &&
+          line.includes("}")
+        ) {
           // One-liner function
           aliases.set(functionName, `__LETTA_FUNC__${functionBody}`);
           functionName = "";
@@ -96,8 +102,10 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         let value = rawValue.trim();
 
         // Remove surrounding quotes if present
-        if ((value.startsWith("'") && value.endsWith("'")) ||
-            (value.startsWith('"') && value.endsWith('"'))) {
+        if (
+          (value.startsWith("'") && value.endsWith("'")) ||
+          (value.startsWith('"') && value.endsWith('"'))
+        ) {
           value = value.slice(1, -1);
         }
 
@@ -131,7 +139,7 @@ export function loadAliases(forceReload = false): Map<string, string> {
   for (const file of ALIAS_FILES) {
     const filePath = join(home, file);
     const fileAliases = parseAliasesFromFile(filePath);
-    
+
     // Later files override earlier ones
     for (const [name, value] of fileAliases) {
       allAliases.set(name, value);
@@ -160,18 +168,19 @@ export interface ExpandedCommand {
  */
 export function expandAliases(command: string, maxDepth = 10): ExpandedCommand {
   const aliases = loadAliases();
-  
+
   if (aliases.size === 0) {
     return { command };
   }
 
   const trimmed = command.trim();
   const firstSpaceIdx = trimmed.indexOf(" ");
-  const firstWord = firstSpaceIdx === -1 ? trimmed : trimmed.slice(0, firstSpaceIdx);
+  const firstWord =
+    firstSpaceIdx === -1 ? trimmed : trimmed.slice(0, firstSpaceIdx);
   const rest = firstSpaceIdx === -1 ? "" : trimmed.slice(firstSpaceIdx);
 
   const aliasValue = aliases.get(firstWord);
-  
+
   // Check if it's a function
   if (aliasValue?.startsWith("__LETTA_FUNC__")) {
     const functionDef = aliasValue.slice("__LETTA_FUNC__".length);
@@ -191,8 +200,14 @@ export function expandAliases(command: string, maxDepth = 10): ExpandedCommand {
   while (depth < maxDepth) {
     const expandedTrimmed = expanded.trim();
     const expandedFirstSpace = expandedTrimmed.indexOf(" ");
-    const expandedFirstWord = expandedFirstSpace === -1 ? expandedTrimmed : expandedTrimmed.slice(0, expandedFirstSpace);
-    const expandedRest = expandedFirstSpace === -1 ? "" : expandedTrimmed.slice(expandedFirstSpace);
+    const expandedFirstWord =
+      expandedFirstSpace === -1
+        ? expandedTrimmed
+        : expandedTrimmed.slice(0, expandedFirstSpace);
+    const expandedRest =
+      expandedFirstSpace === -1
+        ? ""
+        : expandedTrimmed.slice(expandedFirstSpace);
 
     const nextAlias = aliases.get(expandedFirstWord);
     if (!nextAlias || nextAlias.startsWith("__LETTA_FUNC__")) {
