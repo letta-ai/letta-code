@@ -25,6 +25,15 @@ interface SkillResult {
   message: string;
 }
 
+function coreMemoryBlockEditedMessage(label: string): string {
+  return (
+    `The core memory block with label \`${label}\` has been successfully edited. ` +
+    "Your system prompt has been recompiled with the updated memory contents and is now active in your context. " +
+    "Review the changes and make sure they are as expected (correct indentation, " +
+    "no duplicate lines, etc). Edit the memory block again if necessary."
+  );
+}
+
 /**
  * Parse loaded_skills block content to extract skill IDs and their content boundaries
  */
@@ -244,9 +253,12 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
         value: formattedSkills,
       });
 
-      return {
-        message: `Refreshed skills list: found ${skills.length} skill(s)${errors.length > 0 ? `, ${errors.length} error(s)` : ""}`,
-      };
+      const successMsg =
+        coreMemoryBlockEditedMessage("skills") +
+        ` Found ${skills.length} skill(s)` +
+        (errors.length > 0 ? ` with ${errors.length} error(s) during discovery.` : ".");
+
+      return { message: successMsg };
     }
 
     // Retrieve the loaded_skills block for load/unload
@@ -267,18 +279,18 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
     let currentValue = loadedSkillsBlock.value?.trim() || "";
     const loadedSkillIds = getLoadedSkillIds(currentValue);
-    const results: string[] = [];
 
     // skillIds is guaranteed to be non-empty for load/unload (validated above)
     const skillsToProcess = skillIds as string[];
 
     if (command === "load") {
-      // Load skills - track which ones were prepared successfully
-      const preparedSkills: string[] = [];
+      const loaded: string[] = [];
+      const alreadyLoaded: string[] = [];
+      const failed: { id: string; error: string }[] = [];
 
       for (const skillId of skillsToProcess) {
         if (loadedSkillIds.includes(skillId)) {
-          results.push(`"${skillId}" already loaded`);
+          alreadyLoaded.push(skillId);
           continue;
         }
 
@@ -310,99 +322,148 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
           const separator = currentValue ? "\n\n---\n\n" : "";
           currentValue = `${currentValue}${separator}# Skill: ${skillId}\n${pathLine}${processedContent}`;
           loadedSkillIds.push(skillId);
-          preparedSkills.push(skillId);
+          loaded.push(skillId);
         } catch (error) {
-          results.push(
-            `"${skillId}" failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          failed.push({
+            id: skillId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
-      // Update the block - only report success AFTER the update succeeds
-      if (preparedSkills.length > 0) {
+      if (loaded.length > 0) {
         await client.agents.blocks.update("loaded_skills", {
           agent_id: agentId,
           value: currentValue,
         });
 
-        // Now we can report success
-        for (const skillId of preparedSkills) {
-          results.push(
-            `"${skillId}" loaded. Contents have been placed into your memory - check your 'loaded_skills' block for instructions.`,
-          );
-        }
-
         // Update the cached flag
         setHasLoadedSkills(true);
       }
-    } else {
-      // Unload skills
-      const skillBoundaries = parseLoadedSkills(currentValue);
 
-      // Sort skills to unload by their position (descending) so we can remove from end first
-      const sortedSkillsToUnload = skillsToProcess
-        .filter((id) => skillBoundaries.has(id))
-        .sort((a, b) => {
-          const boundaryA = skillBoundaries.get(a);
-          const boundaryB = skillBoundaries.get(b);
-          return (boundaryB?.start || 0) - (boundaryA?.start || 0);
-        });
-
-      for (const skillId of skillsToProcess) {
-        if (!loadedSkillIds.includes(skillId)) {
-          results.push(`"${skillId}" not loaded`);
-          continue;
-        }
-        results.push(`"${skillId}" unloaded`);
+      const messages: string[] = [];
+      if (loaded.length > 0) {
+        messages.push(coreMemoryBlockEditedMessage("loaded_skills"));
       }
 
-      // Remove skills from content (in reverse order to maintain indices)
-      for (const skillId of sortedSkillsToUnload) {
-        const boundary = skillBoundaries.get(skillId);
-        if (boundary) {
-          // Check if there's a separator before this skill
-          const beforeStart = boundary.start;
-          let actualStart = beforeStart;
-
-          // Look for preceding separator
-          const precedingSep = "\n\n---\n\n";
-          if (beforeStart >= precedingSep.length) {
-            const potentialSep = currentValue.substring(
-              beforeStart - precedingSep.length,
-              beforeStart,
-            );
-            if (potentialSep === precedingSep) {
-              actualStart = beforeStart - precedingSep.length;
-            }
-          }
-
-          // Remove the skill content
-          currentValue =
-            currentValue.substring(0, actualStart) +
-            currentValue.substring(boundary.end);
-        }
+      if (loaded.length > 0) {
+        messages.push(
+          `The following skill(s) have been successfully loaded into your \`loaded_skills\` memory block: ${loaded
+            .map((id) => `\`${id}\``)
+            .join(", ")}.`,
+        );
+      } else {
+        messages.push("No new skills were loaded.");
       }
 
-      // Clean up the value
-      currentValue = currentValue.trim();
-      if (currentValue === "") {
-        currentValue = "No skills currently loaded.";
+      if (alreadyLoaded.length > 0) {
+        messages.push(
+          `These skill(s) were already loaded: ${alreadyLoaded
+            .map((id) => `\`${id}\``)
+            .join(", ")}.`,
+        );
       }
 
-      // Update the block
-      await client.agents.blocks.update("loaded_skills", {
-        agent_id: agentId,
-        value: currentValue,
-      });
+      if (failed.length > 0) {
+        messages.push(
+          `Failed to load the following skill(s): ${failed
+            .map(({ id, error }) => `\`${id}\` (${error})`)
+            .join(", ")}.`,
+        );
+      }
 
-      // Update the cached flag
-      const remainingSkills = getLoadedSkillIds(currentValue);
-      setHasLoadedSkills(remainingSkills.length > 0);
+      messages.push(
+        "Review your `loaded_skills` block for instructions and unload skills when you're done to free up context.",
+      );
+
+      return { message: messages.join(" ") };
     }
 
-    return {
-      message: results.join(", "),
-    };
+    // Unload skills
+    const unloaded: string[] = [];
+    const notLoaded: string[] = [];
+
+    const skillBoundaries = parseLoadedSkills(currentValue);
+
+    for (const skillId of skillsToProcess) {
+      if (!loadedSkillIds.includes(skillId) || !skillBoundaries.has(skillId)) {
+        notLoaded.push(skillId);
+        continue;
+      }
+      unloaded.push(skillId);
+    }
+
+    // Sort skills to unload by their position (descending) so we can remove from end first
+    const sortedSkillsToUnload = unloaded.sort((a, b) => {
+      const boundaryA = skillBoundaries.get(a);
+      const boundaryB = skillBoundaries.get(b);
+      return (boundaryB?.start || 0) - (boundaryA?.start || 0);
+    });
+
+    // Remove skills from content (in reverse order to maintain indices)
+    for (const skillId of sortedSkillsToUnload) {
+      const boundary = skillBoundaries.get(skillId);
+      if (!boundary) continue;
+
+      // Check if there's a separator before this skill
+      const beforeStart = boundary.start;
+      let actualStart = beforeStart;
+
+      // Look for preceding separator
+      const precedingSep = "\n\n---\n\n";
+      if (beforeStart >= precedingSep.length) {
+        const potentialSep = currentValue.substring(
+          beforeStart - precedingSep.length,
+          beforeStart,
+        );
+        if (potentialSep === precedingSep) {
+          actualStart = beforeStart - precedingSep.length;
+        }
+      }
+
+      // Remove the skill content
+      currentValue =
+        currentValue.substring(0, actualStart) + currentValue.substring(boundary.end);
+    }
+
+    // Clean up the value
+    currentValue = currentValue.trim();
+    if (currentValue === "") {
+      currentValue = "No skills currently loaded.";
+    }
+
+    // Update the block
+    await client.agents.blocks.update("loaded_skills", {
+      agent_id: agentId,
+      value: currentValue,
+    });
+
+    // Update the cached flag
+    const remainingSkills = getLoadedSkillIds(currentValue);
+    setHasLoadedSkills(remainingSkills.length > 0);
+
+    const messages: string[] = [coreMemoryBlockEditedMessage("loaded_skills")];
+    if (unloaded.length > 0) {
+      messages.push(
+        `The following skill(s) have been successfully unloaded from your \`loaded_skills\` memory block: ${unloaded
+          .map((id) => `\`${id}\``)
+          .join(", ")}.`,
+      );
+    } else {
+      messages.push("No skills were unloaded.");
+    }
+
+    if (notLoaded.length > 0) {
+      messages.push(
+        `These skill(s) were not loaded: ${notLoaded
+          .map((id) => `\`${id}\``)
+          .join(", ")}.`,
+      );
+    }
+
+    messages.push("Your `loaded_skills` block has been updated.");
+
+    return { message: messages.join(" ") };
   } catch (error) {
     if (error instanceof Error) {
       throw error;
