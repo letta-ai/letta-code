@@ -5,6 +5,8 @@
 /**
  * Checks if a given character index is inside a fenced code block (```).
  * Counts fence markers before the index - odd count means inside a block.
+ * Only counts ``` at the start of a line (real markdown fences), not ones
+ * embedded in code like: content.indexOf("```")
  */
 function isIndexInsideCodeBlock(content: string, indexToTest: number): boolean {
   let fenceCount = 0;
@@ -14,10 +16,31 @@ function isIndexInsideCodeBlock(content: string, indexToTest: number): boolean {
     if (nextFence === -1 || nextFence >= indexToTest) {
       break;
     }
-    fenceCount++;
+    // Only count as fence if at start of content or after a newline
+    if (nextFence === 0 || content[nextFence - 1] === "\n") {
+      fenceCount++;
+    }
     searchPos = nextFence + 3;
   }
   return fenceCount % 2 === 1;
+}
+
+/**
+ * Finds the next fence marker (``` at start of line) starting from pos.
+ * Returns -1 if not found.
+ */
+function findNextLineFence(content: string, startPos: number): number {
+  let pos = startPos;
+  while (pos < content.length) {
+    const nextFence = content.indexOf("```", pos);
+    if (nextFence === -1) return -1;
+    // Only count as fence if at start of content or after a newline
+    if (nextFence === 0 || content[nextFence - 1] === "\n") {
+      return nextFence;
+    }
+    pos = nextFence + 3;
+  }
+  return -1;
 }
 
 /**
@@ -30,11 +53,11 @@ function findEnclosingCodeBlockStart(content: string, index: number): number {
   }
   let currentSearchPos = 0;
   while (currentSearchPos < index) {
-    const blockStartIndex = content.indexOf("```", currentSearchPos);
+    const blockStartIndex = findNextLineFence(content, currentSearchPos);
     if (blockStartIndex === -1 || blockStartIndex >= index) {
       break;
     }
-    const blockEndIndex = content.indexOf("```", blockStartIndex + 3);
+    const blockEndIndex = findNextLineFence(content, blockStartIndex + 3);
     if (blockStartIndex < index) {
       if (blockEndIndex === -1 || index < blockEndIndex + 3) {
         return blockStartIndex;
@@ -46,6 +69,11 @@ function findEnclosingCodeBlockStart(content: string, index: number): number {
   return -1;
 }
 
+// Minimum content length before we consider splitting
+// This prevents creating many tiny chunks which causes spacing issues
+// Higher value = fewer splits = cleaner output but more content re-rendering
+const MIN_SPLIT_LENGTH = 1500;
+
 /**
  * Finds the last safe split point in content (paragraph boundary not inside code block).
  * Returns content.length if no safe split point found (meaning don't split).
@@ -54,6 +82,10 @@ function findEnclosingCodeBlockStart(content: string, index: number): number {
  * can be committed to Ink's <Static> component to reduce flicker.
  */
 export function findLastSafeSplitPoint(content: string): number {
+  // Don't split if content is too short - prevents excessive chunking
+  if (content.length < MIN_SPLIT_LENGTH) {
+    return content.length;
+  }
   // If end of content is inside a code block, split before that block
   const enclosingBlockStart = findEnclosingCodeBlockStart(
     content,

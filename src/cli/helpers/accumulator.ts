@@ -105,12 +105,14 @@ export type Line =
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no header)
     }
   | {
       kind: "assistant";
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no bullet)
     }
   | {
       kind: "tool_call";
@@ -367,12 +369,14 @@ function trySplitContent(
   b.splitCounters.set(id, counter + 1);
 
   // Create committed line for "before" content
+  // Only the first split (counter=0) shows the bullet/header; subsequent splits are continuations
   const commitId = `${id}-split-${counter}`;
   const committedLine = {
     kind,
     id: commitId,
     text: beforeText,
     phase: "finished" as const,
+    isContinuation: counter > 0, // First split shows bullet, subsequent don't
   };
   b.byId.set(commitId, committedLine);
 
@@ -386,12 +390,13 @@ function trySplitContent(
   }
 
   // Update original line with just the "after" content (keep streaming)
+  // Mark it as a continuation so it doesn't show bullet/header
   const originalLine = b.byId.get(id);
   if (
     originalLine &&
     (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
   ) {
-    b.byId.set(id, { ...originalLine, text: afterText });
+    b.byId.set(id, { ...originalLine, text: afterText, isContinuation: true });
   }
 
   return true;
