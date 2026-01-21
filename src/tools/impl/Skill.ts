@@ -256,7 +256,9 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       const successMsg =
         coreMemoryBlockEditedMessage("skills") +
         ` Found ${skills.length} skill(s)` +
-        (errors.length > 0 ? ` with ${errors.length} error(s) during discovery.` : ".");
+        (errors.length > 0
+          ? ` with ${errors.length} error(s) during discovery.`
+          : ".");
 
       return { message: successMsg };
     }
@@ -423,7 +425,8 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
       // Remove the skill content
       currentValue =
-        currentValue.substring(0, actualStart) + currentValue.substring(boundary.end);
+        currentValue.substring(0, actualStart) +
+        currentValue.substring(boundary.end);
     }
 
     // Clean up the value
