@@ -1776,11 +1776,16 @@ export default function App({
         // If we're sending a new message, old pending state is no longer relevant
         // Pass false to avoid setting interrupted=true, which causes race conditions
         // with concurrent processConversation calls reading the flag
-        markIncompleteToolsAsCancelled(
-          buffersRef.current,
-          false,
-          "internal_cancel",
-        );
+        // IMPORTANT: Skip this when allowReentry=true (continuing after tool execution)
+        // because server-side tools (like memory) may still be pending and their results
+        // will arrive in this stream. Cancelling them prematurely shows "Cancelled" in UI.
+        if (!allowReentry) {
+          markIncompleteToolsAsCancelled(
+            buffersRef.current,
+            false,
+            "internal_cancel",
+          );
+        }
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
