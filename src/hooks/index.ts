@@ -198,7 +198,7 @@ export async function runNotificationHooks(
 
 /**
  * Run Stop hooks when the agent finishes responding
- * These run in parallel and cannot block
+ * Can block stoppage (exit 2), stderr shown to model
  */
 export async function runStopHooks(
   stopReason: string,
@@ -219,8 +219,8 @@ export async function runStopHooks(
     tool_call_count: toolCallCount,
   };
 
-  // Run in parallel - Stop cannot block
-  return executeHooksParallel(hooks, input, workingDirectory);
+  // Run sequentially - Stop can block
+  return executeHooks(hooks, input, workingDirectory);
 }
 
 /**

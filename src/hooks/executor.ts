@@ -34,11 +34,24 @@ export async function executeHookCommand(
     const safeResolve = (result: HookResult) => {
       if (!resolved) {
         resolved = true;
+        // Log hook completion
+        const exitLabel =
+          result.exitCode === HookExitCode.ALLOW
+            ? "\x1b[32m✓ allowed\x1b[0m"
+            : result.exitCode === HookExitCode.BLOCK
+              ? "\x1b[31m✗ blocked\x1b[0m"
+              : "\x1b[33m⚠ error\x1b[0m";
+        console.log(
+          `\x1b[90m[hook] ${exitLabel} (${result.durationMs}ms)${result.stdout ? ` stdout: ${result.stdout.slice(0, 100)}` : ""}${result.stderr ? ` stderr: ${result.stderr.slice(0, 100)}` : ""}\x1b[0m`,
+        );
         resolve(result);
       }
     };
 
     try {
+      // Log hook start
+      console.log(`\x1b[90m[hook] Running: ${hook.command}\x1b[0m`);
+
       // Spawn shell process to run the hook command
       const child = spawn("sh", ["-c", hook.command], {
         cwd: workingDirectory,
