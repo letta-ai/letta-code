@@ -33,7 +33,7 @@ interface StreamMessage {
   subtype?: string;
   message_type?: string;
   stop_reason?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: index signature for arbitrary JSON fields
   [key: string]: any;
 }
 
