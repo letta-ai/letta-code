@@ -37,6 +37,7 @@ export function MemoryTabViewer({
 }: MemoryTabViewerProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+  const isTmux = Boolean(process.env.TMUX);
   const adeUrl = `https://app.letta.com/agents/${agentId}?view=memory${conversationId ? `&conversation=${conversationId}` : ""}`;
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
@@ -256,9 +257,12 @@ export function MemoryTabViewer({
         </Text>
         <Box>
           <Text dimColor>{"  "}←→/Tab switch · ↑↓ scroll · </Text>
-          <Link url={adeUrl}>
-            <Text dimColor>Edit in ADE</Text>
-          </Link>
+          {!isTmux && (
+            <Link url={adeUrl}>
+              <Text dimColor>Edit in ADE</Text>
+            </Link>
+          )}
+          {isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
           <Text dimColor> · Esc cancel</Text>
         </Box>
       </Box>
