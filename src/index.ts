@@ -75,6 +75,8 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta --init          Run Setup hooks with 'init' trigger (e.g., project setup)
+  letta --maintenance   Run Setup hooks with 'maintenance' trigger (e.g., cleanup)
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -101,6 +103,8 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+  --init                Run Setup hooks with 'init' trigger, then exit
+  --maintenance         Run Setup hooks with 'maintenance' trigger, then exit
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -345,6 +349,53 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
+  // Initialize hooks system (snapshot hooks at startup for security)
+  const { initializeHooks } = await import("./hooks/loader");
+  await initializeHooks(process.cwd());
+
+  // Run SessionStart hooks
+  const { buildSessionStartInput, hasHooksFor, runHooks } = await import(
+    "./hooks"
+  );
+  let sessionStartContext = "";
+  if (hasHooksFor("SessionStart")) {
+    // Determine session start source based on CLI args
+    const isResume =
+      process.argv.includes("--resume") ||
+      process.argv.includes("-r") ||
+      process.argv.includes("--continue");
+    const source: "startup" | "resume" = isResume ? "resume" : "startup";
+    const hookInput = buildSessionStartInput("startup-session", source);
+    const hookResult = await runHooks("SessionStart", hookInput, source);
+
+    // Collect additional context for the session
+    if (hookResult.additionalContext) {
+      sessionStartContext = hookResult.additionalContext;
+    }
+  }
+
+  // Set up SessionEnd hooks for process exit
+  const { buildSessionEndInput, hasHooksFor: hasSessionEndHooks, runHooks: runSessionEndHooks } = await import(
+    "./hooks"
+  );
+  const runSessionEndHook = async (reason: "logout" | "prompt_input_exit" | "other") => {
+    if (hasSessionEndHooks("SessionEnd")) {
+      const hookInput = buildSessionEndInput("session", reason);
+      await runSessionEndHooks("SessionEnd", hookInput);
+    }
+  };
+  process.on("exit", () => {
+    // Note: Can't await async in exit handler, so we run sync or best-effort
+  });
+  process.on("SIGINT", async () => {
+    await runSessionEndHook("prompt_input_exit");
+    process.exit(0);
+  });
+  process.on("SIGTERM", async () => {
+    await runSessionEndHook("other");
+    process.exit(0);
+  });
+
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
@@ -420,6 +471,9 @@ async function main(): Promise<void> {
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
         "no-skills": { type: "boolean" },
+        // Setup hooks flags
+        init: { type: "boolean" }, // Run Setup hooks with init trigger
+        maintenance: { type: "boolean" }, // Run Setup hooks with maintenance trigger
       },
       strict: true,
       allowPositionals: true,
@@ -469,6 +523,47 @@ async function main(): Promise<void> {
     const result = await manualUpdate();
     console.log(result.message);
     process.exit(result.success ? 0 : 1);
+  }
+
+  // Handle --init and --maintenance flags (Setup hooks)
+  const runInit = (values.init as boolean | undefined) ?? false;
+  const runMaintenance = (values.maintenance as boolean | undefined) ?? false;
+  if (runInit || runMaintenance) {
+    const { buildSetupInput, runHooks: runSetupHooks, hasHooksFor: hasSetupHooks } = await import("./hooks");
+    
+    if (!hasSetupHooks("Setup")) {
+      console.log("No Setup hooks configured.");
+      console.log("\nSetup hooks can be configured in:");
+      console.log("  - ~/.letta/settings.json (user settings)");
+      console.log("  - .letta/settings.json (project settings)");
+      console.log("  - .letta/settings.local.json (local project settings)");
+      process.exit(0);
+    }
+
+    const trigger = runInit ? "init" : "maintenance";
+    console.log(`Running Setup hooks with trigger: ${trigger}...`);
+    
+    const hookInput = buildSetupInput("setup-session", trigger);
+    const hookResult = await runSetupHooks("Setup", hookInput, trigger);
+    
+    // Check if any hooks failed (non-zero exit code or blocked)
+    const hasErrors = hookResult.results.some((r) => r.exitCode !== 0);
+    if (hasErrors || hookResult.blocked) {
+      console.error(`Setup hooks failed.`);
+      if (hookResult.blockReason) {
+        console.error(`Reason: ${hookResult.blockReason}`);
+      }
+      // Show individual hook errors
+      for (const result of hookResult.results) {
+        if (result.exitCode !== 0 && result.stderr) {
+          console.error(`  ${result.stderr}`);
+        }
+      }
+      process.exit(1);
+    }
+    
+    console.log("Setup hooks completed successfully.");
+    process.exit(0);
   }
 
   // --continue: Resume last session (agent + conversation) automatically
