@@ -9,6 +9,7 @@ import { colors } from "./colors";
 
 interface MessageSearchProps {
   onClose: () => void;
+  initialQuery?: string;
 }
 
 const DISPLAY_PAGE_SIZE = 5;
@@ -109,10 +110,10 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
   return `[${msg.message_type || "unknown"}]`;
 }
 
-export function MessageSearch({ onClose }: MessageSearchProps) {
+export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
   const terminalWidth = useTerminalWidth();
-  const [searchInput, setSearchInput] = useState("");
-  const [activeQuery, setActiveQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(initialQuery ?? "");
+  const [activeQuery, setActiveQuery] = useState(initialQuery ?? "");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
   const [results, setResults] = useState<MessageSearchResponse>([]);
   const [loading, setLoading] = useState(false);
