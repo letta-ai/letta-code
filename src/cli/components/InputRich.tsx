@@ -407,7 +407,12 @@ export function Input({
 
         // On first wrapped line
         // First press: move to start, second press: queue edit or history
-        if (currentCursorPosition > 0 && !atStartBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition > 0 &&
+          !atStartBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to start
           setCursorPos(0);
           setAtStartBoundary(true);
@@ -442,13 +447,15 @@ export function Input({
           setTemporaryInput(value);
           // Go to most recent command
           setHistoryIndex(history.length - 1);
-          setValue(history[history.length - 1] ?? "");
-          setCursorPos(0); // Ensure cursor at start for consistent navigation
+          const historyEntry = history[history.length - 1] ?? "";
+          setValue(historyEntry);
+          setCursorPos(historyEntry.length); // Cursor at end (traditional terminal behavior)
         } else if (historyIndex > 0) {
           // Go to older command
           setHistoryIndex(historyIndex - 1);
-          setValue(history[historyIndex - 1] ?? "");
-          setCursorPos(0); // Ensure cursor at start for consistent navigation
+          const olderEntry = history[historyIndex - 1] ?? "";
+          setValue(olderEntry);
+          setCursorPos(olderEntry.length); // Cursor at end (traditional terminal behavior)
         }
       } else if (key.downArrow) {
         if (currentWrappedLine < totalWrappedLines - 1) {
@@ -472,7 +479,12 @@ export function Input({
 
         // On last wrapped line
         // First press: move to end, second press: navigate history
-        if (currentCursorPosition < value.length && !atEndBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition < value.length &&
+          !atEndBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to end
           setCursorPos(value.length);
           setAtEndBoundary(true);
@@ -487,8 +499,9 @@ export function Input({
         if (historyIndex < history.length - 1) {
           // Go to newer command
           setHistoryIndex(historyIndex + 1);
-          setValue(history[historyIndex + 1] ?? "");
-          setCursorPos(0); // Ensure cursor at start for consistent navigation
+          const newerEntry = history[historyIndex + 1] ?? "";
+          setValue(newerEntry);
+          setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
         } else {
           // At the end of history - restore temporary input
           setHistoryIndex(-1);
