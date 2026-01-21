@@ -4512,7 +4512,8 @@ export default function App({
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Agent's in-context messages cleared & moved to conversation history",
+              output:
+                "Agent's in-context messages cleared & moved to conversation history",
               phase: "finished",
               success: true,
             });
