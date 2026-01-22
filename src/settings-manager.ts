@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -35,6 +36,7 @@ export interface Settings {
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Hook commands that run at various lifecycle points
   env?: Record<string, string>;
   // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
@@ -54,12 +56,14 @@ export interface Settings {
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>;
+  hooks?: HooksConfig; // Project-specific hook commands (checked in)
 }
 
 export interface LocalProjectSettings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // Current session (agent + conversation)
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Project-specific hook commands
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned locally
   memoryReminderInterval?: number | null; // null = disabled, number = overrides global

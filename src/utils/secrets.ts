@@ -198,8 +198,14 @@ export async function deleteSecureTokens(): Promise<void> {
 
 /**
  * Check if secrets API is available
+ * Set LETTA_SKIP_KEYCHAIN_CHECK=1 to skip the check (useful in CI/test environments)
  */
 export async function isKeychainAvailable(): Promise<boolean> {
+  // Skip keychain check in test/CI environments to avoid error dialogs
+  if (process.env.LETTA_SKIP_KEYCHAIN_CHECK === "1") {
+    return false;
+  }
+
   if (!secretsAvailable) {
     return false;
   }

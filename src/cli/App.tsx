@@ -45,6 +45,14 @@ import { sendMessageStream } from "../agent/message";
 import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import { INTERRUPTED_BY_USER } from "../constants";
+import {
+  runNotificationHooks,
+  runPreCompactHooks,
+  runSessionEndHooks,
+  runSessionStartHooks,
+  runStopHooks,
+  runUserPromptSubmitHooks,
+} from "../hooks";
 import type { ApprovalContext } from "../permissions/analyzer";
 import { type PermissionMode, permissionMode } from "../permissions/mode";
 import {
@@ -93,6 +101,7 @@ import { colors } from "./components/colors";
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
+import { HooksManager } from "./components/HooksManager";
 import { Input } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
@@ -213,8 +222,16 @@ function uid(prefix: string) {
 // Send desktop notification via terminal bell
 // Modern terminals (iTerm2, Ghostty, WezTerm, Kitty) convert this to a desktop
 // notification when the terminal is not focused
-function sendDesktopNotification() {
+function sendDesktopNotification(
+  message = "Awaiting your input",
+  level: "info" | "warning" | "error" = "info",
+) {
+  // Send terminal bell for native notification
   process.stdout.write("\x07");
+  // Run Notification hooks (fire-and-forget, don't block)
+  runNotificationHooks(message, level).catch(() => {
+    // Silently ignore hook errors
+  });
 }
 
 // Check if error is retriable based on stop reason and run metadata
@@ -880,6 +897,7 @@ export default function App({
     | "mcp"
     | "mcp-connect"
     | "help"
+    | "hooks"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
@@ -948,6 +966,8 @@ export default function App({
 
   // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
+  const sessionStartTimeRef = useRef(Date.now());
+  const sessionHooksRanRef = useRef(false);
 
   // Wire up session stats to telemetry for safety net handlers
   useEffect(() => {
@@ -958,6 +978,39 @@ export default function App({
     // Cleanup on unmount (defensive, prevents potential memory leak)
     return () => {
       telemetry.setSessionStatsGetter(undefined);
+    };
+  }, []);
+
+  // Run SessionStart hooks when agent becomes available
+  useEffect(() => {
+    if (agentId && !sessionHooksRanRef.current) {
+      sessionHooksRanRef.current = true;
+      // Determine if this is a new session or resumed
+      const isNewSession = !initialConversationId;
+      runSessionStartHooks(
+        isNewSession,
+        agentId,
+        agentName ?? undefined,
+        conversationIdRef.current ?? undefined,
+      ).catch(() => {
+        // Silently ignore hook errors
+      });
+    }
+  }, [agentId, agentName, initialConversationId]);
+
+  // Run SessionEnd hooks on unmount
+  useEffect(() => {
+    return () => {
+      const durationMs = Date.now() - sessionStartTimeRef.current;
+      runSessionEndHooks(
+        durationMs,
+        undefined, // messageCount not tracked in SessionStats
+        undefined, // toolCallCount not tracked in SessionStats
+        agentIdRef.current ?? undefined,
+        conversationIdRef.current ?? undefined,
+      ).catch(() => {
+        // Silently ignore hook errors
+      });
     };
   }, []);
 
@@ -2092,6 +2145,17 @@ export default function App({
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
 
+            // Run Stop hooks (fire-and-forget)
+            runStopHooks(
+              stopReasonToHandle,
+              buffersRef.current.order.length,
+              Array.from(buffersRef.current.byId.values()).filter(
+                (item) => item.kind === "tool_call",
+              ).length,
+            ).catch(() => {
+              // Silently ignore hook errors
+            });
+
             // Disable eager approval check after first successful message (LET-7101)
             // Any new approvals from here on are from our own turn, not orphaned
             if (needsEagerApprovalCheck) {
@@ -2101,7 +2165,7 @@ export default function App({
             // Send desktop notification when turn completes
             // and we're not about to auto-send another queued message
             if (!waitingForQueueCancelRef.current) {
-              sendDesktopNotification();
+              sendDesktopNotification("Turn completed, awaiting your input");
             }
 
             // Check if we were waiting for cancel but stream finished naturally
@@ -2638,7 +2702,7 @@ export default function App({
             setAutoDeniedApprovals(autoDeniedResults);
             setStreaming(false);
             // Notify user that approval is needed
-            sendDesktopNotification();
+            sendDesktopNotification("Approval needed");
             return;
           }
 
@@ -2740,7 +2804,7 @@ export default function App({
             setMessageQueue([]);
 
             setStreaming(false);
-            sendDesktopNotification();
+            sendDesktopNotification("Agent execution error", "error");
             refreshDerived();
             return;
           }
@@ -2893,7 +2957,7 @@ export default function App({
             setMessageQueue([]);
 
             setStreaming(false);
-            sendDesktopNotification(); // Notify user of error
+            sendDesktopNotification("Stream error", "error"); // Notify user of error
             refreshDerived();
             return;
           }
@@ -2972,7 +3036,7 @@ export default function App({
           setMessageQueue([]);
 
           setStreaming(false);
-          sendDesktopNotification(); // Notify user of error
+          sendDesktopNotification("Execution error", "error"); // Notify user of error
           refreshDerived();
           return;
         }
@@ -3026,7 +3090,7 @@ export default function App({
         setMessageQueue([]);
 
         setStreaming(false);
-        sendDesktopNotification(); // Notify user of error
+        sendDesktopNotification("Processing error", "error"); // Notify user of error
         refreshDerived();
       } finally {
         // Check if this conversation was superseded by an ESC interrupt
@@ -3906,6 +3970,30 @@ export default function App({
 
       if (!msg) return { submitted: false };
 
+      // Run UserPromptSubmit hooks - can block the prompt from being processed
+      const isCommand = msg.startsWith("/");
+      const hookResult = await runUserPromptSubmitHooks(
+        msg,
+        isCommand,
+        agentId,
+        conversationIdRef.current,
+      );
+      if (hookResult.blocked) {
+        // Show feedback from hook in the transcript
+        const feedbackId = uid("status");
+        const feedback = hookResult.feedback.join("\n") || "Blocked by hook";
+        buffersRef.current.byId.set(feedbackId, {
+          kind: "status",
+          id: feedbackId,
+          lines: [
+            `<user-prompt-submit-hook>${feedback}</user-prompt-submit-hook>`,
+          ],
+        });
+        buffersRef.current.order.push(feedbackId);
+        refreshDerived();
+        return { submitted: false };
+      }
+
       // Capture the generation at submission time, BEFORE any async work.
       // This allows detecting if ESC was pressed during async operations.
       const submissionGeneration = conversationGenerationRef.current;
@@ -4192,6 +4280,12 @@ export default function App({
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
           setActiveOverlay("help");
+          return { submitted: true };
+        }
+
+        // Special handling for /hooks command - opens hooks manager
+        if (trimmed === "/hooks") {
+          setActiveOverlay("hooks");
           return { submitted: true };
         }
 
@@ -4657,6 +4751,29 @@ export default function App({
           setCommandRunning(true);
 
           try {
+            // Run PreCompact hooks - can block the compact operation
+            const preCompactResult = await runPreCompactHooks(
+              undefined, // context_length - not available here
+              undefined, // max_context_length - not available here
+              agentId,
+              conversationIdRef.current,
+            );
+            if (preCompactResult.blocked) {
+              const feedback =
+                preCompactResult.feedback.join("\n") || "Blocked by hook";
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Compact blocked: ${feedback}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+              setCommandRunning(false);
+              return { submitted: true };
+            }
+
             const client = await getClient();
             // SDK types are out of date - compact returns CompactionResponse, not void
             const result = (await client.agents.messages.compact(
@@ -8630,6 +8747,11 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Hooks Manager - for managing hooks configuration */}
+            {activeOverlay === "hooks" && (
+              <HooksManager onClose={closeOverlay} />
+            )}
 
             {/* New Agent Dialog - for naming new agent before creation */}
             {activeOverlay === "new" && (

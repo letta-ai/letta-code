@@ -201,9 +201,17 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/hooks": {
+    desc: "Manage hooks configuration",
+    order: 36,
+    handler: () => {
+      // Handled specially in App.tsx to open hooks manager
+      return "Opening hooks manager...";
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
-    order: 36,
+    order: 37,
     handler: async (args: string[]) => {
       const {
         detectTerminalType,
