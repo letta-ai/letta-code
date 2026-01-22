@@ -15,7 +15,8 @@ import { join } from "node:path";
 
 const projectRoot = process.cwd();
 
-// Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
+// Skip on Windows - test commands use bash syntax (>>, &&, cat, etc.)
+// The executor itself is cross-platform, but these test commands are bash-specific
 const isWindows = process.platform === "win32";
 
 interface TestEnv {
