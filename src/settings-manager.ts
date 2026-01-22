@@ -411,6 +411,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
+        hooks: rawSettings.hooks as HooksConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -480,7 +481,26 @@ class SettingsManager {
       if (!exists(dirPath)) {
         await mkdir(dirPath, { recursive: true });
       }
-      await writeFile(settingsPath, JSON.stringify(this.settings, null, 2));
+
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      // Our settings take precedence for fields we manage
+      const merged = {
+        ...existingSettings,
+        ...this.settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving settings:", error);
       throw error;
@@ -637,7 +657,24 @@ class SettingsManager {
         await mkdir(dirPath, { recursive: true });
       }
 
-      await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      const merged = {
+        ...existingSettings,
+        ...settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving local project settings:", error);
       throw error;
