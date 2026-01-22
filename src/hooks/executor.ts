@@ -2,7 +2,7 @@
 // Executes hook commands with JSON input via stdin
 // Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "../tools/impl/shellLaunchers";
 import {
   type HookCommand,
