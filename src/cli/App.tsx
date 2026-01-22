@@ -4969,7 +4969,7 @@ export default function App({
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Started new conversation",
+              output: "Started new conversation (use /resume to change convos)",
               phase: "finished",
               success: true,
             });
