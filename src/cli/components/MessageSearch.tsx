@@ -314,6 +314,7 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                 date?: string;
                 created_at?: string;
                 agent_id?: string;
+                conversation_id?: string;
               };
               const timestamp = msgWithDate.date
                 ? formatRelativeTime(msgWithDate.date)
@@ -323,6 +324,7 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                 "",
               );
               const agentId = msgWithDate.agent_id || "unknown";
+              const conversationId = msgWithDate.conversation_id;
               const createdAt = formatLocalTime(msgWithDate.created_at);
 
               // Calculate available width for message text
@@ -370,13 +372,13 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                       <>
                         <Text dimColor> · </Text>
                         <Link
-                          url={`https://app.letta.com/projects/default-project/agents/${agentId}?searchTerm=${encodeURIComponent(activeQuery)}&messageId=${msgId}`}
+                          url={`https://app.letta.com/projects/default-project/agents/${agentId}?searchTerm=${encodeURIComponent(activeQuery)}&messageId=${msgId}${conversationId ? `&conversation=${encodeURIComponent(conversationId)}` : ""}`}
                         >
                           <Text color={colors.link.text}>view message</Text>
                         </Link>
                         <Text dimColor> · agent: </Text>
                         <Link
-                          url={`https://app.letta.com/projects/default-project/agents/${agentId}`}
+                          url={`https://app.letta.com/projects/default-project/agents/${agentId}${conversationId ? `?conversation=${encodeURIComponent(conversationId)}` : ""}`}
                         >
                           <Text color={colors.link.text}>{agentId}</Text>
                         </Link>
