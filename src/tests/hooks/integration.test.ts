@@ -21,7 +21,8 @@ import {
   runUserPromptSubmitHooks,
 } from "../../hooks";
 
-// Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
+// Skip on Windows - test commands use bash syntax (&&, >&2, etc.)
+// The executor itself is cross-platform, but these test commands are bash-specific
 const isWindows = process.platform === "win32";
 
 describe.skipIf(isWindows)("Hooks Integration Tests", () => {
