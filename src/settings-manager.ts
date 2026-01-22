@@ -411,6 +411,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
+        hooks: rawSettings.hooks as HooksConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
