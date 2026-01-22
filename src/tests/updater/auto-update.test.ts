@@ -120,9 +120,10 @@ npm error ENOTEMPTY: directory not empty`;
       const globalPrefix = "/Users/test/.npm-global";
       const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
 
-      expect(lettaAiDir).toBe(
-        "/Users/test/.npm-global/lib/node_modules/@letta-ai",
-      );
+      // path.join normalizes separators for the current platform
+      expect(lettaAiDir).toContain("lib");
+      expect(lettaAiDir).toContain("node_modules");
+      expect(lettaAiDir).toContain("@letta-ai");
     });
 
     test("path structure works on Windows-style paths", () => {

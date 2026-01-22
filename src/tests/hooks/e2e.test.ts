@@ -228,7 +228,7 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
             "haiku",
             "--yolo",
             "-p",
-            "Read the file /etc/hostname",
+            "Read the file /etc/hostname and tell me what it says. Do not ask for confirmation.",
           ],
           env,
         );
