@@ -2,7 +2,6 @@
 // Functions to write hooks to settings files via settings-manager
 
 import { settingsManager } from "../settings-manager";
-import { clearHooksCache } from "./loader";
 import type { HookEvent, HookMatcher, HooksConfig } from "./types";
 
 /**
@@ -69,9 +68,7 @@ export async function saveHooksToLocation(
       settingsManager.updateLocalProjectSettings({ hooks }, workingDirectory);
       break;
   }
-
-  // Clear cache so changes take effect immediately
-  clearHooksCache();
+  // No need to clear cache - settings-manager IS the cache
 }
 
 /**

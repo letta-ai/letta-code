@@ -1,116 +1,73 @@
 // src/hooks/loader.ts
-// Loads and matches hooks from settings
+// Loads and matches hooks from settings-manager (single source of truth)
 
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { exists, readFile } from "../utils/fs.js";
+import { settingsManager } from "../settings-manager";
 import type { HookCommand, HookEvent, HooksConfig } from "./types";
 
 /**
- * Cache for loaded hooks configurations
- */
-let globalHooksCache: HooksConfig | null = null;
-const projectHooksCache: Map<string, HooksConfig> = new Map();
-const projectLocalHooksCache: Map<string, HooksConfig> = new Map();
-
-/**
- * Clear hooks cache (useful for testing or when settings change)
+ * Clear hooks cache - no-op since we use settings-manager as source of truth.
+ * Kept for API compatibility with existing callers.
  */
 export function clearHooksCache(): void {
-  globalHooksCache = null;
-  projectHooksCache.clear();
-  projectLocalHooksCache.clear();
-}
-
-/**
- * Get the path to global hooks settings
- */
-function getGlobalSettingsPath(): string {
-  const home = process.env.HOME || homedir();
-  return join(home, ".letta", "settings.json");
-}
-
-/**
- * Get the path to project hooks settings
- */
-function getProjectSettingsPath(workingDirectory: string): string {
-  return join(workingDirectory, ".letta", "settings.json");
-}
-
-/**
- * Get the path to project-local hooks settings (gitignored)
- */
-function getProjectLocalSettingsPath(workingDirectory: string): string {
-  return join(workingDirectory, ".letta", "settings.local.json");
-}
-
-/**
- * Load hooks configuration from a settings file
- */
-async function loadHooksFromFile(path: string): Promise<HooksConfig | null> {
-  if (!exists(path)) {
-    return null;
-  }
-
-  try {
-    const content = await readFile(path);
-    const settings = JSON.parse(content) as { hooks?: HooksConfig };
-    return settings.hooks || null;
-  } catch (error) {
-    // Silently ignore parse errors - don't break the app for bad hooks config
-    console.warn(`Failed to load hooks from ${path}:`, error);
-    return null;
-  }
+  // No-op: settings-manager is the single source of truth
+  // Any settings updates go through settings-manager which handles caching
 }
 
 /**
  * Load global hooks configuration from ~/.letta/settings.json
+ * Uses settings-manager cache (loaded at app startup)
  */
-export async function loadGlobalHooks(): Promise<HooksConfig> {
-  if (globalHooksCache !== null) {
-    return globalHooksCache;
+export function loadGlobalHooks(): HooksConfig {
+  try {
+    return settingsManager.getSettings().hooks || {};
+  } catch {
+    // Settings not initialized yet
+    return {};
   }
-
-  const path = getGlobalSettingsPath();
-  const hooks = await loadHooksFromFile(path);
-  globalHooksCache = hooks || {};
-  return globalHooksCache;
 }
 
 /**
  * Load project hooks configuration from .letta/settings.json
+ * Uses settings-manager cache
  */
 export async function loadProjectHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<HooksConfig> {
-  const cached = projectHooksCache.get(workingDirectory);
-  if (cached !== undefined) {
-    return cached;
+  try {
+    // Ensure project settings are loaded
+    try {
+      settingsManager.getProjectSettings(workingDirectory);
+    } catch {
+      await settingsManager.loadProjectSettings(workingDirectory);
+    }
+    return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
+  } catch {
+    // Settings not available
+    return {};
   }
-
-  const path = getProjectSettingsPath(workingDirectory);
-  const hooks = await loadHooksFromFile(path);
-  const result = hooks || {};
-  projectHooksCache.set(workingDirectory, result);
-  return result;
 }
 
 /**
  * Load project-local hooks configuration from .letta/settings.local.json
+ * Uses settings-manager cache
  */
 export async function loadProjectLocalHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<HooksConfig> {
-  const cached = projectLocalHooksCache.get(workingDirectory);
-  if (cached !== undefined) {
-    return cached;
+  try {
+    // Ensure local project settings are loaded
+    try {
+      settingsManager.getLocalProjectSettings(workingDirectory);
+    } catch {
+      await settingsManager.loadLocalProjectSettings(workingDirectory);
+    }
+    return (
+      settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {}
+    );
+  } catch {
+    // Settings not available
+    return {};
   }
-
-  const path = getProjectLocalSettingsPath(workingDirectory);
-  const hooks = await loadHooksFromFile(path);
-  const result = hooks || {};
-  projectLocalHooksCache.set(workingDirectory, result);
-  return result;
 }
 
 /**
@@ -152,7 +109,7 @@ export async function loadHooks(
   workingDirectory: string = process.cwd(),
 ): Promise<HooksConfig> {
   const [global, project, projectLocal] = await Promise.all([
-    loadGlobalHooks(),
+    Promise.resolve(loadGlobalHooks()),
     loadProjectHooks(workingDirectory),
     loadProjectLocalHooks(workingDirectory),
   ]);
