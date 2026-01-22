@@ -2017,10 +2017,11 @@ export default function App({
                   ...currentInput,
                 ];
               }
+              // Clear cache after we've checked against backend state
+              prematureInterruptCacheRef.current = null;
             } catch {
               // Silently fail - better to potentially duplicate than lose the message
             }
-            // Cache cleared after drainStreamWithResume if we received any chunks
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -2352,11 +2353,6 @@ export default function App({
             signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
             syncAgentState,
           );
-
-          // Clear premature interrupt cache if we received any chunks (message was received)
-          if (!prematureInterrupt) {
-            prematureInterruptCacheRef.current = null;
-          }
 
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;

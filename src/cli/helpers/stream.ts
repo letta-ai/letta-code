@@ -90,7 +90,14 @@ export async function drainStream(
   try {
     for await (const chunk of stream) {
       // console.log("chunk", chunk);
-      receivedAnyChunk = true;
+
+      const isContentChunk =
+        chunk.message_type === "assistant_message" ||
+        chunk.message_type === "reasoning_message" ||
+        chunk.message_type === "tool_message";
+      if (isContentChunk) {
+        receivedAnyChunk = true;
+      }
 
       // Check if abort generation changed (handleInterrupt ran while we were waiting)
       // This catches cases where the abort signal might not propagate correctly
