@@ -36,6 +36,18 @@
     }
   },
   {
+    "id": "bedrock-opus",
+    "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
+    "label": "Bedrock Claude Opus 4.5",
+    "description": "Anthropic's best model (via AWS Bedrock)",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
+  },
+  {
     "id": "haiku",
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Haiku 4.5",
