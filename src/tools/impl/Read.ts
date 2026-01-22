@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
 import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
@@ -249,7 +250,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
     const content = await fs.readFile(resolvedPath, "utf-8");
     if (content.trim() === "") {
       return {
-        content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
+        content: `${SYSTEM_REMINDER_OPEN}\nThe file ${resolvedPath} exists but has empty contents.\n${SYSTEM_REMINDER_CLOSE}`,
       };
     }
     const formattedContent = formatWithLineNumbers(

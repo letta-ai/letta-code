@@ -13,7 +13,11 @@ import {
   addToolCall,
   updateSubagent,
 } from "../../cli/helpers/subagentState.js";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  INTERRUPTED_BY_USER,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
@@ -643,11 +647,11 @@ function buildDeploySystemReminder(
       ? "read-only tools (Read, Glob, Grep)"
       : "local tools (Bash, Read, Write, Edit, etc.)";
 
-  return `<system-reminder>
+  return `${SYSTEM_REMINDER_OPEN}
 This task is from "${senderAgentName}" (agent ID: ${senderAgentId}), which deployed you as a subagent inside the Letta Code CLI (docs.letta.com/letta-code).
 You have access to ${toolDescription} in their codebase.
 Your final message will be returned to the caller.
-</system-reminder>
+${SYSTEM_REMINDER_CLOSE}
 
 `;
 }

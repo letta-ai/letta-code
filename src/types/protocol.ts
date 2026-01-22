@@ -205,7 +205,10 @@ export interface RetryMessage extends MessageEnvelope {
 export interface RecoveryMessage extends MessageEnvelope {
   type: "recovery";
   /** Type of recovery performed */
-  recovery_type: "approval_pending" | "approval_desync";
+  recovery_type:
+    | "approval_pending"
+    | "approval_desync"
+    | "invalid_tool_call_ids";
   /** Human-readable description of what happened */
   message: string;
   run_id?: string;

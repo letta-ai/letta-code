@@ -22,6 +22,10 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../../../constants";
 
 // Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
 // (ES module imports don't respect NODE_PATH, but require does)
@@ -92,11 +96,11 @@ function buildSystemReminder(
   senderAgentName: string,
   senderAgentId: string,
 ): string {
-  return `<system-reminder>
+  return `${SYSTEM_REMINDER_OPEN}
 This message is from "${senderAgentName}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
 The sender will only see the final message you generate (not tool calls or reasoning).
 If you need to share detailed information, include it in your response text.
-</system-reminder>
+${SYSTEM_REMINDER_CLOSE}
 
 `;
 }
