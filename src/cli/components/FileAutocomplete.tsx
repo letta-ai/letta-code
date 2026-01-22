@@ -68,7 +68,6 @@ export function FileAutocomplete({
     maxVisible: 10,
     onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
     manageActiveState: false, // We manage active state manually due to async loading
-    disabled: isLoading,
   });
 
   useEffect(() => {
