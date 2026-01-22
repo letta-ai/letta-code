@@ -1,5 +1,7 @@
 import { exec } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { getVersion } from "../version";
 
@@ -83,7 +85,51 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   };
 }
 
-async function performUpdate(): Promise<{ success: boolean; error?: string }> {
+/**
+ * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
+ */
+async function getNpmGlobalPath(): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync("npm prefix -g", { timeout: 5000 });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clean up orphaned temp directories left by interrupted npm installs.
+ * These look like: .letta-code-lnWEqMep (npm's temp rename targets)
+ */
+async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
+  const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
+  try {
+    const entries = await readdir(lettaAiDir);
+    for (const entry of entries) {
+      // Match orphaned temp dirs like .letta-code-lnWEqMep
+      if (entry.startsWith(".letta-code-")) {
+        const orphanPath = join(lettaAiDir, entry);
+        debugLog("Cleaning orphaned temp directory:", orphanPath);
+        await rm(orphanPath, { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Directory might not exist or not readable, ignore
+  }
+}
+
+async function performUpdate(): Promise<{
+  success: boolean;
+  error?: string;
+  enotemptyFailed?: boolean;
+}> {
+  // Pre-emptively clean up orphaned directories to prevent ENOTEMPTY errors
+  const globalPath = await getNpmGlobalPath();
+  if (globalPath) {
+    debugLog("Pre-cleaning orphaned directories in:", globalPath);
+    await cleanupOrphanedDirs(globalPath);
+  }
+
   try {
     debugLog("Running npm install -g @letta-ai/letta-code@latest...");
     await execAsync("npm install -g @letta-ai/letta-code@latest", {
@@ -92,15 +138,49 @@ async function performUpdate(): Promise<{ success: boolean; error?: string }> {
     debugLog("Update completed successfully");
     return { success: true };
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    // If ENOTEMPTY still occurred (race condition or new orphans), try cleanup + retry once
+    if (errorMsg.includes("ENOTEMPTY") && globalPath) {
+      debugLog("ENOTEMPTY detected, attempting cleanup and retry...");
+      await cleanupOrphanedDirs(globalPath);
+
+      try {
+        await execAsync("npm install -g @letta-ai/letta-code@latest", {
+          timeout: 60000,
+        });
+        debugLog("Update succeeded after cleanup retry");
+        return { success: true };
+      } catch (retryError) {
+        const retryMsg =
+          retryError instanceof Error ? retryError.message : String(retryError);
+        debugLog("Update failed after retry:", retryMsg);
+
+        // If it's still ENOTEMPTY after retry, flag it for user notification
+        if (retryMsg.includes("ENOTEMPTY")) {
+          return {
+            success: false,
+            error: retryMsg,
+            enotemptyFailed: true,
+          };
+        }
+        return { success: false, error: retryMsg };
+      }
+    }
+
     debugLog("Update failed:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return { success: false, error: errorMsg };
   }
 }
 
-export async function checkAndAutoUpdate() {
+export interface AutoUpdateResult {
+  /** Whether an ENOTEMPTY error persisted after cleanup and retry */
+  enotemptyFailed?: boolean;
+}
+
+export async function checkAndAutoUpdate(): Promise<
+  AutoUpdateResult | undefined
+> {
   debugLog("Auto-update check starting...");
   debugLog("isAutoUpdateEnabled:", isAutoUpdateEnabled());
   const runningLocally = isRunningLocally();
@@ -119,7 +199,10 @@ export async function checkAndAutoUpdate() {
   const result = await checkForUpdate();
 
   if (result.updateAvailable) {
-    await performUpdate();
+    const updateResult = await performUpdate();
+    if (updateResult.enotemptyFailed) {
+      return { enotemptyFailed: true };
+    }
   }
 }
 

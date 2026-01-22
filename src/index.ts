@@ -364,9 +364,21 @@ async function main(): Promise<void> {
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
-  checkAndAutoUpdate().catch(() => {
-    // Silently ignore update failures
-  });
+  checkAndAutoUpdate()
+    .then((result) => {
+      // Surface ENOTEMPTY failures so users know how to fix
+      if (result?.enotemptyFailed) {
+        console.error(
+          "\nAuto-update failed due to filesystem issue (ENOTEMPTY).",
+        );
+        console.error(
+          "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
+        );
+      }
+    })
+    .catch(() => {
+      // Silently ignore other update failures (network timeouts, etc.)
+    });
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
