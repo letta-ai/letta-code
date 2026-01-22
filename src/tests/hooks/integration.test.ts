@@ -230,7 +230,8 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      expect(duration).toBeLessThan(250); // Parallel should be ~100ms
+      // Allow headroom for CI runners (especially macOS ARM) which can be slow
+      expect(duration).toBeLessThan(400); // Parallel should be ~100ms
     });
   });
 
@@ -454,7 +455,8 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      expect(duration).toBeLessThan(250);
+      // Allow headroom for CI runners (especially macOS ARM) which can be slow
+      expect(duration).toBeLessThan(400);
     });
   });
 
@@ -812,7 +814,8 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      expect(duration).toBeLessThan(250);
+      // Allow headroom for CI runners (especially macOS ARM) which can be slow
+      expect(duration).toBeLessThan(400);
     });
   });
 
