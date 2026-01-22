@@ -72,7 +72,7 @@ import {
   savePermissionRule,
   type ToolExecutionResult,
 } from "../tools/manager";
-import { debugLog } from "../utils/debug";
+import { debugLog, debugWarn } from "../utils/debug";
 import {
   handleMcpAdd,
   handleMcpUsage,
@@ -3290,7 +3290,7 @@ export default function App({
       // Set timeout as safety net in case server doesn't respond
       const abortTimeoutId = setTimeout(() => {
         if (abortControllerRef.current) {
-          console.warn("[EAGER_CANCEL] Forcing abort after 30s timeout");
+          debugWarn("EAGER_CANCEL", "Forcing abort after 30s timeout");
           abortControllerRef.current.abort();
           abortControllerRef.current = null;
         }
