@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getClient } from "../../agent/client";
 import {
+  getConversationId,
   getCurrentAgentId,
   getSkillsDirectory,
   setHasLoadedSkills,
@@ -23,6 +24,147 @@ interface SkillArgs {
 
 interface SkillResult {
   message: string;
+}
+
+// Cache for isolated block IDs: Map<label, blockId>
+// This avoids repeated API calls within a session
+let isolatedBlockCache: Map<string, string> | null = null;
+let cachedConversationId: string | null = null;
+
+/**
+ * Clear the cache (called when conversation changes or on errors)
+ */
+function clearIsolatedBlockCache(): void {
+  isolatedBlockCache = null;
+  cachedConversationId = null;
+}
+
+/**
+ * Get the block ID for an isolated block label in the current conversation context.
+ * Uses caching to avoid repeated API calls.
+ * If in a conversation with isolated blocks, returns the isolated block ID.
+ * Otherwise returns null (use agent-level block).
+ *
+ * SAFETY: Any error returns null (falls back to agent-level block).
+ * Caching never causes errors - only helps performance.
+ */
+async function getIsolatedBlockId(
+  client: Awaited<ReturnType<typeof getClient>>,
+  label: string,
+): Promise<string | null> {
+  const conversationId = getConversationId();
+
+  // "default" conversation doesn't have isolated blocks
+  if (!conversationId || conversationId === "default") {
+    return null;
+  }
+
+  try {
+    // Check if conversation changed - invalidate cache
+    if (cachedConversationId !== conversationId) {
+      clearIsolatedBlockCache();
+      cachedConversationId = conversationId;
+    }
+
+    // Check cache first
+    if (isolatedBlockCache?.has(label)) {
+      return isolatedBlockCache.get(label) ?? null;
+    }
+
+    // Cache miss - fetch from API
+    const conversation = await client.conversations.retrieve(conversationId);
+    const isolatedBlockIds = conversation.isolated_block_ids || [];
+
+    if (isolatedBlockIds.length === 0) {
+      // No isolated blocks - cache this fact as empty map
+      isolatedBlockCache = new Map();
+      return null;
+    }
+
+    // Build cache: fetch all isolated blocks and map label -> blockId
+    if (!isolatedBlockCache) {
+      isolatedBlockCache = new Map();
+    }
+
+    for (const blockId of isolatedBlockIds) {
+      try {
+        const block = await client.blocks.retrieve(blockId);
+        if (block.label) {
+          isolatedBlockCache.set(block.label, blockId);
+        }
+      } catch {
+        // Individual block fetch failed - skip it, don't fail the whole operation
+      }
+    }
+
+    return isolatedBlockCache.get(label) ?? null;
+  } catch {
+    // If anything fails, fall back to agent-level block (safe default)
+    // Don't cache the error - next call will try again
+    return null;
+  }
+}
+
+/**
+ * Update a block by label, using isolated block if in conversation context.
+ *
+ * SAFETY: If updating isolated block fails, clears cache and falls back to
+ * agent-level block. Errors from agent-level update are propagated (that's
+ * the existing behavior).
+ */
+async function updateBlock(
+  client: Awaited<ReturnType<typeof getClient>>,
+  agentId: string,
+  label: string,
+  value: string,
+): Promise<void> {
+  const isolatedBlockId = await getIsolatedBlockId(client, label);
+
+  if (isolatedBlockId) {
+    try {
+      // Update the conversation's isolated block directly
+      await client.blocks.update(isolatedBlockId, { value });
+      return;
+    } catch {
+      // If isolated block update fails (e.g., block was deleted),
+      // clear cache and fall back to agent-level block
+      clearIsolatedBlockCache();
+      // Fall through to agent-level update
+    }
+  }
+
+  // Fall back to agent-level block
+  await client.agents.blocks.update(label, {
+    agent_id: agentId,
+    value,
+  });
+}
+
+/**
+ * Retrieve a block by label, using isolated block if in conversation context.
+ *
+ * SAFETY: If retrieving isolated block fails, clears cache and falls back to
+ * agent-level block.
+ */
+async function retrieveBlock(
+  client: Awaited<ReturnType<typeof getClient>>,
+  agentId: string,
+  label: string,
+): Promise<Awaited<ReturnType<typeof client.blocks.retrieve>>> {
+  const isolatedBlockId = await getIsolatedBlockId(client, label);
+
+  if (isolatedBlockId) {
+    try {
+      return await client.blocks.retrieve(isolatedBlockId);
+    } catch {
+      // If isolated block retrieval fails, clear cache and fall back
+      clearIsolatedBlockCache();
+      // Fall through to agent-level retrieval
+    }
+  }
+
+  // Fall back to agent-level block
+  return await client.agents.blocks.retrieve(label, { agent_id: agentId });
 }
 
 function coreMemoryBlockEditedMessage(label: string): string {
@@ -248,10 +390,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
       // Format and update the skills block
       const formattedSkills = formatSkillsForMemory(skills, skillsDir);
-      await client.agents.blocks.update("skills", {
-        agent_id: agentId,
-        value: formattedSkills,
-      });
+      await updateBlock(client, agentId, "skills", formattedSkills);
 
       const successMsg =
         coreMemoryBlockEditedMessage("skills") +
@@ -268,9 +407,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       ReturnType<typeof client.agents.blocks.retrieve>
     >;
     try {
-      loadedSkillsBlock = await client.agents.blocks.retrieve("loaded_skills", {
-        agent_id: agentId,
-      });
+      loadedSkillsBlock = await retrieveBlock(client, agentId, "loaded_skills");
     } catch (error) {
       throw new Error(
         `Error: loaded_skills block not found. This block is required for the Skill tool to work.\nAgent ID: ${agentId}\nError: ${error instanceof Error ? error.message : String(error)}`,
@@ -334,10 +471,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       }
 
       if (loaded.length > 0) {
-        await client.agents.blocks.update("loaded_skills", {
-          agent_id: agentId,
-          value: currentValue,
-        });
+        await updateBlock(client, agentId, "loaded_skills", currentValue);
 
         // Update the cached flag
         setHasLoadedSkills(true);
@@ -436,10 +570,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     }
 
     // Update the block
-    await client.agents.blocks.update("loaded_skills", {
-      agent_id: agentId,
-      value: currentValue,
-    });
+    await updateBlock(client, agentId, "loaded_skills", currentValue);
 
     // Update the cached flag
     const remainingSkills = getLoadedSkillIds(currentValue);
