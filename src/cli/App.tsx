@@ -759,9 +759,6 @@ export default function App({
   const [commandRunning, setCommandRunning, commandRunningRef] =
     useSyncedState(false);
 
-  // Whether a bash mode command is running (for escape key cancellation)
-  const [bashRunning, setBashRunning] = useState(false);
-
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
     name: string;
@@ -789,9 +786,6 @@ export default function App({
     ApprovalResult[] | null
   >(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
-
-  // AbortController for bash mode command cancellation
-  const bashAbortControllerRef = useRef<AbortController | null>(null);
 
   // Eager approval checking: only enabled when resuming a session (LET-7101)
   // After first successful message, we disable it since any new approvals are from our own turn
@@ -3436,14 +3430,6 @@ export default function App({
   );
 
   const handleInterrupt = useCallback(async () => {
-    // If we're running a bash mode command, abort it
-    if (bashAbortControllerRef.current) {
-      bashAbortControllerRef.current.abort();
-      // Don't null the ref here - the finally block in handleBashSubmit will do that
-      // Just return since the bash command will handle its own cleanup
-      return;
-    }
-
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
@@ -3917,11 +3903,6 @@ export default function App({
       const cmdId = uid("bash");
       const startTime = Date.now();
 
-      // Create AbortController for this bash command
-      const bashAbortController = new AbortController();
-      bashAbortControllerRef.current = bashAbortController;
-      setBashRunning(true);
-
       // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
         kind: "bash_command",
@@ -3958,7 +3939,6 @@ export default function App({
           cwd: process.cwd(),
           env: getShellEnv(),
           timeout: 30000, // 30 second timeout
-          signal: bashAbortController.signal,
           onOutput: (chunk, stream) => {
             const entry = buffersRef.current.byId.get(cmdId);
             if (entry && entry.kind === "bash_command") {
@@ -3998,58 +3978,26 @@ export default function App({
           output: output || (success ? "" : `Exit code: ${result.exitCode}`),
         });
       } catch (error: unknown) {
-        // Check if this was an abort/interrupt
-        const err = error as { name?: string; code?: string; message?: string };
-        const isAbort =
-          bashAbortController.signal.aborted ||
-          err.code === "ABORT_ERR" ||
-          err.name === "AbortError" ||
-          err.message === "The operation was aborted";
+        // Handle command errors (timeout, abort, etc.)
+        const errOutput =
+          error instanceof Error
+            ? (error as { stderr?: string; stdout?: string }).stderr ||
+              (error as { stdout?: string }).stdout ||
+              error.message
+            : String(error);
 
-        if (isAbort) {
-          // User interrupted the command
-          buffersRef.current.byId.set(cmdId, {
-            kind: "bash_command",
-            id: cmdId,
-            input: command,
-            output: INTERRUPTED_BY_USER,
-            phase: "finished",
-            success: false,
-            streaming: undefined,
-          });
-          bashCommandCacheRef.current.push({
-            input: command,
-            output: INTERRUPTED_BY_USER,
-          });
-        } else {
-          // Handle other command errors (timeout, etc.)
-          const errOutput =
-            error instanceof Error
-              ? (error as { stderr?: string; stdout?: string }).stderr ||
-                (error as { stdout?: string }).stdout ||
-                error.message
-              : String(error);
+        buffersRef.current.byId.set(cmdId, {
+          kind: "bash_command",
+          id: cmdId,
+          input: command,
+          output: errOutput,
+          phase: "finished",
+          success: false,
+          streaming: undefined,
+        });
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "bash_command",
-            id: cmdId,
-            input: command,
-            output: errOutput,
-            phase: "finished",
-            success: false,
-            streaming: undefined,
-          });
-
-          // Still cache for next user message (even failures are visible to agent)
-          bashCommandCacheRef.current.push({
-            input: command,
-            output: errOutput,
-          });
-        }
-      } finally {
-        // Clear the abort controller ref and state
-        bashAbortControllerRef.current = null;
-        setBashRunning(false);
+        // Still cache for next user message (even failures are visible to agent)
+        bashCommandCacheRef.current.push({ input: command, output: errOutput });
       }
 
       refreshDerived();
@@ -8926,7 +8874,6 @@ Plan file path: ${planFilePath}`;
                 streaming={
                   streaming && !abortControllerRef.current?.signal.aborted
                 }
-                bashRunning={bashRunning}
                 tokenCount={tokenCount}
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
