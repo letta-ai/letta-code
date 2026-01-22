@@ -5,7 +5,11 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
-import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import {
+  initializeLoadedSkillsFlag,
+  setAgentContext,
+  setConversationId as setContextConversationId,
+} from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
@@ -1767,6 +1771,8 @@ async function main(): Promise<void> {
         setAgentId(agent.id);
         setAgentState(agent);
         setConversationId(conversationIdToUse);
+        // Also set in global context for tools (e.g., Skill tool) to access
+        setContextConversationId(conversationIdToUse);
         setLoadingState("ready");
       }
 

@@ -16,7 +16,11 @@ import {
   isConversationBusyError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
-import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import {
+  initializeLoadedSkillsFlag,
+  setAgentContext,
+  setConversationId,
+} from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
@@ -658,6 +662,9 @@ export async function handleHeadlessCommand(
     conversationId = "default";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
+
+  // Set conversation ID in context for tools (e.g., Skill tool) to access
+  setConversationId(conversationId);
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
