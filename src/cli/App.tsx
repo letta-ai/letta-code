@@ -6891,8 +6891,9 @@ ${SYSTEM_REMINDER_CLOSE}
             approvals: queuedApprovalResults,
           });
         } else {
-          console.warn(
-            "[WARN] Dropping stale queued approval results for mismatched conversation or generation",
+          debugWarn(
+            "queue",
+            "Dropping stale queued approval results for mismatched conversation or generation",
           );
         }
         queueApprovalResults(null);
