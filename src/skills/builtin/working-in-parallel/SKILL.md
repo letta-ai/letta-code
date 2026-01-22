@@ -11,6 +11,16 @@ Git worktrees let you check out multiple branches into separate directories. Eac
 
 Learn more: [Git worktree documentation](https://git-scm.com/docs/git-worktree)
 
+## IMPORTANT: Check Project Setup First
+
+Before running ANY commands in a new worktree, check the project's setup instructions:
+
+1. **Read the README** - Usually has install/build commands
+2. **Check `claude.md` or `AGENT.md`** - Agent-specific guidance if present
+3. **Review your `project` memory block** - Contains learned project preferences
+
+Don't assume `npm` vs `bun` vs `pnpm` - **check the project first!**
+
 ## Quick Start
 
 ```bash
@@ -19,7 +29,10 @@ git worktree add -b fix/my-feature ../repo-my-feature main
 
 # Work in the worktree
 cd ../repo-my-feature
-bun install  # or npm install, pip install, etc.
+
+# CHECK PROJECT SETUP FIRST - then install dependencies
+# Read README.md or check project memory block for correct command
+bun install  # Example - verify this is correct for YOUR project!
 
 # Make changes, commit, push, PR
 git add <files>
@@ -48,8 +61,9 @@ git worktree remove <path>                 # Remove worktree
 
 ## Tips
 
+- **Check project setup docs before installing** - README, claude.md, project memory block
 - Name directories clearly: `../repo-feature-auth`, `../repo-bugfix-123`
-- Install dependencies in new worktrees (`npm install`, `bun install`, `pip install`, etc.)
+- Install dependencies using the project's package manager (check first!)
 - Push changes before removing worktrees
 
 ## Alternative: Repo Clones
