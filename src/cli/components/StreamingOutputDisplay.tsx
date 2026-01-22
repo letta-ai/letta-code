@@ -4,6 +4,8 @@ import type { StreamingState } from "../helpers/accumulator";
 
 interface StreamingOutputDisplayProps {
   streaming: StreamingState;
+  /** Show "(esc to interrupt)" hint - used by bash mode (LET-7199) */
+  showInterruptHint?: boolean;
 }
 
 /**
@@ -11,7 +13,7 @@ interface StreamingOutputDisplayProps {
  * Shows a rolling window of the last 5 lines with elapsed time.
  */
 export const StreamingOutputDisplay = memo(
-  ({ streaming }: StreamingOutputDisplayProps) => {
+  ({ streaming, showInterruptHint }: StreamingOutputDisplayProps) => {
     // Force re-render every second for elapsed timer
     const [, forceUpdate] = useState(0);
     useEffect(() => {
@@ -24,10 +26,13 @@ export const StreamingOutputDisplay = memo(
     const hiddenCount = Math.max(0, totalLineCount - tailLines.length);
 
     const firstLine = tailLines[0];
+    const interruptHint = showInterruptHint ? " (esc to interrupt)" : "";
     if (!firstLine) {
       return (
         <Box>
-          <Text dimColor>{`  ⎿  Running... (${elapsed}s)`}</Text>
+          <Text
+            dimColor
+          >{`  ⎿  Running... (${elapsed}s)${interruptHint}`}</Text>
         </Box>
       );
     }
@@ -59,7 +64,7 @@ export const StreamingOutputDisplay = memo(
         {/* Hidden count + elapsed time */}
         {hiddenCount > 0 && (
           <Text dimColor>
-            {"     "}… +{hiddenCount} more lines ({elapsed}s)
+            {"     "}… +{hiddenCount} more lines ({elapsed}s){interruptHint}
           </Text>
         )}
       </Box>

@@ -787,6 +787,10 @@ export default function App({
   >(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
 
+  // Bash mode state - track running commands for input locking and ESC cancellation
+  const [bashRunning, setBashRunning] = useState(false);
+  const bashAbortControllerRef = useRef<AbortController | null>(null);
+
   // Eager approval checking: only enabled when resuming a session (LET-7101)
   // After first successful message, we disable it since any new approvals are from our own turn
   const [needsEagerApprovalCheck, setNeedsEagerApprovalCheck] = useState(
@@ -3898,10 +3902,18 @@ export default function App({
 
   // Handle bash mode command submission
   // Expands aliases from shell config files, then runs with spawnCommand
+  // Implements input locking and ESC cancellation (LET-7199)
   const handleBashSubmit = useCallback(
     async (command: string) => {
+      // Input locking - prevent multiple concurrent bash commands
+      if (bashRunning) return;
+
       const cmdId = uid("bash");
       const startTime = Date.now();
+
+      // Set up state for input locking and cancellation
+      setBashRunning(true);
+      bashAbortControllerRef.current = new AbortController();
 
       // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
@@ -3938,7 +3950,8 @@ export default function App({
         const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),
           env: getShellEnv(),
-          timeout: 30000, // 30 second timeout
+          timeout: 0, // No timeout - user must ESC to interrupt (LET-7199)
+          signal: bashAbortControllerRef.current.signal,
           onOutput: (chunk, stream) => {
             const entry = buffersRef.current.byId.get(cmdId);
             if (entry && entry.kind === "bash_command") {
@@ -3962,11 +3975,16 @@ export default function App({
         const success = result.exitCode === 0;
 
         // Update line with output, clear streaming state
+        const displayOutput =
+          output ||
+          (success
+            ? "(Command completed with no output)"
+            : `Exit code: ${result.exitCode}`);
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: displayOutput,
           phase: "finished",
           success,
           streaming: undefined,
@@ -3975,16 +3993,29 @@ export default function App({
         // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: displayOutput,
         });
       } catch (error: unknown) {
-        // Handle command errors (timeout, abort, etc.)
-        const errOutput =
-          error instanceof Error
-            ? (error as { stderr?: string; stdout?: string }).stderr ||
-              (error as { stdout?: string }).stdout ||
-              error.message
-            : String(error);
+        // Check if this was an abort (user pressed ESC)
+        const err = error as { name?: string; code?: string; message?: string };
+        const isAbort =
+          bashAbortControllerRef.current?.signal.aborted ||
+          err.code === "ABORT_ERR" ||
+          err.name === "AbortError" ||
+          err.message === "The operation was aborted";
+
+        let errOutput: string;
+        if (isAbort) {
+          errOutput = INTERRUPTED_BY_USER;
+        } else {
+          // Handle command errors (timeout, other failures)
+          errOutput =
+            error instanceof Error
+              ? (error as { stderr?: string; stdout?: string }).stderr ||
+                (error as { stdout?: string }).stdout ||
+                error.message
+              : String(error);
+        }
 
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
@@ -3998,12 +4029,23 @@ export default function App({
 
         // Still cache for next user message (even failures are visible to agent)
         bashCommandCacheRef.current.push({ input: command, output: errOutput });
+      } finally {
+        // Clean up state
+        setBashRunning(false);
+        bashAbortControllerRef.current = null;
       }
 
       refreshDerived();
     },
-    [refreshDerived, refreshDerivedStreaming],
+    [bashRunning, refreshDerived, refreshDerivedStreaming],
   );
+
+  // Handle ESC interrupt for bash mode commands (LET-7199)
+  const handleBashInterrupt = useCallback(() => {
+    if (bashAbortControllerRef.current) {
+      bashAbortControllerRef.current.abort();
+    }
+  }, []);
 
   /**
    * Check and handle any pending approvals before sending a slash command.
@@ -8878,6 +8920,8 @@ Plan file path: ${planFilePath}`;
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
+                bashRunning={bashRunning}
+                onBashInterrupt={handleBashInterrupt}
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}

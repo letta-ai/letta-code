@@ -42,10 +42,13 @@ export function spawnWithLauncher(
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      childProcess.kill("SIGTERM");
-    }, options.timeoutMs);
+    // Only set timeout if timeoutMs > 0 (0 means no timeout)
+    const timeoutId = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          childProcess.kill("SIGTERM");
+        }, options.timeoutMs)
+      : null;
 
     const abortHandler = () => {
       childProcess.kill("SIGTERM");
@@ -72,7 +75,7 @@ export function spawnWithLauncher(
     });
 
     childProcess.on("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       if (killTimer) {
         clearTimeout(killTimer);
         killTimer = null;
@@ -92,7 +95,7 @@ export function spawnWithLauncher(
     });
 
     childProcess.on("close", (code) => {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       if (killTimer) {
         clearTimeout(killTimer);
         killTimer = null;
