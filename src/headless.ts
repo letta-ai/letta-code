@@ -14,6 +14,7 @@ import {
   isApprovalPendingError,
   isApprovalStateDesyncError,
   isConversationBusyError,
+  isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
 import {
@@ -1411,6 +1412,39 @@ export async function handleHeadlessCommand(
       // Fallback: if we were sending only approvals and hit an internal error that
       // says there is no pending approval, resend using the keep-alive recovery prompt.
       if (approvalDesynced) {
+        // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+        // Fetch the actual pending approvals and process them before retrying.
+        if (
+          isInvalidToolCallIdsError(detailFromRun) ||
+          isInvalidToolCallIdsError(latestErrorText)
+        ) {
+          if (outputFormat === "stream-json") {
+            const recoveryMsg: RecoveryMessage = {
+              type: "recovery",
+              recovery_type: "invalid_tool_call_ids",
+              message:
+                "Tool call ID mismatch; fetching actual pending approvals and resyncing",
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(recoveryMsg));
+          } else {
+            console.error(
+              "Tool call ID mismatch; fetching actual pending approvals...",
+            );
+          }
+
+          try {
+            // Fetch and process actual pending approvals from server
+            await resolveAllPendingApprovals();
+            // After processing, continue to next iteration (fresh state)
+            continue;
+          } catch {
+            // If fetch fails, fall through to general desync recovery
+          }
+        }
+
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
 

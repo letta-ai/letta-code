@@ -34,6 +34,7 @@ import {
   isApprovalPendingError,
   isApprovalStateDesyncError,
   isConversationBusyError,
+  isInvalidToolCallIdsError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -44,7 +45,11 @@ import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
 import { getModelDisplayName, getModelInfo } from "../agent/model";
 import { SessionStats } from "../agent/stats";
-import { INTERRUPTED_BY_USER } from "../constants";
+import {
+  INTERRUPTED_BY_USER,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../constants";
 import {
   runNotificationHooks,
   runPreCompactHooks,
@@ -321,7 +326,7 @@ function getPlanModeReminder(): string {
   const planFilePath = permissionMode.getPlanFilePath();
 
   // Generate dynamic reminder with plan file path
-  return `<system-reminder>
+  return `${SYSTEM_REMINDER_OPEN}
       Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
@@ -366,7 +371,7 @@ At the very end of your turn, once you have asked the user questions and are hap
 This is critical - your turn should only end with either asking the user a question or calling ExitPlanMode. Do not stop unless it's for these 2 reasons.
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>
+${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
@@ -454,7 +459,7 @@ function buildRalphFirstTurnReminder(state: RalphState): string {
       ? `${state.currentIteration}/${state.maxIterations}`
       : `${state.currentIteration}`;
 
-  let reminder = `<system-reminder>
+  let reminder = `${SYSTEM_REMINDER_OPEN}
 🔄 Ralph Wiggum mode activated (iteration ${iterInfo})
 `;
 
@@ -489,7 +494,7 @@ No completion promise set - loop runs until --max-iterations or ESC/Shift+Tab to
 `;
   }
 
-  reminder += `</system-reminder>`;
+  reminder += SYSTEM_REMINDER_CLOSE;
   return reminder;
 }
 
@@ -502,14 +507,26 @@ function buildRalphContinuationReminder(state: RalphState): string {
       : `${state.currentIteration}`;
 
   if (state.completionPromise) {
-    return `<system-reminder>
+    return `${SYSTEM_REMINDER_OPEN}
 🔄 Ralph iteration ${iterInfo} | To stop: output <promise>${state.completionPromise}</promise> (ONLY when statement is TRUE - do not lie to exit!)
-</system-reminder>`;
+${SYSTEM_REMINDER_CLOSE}`;
   } else {
-    return `<system-reminder>
+    return `${SYSTEM_REMINDER_OPEN}
 🔄 Ralph iteration ${iterInfo} | No completion promise set - loop runs infinitely
-</system-reminder>`;
+${SYSTEM_REMINDER_CLOSE}`;
   }
+}
+
+function stripSystemReminders(text: string): string {
+  return text
+    .replace(
+      new RegExp(
+        `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
+        "g",
+      ),
+      "",
+    )
+    .trim();
 }
 
 // Items that have finished rendering and no longer change
@@ -1974,7 +1991,95 @@ export default function App({
             );
 
             if (hasApprovalInPayload) {
-              // If desync detected and retries available, recover with keep-alive prompt
+              // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+              // We need to fetch the actual pending approvals and show them to the user.
+              if (isInvalidToolCallIdsError(errorDetail)) {
+                try {
+                  const client = await getClient();
+                  const agent = await client.agents.retrieve(
+                    agentIdRef.current,
+                  );
+                  const { pendingApprovals: serverApprovals } =
+                    await getResumeData(
+                      client,
+                      agent,
+                      conversationIdRef.current,
+                    );
+
+                  if (serverApprovals && serverApprovals.length > 0) {
+                    // Preserve user message from current input (if any)
+                    // Filter out system reminders to avoid re-injecting them
+                    const userMessage = currentInput.find(
+                      (item) => item?.type === "message",
+                    );
+                    if (userMessage && "content" in userMessage) {
+                      const content = userMessage.content;
+                      let textToRestore = "";
+                      if (typeof content === "string") {
+                        textToRestore = stripSystemReminders(content);
+                      } else if (Array.isArray(content)) {
+                        // Extract text parts, filtering out system reminders
+                        textToRestore = content
+                          .filter(
+                            (c): c is { type: "text"; text: string } =>
+                              typeof c === "object" &&
+                              c !== null &&
+                              "type" in c &&
+                              c.type === "text" &&
+                              "text" in c &&
+                              typeof c.text === "string" &&
+                              !c.text.includes(SYSTEM_REMINDER_OPEN),
+                          )
+                          .map((c) => c.text)
+                          .join("\n");
+                      }
+                      if (textToRestore.trim()) {
+                        setRestoredInput(textToRestore);
+                      }
+                    }
+
+                    // Clear all stale approval state before setting new approvals
+                    setApprovalResults([]);
+                    setAutoHandledResults([]);
+                    setAutoDeniedApprovals([]);
+                    setApprovalContexts([]);
+                    queueApprovalResults(null);
+
+                    // Set up approval UI with fetched approvals
+                    setPendingApprovals(serverApprovals);
+
+                    // Analyze approval contexts (same logic as /resume)
+                    try {
+                      const contexts = await Promise.all(
+                        serverApprovals.map(async (approval) => {
+                          const parsedArgs = safeJsonParseOr<
+                            Record<string, unknown>
+                          >(approval.toolArgs, {});
+                          return await analyzeToolApproval(
+                            approval.toolName,
+                            parsedArgs,
+                          );
+                        }),
+                      );
+                      setApprovalContexts(contexts);
+                    } catch {
+                      // If analysis fails, contexts remain empty (will show basic options)
+                    }
+
+                    // Stop streaming and exit - user needs to approve/deny
+                    // (finally block will decrement processingConversationRef)
+                    setStreaming(false);
+                    sendDesktopNotification("Approval needed");
+                    return;
+                  }
+                  // No approvals found - fall through to general desync recovery
+                } catch {
+                  // Fetch failed - fall through to general desync recovery
+                }
+              }
+
+              // General desync: "no tool call awaiting" or fetch failed above
+              // Recover with keep-alive prompt or strip stale approvals
               if (
                 isApprovalStateDesyncError(errorDetail) &&
                 llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
@@ -2754,6 +2859,94 @@ export default function App({
 
           // Track last failure info so we can emit it if retries stop
           const lastFailureMessage = latestErrorText || detailFromRun || null;
+
+          // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+          // Fetch the actual pending approvals and show them to the user.
+          const invalidIdsDetected =
+            isInvalidToolCallIdsError(detailFromRun) ||
+            isInvalidToolCallIdsError(latestErrorText);
+
+          if (hasApprovalInPayload && invalidIdsDetected) {
+            try {
+              const client = await getClient();
+              const agent = await client.agents.retrieve(agentIdRef.current);
+              const { pendingApprovals: serverApprovals } = await getResumeData(
+                client,
+                agent,
+                conversationIdRef.current,
+              );
+
+              if (serverApprovals && serverApprovals.length > 0) {
+                // Preserve user message from current input (if any)
+                // Filter out system reminders to avoid re-injecting them
+                const userMessage = currentInput.find(
+                  (item) => item?.type === "message",
+                );
+                if (userMessage && "content" in userMessage) {
+                  const content = userMessage.content;
+                  let textToRestore = "";
+                  if (typeof content === "string") {
+                    textToRestore = stripSystemReminders(content);
+                  } else if (Array.isArray(content)) {
+                    // Extract text parts, filtering out system reminders
+                    textToRestore = content
+                      .filter(
+                        (c): c is { type: "text"; text: string } =>
+                          typeof c === "object" &&
+                          c !== null &&
+                          "type" in c &&
+                          c.type === "text" &&
+                          "text" in c &&
+                          typeof c.text === "string" &&
+                          !c.text.includes(SYSTEM_REMINDER_OPEN),
+                      )
+                      .map((c) => c.text)
+                      .join("\n");
+                  }
+                  if (textToRestore.trim()) {
+                    setRestoredInput(textToRestore);
+                  }
+                }
+
+                // Clear all stale approval state before setting new approvals
+                setApprovalResults([]);
+                setAutoHandledResults([]);
+                setAutoDeniedApprovals([]);
+                setApprovalContexts([]);
+                queueApprovalResults(null);
+
+                // Set up approval UI with fetched approvals
+                setPendingApprovals(serverApprovals);
+
+                // Analyze approval contexts
+                try {
+                  const contexts = await Promise.all(
+                    serverApprovals.map(async (approval) => {
+                      const parsedArgs = safeJsonParseOr<
+                        Record<string, unknown>
+                      >(approval.toolArgs, {});
+                      return await analyzeToolApproval(
+                        approval.toolName,
+                        parsedArgs,
+                      );
+                    }),
+                  );
+                  setApprovalContexts(contexts);
+                } catch {
+                  // If analysis fails, contexts remain empty (will show basic options)
+                }
+
+                // Stop streaming and exit - user needs to approve/deny
+                // (finally block will decrement processingConversationRef)
+                setStreaming(false);
+                sendDesktopNotification("Approval needed");
+                return;
+              }
+              // No approvals found - fall through to general desync recovery
+            } catch {
+              // Fetch failed - fall through to general desync recovery
+            }
+          }
 
           // Check for approval desync errors even if stop_reason isn't llm_api_error.
           // Handle both approval-only payloads and mixed [approval, message] payloads.
@@ -5474,7 +5667,7 @@ export default function App({
               ? `\n\nUser-provided skill description:\n${description}`
               : "\n\nThe user did not provide a description with /skill. Ask what kind of skill they want to create before proceeding.";
 
-            const skillMessage = `<system-reminder>\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n</system-reminder>`;
+            const skillMessage = `${SYSTEM_REMINDER_OPEN}\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n${SYSTEM_REMINDER_CLOSE}`;
 
             // Mark command as finished before sending message
             buffersRef.current.byId.set(cmdId, {
@@ -5552,8 +5745,8 @@ export default function App({
 
             // Build system-reminder content for memory request
             const rememberMessage = userText
-              ? `<system-reminder>\n${REMEMBER_PROMPT}\n</system-reminder>${userText}`
-              : `<system-reminder>\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n</system-reminder>`;
+              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}${userText}`
+              : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
 
             // Mark command as finished before sending message
             buffersRef.current.byId.set(cmdId, {
@@ -5708,7 +5901,7 @@ ${recentCommits}
             refreshDerived();
 
             // Send trigger message instructing agent to load the initializing-memory skill
-            const initMessage = `<system-reminder>
+            const initMessage = `${SYSTEM_REMINDER_OPEN}
 The user has requested memory initialization via /init.
 
 ## 1. Load the initializing-memory skill
@@ -5727,7 +5920,7 @@ If the skill fails to load, proceed with your best judgment based on these guide
 
 Once loaded, follow the instructions in the \`initializing-memory\` skill to complete the initialization.
 ${gitContext}
-</system-reminder>`;
+${SYSTEM_REMINDER_CLOSE}`;
 
             // Process conversation with the init prompt
             await processConversation([
@@ -5817,7 +6010,7 @@ ${gitContext}
               {
                 type: "message",
                 role: "user",
-                content: `<system-reminder>\n${prompt}\n</system-reminder>`,
+                content: `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
               },
             ]);
           } catch (error) {
@@ -5935,10 +6128,10 @@ ${gitContext}
       // Build bash command prefix if there are cached commands
       let bashCommandPrefix = "";
       if (bashCommandCacheRef.current.length > 0) {
-        bashCommandPrefix = `<system-reminder>
+        bashCommandPrefix = `${SYSTEM_REMINDER_OPEN}
 The messages below were generated by the user while running local commands using "bash mode" in the Letta Code CLI tool.
 DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.
-</system-reminder>
+${SYSTEM_REMINDER_CLOSE}
 `;
         for (const cmd of bashCommandCacheRef.current) {
           bashCommandPrefix += `<bash-input>${cmd.input}</bash-input>\n<bash-output>${cmd.output}</bash-output>\n`;

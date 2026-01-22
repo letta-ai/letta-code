@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type Letta from "@letta-ai/letta-client";
+import { SYSTEM_REMINDER_OPEN } from "../../constants";
 import { continueConversation } from "../../skills/builtin/messaging-agents/scripts/continue-conversation";
 import { startConversation } from "../../skills/builtin/messaging-agents/scripts/start-conversation";
 
@@ -98,7 +99,7 @@ describe("start-conversation", () => {
 
     // Check message was sent with system reminder
     expect(mockMessageCreate).toHaveBeenCalledWith(mockConversation.id, {
-      input: expect.stringContaining("<system-reminder>"),
+      input: expect.stringContaining(SYSTEM_REMINDER_OPEN),
     });
     expect(mockMessageCreate).toHaveBeenCalledWith(mockConversation.id, {
       input: expect.stringContaining("Hello!"),
@@ -217,7 +218,7 @@ describe("continue-conversation", () => {
 
     // Check message was sent with system reminder
     expect(mockMessageCreate).toHaveBeenCalledWith(mockConversation.id, {
-      input: expect.stringContaining("<system-reminder>"),
+      input: expect.stringContaining(SYSTEM_REMINDER_OPEN),
     });
     expect(mockMessageCreate).toHaveBeenCalledWith(mockConversation.id, {
       input: expect.stringContaining("Follow-up question"),

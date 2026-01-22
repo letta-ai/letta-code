@@ -18,6 +18,13 @@ export const DEFAULT_AGENT_NAME = "Nameless Agent";
 export const INTERRUPTED_BY_USER = "Interrupted by user";
 
 /**
+ * XML tag used to wrap system reminder content injected into messages
+ */
+export const SYSTEM_REMINDER_TAG = "system-reminder";
+export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
+export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
+
+/**
  * Status bar thresholds - only show indicators when values exceed these
  */
 // Show token count after 100 estimated tokens (shows exact count until 1k, then compact)
