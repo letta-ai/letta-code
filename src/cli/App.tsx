@@ -1047,7 +1047,7 @@ export default function App({
 
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
-  
+
   // Timeout for graceful cancellation (waits for stop_reason before force-aborting)
   const abortTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -2217,7 +2217,7 @@ export default function App({
               clearTimeout(abortTimeoutIdRef.current);
               abortTimeoutIdRef.current = null;
             }
-            
+
             setStreaming(false);
 
             // Check if this cancel was triggered by queue threshold
@@ -3290,12 +3290,12 @@ export default function App({
       // Set timeout as safety net in case server doesn't respond
       const abortTimeoutId = setTimeout(() => {
         if (abortControllerRef.current) {
-          console.warn('[EAGER_CANCEL] Forcing abort after 30s timeout');
+          console.warn("[EAGER_CANCEL] Forcing abort after 30s timeout");
           abortControllerRef.current.abort();
           abortControllerRef.current = null;
         }
       }, 30000); // 30 seconds
-      
+
       abortTimeoutIdRef.current = abortTimeoutId;
 
       // Set cancellation flag to prevent processConversation from starting
