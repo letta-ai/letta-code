@@ -6,7 +6,6 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  clearHooksCache,
   hasHooks,
   runNotificationHooks,
   runPermissionRequestHooks,
@@ -20,6 +19,7 @@ import {
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
 } from "../../hooks";
+import { settingsManager } from "../../settings-manager";
 
 // Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
 const isWindows = process.platform === "win32";
@@ -29,7 +29,10 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
   let fakeHome: string;
   let originalHome: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset settings manager FIRST before changing HOME
+    await settingsManager.reset();
+
     const baseDir = join(
       tmpdir(),
       `hooks-integration-${process.pid}-${Math.random().toString(36).slice(2)}`,
@@ -42,10 +45,15 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     // Override HOME to isolate from real global hooks
     originalHome = process.env.HOME;
     process.env.HOME = fakeHome;
-    clearHooksCache();
+
+    // Initialize settings manager with new HOME
+    await settingsManager.initialize();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Wait for pending writes and reset
+    await settingsManager.reset();
+
     // Restore HOME
     process.env.HOME = originalHome;
     try {
@@ -55,7 +63,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     } catch {
       // Ignore cleanup errors
     }
-    clearHooksCache();
   });
 
   // Helper to create hook config

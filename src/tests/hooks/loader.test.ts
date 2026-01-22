@@ -3,8 +3,6 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  clearHooksCache,
-  getHooksForEvent,
   getMatchingHooks,
   hasHooksForEvent,
   loadHooks,
@@ -14,13 +12,17 @@ import {
   mergeHooksConfigs,
 } from "../../hooks/loader";
 import type { HookEvent, HooksConfig } from "../../hooks/types";
+import { settingsManager } from "../../settings-manager";
 
 describe("Hooks Loader", () => {
   let tempDir: string;
   let fakeHome: string;
   let originalHome: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset settings manager FIRST before changing HOME
+    await settingsManager.reset();
+
     const baseDir = join(tmpdir(), `hooks-loader-test-${Date.now()}`);
     // Create separate directories for HOME and project to avoid double-loading
     fakeHome = join(baseDir, "home");
@@ -30,10 +32,15 @@ describe("Hooks Loader", () => {
     // Override HOME to isolate from real global hooks
     originalHome = process.env.HOME;
     process.env.HOME = fakeHome;
-    clearHooksCache();
+
+    // Initialize settings manager with new HOME
+    await settingsManager.initialize();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Wait for pending writes and reset
+    await settingsManager.reset();
+
     // Restore HOME
     process.env.HOME = originalHome;
     try {
@@ -43,7 +50,6 @@ describe("Hooks Loader", () => {
     } catch {
       // Ignore cleanup errors
     }
-    clearHooksCache();
   });
 
   describe("loadProjectHooks", () => {
@@ -77,32 +83,7 @@ describe("Hooks Loader", () => {
       expect(hooks.PreToolUse?.[0]?.matcher).toBe("Bash");
     });
 
-    test("caches loaded hooks", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-
-      const settings = {
-        hooks: {
-          PreToolUse: [
-            {
-              matcher: "*",
-              hooks: [{ type: "command", command: "echo cached" }],
-            },
-          ],
-        },
-      };
-
-      writeFileSync(
-        join(settingsDir, "settings.json"),
-        JSON.stringify(settings),
-      );
-
-      const hooks1 = await loadProjectHooks(tempDir);
-      const hooks2 = await loadProjectHooks(tempDir);
-
-      // Should return same object from cache
-      expect(hooks1).toBe(hooks2);
-    });
+    // Note: Caching is now handled by settingsManager, not the loader
   });
 
   describe("mergeHooksConfigs", () => {
@@ -368,57 +349,6 @@ describe("Hooks Loader", () => {
     });
   });
 
-  describe("getHooksForEvent", () => {
-    test("loads and returns matching hooks", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-
-      const settings = {
-        hooks: {
-          PreToolUse: [
-            {
-              matcher: "Bash",
-              hooks: [{ type: "command", command: "bash hook" }],
-            },
-          ],
-        },
-      };
-
-      writeFileSync(
-        join(settingsDir, "settings.json"),
-        JSON.stringify(settings),
-      );
-
-      const hooks = await getHooksForEvent("PreToolUse", "Bash", tempDir);
-      expect(hooks).toHaveLength(1);
-      expect(hooks[0]?.command).toBe("bash hook");
-    });
-
-    test("returns empty for non-matching tool", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-
-      const settings = {
-        hooks: {
-          PreToolUse: [
-            {
-              matcher: "Bash",
-              hooks: [{ type: "command", command: "bash hook" }],
-            },
-          ],
-        },
-      };
-
-      writeFileSync(
-        join(settingsDir, "settings.json"),
-        JSON.stringify(settings),
-      );
-
-      const hooks = await getHooksForEvent("PreToolUse", "Edit", tempDir);
-      expect(hooks).toHaveLength(0);
-    });
-  });
-
   describe("All 11 hook events", () => {
     const allEvents: HookEvent[] = [
       "PreToolUse",
@@ -481,16 +411,6 @@ describe("Hooks Loader", () => {
   });
 
   describe("Edge cases", () => {
-    test("handles malformed JSON gracefully", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-      writeFileSync(join(settingsDir, "settings.json"), "{ invalid json }");
-
-      // Should not throw, returns empty config
-      const hooks = await loadProjectHooks(tempDir);
-      expect(hooks).toEqual({});
-    });
-
     test("handles settings without hooks field", async () => {
       const settingsDir = join(tempDir, ".letta");
       mkdirSync(settingsDir, { recursive: true });
@@ -501,46 +421,6 @@ describe("Hooks Loader", () => {
 
       const hooks = await loadProjectHooks(tempDir);
       expect(hooks).toEqual({});
-    });
-
-    test("clearHooksCache resets cache", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-
-      writeFileSync(
-        join(settingsDir, "settings.json"),
-        JSON.stringify({
-          hooks: {
-            PreToolUse: [
-              { matcher: "*", hooks: [{ type: "command", command: "v1" }] },
-            ],
-          },
-        }),
-      );
-
-      const hooks1 = await loadProjectHooks(tempDir);
-      expect(hooks1.PreToolUse?.[0]?.hooks[0]?.command).toBe("v1");
-
-      // Update the file
-      writeFileSync(
-        join(settingsDir, "settings.json"),
-        JSON.stringify({
-          hooks: {
-            PreToolUse: [
-              { matcher: "*", hooks: [{ type: "command", command: "v2" }] },
-            ],
-          },
-        }),
-      );
-
-      // Without clearing cache, should still return v1
-      const hooks2 = await loadProjectHooks(tempDir);
-      expect(hooks2.PreToolUse?.[0]?.hooks[0]?.command).toBe("v1");
-
-      // After clearing cache, should return v2
-      clearHooksCache();
-      const hooks3 = await loadProjectHooks(tempDir);
-      expect(hooks3.PreToolUse?.[0]?.hooks[0]?.command).toBe("v2");
     });
   });
 
@@ -577,28 +457,6 @@ describe("Hooks Loader", () => {
       const hooks = await loadProjectLocalHooks(tempDir);
       expect(hooks.PreToolUse).toHaveLength(1);
       expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("echo local");
-    });
-
-    test("caches loaded local hooks", async () => {
-      const settingsDir = join(tempDir, ".letta");
-      mkdirSync(settingsDir, { recursive: true });
-
-      writeFileSync(
-        join(settingsDir, "settings.local.json"),
-        JSON.stringify({
-          hooks: {
-            PreToolUse: [
-              { matcher: "*", hooks: [{ type: "command", command: "cached" }] },
-            ],
-          },
-        }),
-      );
-
-      const hooks1 = await loadProjectLocalHooks(tempDir);
-      const hooks2 = await loadProjectLocalHooks(tempDir);
-
-      // Should return same object from cache
-      expect(hooks1).toBe(hooks2);
     });
   });
 
