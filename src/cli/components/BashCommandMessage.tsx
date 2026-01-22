@@ -63,9 +63,9 @@ export const BashCommandMessage = memo(
           <StreamingOutputDisplay streaming={line.streaming} />
         )}
 
-        {/* Collapsed output after completion */}
+        {/* Full output after completion (no collapse for bash mode) */}
         {line.phase === "finished" && line.output && (
-          <CollapsedOutputDisplay output={line.output} />
+          <CollapsedOutputDisplay output={line.output} maxLines={Infinity} />
         )}
 
         {/* Fallback: show output when phase is undefined (legacy bash commands before streaming) */}
