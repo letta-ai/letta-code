@@ -5837,26 +5837,16 @@ ${gitContext}
         }
         // === END custom command handling ===
 
-        // Immediately add command to transcript with "running" phase
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: msg,
-          output: "",
-          phase: "running",
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+        // Check if this is a known command before treating it as a slash command
+        const { executeCommand } = await import("./commands/registry");
+        const result = await executeCommand(aliasedMsg);
 
-        // Lock input during async operation
-        setCommandRunning(true);
-
-        try {
-          const { executeCommand } = await import("./commands/registry");
-          const result = await executeCommand(msg);
-
-          // Update the same command with result
+        // If command not found, fall through to send as regular message to agent
+        if (result.notFound) {
+          // Don't treat as command - continue to regular message handling below
+        } else {
+          // Known command - show in transcript and handle result
+          const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
@@ -5865,24 +5855,10 @@ ${gitContext}
             phase: "finished",
             success: result.success,
           });
+          buffersRef.current.order.push(cmdId);
           refreshDerived();
-        } catch (error) {
-          // Mark command as failed if executeCommand throws
-          const errorDetails = formatErrorDetails(error, agentId);
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `Failed: ${errorDetails}`,
-            phase: "finished",
-            success: false,
-          });
-          refreshDerived();
-        } finally {
-          // Unlock input
-          setCommandRunning(false);
+          return { submitted: true }; // Don't send commands to Letta agent
         }
-        return { submitted: true }; // Don't send commands to Letta agent
       }
 
       // Build message content from display value (handles placeholders for text/images)

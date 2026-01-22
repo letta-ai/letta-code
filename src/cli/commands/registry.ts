@@ -384,7 +384,7 @@ export const commands: Record<string, Command> = {
  */
 export async function executeCommand(
   input: string,
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; notFound?: boolean }> {
   const [command, ...args] = input.trim().split(/\s+/);
 
   if (!command) {
@@ -399,6 +399,7 @@ export async function executeCommand(
     return {
       success: false,
       output: `Unknown command: ${command}`,
+      notFound: true,
     };
   }
 
