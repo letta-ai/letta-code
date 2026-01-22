@@ -1116,16 +1116,6 @@ export default function App({
     };
   }, []);
 
-  // Cleanup abort timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (abortTimeoutIdRef.current) {
-        clearTimeout(abortTimeoutIdRef.current);
-        abortTimeoutIdRef.current = null;
-      }
-    };
-  }, []);
-
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
@@ -1149,9 +1139,6 @@ export default function App({
 
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Timeout for graceful cancellation (waits for stop_reason before force-aborting)
-  const abortTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
@@ -2402,12 +2389,6 @@ export default function App({
 
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
-            // Clear the force-abort timeout since we received graceful cancellation
-            if (abortTimeoutIdRef.current) {
-              clearTimeout(abortTimeoutIdRef.current);
-              abortTimeoutIdRef.current = null;
-            }
-
             setStreaming(false);
 
             // Check if this cancel was triggered by queue threshold
@@ -3571,18 +3552,11 @@ export default function App({
       // Mark any running subagents as interrupted
       interruptActiveSubagents(INTERRUPTED_BY_USER);
 
-      // DON'T abort immediately - wait for server to send stop_reason: cancelled
-      // This gives server time to gracefully shut down and avoids GeneratorExit errors
-      // Set timeout as safety net in case server doesn't respond
-      const abortTimeoutId = setTimeout(() => {
-        if (abortControllerRef.current) {
-          debugWarn("EAGER_CANCEL", "Forcing abort after 30s timeout");
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-      }, 30000); // 30 seconds
-
-      abortTimeoutIdRef.current = abortTimeoutId;
+      // NOW abort the stream - interrupted flag is already set
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
+      }
 
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
