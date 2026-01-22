@@ -321,9 +321,15 @@ export function Input({
   useInput((input, key) => {
     if (!visible) return;
 
-    // Handle CTRL-C for double-ctrl-c-to-exit
-    // In bash mode, CTRL-C wipes input but doesn't exit bash mode
+    // Handle CTRL-C
     if (input === "c" && key.ctrl) {
+      // If bash command or streaming is running, interrupt it (like normal terminal)
+      if ((bashRunning || streaming) && onInterrupt && !interruptRequested) {
+        onInterrupt();
+        return;
+      }
+
+      // Otherwise, double-ctrl-c-to-exit behavior
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
