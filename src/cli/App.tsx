@@ -759,6 +759,9 @@ export default function App({
   const [commandRunning, setCommandRunning, commandRunningRef] =
     useSyncedState(false);
 
+  // Whether a bash mode command is running (for escape key cancellation)
+  const [bashRunning, setBashRunning] = useState(false);
+
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
     name: string;
@@ -3943,6 +3946,7 @@ export default function App({
       // Create AbortController for this bash command
       const bashAbortController = new AbortController();
       bashAbortControllerRef.current = bashAbortController;
+      setBashRunning(true);
 
       // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
@@ -4069,8 +4073,9 @@ export default function App({
           });
         }
       } finally {
-        // Clear the abort controller ref
+        // Clear the abort controller ref and state
         bashAbortControllerRef.current = null;
+        setBashRunning(false);
       }
 
       refreshDerived();
@@ -8947,6 +8952,7 @@ Plan file path: ${planFilePath}`;
                 streaming={
                   streaming && !abortControllerRef.current?.signal.aborted
                 }
+                bashRunning={bashRunning}
                 tokenCount={tokenCount}
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
