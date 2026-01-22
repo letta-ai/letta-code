@@ -68,7 +68,6 @@ export async function saveHooksToLocation(
       settingsManager.updateLocalProjectSettings({ hooks }, workingDirectory);
       break;
   }
-  // No need to clear cache - settings-manager IS the cache
 }
 
 /**

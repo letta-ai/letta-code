@@ -1,16 +1,14 @@
 // src/hooks/loader.ts
-// Loads and matches hooks from settings-manager (single source of truth)
+// Loads and matches hooks from settings-manager
 
 import { settingsManager } from "../settings-manager";
 import type { HookCommand, HookEvent, HooksConfig } from "./types";
 
 /**
- * Clear hooks cache - no-op since we use settings-manager as source of truth.
- * Kept for API compatibility with existing callers.
+ * Clear hooks cache - kept for API compatibility with existing callers.
  */
 export function clearHooksCache(): void {
-  // No-op: settings-manager is the single source of truth
-  // Any settings updates go through settings-manager which handles caching
+  // Settings-manager handles caching
 }
 
 /**
