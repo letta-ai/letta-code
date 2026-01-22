@@ -1,14 +1,7 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  mock,
-  test,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 
 // We need to test the internal functions, so we'll recreate them here
 // In a real scenario, we'd export these for testing or use dependency injection
@@ -51,7 +44,10 @@ describe("auto-update ENOTEMPTY handling", () => {
       const entries = await readdir(lettaAiDir);
       for (const entry of entries) {
         if (entry.startsWith(".letta-code-")) {
-          await rm(path.join(lettaAiDir, entry), { recursive: true, force: true });
+          await rm(path.join(lettaAiDir, entry), {
+            recursive: true,
+            force: true,
+          });
         }
       }
 
@@ -67,11 +63,11 @@ describe("auto-update ENOTEMPTY handling", () => {
       const { readdir } = await import("node:fs/promises");
 
       // This should not throw
-      let error: Error | null = null;
+      let error: NodeJS.ErrnoException | null = null;
       try {
         await readdir(nonExistent);
       } catch (e) {
-        error = e as Error;
+        error = e as NodeJS.ErrnoException;
       }
 
       expect(error).not.toBeNull();
@@ -124,7 +120,9 @@ npm error ENOTEMPTY: directory not empty`;
       const globalPrefix = "/Users/test/.npm-global";
       const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
 
-      expect(lettaAiDir).toBe("/Users/test/.npm-global/lib/node_modules/@letta-ai");
+      expect(lettaAiDir).toBe(
+        "/Users/test/.npm-global/lib/node_modules/@letta-ai",
+      );
     });
 
     test("path structure works on Windows-style paths", () => {
