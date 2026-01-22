@@ -15,6 +15,9 @@ import { join } from "node:path";
 
 const projectRoot = process.cwd();
 
+// Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
+const isWindows = process.platform === "win32";
+
 interface TestEnv {
   baseDir: string;
   projectDir: string;
@@ -136,9 +139,10 @@ function hasApiKey(): boolean {
 
 // ============================================================================
 // E2E Tests - Require API key, skip gracefully if missing
+// Skip on Windows - hooks use `sh -c` shell commands
 // ============================================================================
 
-describe("Hooks E2E Tests", () => {
+describe.skipIf(isWindows)("Hooks E2E Tests", () => {
   let env: TestEnv;
 
   beforeEach(() => {

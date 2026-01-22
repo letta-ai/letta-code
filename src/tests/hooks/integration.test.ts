@@ -21,7 +21,10 @@ import {
   runUserPromptSubmitHooks,
 } from "../../hooks";
 
-describe("Hooks Integration Tests", () => {
+// Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
+const isWindows = process.platform === "win32";
+
+describe.skipIf(isWindows)("Hooks Integration Tests", () => {
   let tempDir: string;
   let fakeHome: string;
   let originalHome: string | undefined;

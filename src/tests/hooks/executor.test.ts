@@ -16,7 +16,10 @@ import {
   type StopHookInput,
 } from "../../hooks/types";
 
-describe("Hooks Executor", () => {
+// Skip on Windows - hooks executor uses `sh -c` which doesn't exist on Windows
+const isWindows = process.platform === "win32";
+
+describe.skipIf(isWindows)("Hooks Executor", () => {
   let tempDir: string;
 
   beforeEach(() => {
