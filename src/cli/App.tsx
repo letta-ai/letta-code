@@ -214,6 +214,64 @@ const INTERRUPT_MESSAGE =
 const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
 
+// Interactive slash commands that open overlays immediately (bypass queueing)
+// These commands let users browse/view while the agent is working
+// Any changes made in the overlay will be queued until end_turn
+const INTERACTIVE_SLASH_COMMANDS = new Set([
+  "/model",
+  "/toolset",
+  "/system",
+  "/subagents",
+  "/memory",
+  "/mcp",
+  "/help",
+  "/agents",
+  "/resume",
+  "/pinned",
+  "/profiles",
+  "/search",
+  "/feedback",
+  "/pin",
+  "/pin-local",
+  "/conversations",
+  "/profile",
+]);
+
+// Non-state commands that should run immediately while the agent is busy
+// These don't modify agent state, so they should bypass queueing
+const NON_STATE_COMMANDS = new Set([
+  "/ade",
+  "/bg",
+  "/usage",
+  "/help",
+  "/hooks",
+  "/search",
+  "/memory",
+  "/feedback",
+  "/download",
+]);
+
+// Check if a command is interactive (opens overlay, should not be queued)
+function isInteractiveCommand(msg: string): boolean {
+  const trimmed = msg.trim().toLowerCase();
+  // Check exact matches first
+  if (INTERACTIVE_SLASH_COMMANDS.has(trimmed)) return true;
+  // Check prefix matches for commands with arguments
+  for (const cmd of INTERACTIVE_SLASH_COMMANDS) {
+    if (trimmed.startsWith(`${cmd} `)) return true;
+  }
+  return false;
+}
+
+function isNonStateCommand(msg: string): boolean {
+  const trimmed = msg.trim().toLowerCase();
+  if (NON_STATE_COMMANDS.has(trimmed)) return true;
+  for (const cmd of NON_STATE_COMMANDS) {
+    if (trimmed.startsWith(`${cmd} `)) return true;
+  }
+  return false;
+}
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -912,6 +970,27 @@ export default function App({
     setSearchQuery("");
     setModelSelectorOptions({});
   }, []);
+
+  // Queued overlay action - executed after end_turn when user makes a selection
+  // while agent is busy (streaming/executing tools)
+  type QueuedOverlayAction =
+    | { type: "switch_agent"; agentId: string }
+    | { type: "switch_model"; modelId: string }
+    | { type: "switch_conversation"; conversationId: string }
+    | {
+        type: "switch_toolset";
+        toolsetId:
+          | "codex"
+          | "codex_snake"
+          | "default"
+          | "gemini"
+          | "gemini_snake"
+          | "none";
+      }
+    | { type: "switch_system"; promptId: string }
+    | null;
+  const [queuedOverlayAction, setQueuedOverlayAction] =
+    useState<QueuedOverlayAction>(null);
 
   // Pin dialog state
   const [pinDialogLocal, setPinDialogLocal] = useState(false);
@@ -3441,6 +3520,26 @@ export default function App({
         return;
       }
 
+      // If agent is busy, queue the switch for after end_turn
+      if (isAgentBusy()) {
+        setQueuedOverlayAction({
+          type: "switch_agent",
+          agentId: targetAgentId,
+        });
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: "/agents",
+          output: `Agent switch queued – will switch after current task completes`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+        return;
+      }
+
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
 
@@ -3538,7 +3637,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId, agentName, setCommandRunning],
+    [refreshDerived, agentId, agentName, setCommandRunning, isAgentBusy],
   );
 
   // Handle creating a new agent and switching to it
@@ -4052,7 +4151,13 @@ export default function App({
         setDequeueEpoch((e) => e + 1);
       }
 
-      if (isAgentBusy()) {
+      // Interactive slash commands (like /memory, /model, /agents) bypass queueing
+      // so users can browse/view while the agent is working.
+      // Changes made in these overlays will be queued until end_turn.
+      const shouldBypassQueue =
+        isInteractiveCommand(msg) || isNonStateCommand(msg);
+
+      if (isAgentBusy() && !shouldBypassQueue) {
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
@@ -7197,6 +7302,24 @@ DO NOT respond to these messages or otherwise consider them in your response unl
 
   const handleModelSelect = useCallback(
     async (modelId: string) => {
+      // If agent is busy, queue the model switch for after end_turn
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        setQueuedOverlayAction({ type: "switch_model", modelId });
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/model ${modelId}`,
+          output: `Model switch queued – will switch after current task completes`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+        return;
+      }
+
       await withCommandLock(async () => {
         // Declare cmdId outside try block so it's accessible in catch
         let cmdId: string | null = null;
@@ -7333,11 +7456,239 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         }
       });
     },
-    [agentId, refreshDerived, currentToolset, withCommandLock],
+    [agentId, refreshDerived, currentToolset, withCommandLock, isAgentBusy],
   );
+
+  // Process queued overlay actions when streaming ends
+  // These are actions from interactive commands (like /agents, /model) that were
+  // used while the agent was busy. The change is applied after end_turn.
+  useEffect(() => {
+    if (
+      !streaming &&
+      !commandRunning &&
+      !isExecutingTool &&
+      pendingApprovals.length === 0 &&
+      queuedOverlayAction !== null
+    ) {
+      const action = queuedOverlayAction;
+      setQueuedOverlayAction(null); // Clear immediately to prevent re-runs
+
+      // Process the queued action
+      if (action.type === "switch_agent") {
+        // Call handleAgentSelect - it will see isAgentBusy() as false now
+        handleAgentSelect(action.agentId);
+      } else if (action.type === "switch_model") {
+        // Call handleModelSelect - it will see isAgentBusy() as false now
+        handleModelSelect(action.modelId);
+      } else if (action.type === "switch_conversation") {
+        // For conversation switch, we need to handle it inline since the handler
+        // is defined in JSX. We'll dispatch a synthetic event or handle directly.
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: "/resume",
+          output: `Processing queued conversation switch...`,
+          phase: "running",
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+
+        // Execute the conversation switch asynchronously
+        (async () => {
+          setCommandRunning(true);
+          try {
+            if (action.conversationId === conversationId) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: "/resume",
+                output: "Already on this conversation",
+                phase: "finished",
+                success: true,
+              });
+            } else {
+              const client = await getClient();
+              if (agentState) {
+                const resumeData = await getResumeData(
+                  client,
+                  agentState,
+                  action.conversationId,
+                );
+
+                setConversationId(action.conversationId);
+                settingsManager.setLocalLastSession(
+                  { agentId, conversationId: action.conversationId },
+                  process.cwd(),
+                );
+                settingsManager.setGlobalLastSession({
+                  agentId,
+                  conversationId: action.conversationId,
+                });
+
+                buffersRef.current.byId.set(cmdId, {
+                  kind: "command",
+                  id: cmdId,
+                  input: "/resume",
+                  output: `Switched to conversation (${resumeData.messageHistory.length} messages)`,
+                  phase: "finished",
+                  success: true,
+                });
+              }
+            }
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: "/resume",
+              output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+          } finally {
+            setCommandRunning(false);
+            refreshDerived();
+          }
+        })();
+      } else if (action.type === "switch_toolset") {
+        // Execute toolset switch inline (handler defined later, can't call directly)
+        (async () => {
+          setCommandRunning(true);
+          const cmdId = uid("cmd");
+          try {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/toolset ${action.toolsetId}`,
+              output: `Switching toolset to ${action.toolsetId}...`,
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            const { forceToolsetSwitch } = await import("../tools/toolset");
+            await forceToolsetSwitch(action.toolsetId, agentId);
+            setCurrentToolset(action.toolsetId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/toolset ${action.toolsetId}`,
+              output: `Switched toolset to ${action.toolsetId}`,
+              phase: "finished",
+              success: true,
+            });
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/toolset ${action.toolsetId}`,
+              output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+          } finally {
+            setCommandRunning(false);
+            refreshDerived();
+          }
+        })();
+      } else if (action.type === "switch_system") {
+        // Execute system prompt switch inline (handler defined later, can't call directly)
+        (async () => {
+          setCommandRunning(true);
+          const cmdId = uid("cmd");
+          try {
+            const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+            const selectedPrompt = SYSTEM_PROMPTS.find(
+              (p) => p.id === action.promptId,
+            );
+
+            if (!selectedPrompt) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: `/system ${action.promptId}`,
+                output: `System prompt not found: ${action.promptId}`,
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              return;
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${action.promptId}`,
+              output: `Switching system prompt to ${selectedPrompt.label}...`,
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            const { updateAgentSystemPrompt } = await import("../agent/modify");
+            await updateAgentSystemPrompt(agentId, selectedPrompt.content);
+            setCurrentSystemPromptId(action.promptId);
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${action.promptId}`,
+              output: `Switched system prompt to ${selectedPrompt.label}`,
+              phase: "finished",
+              success: true,
+            });
+          } catch (error) {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: `/system ${action.promptId}`,
+              output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
+              phase: "finished",
+              success: false,
+            });
+          } finally {
+            setCommandRunning(false);
+            refreshDerived();
+          }
+        })();
+      }
+    }
+  }, [
+    streaming,
+    commandRunning,
+    isExecutingTool,
+    pendingApprovals,
+    queuedOverlayAction,
+    handleAgentSelect,
+    handleModelSelect,
+    agentId,
+    agentState,
+    conversationId,
+    refreshDerived,
+    setCommandRunning,
+  ]);
 
   const handleSystemPromptSelect = useCallback(
     async (promptId: string) => {
+      // If agent is busy, queue the system prompt switch for after end_turn
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        setQueuedOverlayAction({ type: "switch_system", promptId });
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/system ${promptId}`,
+          output: `System prompt switch queued – will switch after current task completes`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+        return;
+      }
+
       await withCommandLock(async () => {
         const cmdId = uid("cmd");
 
@@ -7415,7 +7766,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         }
       });
     },
-    [agentId, refreshDerived, withCommandLock],
+    [agentId, refreshDerived, withCommandLock, isAgentBusy],
   );
 
   const handleToolsetSelect = useCallback(
@@ -7428,6 +7779,24 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         | "gemini_snake"
         | "none",
     ) => {
+      // If agent is busy, queue the toolset switch for after end_turn
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        setQueuedOverlayAction({ type: "switch_toolset", toolsetId });
+        const cmdId = uid("cmd");
+        buffersRef.current.byId.set(cmdId, {
+          kind: "command",
+          id: cmdId,
+          input: `/toolset ${toolsetId}`,
+          output: `Toolset switch queued – will switch after current task completes`,
+          phase: "finished",
+          success: true,
+        });
+        buffersRef.current.order.push(cmdId);
+        refreshDerived();
+        return;
+      }
+
       await withCommandLock(async () => {
         const cmdId = uid("cmd");
 
@@ -7472,7 +7841,7 @@ DO NOT respond to these messages or otherwise consider them in your response unl
         }
       });
     },
-    [agentId, refreshDerived, withCommandLock],
+    [agentId, refreshDerived, withCommandLock, isAgentBusy],
   );
 
   // Handle escape when profile confirmation is pending
@@ -8449,6 +8818,26 @@ Plan file path: ${planFilePath}`;
                       id: cmdId,
                       input: "/resume",
                       output: "Already on this conversation",
+                      phase: "finished",
+                      success: true,
+                    });
+                    buffersRef.current.order.push(cmdId);
+                    refreshDerived();
+                    return;
+                  }
+
+                  // If agent is busy, queue the switch for after end_turn
+                  if (isAgentBusy()) {
+                    setQueuedOverlayAction({
+                      type: "switch_conversation",
+                      conversationId: convId,
+                    });
+                    const cmdId = uid("cmd");
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/resume",
+                      output: `Conversation switch queued – will switch after current task completes`,
                       phase: "finished",
                       success: true,
                     });
