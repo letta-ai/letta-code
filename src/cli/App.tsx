@@ -3935,6 +3935,9 @@ export default function App({
             { type: "approval", approvals: allResults },
           ]);
           toolResultsInFlightRef.current = false;
+
+          // Clear any stale queued results from previous interrupts.
+          queueApprovalResults(null);
         }
       } finally {
         if (shouldTrackAutoAllowed) {
@@ -6864,6 +6867,12 @@ DO NOT respond to these messages or otherwise consider them in your response unl
             },
           ]);
           toolResultsInFlightRef.current = false;
+
+          // Clear any stale queued results from previous interrupts.
+          // This approval flow supersedes any previously queued results - if we don't
+          // clear them here, they persist with matching generation and get sent on the
+          // next onSubmit, causing "Invalid tool call IDs" errors.
+          queueApprovalResults(null);
         }
       } finally {
         // Always release the execution guard, even if an error occurred
