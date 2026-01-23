@@ -21,7 +21,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
 // (ES module imports don't respect NODE_PATH, but require does)
@@ -123,8 +123,15 @@ async function backupMemory(
     limit?: number;
   }>) {
     const label = block.label || `block-${block.id}`;
+    // For hierarchical labels like "A/B", create directory A/ with file B.md
     const filename = `${label}.md`;
     const filepath = join(backupPath, filename);
+
+    // Create parent directories if label contains slashes
+    const parentDir = dirname(filepath);
+    if (parentDir !== backupPath) {
+      mkdirSync(parentDir, { recursive: true });
+    }
 
     // Write block content to file
     const content = block.value || "";

@@ -16,10 +16,10 @@
  *   npx tsx restore-memory.ts $LETTA_AGENT_ID .letta/backups/working --dry-run
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { extname, join } from "node:path";
+import { extname, join, relative } from "node:path";
 
 import type { BackupManifest } from "./backup-memory";
 
@@ -61,6 +61,31 @@ function createClient(): LettaClient {
 }
 
 /**
+ * Recursively scan directory for .md files
+ * Returns array of relative file paths from baseDir
+ */
+function scanMdFiles(dir: string, baseDir: string = dir): string[] {
+  const results: string[] = [];
+  const entries = readdirSync(dir);
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    const stat = statSync(fullPath);
+
+    if (stat.isDirectory()) {
+      // Recursively scan subdirectory
+      results.push(...scanMdFiles(fullPath, baseDir));
+    } else if (stat.isFile() && extname(entry) === ".md") {
+      // Convert to relative path from baseDir
+      const relativePath = relative(baseDir, fullPath);
+      results.push(relativePath);
+    }
+  }
+
+  return results;
+}
+
+/**
  * Restore memory blocks from local files
  */
 async function restoreMemory(
@@ -77,18 +102,15 @@ async function restoreMemory(
     console.log("⚠️  DRY RUN MODE - No changes will be made\n");
   }
 
-  // Read manifest
+  // Read manifest for metadata only (block IDs)
   const manifestPath = join(backupDir, "manifest.json");
   let manifest: BackupManifest | null = null;
 
   try {
     const manifestContent = readFileSync(manifestPath, "utf-8");
     manifest = JSON.parse(manifestContent);
-    console.log(`Loaded manifest (${manifest?.blocks.length} blocks)\n`);
   } catch {
-    console.warn(
-      "Warning: No manifest.json found, will scan directory for .md files",
-    );
+    // Manifest is optional
   }
 
   // Get current agent blocks
@@ -104,32 +126,24 @@ async function restoreMemory(
     ),
   );
 
-  // Determine which files to restore
-  let filesToRestore: Array<{
-    label: string;
-    filename: string;
-    blockId?: string;
-  }> = [];
+  // Always scan directory for .md files (manifest is only used for block IDs)
+  const files = scanMdFiles(backupDir);
+  console.log(`Scanned ${files.length} .md files\n`);
+  const filesToRestore = files.map((relativePath) => {
+    // Convert path like "A/B.md" to label "A/B"
+    // Replace backslashes with forward slashes (Windows compatibility)
+    const normalizedPath = relativePath.replace(/\\/g, "/");
+    const label = normalizedPath.replace(/\.md$/, "");
+    // Look up block ID from manifest if available
+    const manifestBlock = manifest?.blocks.find((b) => b.label === label);
+    return {
+      label,
+      filename: relativePath,
+      blockId: manifestBlock?.id,
+    };
+  });
 
-  if (manifest) {
-    // Use manifest
-    filesToRestore = manifest.blocks.map((b) => ({
-      label: b.label,
-      filename: b.filename,
-      blockId: b.id,
-    }));
-  } else {
-    // Scan directory for .md files
-    const files = readdirSync(backupDir);
-    filesToRestore = files
-      .filter((f) => extname(f) === ".md")
-      .map((f) => ({
-        label: f.replace(/\.md$/, ""),
-        filename: f,
-      }));
-  }
 
-  console.log(`Found ${filesToRestore.length} files to restore\n`);
 
   // Detect blocks to delete (exist on agent but not in backup)
   const backupLabels = new Set(filesToRestore.map((f) => f.label));
@@ -140,15 +154,9 @@ async function restoreMemory(
   // Restore each block
   let updated = 0;
   let created = 0;
-  let skipped = 0;
   let deleted = 0;
 
-  // Track new blocks for later confirmation
-  const blocksToCreate: Array<{
-    label: string;
-    value: string;
-    description: string;
-  }> = [];
+
 
   for (const { label, filename } of filesToRestore) {
     const filepath = join(backupDir, filename);
@@ -158,15 +166,7 @@ async function restoreMemory(
       const existingBlock = blocksByLabel.get(label);
 
       if (existingBlock) {
-        // Update existing block
-        const unchanged = existingBlock.value === newValue;
-
-        if (unchanged) {
-          console.log(`  ⏭️  ${label} - unchanged, skipping`);
-          skipped++;
-          continue;
-        }
-
+        // Update existing block (always update, even if unchanged)
         if (!options.dryRun) {
           await client.agents.blocks.update(label, {
             agent_id: agentId,
@@ -176,77 +176,43 @@ async function restoreMemory(
 
         const oldLen = existingBlock.value?.length || 0;
         const newLen = newValue.length;
-        const diff = newLen - oldLen;
-        const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+        const unchanged = existingBlock.value === newValue;
 
-        console.log(
-          `  ✓ ${label} - updated (${oldLen} -> ${newLen} chars, ${diffStr})`,
-        );
+        if (unchanged) {
+          console.log(`  ✓ ${label} - restored (${newLen} chars, unchanged)`);
+        } else {
+          const diff = newLen - oldLen;
+          const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+          console.log(
+            `  ✓ ${label} - restored (${oldLen} -> ${newLen} chars, ${diffStr})`,
+          );
+        }
         updated++;
       } else {
-        // New block - collect for later confirmation
-        console.log(`  ➕ ${label} - new block (${newValue.length} chars)`);
-        blocksToCreate.push({
-          label,
-          value: newValue,
-          description: `Memory block: ${label}`,
-        });
+        // New block - create immediately
+        if (!options.dryRun) {
+          const createdBlock = await client.blocks.create({
+            label,
+            value: newValue,
+            description: `Memory block: ${label}`,
+            limit: 20000,
+          });
+
+          if (!createdBlock.id) {
+            throw new Error(`Created block ${label} has no ID`);
+          }
+
+          await client.agents.blocks.attach(createdBlock.id, {
+            agent_id: agentId,
+          });
+        }
+        console.log(`  ✓ ${label} - created (${newValue.length} chars)`);
+        created++;
       }
     } catch (error) {
       console.error(
         `  ❌ ${label} - error: ${error instanceof Error ? error.message : String(error)}`,
       );
-    }
-  }
-
-  // Handle new blocks (exist in backup but not on agent)
-  if (blocksToCreate.length > 0) {
-    console.log(`\n➕ Found ${blocksToCreate.length} new block(s) to create:`);
-    for (const block of blocksToCreate) {
-      console.log(`    - ${block.label} (${block.value.length} chars)`);
-    }
-
-    if (!options.dryRun) {
-      console.log(`\nThese blocks will be CREATED on the agent.`);
-      console.log(
-        `Press Ctrl+C to cancel, or press Enter to confirm creation...`,
-      );
-
-      // Wait for user confirmation
-      await new Promise<void>((resolve) => {
-        process.stdin.once("data", () => resolve());
-      });
-
-      console.log();
-      for (const block of blocksToCreate) {
-        try {
-          // Create the block
-          const createdBlock = await client.blocks.create({
-            label: block.label,
-            value: block.value,
-            description: block.description,
-            limit: 20000,
-          });
-
-          if (!createdBlock.id) {
-            throw new Error(`Created block ${block.label} has no ID`);
-          }
-
-          // Attach the newly created block to the agent
-          await client.agents.blocks.attach(createdBlock.id, {
-            agent_id: agentId,
-          });
-
-          console.log(`  ✅ ${block.label} - created and attached`);
-          created++;
-        } catch (error) {
-          console.error(
-            `  ❌ ${block.label} - error creating: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-    } else {
-      console.log(`\n(Would create these blocks if not in dry-run mode)`);
     }
   }
 
@@ -290,8 +256,7 @@ async function restoreMemory(
   }
 
   console.log(`\n📊 Summary:`);
-  console.log(`   Updated: ${updated}`);
-  console.log(`   Skipped: ${skipped}`);
+  console.log(`   Restored: ${updated}`);
   console.log(`   Created: ${created}`);
   console.log(`   Deleted: ${deleted}`);
 
