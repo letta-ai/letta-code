@@ -8,7 +8,10 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { getClientToolsFromRegistry } from "../tools/manager";
+import {
+  getClientToolsFromRegistry,
+  waitForToolsetReady,
+} from "../tools/manager";
 import { isTimingsEnabled } from "../utils/timing";
 import { getClient } from "./client";
 
@@ -41,6 +44,10 @@ export async function sendMessageStream(
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
 
   const client = await getClient();
+
+  // Wait for any in-progress toolset switch to complete before reading tools
+  // This prevents sending messages with stale tools during a switch
+  await waitForToolsetReady();
 
   let stream: Stream<LettaStreamingResponse>;
 
