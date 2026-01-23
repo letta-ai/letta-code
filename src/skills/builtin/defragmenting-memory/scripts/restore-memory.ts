@@ -143,8 +143,6 @@ async function restoreMemory(
     };
   });
 
-
-
   // Detect blocks to delete (exist on agent but not in backup)
   const backupLabels = new Set(filesToRestore.map((f) => f.label));
   const blocksToDelete = (
@@ -155,8 +153,6 @@ async function restoreMemory(
   let updated = 0;
   let created = 0;
   let deleted = 0;
-
-
 
   for (const { label, filename } of filesToRestore) {
     const filepath = join(backupDir, filename);
