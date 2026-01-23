@@ -35,7 +35,24 @@ export function spawnWithLauncher(
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true, // Create new process group so we can kill all descendants
     });
+
+    // Helper to kill the entire process group
+    const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {
+      if (childProcess.pid) {
+        try {
+          process.kill(-childProcess.pid, signal); // Negative PID kills process group
+        } catch {
+          // Process group may already be dead, try killing just the child
+          try {
+            childProcess.kill(signal);
+          } catch {
+            // Already dead, ignore
+          }
+        }
+      }
+    };
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -46,16 +63,16 @@ export function spawnWithLauncher(
     const timeoutId = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          childProcess.kill("SIGTERM");
+          killProcessGroup("SIGTERM");
         }, options.timeoutMs)
       : null;
 
     const abortHandler = () => {
-      childProcess.kill("SIGTERM");
+      killProcessGroup("SIGTERM");
       if (!killTimer) {
         killTimer = setTimeout(() => {
           if (childProcess.exitCode === null && !childProcess.killed) {
-            childProcess.kill("SIGKILL");
+            killProcessGroup("SIGKILL");
           }
         }, ABORT_KILL_TIMEOUT_MS);
       }
