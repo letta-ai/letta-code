@@ -129,22 +129,36 @@ function executeWithLauncher(
     const safeResolve = (result: HookResult) => {
       if (!resolved) {
         resolved = true;
-        // Log hook completion
+        // Log hook completion with command for context
         const exitLabel =
           result.exitCode === HookExitCode.ALLOW
             ? "\x1b[32m✓ allowed\x1b[0m"
             : result.exitCode === HookExitCode.BLOCK
               ? "\x1b[31m✗ blocked\x1b[0m"
               : "\x1b[33m⚠ error\x1b[0m";
+        console.log(`\x1b[90m[hook] ${command}\x1b[0m`);
         console.log(
-          `\x1b[90m[hook] ${exitLabel} (${result.durationMs}ms)${result.stdout ? ` stdout: ${result.stdout.slice(0, 100)}` : ""}${result.stderr ? ` stderr: ${result.stderr.slice(0, 100)}` : ""}\x1b[0m`,
+          `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
         );
+        if (result.stdout) {
+          console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
+          const indented = result.stdout
+            .split("\n")
+            .map((line) => `    ${line}`)
+            .join("\n");
+          console.log(`\x1b[90m${indented}\x1b[0m`);
+        }
+        if (result.stderr) {
+          console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
+          const indented = result.stderr
+            .split("\n")
+            .map((line) => `    ${line}`)
+            .join("\n");
+          console.log(`\x1b[90m${indented}\x1b[0m`);
+        }
         resolve(result);
       }
     };
-
-    // Log hook start
-    console.log(`\x1b[90m[hook] Running: ${command}\x1b[0m`);
 
     let child: ChildProcess;
     try {
