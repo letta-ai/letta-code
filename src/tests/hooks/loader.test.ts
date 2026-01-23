@@ -11,7 +11,13 @@ import {
   matchesTool,
   mergeHooksConfigs,
 } from "../../hooks/loader";
-import type { HookEvent, HooksConfig } from "../../hooks/types";
+import {
+  type HookEvent,
+  type HooksConfig,
+  isToolEvent,
+  type SimpleHookEvent,
+  type ToolHookEvent,
+} from "../../hooks/types";
 import { settingsManager } from "../../settings-manager";
 
 describe("Hooks Loader", () => {
@@ -251,11 +257,9 @@ describe("Hooks Loader", () => {
 
     test("handles undefined tool name (for non-tool events)", () => {
       const config: HooksConfig = {
+        // Simple events use SimpleHookMatcher[] (hooks wrapper, no matcher)
         SessionStart: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "session hook" }],
-          },
+          { hooks: [{ type: "command", command: "session hook" }] },
         ],
       };
 
@@ -367,12 +371,20 @@ describe("Hooks Loader", () => {
     test("config can have all 11 event types", () => {
       const config: HooksConfig = {};
       for (const event of allEvents) {
-        config[event] = [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: `echo ${event}` }],
-          },
-        ];
+        if (isToolEvent(event)) {
+          // Tool events use HookMatcher[]
+          (config as Record<ToolHookEvent, unknown>)[event as ToolHookEvent] = [
+            {
+              matcher: "*",
+              hooks: [{ type: "command", command: `echo ${event}` }],
+            },
+          ];
+        } else {
+          // Simple events use SimpleHookMatcher[] (hooks wrapper)
+          (config as Record<SimpleHookEvent, unknown>)[
+            event as SimpleHookEvent
+          ] = [{ hooks: [{ type: "command", command: `echo ${event}` }] }];
+        }
       }
 
       for (const event of allEvents) {
@@ -384,21 +396,21 @@ describe("Hooks Loader", () => {
 
     test("merging preserves all event types", () => {
       const global: HooksConfig = {
+        // Tool events use HookMatcher[]
         PreToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: "g1" }] },
         ],
-        SessionStart: [
-          { matcher: "*", hooks: [{ type: "command", command: "g2" }] },
-        ],
+        // Simple events use SimpleHookMatcher[] (hooks wrapper)
+        SessionStart: [{ hooks: [{ type: "command", command: "g2" }] }],
       };
 
       const project: HooksConfig = {
+        // Tool events use HookMatcher[]
         PostToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: "p1" }] },
         ],
-        SessionEnd: [
-          { matcher: "*", hooks: [{ type: "command", command: "p2" }] },
-        ],
+        // Simple events use SimpleHookMatcher[] (hooks wrapper)
+        SessionEnd: [{ hooks: [{ type: "command", command: "p2" }] }],
       };
 
       const merged = mergeHooksConfigs(global, project);
@@ -503,14 +515,15 @@ describe("Hooks Loader", () => {
 
     test("all three levels merge correctly", () => {
       const global: HooksConfig = {
+        // Tool event with HookMatcher[]
         PreToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: "global" }] },
         ],
-        SessionEnd: [
-          { matcher: "*", hooks: [{ type: "command", command: "global-end" }] },
-        ],
+        // Simple event with SimpleHookMatcher[]
+        SessionEnd: [{ hooks: [{ type: "command", command: "global-end" }] }],
       };
       const project: HooksConfig = {
+        // Tool event with HookMatcher[]
         PreToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: "project" }] },
         ],
@@ -522,14 +535,13 @@ describe("Hooks Loader", () => {
         ],
       };
       const projectLocal: HooksConfig = {
+        // Tool event with HookMatcher[]
         PreToolUse: [
           { matcher: "*", hooks: [{ type: "command", command: "local" }] },
         ],
+        // Simple event with SimpleHookMatcher[]
         SessionStart: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "local-start" }],
-          },
+          { hooks: [{ type: "command", command: "local-start" }] },
         ],
       };
 

@@ -2,7 +2,16 @@
 // Loads and matches hooks from settings-manager
 
 import { settingsManager } from "../settings-manager";
-import type { HookCommand, HookEvent, HooksConfig } from "./types";
+import {
+  type HookCommand,
+  type HookEvent,
+  type HookMatcher,
+  type HooksConfig,
+  isToolEvent,
+  type SimpleHookEvent,
+  type SimpleHookMatcher,
+  type ToolHookEvent,
+} from "./types";
 
 /**
  * Clear hooks cache - kept for API compatibility with existing callers.
@@ -71,7 +80,7 @@ export async function loadProjectLocalHooks(
 /**
  * Merge hooks configurations
  * Priority order: project-local > project > global
- * For each event, matchers are ordered by priority (local first, global last)
+ * For each event, hooks are ordered by priority (local first, global last)
  */
 export function mergeHooksConfigs(
   global: HooksConfig,
@@ -86,15 +95,34 @@ export function mergeHooksConfigs(
   ]) as Set<HookEvent>;
 
   for (const event of allEvents) {
-    const globalMatchers = global[event] || [];
-    const projectMatchers = project[event] || [];
-    const projectLocalMatchers = projectLocal[event] || [];
-    // Project-local matchers run first, then project, then global
-    merged[event] = [
-      ...projectLocalMatchers,
-      ...projectMatchers,
-      ...globalMatchers,
-    ];
+    if (isToolEvent(event)) {
+      // Tool events use HookMatcher[]
+      const toolEvent = event as ToolHookEvent;
+      const globalMatchers = (global[toolEvent] || []) as HookMatcher[];
+      const projectMatchers = (project[toolEvent] || []) as HookMatcher[];
+      const projectLocalMatchers = (projectLocal[toolEvent] ||
+        []) as HookMatcher[];
+      // Project-local runs first, then project, then global
+      (merged as Record<ToolHookEvent, HookMatcher[]>)[toolEvent] = [
+        ...projectLocalMatchers,
+        ...projectMatchers,
+        ...globalMatchers,
+      ];
+    } else {
+      // Simple events use SimpleHookMatcher[] (same as HookMatcher but without matcher field)
+      const simpleEvent = event as SimpleHookEvent;
+      const globalMatchers = (global[simpleEvent] || []) as SimpleHookMatcher[];
+      const projectMatchers = (project[simpleEvent] ||
+        []) as SimpleHookMatcher[];
+      const projectLocalMatchers = (projectLocal[simpleEvent] ||
+        []) as SimpleHookMatcher[];
+      // Project-local runs first, then project, then global
+      (merged as Record<SimpleHookEvent, SimpleHookMatcher[]>)[simpleEvent] = [
+        ...projectLocalMatchers,
+        ...projectMatchers,
+        ...globalMatchers,
+      ];
+    }
   }
 
   return merged;
@@ -146,22 +174,37 @@ export function getMatchingHooks(
   event: HookEvent,
   toolName?: string,
 ): HookCommand[] {
-  const matchers = config[event];
-  if (!matchers || matchers.length === 0) {
-    return [];
-  }
+  if (isToolEvent(event)) {
+    // Tool events use HookMatcher[] - need to match against tool name
+    const matchers = config[event as ToolHookEvent] as
+      | HookMatcher[]
+      | undefined;
+    if (!matchers || matchers.length === 0) {
+      return [];
+    }
 
-  const hooks: HookCommand[] = [];
+    const hooks: HookCommand[] = [];
+    for (const matcher of matchers) {
+      if (!toolName || matchesTool(matcher.matcher, toolName)) {
+        hooks.push(...matcher.hooks);
+      }
+    }
+    return hooks;
+  } else {
+    // Simple events use SimpleHookMatcher[] - extract hooks from each matcher
+    const matchers = config[event as SimpleHookEvent] as
+      | SimpleHookMatcher[]
+      | undefined;
+    if (!matchers || matchers.length === 0) {
+      return [];
+    }
 
-  for (const matcher of matchers) {
-    // For non-tool events, matcher is usually empty/"*"
-    // For tool events, check if the tool matches
-    if (!toolName || matchesTool(matcher.matcher, toolName)) {
+    const hooks: HookCommand[] = [];
+    for (const matcher of matchers) {
       hooks.push(...matcher.hooks);
     }
+    return hooks;
   }
-
-  return hooks;
 }
 
 /**
@@ -171,13 +214,27 @@ export function hasHooksForEvent(
   config: HooksConfig,
   event: HookEvent,
 ): boolean {
-  const matchers = config[event];
-  if (!matchers || matchers.length === 0) {
-    return false;
+  if (isToolEvent(event)) {
+    // Tool events use HookMatcher[]
+    const matchers = config[event as ToolHookEvent] as
+      | HookMatcher[]
+      | undefined;
+    if (!matchers || matchers.length === 0) {
+      return false;
+    }
+    // Check if any matcher has hooks
+    return matchers.some((m) => m.hooks && m.hooks.length > 0);
+  } else {
+    // Simple events use SimpleHookMatcher[]
+    const matchers = config[event as SimpleHookEvent] as
+      | SimpleHookMatcher[]
+      | undefined;
+    if (!matchers || matchers.length === 0) {
+      return false;
+    }
+    // Check if any matcher has hooks
+    return matchers.some((m) => m.hooks && m.hooks.length > 0);
   }
-
-  // Check if any matcher has hooks
-  return matchers.some((m) => m.hooks && m.hooks.length > 0);
 }
 
 /**
