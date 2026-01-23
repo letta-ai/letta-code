@@ -391,9 +391,9 @@ export function MessageSearch({
       case "all":
         return "all agents";
       case "agent":
-        return "current agent";
+        return "this agent";
       case "conv":
-        return "current conv";
+        return "this conversation";
     }
   };
 
@@ -463,20 +463,19 @@ export function MessageSearch({
           </Text>
           <Box flexDirection="column" paddingLeft={1}>
             {/* Search input */}
-            <Text dimColor>
-              {" "}
-              Search:{" "}
+            <Box flexDirection="row">
+              <Text dimColor> Search: </Text>
               {searchInput ? (
                 <>
-                  <Text color="white">{searchInput}</Text>
+                  <Text>{searchInput}</Text>
                   {searchInput !== activeQuery && (
                     <Text dimColor> (press Enter to search)</Text>
                   )}
                 </>
               ) : (
-                "(type to search)"
+                <Text dimColor>(type to search)</Text>
               )}
-            </Text>
+            </Box>
 
             <Box height={1} />
 

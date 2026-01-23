@@ -81,7 +81,7 @@ export async function sendMessageStream(
       conversationId,
       {
         messages: messages,
-        streaming: true,
+        stream: true,
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
         client_tools: getClientToolsFromRegistry(),
