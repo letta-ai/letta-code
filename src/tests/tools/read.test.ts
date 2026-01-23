@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { SYSTEM_REMINDER_OPEN } from "../../constants";
 import { read } from "../../tools/impl/Read";
 import { TestDirectory } from "../helpers/testFs";
 
@@ -115,7 +116,7 @@ export default box;
 
     const result = await read({ file_path: file });
 
-    expect(result.content).toContain("<system-reminder>");
+    expect(result.content).toContain(SYSTEM_REMINDER_OPEN);
     expect(result.content).toContain("empty contents");
   });
 
@@ -125,7 +126,7 @@ export default box;
 
     const result = await read({ file_path: file });
 
-    expect(result.content).toContain("<system-reminder>");
+    expect(result.content).toContain(SYSTEM_REMINDER_OPEN);
     expect(result.content).toContain("empty contents");
   });
 });

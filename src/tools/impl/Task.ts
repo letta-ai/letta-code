@@ -16,6 +16,7 @@ import {
   generateSubagentId,
   registerSubagent,
 } from "../../cli/helpers/subagentState.js";
+import { runSubagentStopHooks } from "../../hooks";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
 
@@ -127,6 +128,18 @@ export async function task(args: TaskArgs): Promise<string> {
       totalTokens: result.totalTokens,
     });
 
+    // Run SubagentStop hooks (fire-and-forget)
+    runSubagentStopHooks(
+      subagent_type,
+      subagentId,
+      result.success,
+      result.error,
+      result.agentId,
+      result.conversationId,
+    ).catch(() => {
+      // Silently ignore hook errors
+    });
+
     if (!result.success) {
       return `Error: ${result.error || "Subagent execution failed"}`;
     }
@@ -158,6 +171,19 @@ export async function task(args: TaskArgs): Promise<string> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     completeSubagent(subagentId, { success: false, error: errorMessage });
+
+    // Run SubagentStop hooks for error case (fire-and-forget)
+    runSubagentStopHooks(
+      subagent_type,
+      subagentId,
+      false,
+      errorMessage,
+      args.agent_id,
+      args.conversation_id,
+    ).catch(() => {
+      // Silently ignore hook errors
+    });
+
     return `Error: ${errorMessage}`;
   }
 }

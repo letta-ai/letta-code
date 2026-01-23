@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -35,6 +36,7 @@ export interface Settings {
   pinnedAgents?: string[]; // Array of agent IDs pinned globally
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Hook commands that run at various lifecycle points
   env?: Record<string, string>;
   // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
@@ -54,12 +56,14 @@ export interface Settings {
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>;
+  hooks?: HooksConfig; // Project-specific hook commands (checked in)
 }
 
 export interface LocalProjectSettings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // Current session (agent + conversation)
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Project-specific hook commands
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // Array of agent IDs pinned locally
   memoryReminderInterval?: number | null; // null = disabled, number = overrides global
@@ -407,6 +411,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
+        hooks: rawSettings.hooks as HooksConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -476,7 +481,26 @@ class SettingsManager {
       if (!exists(dirPath)) {
         await mkdir(dirPath, { recursive: true });
       }
-      await writeFile(settingsPath, JSON.stringify(this.settings, null, 2));
+
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      // Our settings take precedence for fields we manage
+      const merged = {
+        ...existingSettings,
+        ...this.settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving settings:", error);
       throw error;
@@ -633,7 +657,24 @@ class SettingsManager {
         await mkdir(dirPath, { recursive: true });
       }
 
-      await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      const merged = {
+        ...existingSettings,
+        ...settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving local project settings:", error);
       throw error;

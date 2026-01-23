@@ -122,6 +122,8 @@ export function Input({
   thinkingMessage,
   onSubmit,
   onBashSubmit,
+  bashRunning = false,
+  onBashInterrupt,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -140,6 +142,8 @@ export function Input({
   onRalphExit,
   conversationId,
   onPasteError,
+  restoredInput,
+  onRestoredInputConsumed,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -147,6 +151,8 @@ export function Input({
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
+  bashRunning?: boolean;
+  onBashInterrupt?: () => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -165,6 +171,8 @@ export function Input({
   onRalphExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
+  restoredInput?: string | null;
+  onRestoredInputConsumed?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -190,6 +198,17 @@ export function Input({
 
   // Bash mode state
   const [isBashMode, setIsBashMode] = useState(false);
+
+  // Restore input from error (only if current value is empty)
+  useEffect(() => {
+    if (restoredInput && value === "") {
+      setValue(restoredInput);
+      onRestoredInputConsumed?.();
+    } else if (restoredInput && value !== "") {
+      // Input has content, don't clobber - just consume the restored value
+      onRestoredInputConsumed?.();
+    }
+  }, [restoredInput, value, onRestoredInputConsumed]);
 
   const handleBangAtEmpty = () => {
     if (isBashMode) return false;
@@ -274,7 +293,13 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When streaming, use Esc to interrupt
+      // When bash command running, use Esc to interrupt (LET-7199)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
+      // When agent streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
@@ -307,6 +332,12 @@ export function Input({
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
+      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
@@ -593,6 +624,9 @@ export function Input({
     // Handle bash mode submission
     if (isBashMode) {
       if (!previousValue.trim()) return;
+
+      // Input locking - don't accept new commands while one is running (LET-7199)
+      if (bashRunning) return;
 
       // Add to history if not empty and not a duplicate of the last entry
       if (previousValue.trim() !== history[history.length - 1]) {

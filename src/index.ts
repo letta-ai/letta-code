@@ -5,7 +5,11 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
-import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import {
+  initializeLoadedSkillsFlag,
+  setAgentContext,
+  setConversationId as setContextConversationId,
+} from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
@@ -360,9 +364,21 @@ async function main(): Promise<void> {
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
-  checkAndAutoUpdate().catch(() => {
-    // Silently ignore update failures
-  });
+  checkAndAutoUpdate()
+    .then((result) => {
+      // Surface ENOTEMPTY failures so users know how to fix
+      if (result?.enotemptyFailed) {
+        console.error(
+          "\nAuto-update failed due to filesystem issue (ENOTEMPTY).",
+        );
+        console.error(
+          "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
+        );
+      }
+    })
+    .catch(() => {
+      // Silently ignore other update failures (network timeouts, etc.)
+    });
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
@@ -1767,6 +1783,8 @@ async function main(): Promise<void> {
         setAgentId(agent.id);
         setAgentState(agent);
         setConversationId(conversationIdToUse);
+        // Also set in global context for tools (e.g., Skill tool) to access
+        setContextConversationId(conversationIdToUse);
         setLoadingState("ready");
       }
 

@@ -88,7 +88,10 @@ export function formatErrorDetails(
         runId = e.error.run_id;
       }
 
-      const baseError = detail ? `${e.message}\nDetail: ${detail}` : e.message;
+      // When detail is available, prefer showing just the detail to avoid redundancy
+      // (e.message often contains the full JSON body like '409 {"detail":"CONFLICT: ..."}')
+      const baseError =
+        detail && typeof detail === "string" ? detail : e.message;
       return runId && agentId
         ? `${baseError}\n${createAgentLink(runId, agentId, conversationId)}`
         : baseError;

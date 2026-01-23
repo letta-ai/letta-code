@@ -3,6 +3,7 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   isApprovalPendingError,
   isApprovalStateDesyncError,
+  isInvalidToolCallIdsError,
 } from "../agent/approval-recovery";
 import { extractApprovals } from "../agent/check-approval";
 
@@ -31,6 +32,21 @@ describe("isApprovalStateDesyncError", () => {
     expect(isApprovalStateDesyncError(detail)).toBe(true);
   });
 
+  test("detects invalid tool call IDs error", () => {
+    const detail =
+      "Invalid tool call IDs: Expected ['tc_abc123'], got ['tc_xyz789']";
+    expect(isApprovalStateDesyncError(detail)).toBe(true);
+  });
+
+  test("detects invalid tool call IDs error case-insensitively", () => {
+    expect(
+      isApprovalStateDesyncError("INVALID TOOL CALL IDS: Expected X, got Y"),
+    ).toBe(true);
+    expect(isApprovalStateDesyncError("invalid tool call ids: mismatch")).toBe(
+      true,
+    );
+  });
+
   test("returns false for unrelated errors", () => {
     expect(isApprovalStateDesyncError("Connection timeout")).toBe(false);
     expect(isApprovalStateDesyncError("Internal server error")).toBe(false);
@@ -41,6 +57,43 @@ describe("isApprovalStateDesyncError", () => {
     expect(isApprovalStateDesyncError(undefined)).toBe(false);
     expect(isApprovalStateDesyncError(123)).toBe(false);
     expect(isApprovalStateDesyncError({ error: "test" })).toBe(false);
+  });
+});
+
+describe("isInvalidToolCallIdsError", () => {
+  test("detects invalid tool call IDs error", () => {
+    const detail =
+      "Invalid tool call IDs: Expected ['tc_abc123'], got ['tc_xyz789']";
+    expect(isInvalidToolCallIdsError(detail)).toBe(true);
+  });
+
+  test("detects invalid tool call IDs error case-insensitively", () => {
+    expect(
+      isInvalidToolCallIdsError("INVALID TOOL CALL IDS: Expected X, got Y"),
+    ).toBe(true);
+    expect(isInvalidToolCallIdsError("invalid tool call ids: mismatch")).toBe(
+      true,
+    );
+  });
+
+  test("returns false for 'no tool call awaiting' error", () => {
+    // This is a different desync type - server has NO pending approvals
+    expect(
+      isInvalidToolCallIdsError("No tool call is currently awaiting approval"),
+    ).toBe(false);
+  });
+
+  test("returns false for unrelated errors", () => {
+    expect(isInvalidToolCallIdsError("Connection timeout")).toBe(false);
+    expect(isInvalidToolCallIdsError("Internal server error")).toBe(false);
+    expect(isInvalidToolCallIdsError("Rate limit exceeded")).toBe(false);
+  });
+
+  test("returns false for non-string input", () => {
+    expect(isInvalidToolCallIdsError(null)).toBe(false);
+    expect(isInvalidToolCallIdsError(undefined)).toBe(false);
+    expect(isInvalidToolCallIdsError(123)).toBe(false);
+    expect(isInvalidToolCallIdsError({ error: "test" })).toBe(false);
   });
 });
 

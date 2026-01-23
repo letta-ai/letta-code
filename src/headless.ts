@@ -13,9 +13,15 @@ import {
   fetchRunErrorDetail,
   isApprovalPendingError,
   isApprovalStateDesyncError,
+  isConversationBusyError,
+  isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
-import { initializeLoadedSkillsFlag, setAgentContext } from "./agent/context";
+import {
+  initializeLoadedSkillsFlag,
+  setAgentContext,
+  setConversationId,
+} from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
@@ -58,6 +64,10 @@ import {
 // over transient LLM/backend issues without requiring the
 // caller to manually resubmit the prompt.
 const LLM_API_ERROR_MAX_RETRIES = 3;
+
+// Retry config for 409 "conversation busy" errors
+const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
+const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -654,6 +664,9 @@ export async function handleHeadlessCommand(
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
+  // Set conversation ID in context for tools (e.g., Skill tool) to access
+  setConversationId(conversationId);
+
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
   if (!isSubagent) {
@@ -945,15 +958,83 @@ export async function handleHeadlessCommand(
   // Track lastRunId outside the while loop so it's available in catch block
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
+  let conversationBusyRetries = 0;
 
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
   try {
     while (true) {
-      const stream = await sendMessageStream(conversationId, currentInput, {
-        agentId: agent.id,
-      });
+      // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
+      let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+      try {
+        stream = await sendMessageStream(conversationId, currentInput, {
+          agentId: agent.id,
+        });
+      } catch (preStreamError) {
+        // Extract error detail from APIError
+        let errorDetail = "";
+        if (
+          preStreamError instanceof APIError &&
+          preStreamError.error &&
+          typeof preStreamError.error === "object"
+        ) {
+          const errObj = preStreamError.error as Record<string, unknown>;
+          if (
+            errObj.error &&
+            typeof errObj.error === "object" &&
+            "detail" in errObj.error
+          ) {
+            const nested = errObj.error as Record<string, unknown>;
+            errorDetail =
+              typeof nested.detail === "string" ? nested.detail : "";
+          }
+          if (!errorDetail && typeof errObj.detail === "string") {
+            errorDetail = errObj.detail;
+          }
+        }
+        if (!errorDetail && preStreamError instanceof Error) {
+          errorDetail = preStreamError.message;
+        }
+
+        // Check for 409 "conversation busy" error - retry once with delay
+        if (
+          isConversationBusyError(errorDetail) &&
+          conversationBusyRetries < CONVERSATION_BUSY_MAX_RETRIES
+        ) {
+          conversationBusyRetries += 1;
+
+          // Emit retry message for stream-json mode
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "error", // 409 conversation busy is a pre-stream error
+              attempt: conversationBusyRetries,
+              max_attempts: CONVERSATION_BUSY_MAX_RETRIES,
+              delay_ms: CONVERSATION_BUSY_RETRY_DELAY_MS,
+              session_id: sessionId,
+              uuid: `retry-conversation-busy-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            console.error(
+              `Conversation is busy, waiting ${CONVERSATION_BUSY_RETRY_DELAY_MS / 1000}s and retrying...`,
+            );
+          }
+
+          // Wait before retry
+          await new Promise((resolve) =>
+            setTimeout(resolve, CONVERSATION_BUSY_RETRY_DELAY_MS),
+          );
+          continue;
+        }
+
+        // Reset conversation busy retry counter on other errors
+        conversationBusyRetries = 0;
+
+        // Re-throw to outer catch for other errors
+        throw preStreamError;
+      }
 
       // For stream-json, output each chunk as it arrives
       let stopReason: StopReasonType | null = null;
@@ -1147,6 +1228,9 @@ export async function handleHeadlessCommand(
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
+        // Reset retry counters on success
+        llmApiErrorRetries = 0;
+        conversationBusyRetries = 0;
         break;
       }
 
@@ -1328,6 +1412,39 @@ export async function handleHeadlessCommand(
       // Fallback: if we were sending only approvals and hit an internal error that
       // says there is no pending approval, resend using the keep-alive recovery prompt.
       if (approvalDesynced) {
+        // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+        // Fetch the actual pending approvals and process them before retrying.
+        if (
+          isInvalidToolCallIdsError(detailFromRun) ||
+          isInvalidToolCallIdsError(latestErrorText)
+        ) {
+          if (outputFormat === "stream-json") {
+            const recoveryMsg: RecoveryMessage = {
+              type: "recovery",
+              recovery_type: "invalid_tool_call_ids",
+              message:
+                "Tool call ID mismatch; fetching actual pending approvals and resyncing",
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(recoveryMsg));
+          } else {
+            console.error(
+              "Tool call ID mismatch; fetching actual pending approvals...",
+            );
+          }
+
+          try {
+            // Fetch and process actual pending approvals from server
+            await resolveAllPendingApprovals();
+            // After processing, continue to next iteration (fresh state)
+            continue;
+          } catch {
+            // If fetch fails, fall through to general desync recovery
+          }
+        }
+
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           llmApiErrorRetries += 1;
 

@@ -6,9 +6,19 @@ import { APPROVAL_RECOVERY_PROMPT } from "./promptAssets";
 const APPROVAL_RECOVERY_DETAIL_FRAGMENT =
   "no tool call is currently awaiting approval";
 
+// Error when approval tool call IDs don't match what server expects
+// Format: "Invalid tool call IDs: Expected [...], got [...]"
+// This is a specific subtype of desync - server HAS approvals but with different IDs
+const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
+
 // Error when trying to SEND message but server has pending approval waiting
 // This is the CONFLICT error - opposite of desync
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "cannot send a new message";
+
+// Error when conversation is busy (another request is being processed)
+// This is a 409 CONFLICT when trying to send while a run is active
+const CONVERSATION_BUSY_DETAIL_FRAGMENT =
+  "another request is currently being processed";
 
 type RunErrorMetadata =
   | {
@@ -22,7 +32,27 @@ type RunErrorMetadata =
 
 export function isApprovalStateDesyncError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
-  return detail.toLowerCase().includes(APPROVAL_RECOVERY_DETAIL_FRAGMENT);
+  const lower = detail.toLowerCase();
+  return (
+    lower.includes(APPROVAL_RECOVERY_DETAIL_FRAGMENT) ||
+    lower.includes(INVALID_TOOL_CALL_IDS_FRAGMENT)
+  );
+}
+
+/**
+ * Check if error specifically indicates tool call ID mismatch.
+ * This is a subtype of desync where the server HAS pending approvals,
+ * but they have different IDs than what the client sent.
+ *
+ * Unlike "no tool call is currently awaiting approval" (server has nothing),
+ * this error means we need to FETCH the actual pending approvals to resync.
+ *
+ * Error format:
+ * { detail: "Invalid tool call IDs: Expected ['tc_abc'], got ['tc_xyz']" }
+ */
+export function isInvalidToolCallIdsError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(INVALID_TOOL_CALL_IDS_FRAGMENT);
 }
 
 /**
@@ -36,6 +66,18 @@ export function isApprovalStateDesyncError(detail: unknown): boolean {
 export function isApprovalPendingError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
+}
+
+/**
+ * Check if error indicates the conversation is busy (another request is being processed).
+ * This is a 409 CONFLICT when trying to send a message while a run is still active.
+ *
+ * Error format:
+ * { detail: "CONFLICT: Cannot send a new message: Another request is currently being processed..." }
+ */
+export function isConversationBusyError(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
 }
 
 export async function fetchRunErrorDetail(
