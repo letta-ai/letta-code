@@ -2333,16 +2333,49 @@ export default function App({
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
 
-            // Run Stop hooks (fire-and-forget)
-            runStopHooks(
+            // Run Stop hooks - if blocked/errored, continue the conversation with feedback
+            const stopHookResult = await runStopHooks(
               stopReasonToHandle,
               buffersRef.current.order.length,
               Array.from(buffersRef.current.byId.values()).filter(
                 (item) => item.kind === "tool_call",
               ).length,
-            ).catch(() => {
-              // Silently ignore hook errors
-            });
+            );
+
+            // If hook blocked (exit 2), inject stderr feedback and continue conversation
+            if (stopHookResult.blocked) {
+              const stderrOutput = stopHookResult.results
+                .map((r) => r.stderr)
+                .filter(Boolean)
+                .join("\n");
+              const feedback = stderrOutput || "Stop hook blocked";
+              const hookMessage = `<stop-hook>\n${feedback}\n</stop-hook>`;
+
+              // Add status to transcript so user sees what's happening
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: ["🔄 Stop hook blocked: continuing conversation"],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              // Continue conversation with the hook feedback
+              setTimeout(() => {
+                processConversation(
+                  [
+                    {
+                      type: "message",
+                      role: "user",
+                      content: hookMessage,
+                    },
+                  ],
+                  { allowReentry: true },
+                );
+              }, 0);
+              return;
+            }
 
             // Disable eager approval check after first successful message (LET-7101)
             // Any new approvals from here on are from our own turn, not orphaned
