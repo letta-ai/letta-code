@@ -1,4 +1,5 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
+import { getErrorContext } from "./errorContext";
 
 const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
 const LETTA_AGENTS_URL =
@@ -162,6 +163,14 @@ export function formatErrorDetails(
 
     // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e)) {
+      const { billingTier, modelDisplayName } = getErrorContext();
+
+      // Free plan users get a special message about BYOK
+      if (billingTier?.toLowerCase() === "free") {
+        const modelInfo = modelDisplayName ? ` (${modelDisplayName})` : "";
+        return `Selected hosted model${modelInfo} not available on Free plan. Upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys for free to use OpenAI, Anthropic, and more with /connect.`;
+      }
+
       return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;
     }
     // Check for nested error structure: e.error.error

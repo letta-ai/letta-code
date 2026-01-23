@@ -150,6 +150,7 @@ import {
   computeAdvancedDiff,
   parsePatchToAdvancedDiff,
 } from "./helpers/diff";
+import { setErrorContext } from "./helpers/errorContext";
 import { formatErrorDetails } from "./helpers/errorFormatter";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
@@ -1055,8 +1056,16 @@ export default function App({
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
 
-  // Billing tier for conditional UI (fetched once on mount)
+  // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
+
+  // Update error context when model or billing tier changes
+  useEffect(() => {
+    setErrorContext({
+      modelDisplayName: currentModelDisplay ?? undefined,
+      billingTier: billingTier ?? undefined,
+    });
+  }, [currentModelDisplay, billingTier]);
 
   // Fetch billing tier once on mount
   useEffect(() => {
