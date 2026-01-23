@@ -38,7 +38,8 @@
   {
     "id": "bedrock-opus",
     "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
-    "label": "Bedrock Claude Opus 4.5",
+    "label": "Bedrock Opus 4.5",
+    "shortLabel": "Opus 4.5 BR",
     "description": "Anthropic's best model (via AWS Bedrock)",
     "isFeatured": true,
     "updateArgs": {
