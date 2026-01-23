@@ -332,6 +332,12 @@ export function Input({
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
+      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
