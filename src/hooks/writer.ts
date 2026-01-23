@@ -297,7 +297,6 @@ export function loadSimpleMatchersWithSource(
   return result;
 }
 
-
 /**
  * Count total hooks across all events and locations
  */
