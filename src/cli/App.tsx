@@ -5127,14 +5127,9 @@ export default function App({
             }
 
             const client = await getClient();
-            // SDK types are out of date - compact returns CompactionResponse, not void
-            const result = (await client.agents.messages.compact(
-              agentId,
-            )) as unknown as {
-              num_messages_before: number;
-              num_messages_after: number;
-              summary: string;
-            };
+            const result = await client.conversations.messages.compact(
+              conversationIdRef.current,
+            );
 
             // Format success message with before/after counts and summary
             const outputLines = [
