@@ -248,10 +248,7 @@ export function formatArgsDisplay(
           }
 
           // Read tools: show file path + any other useful args (limit, offset)
-          if (
-            isFileReadTool(toolName) &&
-            (parsed.file_path || parsed.path)
-          ) {
+          if (isFileReadTool(toolName) && (parsed.file_path || parsed.path)) {
             const filePath = String(parsed.file_path || parsed.path);
             const relativePath = formatDisplayPath(filePath);
 
