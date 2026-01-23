@@ -1,6 +1,8 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 
 const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
+const LETTA_AGENTS_URL =
+  "https://app.letta.com/projects/default-project/agents";
 
 /**
  * Check if the error is a rate limit error (429 with exceeded-quota)
@@ -56,6 +58,36 @@ function formatResetTime(ms: number): string {
   }
 
   return `Resets at ${timeStr} (${durationStr})`;
+}
+
+/**
+ * Check if the error is a resource limit error (402 with "You have reached your limit for X")
+ * Returns the error message if it matches, undefined otherwise
+ */
+function getResourceLimitMessage(e: APIError): string | undefined {
+  if (e.status !== 402) return undefined;
+
+  const errorBody = e.error;
+  if (errorBody && typeof errorBody === "object") {
+    if (
+      "error" in errorBody &&
+      typeof errorBody.error === "string" &&
+      errorBody.error.includes("You have reached your limit for")
+    ) {
+      return errorBody.error;
+    }
+  }
+
+  // Also check the message directly
+  if (e.message?.includes("You have reached your limit for")) {
+    // Extract just the error message part, not the full "402 {...}" string
+    const match = e.message.match(/"error":"([^"]+)"/);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -117,6 +149,15 @@ export function formatErrorDetails(
           ? formatResetTime(rateLimitResetMs)
           : "Try again later";
       return `You've hit your usage limit. ${resetInfo}. View usage: ${LETTA_USAGE_URL}`;
+    }
+
+    // Check for resource limit error (e.g., "You have reached your limit for agents")
+    const resourceLimitMsg = getResourceLimitMessage(e);
+    if (resourceLimitMsg) {
+      // Extract the resource type (agents, tools, etc.) from the message
+      const match = resourceLimitMsg.match(/limit for (\w+)/);
+      const resourceType = match ? match[1] : "resources";
+      return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
     }
 
     // Check for credit exhaustion error - provide a friendly message
