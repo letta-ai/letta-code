@@ -35,14 +35,14 @@ export function spawnWithLauncher(
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: true, // Create new process group so we can kill all descendants
+      detached: true,
     });
 
     // Helper to kill the entire process group
     const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {
       if (childProcess.pid) {
         try {
-          process.kill(-childProcess.pid, signal); // Negative PID kills process group
+          process.kill(-childProcess.pid, signal);
         } catch {
           // Process group may already be dead, try killing just the child
           try {
