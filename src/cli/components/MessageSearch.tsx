@@ -1,43 +1,33 @@
 import type { Letta } from "@letta-ai/letta-client";
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
 import { Box, Text, useInput } from "ink";
-import Link from "ink-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
+
 interface MessageSearchProps {
   onClose: () => void;
   initialQuery?: string;
+  /** Current agent ID for "current agent" filter */
+  agentId?: string;
+  /** Current conversation ID for "current conv" filter */
+  conversationId?: string;
+  /** Callback when user wants to open a conversation */
+  onOpenConversation?: (agentId: string, conversationId?: string) => void;
 }
 
-const DISPLAY_PAGE_SIZE = 5;
+const VISIBLE_ITEMS = 5;
 const SEARCH_LIMIT = 100; // Max results from API
 
 type SearchMode = "hybrid" | "vector" | "fts";
-const SEARCH_MODES: SearchMode[] = ["hybrid", "vector", "fts"];
+const SEARCH_MODES: SearchMode[] = ["fts", "vector", "hybrid"]; // Display order (hybrid is default)
 
-/**
- * Format a relative time string from a date
- */
-function formatRelativeTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return "";
-
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  const diffWeeks = Math.floor(diffDays / 7);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return `${diffWeeks}w ago`;
-}
+type SearchRange = "all" | "agent" | "conv";
+const SEARCH_RANGES: SearchRange[] = ["all", "agent", "conv"];
 
 /**
  * Format a timestamp in local timezone
@@ -110,94 +100,255 @@ function getMessageText(msg: MessageSearchResponse[number]): string {
   return `[${msg.message_type || "unknown"}]`;
 }
 
-export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
+export function MessageSearch({
+  onClose,
+  initialQuery,
+  agentId,
+  conversationId,
+  onOpenConversation,
+}: MessageSearchProps) {
   const terminalWidth = useTerminalWidth();
   const [searchInput, setSearchInput] = useState(initialQuery ?? "");
   const [activeQuery, setActiveQuery] = useState(initialQuery ?? "");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
+  const [searchRange, setSearchRange] = useState<SearchRange>("all");
   const [results, setResults] = useState<MessageSearchResponse>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [expandedMessage, setExpandedMessage] = useState<
+    MessageSearchResponse[number] | null
+  >(null);
   const clientRef = useRef<Letta | null>(null);
+  // Cache results per query+mode+range combination to avoid re-fetching
+  const resultsCache = useRef<Map<string, MessageSearchResponse>>(new Map());
 
-  // Execute search
-  const executeSearch = useCallback(async (query: string, mode: SearchMode) => {
-    if (!query.trim()) return;
+  // Get cache key for a specific query+mode+range combination
+  const getCacheKey = useCallback(
+    (query: string, mode: SearchMode, range: SearchRange) => {
+      const rangeKey =
+        range === "agent"
+          ? agentId || "no-agent"
+          : range === "conv"
+            ? conversationId || "no-conv"
+            : "all";
+      return `${query.trim()}-${mode}-${rangeKey}`;
+    },
+    [agentId, conversationId],
+  );
 
-    setLoading(true);
-    setError(null);
+  // Execute search for a single mode (returns results, doesn't set state)
+  const fetchSearchResults = useCallback(
+    async (
+      client: Letta,
+      query: string,
+      mode: SearchMode,
+      range: SearchRange,
+    ) => {
+      const body: Record<string, unknown> = {
+        query: query.trim(),
+        search_mode: mode,
+        limit: SEARCH_LIMIT,
+      };
 
-    try {
-      const client = clientRef.current || (await getClient());
-      clientRef.current = client;
+      // Add filters based on range
+      if (range === "agent" && agentId) {
+        body.agent_id = agentId;
+      } else if (range === "conv" && conversationId) {
+        body.conversation_id = conversationId;
+      }
 
-      // Direct API call since client.messages.search doesn't exist yet in SDK
       const searchResults = await client.post<MessageSearchResponse>(
         "/v1/messages/search",
-        {
-          body: {
-            query: query.trim(),
-            search_mode: mode,
-            limit: SEARCH_LIMIT,
-          },
-        },
+        { body },
       );
+      return searchResults;
+    },
+    [agentId, conversationId],
+  );
 
-      setResults(searchResults);
-      setCurrentPage(0);
-      setSelectedIndex(0);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Execute search - fires all 9 combinations (3 modes × 3 ranges) in parallel
+  const executeSearch = useCallback(
+    async (query: string, mode: SearchMode, range: SearchRange) => {
+      if (!query.trim()) return;
 
-  // Submit search
+      const cacheKey = getCacheKey(query, mode, range);
+
+      // Check cache first
+      const cached = resultsCache.current.get(cacheKey);
+      if (cached) {
+        setResults(cached);
+        setSelectedIndex(0);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const client = clientRef.current || (await getClient());
+        clientRef.current = client;
+
+        // Helper to get cached or fetch
+        const getOrFetch = (m: SearchMode, r: SearchRange) => {
+          const key = getCacheKey(query, m, r);
+          return (
+            resultsCache.current.get(key) ??
+            fetchSearchResults(client, query, m, r)
+          );
+        };
+
+        // Fire all 9 combinations in parallel for instant mode/range switching
+        const [
+          hybridAll,
+          vectorAll,
+          ftsAll,
+          hybridAgent,
+          vectorAgent,
+          ftsAgent,
+          hybridConv,
+          vectorConv,
+          ftsConv,
+        ] = await Promise.all([
+          getOrFetch("hybrid", "all"),
+          getOrFetch("vector", "all"),
+          getOrFetch("fts", "all"),
+          agentId ? getOrFetch("hybrid", "agent") : Promise.resolve([]),
+          agentId ? getOrFetch("vector", "agent") : Promise.resolve([]),
+          agentId ? getOrFetch("fts", "agent") : Promise.resolve([]),
+          conversationId ? getOrFetch("hybrid", "conv") : Promise.resolve([]),
+          conversationId ? getOrFetch("vector", "conv") : Promise.resolve([]),
+          conversationId ? getOrFetch("fts", "conv") : Promise.resolve([]),
+        ]);
+
+        // Cache all results
+        resultsCache.current.set(
+          getCacheKey(query, "hybrid", "all"),
+          hybridAll,
+        );
+        resultsCache.current.set(
+          getCacheKey(query, "vector", "all"),
+          vectorAll,
+        );
+        resultsCache.current.set(getCacheKey(query, "fts", "all"), ftsAll);
+        if (agentId) {
+          resultsCache.current.set(
+            getCacheKey(query, "hybrid", "agent"),
+            hybridAgent,
+          );
+          resultsCache.current.set(
+            getCacheKey(query, "vector", "agent"),
+            vectorAgent,
+          );
+          resultsCache.current.set(
+            getCacheKey(query, "fts", "agent"),
+            ftsAgent,
+          );
+        }
+        if (conversationId) {
+          resultsCache.current.set(
+            getCacheKey(query, "hybrid", "conv"),
+            hybridConv,
+          );
+          resultsCache.current.set(
+            getCacheKey(query, "vector", "conv"),
+            vectorConv,
+          );
+          resultsCache.current.set(getCacheKey(query, "fts", "conv"), ftsConv);
+        }
+
+        // Set the results for the current mode+range
+        const resultMap: Record<
+          SearchMode,
+          Record<SearchRange, MessageSearchResponse>
+        > = {
+          hybrid: { all: hybridAll, agent: hybridAgent, conv: hybridConv },
+          vector: { all: vectorAll, agent: vectorAgent, conv: vectorConv },
+          fts: { all: ftsAll, agent: ftsAgent, conv: ftsConv },
+        };
+
+        setResults(resultMap[mode][range]);
+        setSelectedIndex(0);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fetchSearchResults, getCacheKey, agentId, conversationId],
+  );
+
+  // Submit search (only when query changes)
   const submitSearch = useCallback(() => {
     if (searchInput.trim() && searchInput !== activeQuery) {
       setActiveQuery(searchInput);
-      executeSearch(searchInput, searchMode);
+      executeSearch(searchInput, searchMode, searchRange);
     }
-  }, [searchInput, activeQuery, searchMode, executeSearch]);
+  }, [searchInput, activeQuery, searchMode, searchRange, executeSearch]);
 
   // Clear search
   const clearSearch = useCallback(() => {
     setSearchInput("");
     setActiveQuery("");
     setResults([]);
-    setCurrentPage(0);
     setSelectedIndex(0);
   }, []);
 
-  // Cycle search mode
-  const cycleSearchMode = useCallback(() => {
+  // Cycle search mode (Shift+Tab)
+  const cycleSearchMode = useCallback((reverse = false) => {
     setSearchMode((current) => {
       const currentIndex = SEARCH_MODES.indexOf(current);
-      const nextIndex = (currentIndex + 1) % SEARCH_MODES.length;
+      const nextIndex = reverse
+        ? (currentIndex - 1 + SEARCH_MODES.length) % SEARCH_MODES.length
+        : (currentIndex + 1) % SEARCH_MODES.length;
       return SEARCH_MODES[nextIndex] as SearchMode;
     });
   }, []);
 
-  // Re-run search when mode changes (if there's an active query)
+  // Cycle search range (Tab)
+  const cycleSearchRange = useCallback(() => {
+    setSearchRange((current) => {
+      const currentIndex = SEARCH_RANGES.indexOf(current);
+      const nextIndex = (currentIndex + 1) % SEARCH_RANGES.length;
+      return SEARCH_RANGES[nextIndex] as SearchRange;
+    });
+  }, []);
+
+  // Re-run search when mode or range changes (if there's an active query) - uses cache
   useEffect(() => {
     if (activeQuery) {
-      executeSearch(activeQuery, searchMode);
+      executeSearch(activeQuery, searchMode, searchRange);
     }
-  }, [searchMode, activeQuery, executeSearch]);
+  }, [searchMode, searchRange, activeQuery, executeSearch]);
 
-  // Calculate pagination
-  const totalPages = Math.ceil(results.length / DISPLAY_PAGE_SIZE);
-  const startIndex = currentPage * DISPLAY_PAGE_SIZE;
-  const pageResults = results.slice(startIndex, startIndex + DISPLAY_PAGE_SIZE);
+  // Sliding window for visible items
+  const startIndex = Math.max(
+    0,
+    Math.min(selectedIndex - 2, results.length - VISIBLE_ITEMS),
+  );
+  const visibleResults = results.slice(startIndex, startIndex + VISIBLE_ITEMS);
 
   useInput((input, key) => {
     // CTRL-C: immediately close (bypasses search clearing)
     if (key.ctrl && input === "c") {
       onClose();
+      return;
+    }
+
+    // Handle expanded message view
+    if (expandedMessage) {
+      if (key.escape) {
+        setExpandedMessage(null);
+      } else if (key.return && onOpenConversation) {
+        const msgData = expandedMessage as {
+          agent_id?: string;
+          conversation_id?: string;
+        };
+        if (msgData.agent_id) {
+          onOpenConversation(msgData.agent_id, msgData.conversation_id);
+        }
+      }
       return;
     }
 
@@ -208,106 +359,202 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
         onClose();
       }
     } else if (key.return) {
-      submitSearch();
+      // If user has typed a new query, search first
+      if (searchInput.trim() && searchInput !== activeQuery) {
+        submitSearch();
+      } else if (results.length > 0 && results[selectedIndex]) {
+        // Otherwise expand the selected result
+        setExpandedMessage(results[selectedIndex]);
+      }
     } else if (key.backspace || key.delete) {
       setSearchInput((prev) => prev.slice(0, -1));
-    } else if (key.tab) {
-      // Tab cycles search mode
+    } else if (key.tab && key.shift) {
+      // Shift+Tab cycles search mode
       cycleSearchMode();
+    } else if (key.tab) {
+      // Tab cycles search range
+      cycleSearchRange();
     } else if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(pageResults.length - 1, prev + 1));
-    } else if (input === "j" || input === "J") {
-      // Previous page
-      if (currentPage > 0) {
-        setCurrentPage((prev) => prev - 1);
-        setSelectedIndex(0);
-      }
-    } else if (input === "k" || input === "K") {
-      // Next page
-      if (currentPage < totalPages - 1) {
-        setCurrentPage((prev) => prev + 1);
-        setSelectedIndex(0);
-      }
+      setSelectedIndex((prev) => Math.min(results.length - 1, prev + 1));
     } else if (input && !key.ctrl && !key.meta) {
       setSearchInput((prev) => prev + input);
     }
   });
 
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Box>
-        <Text bold color={colors.selector.title}>
-          Search messages across all agents
-        </Text>
-      </Box>
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
-      {/* Search input and mode */}
-      <Box flexDirection="column">
-        <Box>
-          <Text dimColor>Search: </Text>
-          {searchInput ? (
+  // Range label helper
+  const getRangeLabel = (range: SearchRange) => {
+    switch (range) {
+      case "all":
+        return "all agents";
+      case "agent":
+        return "current agent";
+      case "conv":
+        return "current conv";
+    }
+  };
+
+  return (
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /search"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Expanded message view - hide title/controls */}
+      {expandedMessage &&
+        (() => {
+          const msgData = expandedMessage as {
+            date?: string;
+            created_at?: string;
+            agent_id?: string;
+            conversation_id?: string;
+          };
+          const fullText = getMessageText(expandedMessage);
+          const msgType = expandedMessage.message_type || "unknown";
+          const isAssistant =
+            msgType === "assistant_message" || msgType === "reasoning_message";
+          const typeLabel = isAssistant ? "Agent message" : "User message";
+          const timestamp = formatLocalTime(msgData.created_at || msgData.date);
+
+          return (
             <>
-              <Text>{searchInput}</Text>
-              {searchInput !== activeQuery && (
-                <Text dimColor> (press Enter to search)</Text>
-              )}
+              {/* Full message text in quotes */}
+              <Box paddingLeft={2}>
+                <Text>"{fullText}"</Text>
+              </Box>
+
+              <Box height={1} />
+
+              {/* Metadata */}
+              <Box flexDirection="column" paddingLeft={2}>
+                <Text dimColor>
+                  {typeLabel}, sent {timestamp}
+                </Text>
+                <Text dimColor>Agent ID: {msgData.agent_id || "unknown"}</Text>
+                {msgData.conversation_id && (
+                  <Text dimColor>Conv ID: {msgData.conversation_id}</Text>
+                )}
+              </Box>
+
+              <Box height={1} />
+
+              {/* Footer */}
+              <Box paddingLeft={2}>
+                <Text dimColor>
+                  {onOpenConversation
+                    ? "Enter to open conversation · Esc cancel"
+                    : "Esc cancel"}
+                </Text>
+              </Box>
             </>
-          ) : (
-            <Text dimColor italic>
-              (type your query)
+          );
+        })()}
+
+      {/* Title and search controls - hidden when expanded */}
+      {!expandedMessage && (
+        <Box flexDirection="column" gap={1} marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Search messages across all agents
+          </Text>
+          <Box flexDirection="column" paddingLeft={1}>
+            {/* Search input */}
+            <Text dimColor>
+              {" "}
+              Search:{" "}
+              {searchInput ? (
+                <>
+                  <Text color="white">{searchInput}</Text>
+                  {searchInput !== activeQuery && (
+                    <Text dimColor> (press Enter to search)</Text>
+                  )}
+                </>
+              ) : (
+                "(type to search)"
+              )}
             </Text>
-          )}
+
+            <Box height={1} />
+
+            {/* Range tabs */}
+            <Box flexDirection="row">
+              <Text dimColor> Range (tab): </Text>
+              {SEARCH_RANGES.map((range, i) => {
+                const isActive = range === searchRange;
+                return (
+                  <Text key={range}>
+                    {i > 0 && <Text> </Text>}
+                    <Text
+                      backgroundColor={
+                        isActive ? colors.selector.itemHighlighted : undefined
+                      }
+                      color={isActive ? "black" : undefined}
+                      bold={isActive}
+                    >
+                      {` ${getRangeLabel(range)} `}
+                    </Text>
+                  </Text>
+                );
+              })}
+            </Box>
+
+            {/* Mode tabs */}
+            <Box flexDirection="row">
+              <Text dimColor> Mode (shift-tab): </Text>
+              {SEARCH_MODES.map((mode, i) => {
+                const isActive = mode === searchMode;
+                return (
+                  <Text key={mode}>
+                    {i > 0 && <Text> </Text>}
+                    <Text
+                      backgroundColor={
+                        isActive ? colors.selector.itemHighlighted : undefined
+                      }
+                      color={isActive ? "black" : undefined}
+                      bold={isActive}
+                    >
+                      {` ${mode} `}
+                    </Text>
+                  </Text>
+                );
+              })}
+            </Box>
+          </Box>
         </Box>
-        <Box>
-          <Text dimColor>Mode: </Text>
-          {SEARCH_MODES.map((mode, i) => (
-            <Text key={mode}>
-              {i > 0 && <Text dimColor> · </Text>}
-              <Text
-                bold={mode === searchMode}
-                color={
-                  mode === searchMode
-                    ? colors.selector.itemHighlighted
-                    : undefined
-                }
-              >
-                {mode}
-              </Text>
-            </Text>
-          ))}
-          <Text dimColor> (Tab to change)</Text>
-        </Box>
-      </Box>
+      )}
 
       {/* Error state */}
-      {error && (
-        <Box>
+      {!expandedMessage && error && (
+        <Box paddingLeft={2}>
           <Text color="red">Error: {error}</Text>
         </Box>
       )}
 
       {/* Loading state */}
-      {loading && (
-        <Box>
+      {!expandedMessage && loading && (
+        <Box paddingLeft={2}>
           <Text dimColor>Searching...</Text>
         </Box>
       )}
 
       {/* No results */}
-      {!loading && activeQuery && results.length === 0 && (
-        <Box>
+      {!expandedMessage && !loading && activeQuery && results.length === 0 && (
+        <Box paddingLeft={2}>
           <Text dimColor>No results found for "{activeQuery}"</Text>
         </Box>
       )}
 
       {/* Results list */}
-      {!loading && results.length > 0 && (
+      {!expandedMessage && !loading && results.length > 0 && (
         <Box flexDirection="column">
-          {pageResults.map(
-            (msg: MessageSearchResponse[number], index: number) => {
-              const isSelected = index === selectedIndex;
+          {visibleResults.map(
+            (msg: MessageSearchResponse[number], visibleIndex: number) => {
+              const actualIndex = startIndex + visibleIndex;
+              const isSelected = actualIndex === selectedIndex;
               const messageText = getMessageText(msg);
               // All messages have a date field
               const msgWithDate = msg as {
@@ -316,32 +563,33 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                 agent_id?: string;
                 conversation_id?: string;
               };
-              const timestamp = msgWithDate.date
-                ? formatRelativeTime(msgWithDate.date)
-                : "";
-              const msgType = (msg.message_type || "unknown").replace(
-                "_message",
-                "",
+              const msgType = msg.message_type || "unknown";
+              const agentIdFromMsg = msgWithDate.agent_id || "unknown";
+              const conversationIdFromMsg = msgWithDate.conversation_id;
+              const createdAt = formatLocalTime(
+                msgWithDate.created_at || msgWithDate.date,
               );
-              const agentId = msgWithDate.agent_id || "unknown";
-              const conversationId = msgWithDate.conversation_id;
-              const createdAt = formatLocalTime(msgWithDate.created_at);
 
-              // Calculate available width for message text
-              const metaWidth = timestamp.length + msgType.length + 10; // padding
-              const availableWidth = Math.max(
-                20,
-                terminalWidth - metaWidth - 4,
-              );
+              // Determine emoji based on message type
+              const isAssistant =
+                msgType === "assistant_message" ||
+                msgType === "reasoning_message";
+              const emoji = isAssistant ? "👾" : "👤";
+
+              // Calculate available width for message text (account for emoji + spacing)
+              const availableWidth = Math.max(20, terminalWidth - 8);
               const displayText = truncateText(
                 messageText.replace(/\n/g, " "),
                 availableWidth,
               );
 
+              // Show conversation_id if exists, otherwise agent_id
+              const idToShow = conversationIdFromMsg || agentIdFromMsg;
+
               // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
               const msgId =
                 "message_id" in msg ? String(msg.message_id) : "result";
-              const uniqueKey = `${msgId}-${startIndex + index}`;
+              const uniqueKey = `${msgId}-${actualIndex}`;
 
               return (
                 <Box key={uniqueKey} flexDirection="column" marginBottom={1}>
@@ -353,9 +601,10 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                     >
                       {isSelected ? ">" : " "}
                     </Text>
-                    <Text> </Text>
+                    <Text> {emoji} </Text>
                     <Text
                       bold={isSelected}
+                      italic
                       color={
                         isSelected ? colors.selector.itemHighlighted : undefined
                       }
@@ -365,26 +614,9 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
                   </Box>
                   <Box flexDirection="row" marginLeft={2}>
                     <Text dimColor>
-                      {msgType}
-                      {timestamp && ` · ${timestamp}`}
+                      {createdAt}
+                      {idToShow && ` · ${idToShow}`}
                     </Text>
-                    {agentId && (
-                      <>
-                        <Text dimColor> · </Text>
-                        <Link
-                          url={`https://app.letta.com/projects/default-project/agents/${agentId}?searchTerm=${encodeURIComponent(activeQuery)}&messageId=${msgId}${conversationId ? `&conversation=${encodeURIComponent(conversationId)}` : ""}`}
-                        >
-                          <Text color={colors.link.text}>view message</Text>
-                        </Link>
-                        <Text dimColor> · agent: </Text>
-                        <Link
-                          url={`https://app.letta.com/projects/default-project/agents/${agentId}${conversationId ? `?conversation=${encodeURIComponent(conversationId)}` : ""}`}
-                        >
-                          <Text color={colors.link.text}>{agentId}</Text>
-                        </Link>
-                      </>
-                    )}
-                    {createdAt && <Text dimColor> · {createdAt}</Text>}
                   </Box>
                 </Box>
               );
@@ -394,21 +626,16 @@ export function MessageSearch({ onClose, initialQuery }: MessageSearchProps) {
       )}
 
       {/* Footer */}
-      <Box flexDirection="column" marginTop={1}>
-        {results.length > 0 && (
-          <Box>
+      {!expandedMessage && (
+        <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+          {results.length > 0 && (
             <Text dimColor>
-              Page {currentPage + 1}/{totalPages || 1} ({results.length}{" "}
-              results)
+              {selectedIndex + 1}/{results.length} results
             </Text>
-          </Box>
-        )}
-        <Box>
-          <Text dimColor>
-            Type + Enter to search · Tab mode · J/K page · Esc close
-          </Text>
+          )}
+          <Text dimColor>Enter expand · ↑↓ navigate · Esc close</Text>
         </Box>
-      </Box>
+      )}
     </Box>
   );
 }

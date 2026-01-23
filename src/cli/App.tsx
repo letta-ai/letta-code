@@ -3670,7 +3670,10 @@ export default function App({
   }, [processConversation]);
 
   const handleAgentSelect = useCallback(
-    async (targetAgentId: string, _opts?: { profileName?: string }) => {
+    async (
+      targetAgentId: string,
+      opts?: { profileName?: string; conversationId?: string },
+    ) => {
       // Close selector immediately
       setActiveOverlay(null);
 
@@ -3733,9 +3736,8 @@ export default function App({
         // Fetch new agent
         const agent = await client.agents.retrieve(targetAgentId);
 
-        // Use the agent's default conversation when switching agents
-        // User can /new to start a fresh conversation if needed
-        const targetConversationId = "default";
+        // Use specified conversation or default to the agent's default conversation
+        const targetConversationId = opts?.conversationId ?? "default";
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
@@ -3768,13 +3770,20 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
-        // Build success message - resumed default conversation
+        // Build success message
         const agentLabel = agent.name || targetAgentId;
-        const successOutput = [
-          `Resumed the default conversation with **${agentLabel}**.`,
-          `⎿  Type /resume to browse all conversations`,
-          `⎿  Type /new to start a new conversation`,
-        ].join("\n");
+        const isSpecificConv =
+          opts?.conversationId && opts.conversationId !== "default";
+        const successOutput = isSpecificConv
+          ? [
+              `Switched to **${agentLabel}**`,
+              `⎿  Conversation: ${opts.conversationId}`,
+            ].join("\n")
+          : [
+              `Resumed the default conversation with **${agentLabel}**.`,
+              `⎿  Type /resume to browse all conversations`,
+              `⎿  Type /new to start a new conversation`,
+            ].join("\n");
         const successItem: StaticItem = {
           kind: "command",
           id: uid("cmd"),
@@ -8693,7 +8702,9 @@ Plan file path: ${planFilePath}`;
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
             ) : item.kind === "separator" ? (
-              <Text dimColor>{"─".repeat(columns)}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>{"─".repeat(columns)}</Text>
+              </Box>
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
             ) : item.kind === "bash_command" ? (
@@ -9298,6 +9309,185 @@ Plan file path: ${planFilePath}`;
               <MessageSearch
                 onClose={closeOverlay}
                 initialQuery={searchQuery || undefined}
+                agentId={agentId}
+                conversationId={conversationId}
+                onOpenConversation={async (targetAgentId, targetConvId) => {
+                  closeOverlay();
+
+                  // Different agent: use handleAgentSelect (which supports optional conversationId)
+                  if (targetAgentId !== agentId) {
+                    await handleAgentSelect(targetAgentId, {
+                      conversationId: targetConvId,
+                    });
+                    return;
+                  }
+
+                  // Normalize undefined/null to "default"
+                  const actualTargetConv = targetConvId || "default";
+
+                  // Same agent, same conversation: nothing to do
+                  if (actualTargetConv === conversationId) {
+                    return;
+                  }
+
+                  // Same agent, different conversation: switch conversation
+                  // (Reuses ConversationSelector's onSelect logic pattern)
+                  if (isAgentBusy()) {
+                    setQueuedOverlayAction({
+                      type: "switch_conversation",
+                      conversationId: actualTargetConv,
+                    });
+                    const cmdId = uid("cmd");
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/search",
+                      output: `Conversation switch queued – will switch after current task completes`,
+                      phase: "finished",
+                      success: true,
+                    });
+                    buffersRef.current.order.push(cmdId);
+                    refreshDerived();
+                    return;
+                  }
+
+                  setCommandRunning(true);
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/search",
+                    output: "Switching conversation...",
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    if (agentState) {
+                      const client = await getClient();
+                      const resumeData = await getResumeData(
+                        client,
+                        agentState,
+                        actualTargetConv,
+                      );
+
+                      setConversationId(actualTargetConv);
+                      settingsManager.setLocalLastSession(
+                        { agentId, conversationId: actualTargetConv },
+                        process.cwd(),
+                      );
+                      settingsManager.setGlobalLastSession({
+                        agentId,
+                        conversationId: actualTargetConv,
+                      });
+
+                      // Clear current transcript and static items
+                      buffersRef.current.byId.clear();
+                      buffersRef.current.order = [];
+                      buffersRef.current.tokenCount = 0;
+                      emittedIdsRef.current.clear();
+                      setStaticItems([]);
+                      setStaticRenderEpoch((e) => e + 1);
+
+                      const currentAgentName =
+                        agentState.name || "Unnamed Agent";
+                      const successOutput = [
+                        `Switched to conversation with "${currentAgentName}"`,
+                        `⎿  Conversation: ${actualTargetConv}`,
+                      ].join("\n");
+                      const successItem: StaticItem = {
+                        kind: "command",
+                        id: uid("cmd"),
+                        input: "/search",
+                        output: successOutput,
+                        phase: "finished",
+                        success: true,
+                      };
+
+                      // Backfill message history
+                      if (resumeData.messageHistory.length > 0) {
+                        hasBackfilledRef.current = false;
+                        backfillBuffers(
+                          buffersRef.current,
+                          resumeData.messageHistory,
+                        );
+                        const backfilledItems: StaticItem[] = [];
+                        for (const id of buffersRef.current.order) {
+                          const ln = buffersRef.current.byId.get(id);
+                          if (!ln) continue;
+                          emittedIdsRef.current.add(id);
+                          backfilledItems.push({ ...ln } as StaticItem);
+                        }
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([
+                          separator,
+                          ...backfilledItems,
+                          successItem,
+                        ]);
+                        setLines(toLines(buffersRef.current));
+                        hasBackfilledRef.current = true;
+                      } else {
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([separator, successItem]);
+                        setLines(toLines(buffersRef.current));
+                      }
+
+                      // Restore pending approvals if any
+                      if (resumeData.pendingApprovals.length > 0) {
+                        setPendingApprovals(resumeData.pendingApprovals);
+                        try {
+                          const contexts = await Promise.all(
+                            resumeData.pendingApprovals.map(
+                              async (approval) => {
+                                const parsedArgs = safeJsonParseOr<
+                                  Record<string, unknown>
+                                >(approval.toolArgs, {});
+                                return await analyzeToolApproval(
+                                  approval.toolName,
+                                  parsedArgs,
+                                );
+                              },
+                            ),
+                          );
+                          setApprovalContexts(contexts);
+                        } catch {
+                          // If analysis fails, leave context as null
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    let errorMsg = "Unknown error";
+                    if (error instanceof APIError) {
+                      if (error.status === 404) {
+                        errorMsg = "Conversation not found";
+                      } else if (error.status === 422) {
+                        errorMsg = "Invalid conversation ID";
+                      } else {
+                        errorMsg = error.message;
+                      }
+                    } else if (error instanceof Error) {
+                      errorMsg = error.message;
+                    }
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/search",
+                      output: `Failed: ${errorMsg}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                    refreshDerived();
+                  } finally {
+                    setCommandRunning(false);
+                  }
+                }}
               />
             )}
 
