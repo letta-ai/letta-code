@@ -78,26 +78,36 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         ) : (
           <Text color="gray"> (type /pin to pin agent)</Text>
         )}
-        <Text dimColor> · {agentId}</Text>
+        {isCloudUser && adeUrl && !isTmux && (
+          <>
+            <Text dimColor> · </Text>
+            <Link url={adeUrl}>
+              <Text>Open in ADE ↗</Text>
+            </Link>
+          </>
+        )}
+        {isCloudUser && adeUrl && isTmux && (
+          <Text dimColor> · Open in ADE: {adeUrl}</Text>
+        )}
+        {isCloudUser && (
+          <>
+            <Text dimColor> · </Text>
+            <Link url="https://app.letta.com/settings/organization/usage">
+              <Text>View usage ↗</Text>
+            </Link>
+          </>
+        )}
+        {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
+      </Box>
+      {/* Agent ID and conversation ID on separate line */}
+      <Box>
+        <Text dimColor>
+          {"  "}
+          {agentId}
+        </Text>
         {conversationId && conversationId !== "default" && (
           <Text dimColor> · {conversationId}</Text>
         )}
-      </Box>
-      <Box>
-        <Text dimColor>{"  "}</Text>
-        {isCloudUser && adeUrl && !isTmux && (
-          <Link url={adeUrl}>
-            <Text>Open in ADE ↗</Text>
-          </Link>
-        )}
-        {isCloudUser && adeUrl && isTmux && <Text>Open in ADE: {adeUrl}</Text>}
-        {isCloudUser && <Text dimColor>{" · "}</Text>}
-        {isCloudUser && (
-          <Link url="https://app.letta.com/settings/organization/usage">
-            <Text>View usage ↗</Text>
-          </Link>
-        )}
-        {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
     </Box>
   );
