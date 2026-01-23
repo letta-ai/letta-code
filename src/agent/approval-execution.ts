@@ -40,6 +40,7 @@ export function getDisplayableToolReturn(content: ToolReturnContent): string {
 const PARALLEL_SAFE_TOOLS = new Set([
   // === Anthropic toolset (default) ===
   "Read",
+  "view_image",
   "Grep",
   "Glob",
 

@@ -82,6 +82,7 @@ export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
   "grep_files",
   "apply_patch",
   "update_plan",
+  "view_image",
   "Skill",
   "Task",
 ];
@@ -112,6 +113,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "ShellCommand",
   "Shell",
   "ReadFile",
+  "view_image",
   "ListDir",
   "GrepFiles",
   "ApplyPatch",
@@ -151,6 +153,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  view_image: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
   Skill: { requiresApproval: false },
   Task: { requiresApproval: true },
