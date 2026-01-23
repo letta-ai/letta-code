@@ -35,16 +35,24 @@ export function spawnWithLauncher(
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
+      // On Unix, detached creates a new process group for clean termination
+      // On Windows, detached creates a new console window which we don't want
+      detached: process.platform !== "win32",
     });
 
     // Helper to kill the entire process group
     const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {
       if (childProcess.pid) {
         try {
-          process.kill(-childProcess.pid, signal);
+          if (process.platform !== "win32") {
+            // Unix: kill the process group using negative PID
+            process.kill(-childProcess.pid, signal);
+          } else {
+            // Windows: process groups work differently, just kill the child
+            childProcess.kill(signal);
+          }
         } catch {
-          // Process group may already be dead, try killing just the child
+          // Process may already be dead, try killing just the child
           try {
             childProcess.kill(signal);
           } catch {
