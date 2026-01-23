@@ -116,9 +116,12 @@ async function restoreMemory(
 
   // Get current agent blocks using direct fetch (SDK may hit wrong server)
   const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
-  const blocksResp = await fetch(`${baseUrl}/v1/agents/${agentId}/core-memory`, {
-    headers: { Authorization: `Bearer ${getApiKey()}` },
-  });
+  const blocksResp = await fetch(
+    `${baseUrl}/v1/agents/${agentId}/core-memory`,
+    {
+      headers: { Authorization: `Bearer ${getApiKey()}` },
+    },
+  );
   if (!blocksResp.ok) {
     throw new Error(`Failed to list blocks: ${blocksResp.status}`);
   }
