@@ -79,6 +79,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
           <Text color="gray"> (type /pin to pin agent)</Text>
         )}
         <Text dimColor> · {agentId}</Text>
+        {conversationId && conversationId !== "default" && (
+          <Text dimColor> · {conversationId}</Text>
+        )}
       </Box>
       <Box>
         <Text dimColor>{"  "}</Text>
