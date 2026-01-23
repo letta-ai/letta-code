@@ -133,7 +133,7 @@ export async function getResumeData(
 ): Promise<ResumeData> {
   try {
     let inContextMessageIds: string[] | null | undefined;
-    let messages: Message[];
+    let messages: Message[] = [];
 
     // Use conversations API for explicit conversations,
     // use agents API for "default" or no conversationId (agent's primary message history)
@@ -156,15 +156,22 @@ export async function getResumeData(
           "No in-context messages - no pending approvals",
         );
         if (isBackfillEnabled()) {
-          const backfill = await client.conversations.messages.list(
-            conversationId,
-            { limit: MESSAGE_HISTORY_LIMIT, order: "desc" },
-          );
-          return {
-            pendingApproval: null,
-            pendingApprovals: [],
-            messageHistory: sortChronological(backfill.getPaginatedItems()),
-          };
+          try {
+            const backfill = await client.conversations.messages.list(
+              conversationId,
+              { limit: MESSAGE_HISTORY_LIMIT, order: "desc" },
+            );
+            return {
+              pendingApproval: null,
+              pendingApprovals: [],
+              messageHistory: sortChronological(backfill.getPaginatedItems()),
+            };
+          } catch (backfillError) {
+            debugWarn(
+              "check-approval",
+              `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+            );
+          }
         }
         return {
           pendingApproval: null,
@@ -182,15 +189,24 @@ export async function getResumeData(
       const retrievedMessages = await client.messages.retrieve(lastInContextId);
 
       // Fetch message history separately for backfill (desc then reverse for last N chronological)
-      const backfillPage = isBackfillEnabled()
-        ? await client.conversations.messages.list(conversationId, {
-            limit: MESSAGE_HISTORY_LIMIT,
-            order: "desc",
-          })
-        : null;
-      messages = backfillPage
-        ? sortChronological(backfillPage.getPaginatedItems())
-        : [];
+      // Wrapped in try/catch so backfill failures don't crash the CLI
+      if (isBackfillEnabled()) {
+        try {
+          const backfillPage = await client.conversations.messages.list(
+            conversationId,
+            {
+              limit: MESSAGE_HISTORY_LIMIT,
+              order: "desc",
+            },
+          );
+          messages = sortChronological(backfillPage.getPaginatedItems());
+        } catch (backfillError) {
+          debugWarn(
+            "check-approval",
+            `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+          );
+        }
+      }
 
       // Find the approval_request_message variant if it exists
       // (A single DB message can have multiple content types returned as separate Message objects)
@@ -258,19 +274,28 @@ export async function getResumeData(
 
       // Fetch message history for backfill using conversation_id=default
       // This filters to only the default conversation's messages (like the ADE does)
-      const messagesPage = isBackfillEnabled()
-        ? await client.agents.messages.list(agent.id, {
+      // Wrapped in try/catch so backfill failures don't crash the CLI (e.g., older servers
+      // may not support conversation_id filter)
+      if (isBackfillEnabled()) {
+        try {
+          const messagesPage = await client.agents.messages.list(agent.id, {
             limit: MESSAGE_HISTORY_LIMIT,
             order: "desc",
             conversation_id: "default", // Key: filter to default conversation only
-          })
-        : null;
-      messages = messagesPage ? sortChronological(messagesPage.items) : [];
+          });
+          messages = sortChronological(messagesPage.items);
 
-      if (process.env.DEBUG && messagesPage) {
-        console.log(
-          `[DEBUG] agents.messages.list(conversation_id=default) returned ${messagesPage.items.length} messages`,
-        );
+          if (process.env.DEBUG) {
+            console.log(
+              `[DEBUG] agents.messages.list(conversation_id=default) returned ${messagesPage.items.length} messages`,
+            );
+          }
+        } catch (backfillError) {
+          debugWarn(
+            "check-approval",
+            `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+          );
+        }
       }
 
       // Find the approval_request_message variant if it exists
