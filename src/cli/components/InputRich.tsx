@@ -333,7 +333,6 @@ export function Input({
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
       // If a bash command is running, Ctrl+C interrupts it (same as Esc)
-      // Note: This only affects bash commands, not agent streaming
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
