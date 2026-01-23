@@ -3,6 +3,62 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
 
 /**
+ * Check if the error is a rate limit error (429 with exceeded-quota)
+ * Returns the timeToQuotaResetMs if it's a rate limit error, undefined otherwise
+ */
+function getRateLimitResetMs(e: APIError): number | undefined {
+  if (e.status !== 429) return undefined;
+
+  const errorBody = e.error;
+  if (errorBody && typeof errorBody === "object") {
+    // Check for reasons array with "exceeded-quota"
+    if ("reasons" in errorBody && Array.isArray(errorBody.reasons)) {
+      if (errorBody.reasons.includes("exceeded-quota")) {
+        if (
+          "timeToQuotaResetMs" in errorBody &&
+          typeof errorBody.timeToQuotaResetMs === "number"
+        ) {
+          return errorBody.timeToQuotaResetMs;
+        }
+        // Return 0 to indicate rate limited but no reset time available
+        return 0;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Format a time duration in milliseconds to a human-readable string
+ */
+function formatResetTime(ms: number): string {
+  const now = new Date();
+  const resetTime = new Date(now.getTime() + ms);
+
+  // Format the reset time
+  const timeStr = resetTime.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  // Calculate human-readable duration
+  const totalMinutes = Math.ceil(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  let durationStr: string;
+  if (hours > 0 && minutes > 0) {
+    durationStr = `${hours}h ${minutes}m`;
+  } else if (hours > 0) {
+    durationStr = `${hours}h`;
+  } else {
+    durationStr = `${minutes}m`;
+  }
+
+  return `Resets at ${timeStr} (${durationStr})`;
+}
+
+/**
  * Check if the error is a credit exhaustion error (402 with not-enough-credits)
  */
 function isCreditExhaustedError(e: APIError): boolean {
@@ -53,7 +109,17 @@ export function formatErrorDetails(
 
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
-    // Check for credit exhaustion error first - provide a friendly message
+    // Check for rate limit error first - provide a friendly message with reset time
+    const rateLimitResetMs = getRateLimitResetMs(e);
+    if (rateLimitResetMs !== undefined) {
+      const resetInfo =
+        rateLimitResetMs > 0
+          ? formatResetTime(rateLimitResetMs)
+          : "Try again later";
+      return `You've hit your usage limit. ${resetInfo}. View usage: ${LETTA_USAGE_URL}`;
+    }
+
+    // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e)) {
       return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;
     }
