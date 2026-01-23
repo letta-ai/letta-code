@@ -168,6 +168,34 @@ describe("Hooks Loader", () => {
       expect(matchesTool("Edit|Write", "Bash")).toBe(false);
       expect(matchesTool("Edit|Write|Read", "Read")).toBe(true);
     });
+
+    test("regex patterns work", () => {
+      // .* suffix pattern
+      expect(matchesTool("Notebook.*", "Notebook")).toBe(true);
+      expect(matchesTool("Notebook.*", "NotebookEdit")).toBe(true);
+      expect(matchesTool("Notebook.*", "NotebookRead")).toBe(true);
+      expect(matchesTool("Notebook.*", "Edit")).toBe(false);
+
+      // Prefix pattern
+      expect(matchesTool(".*Edit", "NotebookEdit")).toBe(true);
+      expect(matchesTool(".*Edit", "Edit")).toBe(true);
+      expect(matchesTool(".*Edit", "Write")).toBe(false);
+
+      // Character class
+      expect(matchesTool("Task|Bash", "Task")).toBe(true);
+      expect(matchesTool("Task|Bash", "Bash")).toBe(true);
+
+      // More complex patterns
+      expect(matchesTool("Web.*", "WebFetch")).toBe(true);
+      expect(matchesTool("Web.*", "WebSearch")).toBe(true);
+      expect(matchesTool("Web.*", "Bash")).toBe(false);
+    });
+
+    test("invalid regex falls back to exact match", () => {
+      // Unclosed bracket is invalid regex
+      expect(matchesTool("[invalid", "[invalid")).toBe(true);
+      expect(matchesTool("[invalid", "invalid")).toBe(false);
+    });
   });
 
   describe("getMatchingHooks", () => {
