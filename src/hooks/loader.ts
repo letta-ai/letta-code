@@ -147,8 +147,10 @@ export async function loadHooks(
  * Check if a tool name matches a matcher pattern
  * Patterns:
  * - "*" or "": matches all tools
- * - "ToolName": exact match
- * - "Tool1|Tool2|Tool3": matches any of the listed tools
+ * - "ToolName": exact match (simple alphanumeric strings)
+ * - "Edit|Write": regex alternation, matches Edit or Write
+ * - "Notebook.*": regex pattern, matches Notebook, NotebookEdit, etc.
+ * - Any valid regex pattern is supported (case-sensitive)
  */
 export function matchesTool(pattern: string, toolName: string): boolean {
   // Empty or "*" matches everything
@@ -156,14 +158,14 @@ export function matchesTool(pattern: string, toolName: string): boolean {
     return true;
   }
 
-  // Check for pipe-separated list
-  if (pattern.includes("|")) {
-    const tools = pattern.split("|").map((t) => t.trim());
-    return tools.includes(toolName);
+  // Treat pattern as regex (anchored to match full tool name)
+  try {
+    const regex = new RegExp(`^(?:${pattern})$`);
+    return regex.test(toolName);
+  } catch {
+    // Invalid regex, fall back to exact match
+    return pattern === toolName;
   }
-
-  // Exact match
-  return pattern === toolName;
 }
 
 /**
