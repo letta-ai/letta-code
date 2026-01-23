@@ -35,7 +35,32 @@ export function spawnWithLauncher(
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      // On Unix, detached creates a new process group for clean termination
+      // On Windows, detached creates a new console window which we don't want
+      detached: process.platform !== "win32",
     });
+
+    // Helper to kill the entire process group
+    const killProcessGroup = (signal: "SIGTERM" | "SIGKILL") => {
+      if (childProcess.pid) {
+        try {
+          if (process.platform !== "win32") {
+            // Unix: kill the process group using negative PID
+            process.kill(-childProcess.pid, signal);
+          } else {
+            // Windows: process groups work differently, just kill the child
+            childProcess.kill(signal);
+          }
+        } catch {
+          // Process may already be dead, try killing just the child
+          try {
+            childProcess.kill(signal);
+          } catch {
+            // Already dead, ignore
+          }
+        }
+      }
+    };
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -46,16 +71,16 @@ export function spawnWithLauncher(
     const timeoutId = options.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          childProcess.kill("SIGTERM");
+          killProcessGroup("SIGTERM");
         }, options.timeoutMs)
       : null;
 
     const abortHandler = () => {
-      childProcess.kill("SIGTERM");
+      killProcessGroup("SIGTERM");
       if (!killTimer) {
         killTimer = setTimeout(() => {
           if (childProcess.exitCode === null && !childProcess.killed) {
-            childProcess.kill("SIGKILL");
+            killProcessGroup("SIGKILL");
           }
         }, ABORT_KILL_TIMEOUT_MS);
       }
