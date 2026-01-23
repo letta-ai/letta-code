@@ -129,10 +129,20 @@ export function ModelSelector({
         m.handle.startsWith(`${filterProvider}/`),
       );
     }
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      available = available.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
     const featured = available.filter((m) => m.isFeatured);
     const nonFeatured = available.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
-  }, [typedModels, availableHandles, filterProvider]);
+  }, [typedModels, availableHandles, filterProvider, searchQuery]);
 
   // All other models: API handles not in models.json
   const otherModelHandles = useMemo(() => {
@@ -158,8 +168,8 @@ export function ModelSelector({
     }));
   }, [category, supportedModels, otherModelHandles]);
 
-  // Show 1 fewer item in "all" category because Search line takes space
-  const visibleCount = category === "all" ? VISIBLE_ITEMS - 1 : VISIBLE_ITEMS;
+  // Show 1 fewer item because Search line takes space
+  const visibleCount = VISIBLE_ITEMS - 1;
 
   // Scrolling - keep selectedIndex in view
   const startIndex = useMemo(() => {
@@ -276,8 +286,8 @@ export function ModelSelector({
         if (selectedModel) {
           onSelect(selectedModel.id);
         }
-      } else if (category === "all" && input && input.length === 1) {
-        // Capture text input for search (only in "all" category)
+      } else if (input && input.length === 1) {
+        // Capture text input for search
         setSearchQuery((prev) => prev + input);
         setSelectedIndex(0);
       }
@@ -328,9 +338,7 @@ export function ModelSelector({
         {!isLoading && !refreshing && (
           <Box flexDirection="column" paddingLeft={1}>
             {renderTabBar()}
-            {category === "all" && (
-              <Text dimColor> Search: {searchQuery || "(type to filter)"}</Text>
-            )}
+            <Text dimColor> Search: {searchQuery || "(type to filter)"}</Text>
           </Box>
         )}
       </Box>

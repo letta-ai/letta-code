@@ -43,7 +43,7 @@ import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
-import { getModelDisplayName, getModelInfo } from "../agent/model";
+import { getModelInfo, getModelShortName } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
@@ -1047,7 +1047,7 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel
-    ? (getModelDisplayName(currentModelLabel) ??
+    ? (getModelShortName(currentModelLabel) ??
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
