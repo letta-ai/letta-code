@@ -8,7 +8,7 @@ if git diff --quiet HEAD 2>/dev/null; then
     exit 0
 fi
 
-# Run fix - capture output and send to stderr on failure (per spec)
+# Run fix - capture output and send to stderr on failure
 output=$(bun run fix 2>&1)
 exit_code=$?
 

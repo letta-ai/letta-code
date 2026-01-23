@@ -297,29 +297,6 @@ export function loadSimpleMatchersWithSource(
   return result;
 }
 
-/**
- * Load all hooks for an event with source tracking
- * @deprecated Use loadMatchersWithSource for tool events or loadSimpleMatchersWithSource for simple events
- */
-export function loadHooksWithSource(
-  event: HookEvent,
-  workingDirectory: string = process.cwd(),
-): HookMatcherWithSource[] {
-  if (!isToolEvent(event)) {
-    // For simple events, wrap in HookMatcher format for backwards compatibility
-    const simpleMatchers = loadSimpleMatchersWithSource(
-      event as SimpleHookEvent,
-      workingDirectory,
-    );
-    return simpleMatchers.map((m: SimpleHookMatcherWithSource) => ({
-      matcher: "*",
-      hooks: m.hooks,
-      source: m.source,
-      sourceIndex: m.sourceIndex,
-    }));
-  }
-  return loadMatchersWithSource(event as ToolHookEvent, workingDirectory);
-}
 
 /**
  * Count total hooks across all events and locations

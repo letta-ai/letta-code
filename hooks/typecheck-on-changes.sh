@@ -8,7 +8,7 @@ if git diff --quiet HEAD 2>/dev/null; then
     exit 0
 fi
 
-# Run typecheck - capture output and send to stderr on failure (per spec)
+# Run typecheck - capture output and send to stderr on failure
 output=$(tsc --noEmit --pretty 2>&1)
 exit_code=$?
 

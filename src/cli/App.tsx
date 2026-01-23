@@ -2382,7 +2382,9 @@ export default function App({
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
                 id: statusId,
-                lines: ["🔄 Stop hook blocked: continuing conversation"],
+                lines: [
+                  "Stop hook encountered blocking error, continuing loop with stderr feedback.",
+                ],
               });
               buffersRef.current.order.push(statusId);
               refreshDerived();
