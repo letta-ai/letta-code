@@ -2,7 +2,15 @@
 // Functions to write hooks to settings files via settings-manager
 
 import { settingsManager } from "../settings-manager";
-import type { HookEvent, HookMatcher, HooksConfig } from "./types";
+import {
+  type HookEvent,
+  type HookMatcher,
+  type HooksConfig,
+  isToolEvent,
+  type SimpleHookEvent,
+  type SimpleHookMatcher,
+  type ToolHookEvent,
+} from "./types";
 
 /**
  * Save location for hooks
@@ -71,10 +79,10 @@ export async function saveHooksToLocation(
 }
 
 /**
- * Add a new hook matcher to an event
+ * Add a new hook matcher to a tool event (PreToolUse, PostToolUse, PermissionRequest)
  */
 export async function addHookMatcher(
-  event: HookEvent,
+  event: ToolHookEvent,
   matcher: HookMatcher,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
@@ -83,61 +91,91 @@ export async function addHookMatcher(
 
   // Initialize event array if needed
   if (!hooks[event]) {
-    hooks[event] = [];
+    (hooks as Record<ToolHookEvent, HookMatcher[]>)[event] = [];
   }
 
   // Add the new matcher
-  const eventMatchers = hooks[event];
-  if (eventMatchers) {
-    eventMatchers.push(matcher);
+  const eventMatchers = hooks[event] as HookMatcher[];
+  eventMatchers.push(matcher);
+
+  await saveHooksToLocation(hooks, location, workingDirectory);
+}
+
+/**
+ * Add a new hook matcher to a simple event (non-tool events)
+ * Simple events use the same structure as tool events but without the matcher field
+ */
+export async function addSimpleHookMatcher(
+  event: SimpleHookEvent,
+  matcher: SimpleHookMatcher,
+  location: SaveLocation,
+  workingDirectory: string = process.cwd(),
+): Promise<void> {
+  const hooks = loadHooksFromLocation(location, workingDirectory);
+
+  // Initialize event array if needed
+  if (!hooks[event]) {
+    (hooks as Record<SimpleHookEvent, SimpleHookMatcher[]>)[event] = [];
   }
+
+  // Add the new matcher
+  const eventMatchers = hooks[event] as SimpleHookMatcher[];
+  eventMatchers.push(matcher);
 
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**
  * Remove a hook matcher from an event by index
+ * Works for both tool events (HookMatcher) and simple events (SimpleHookMatcher)
  */
-export async function removeHookMatcher(
+export async function removeHook(
   event: HookEvent,
-  matcherIndex: number,
+  index: number,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
-  const eventMatchers = hooks[event];
 
-  if (
-    !eventMatchers ||
-    matcherIndex < 0 ||
-    matcherIndex >= eventMatchers.length
-  ) {
-    throw new Error(`Invalid matcher index ${matcherIndex} for event ${event}`);
-  }
-
-  // Remove the matcher at the given index
-  eventMatchers.splice(matcherIndex, 1);
-
-  // Clean up empty arrays
-  if (eventMatchers.length === 0) {
-    delete hooks[event];
+  if (isToolEvent(event)) {
+    const eventMatchers = hooks[event as ToolHookEvent] as
+      | HookMatcher[]
+      | undefined;
+    if (!eventMatchers || index < 0 || index >= eventMatchers.length) {
+      throw new Error(`Invalid matcher index ${index} for event ${event}`);
+    }
+    eventMatchers.splice(index, 1);
+    if (eventMatchers.length === 0) {
+      delete hooks[event as ToolHookEvent];
+    }
+  } else {
+    const eventMatchers = hooks[event as SimpleHookEvent] as
+      | SimpleHookMatcher[]
+      | undefined;
+    if (!eventMatchers || index < 0 || index >= eventMatchers.length) {
+      throw new Error(`Invalid matcher index ${index} for event ${event}`);
+    }
+    eventMatchers.splice(index, 1);
+    if (eventMatchers.length === 0) {
+      delete hooks[event as SimpleHookEvent];
+    }
   }
 
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**
- * Update a hook matcher at a specific index
+ * Update a hook matcher at a specific index (tool events only)
  */
 export async function updateHookMatcher(
-  event: HookEvent,
+  event: ToolHookEvent,
   matcherIndex: number,
   matcher: HookMatcher,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
-  const eventMatchers = hooks[event];
+  const eventMatchers = hooks[event] as HookMatcher[] | undefined;
 
   if (
     !eventMatchers ||
@@ -147,14 +185,39 @@ export async function updateHookMatcher(
     throw new Error(`Invalid matcher index ${matcherIndex} for event ${event}`);
   }
 
-  // Update the matcher at the given index
   eventMatchers[matcherIndex] = matcher;
 
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
 /**
- * Hook matcher with source tracking for display
+ * Update a hook matcher at a specific index (simple events only)
+ */
+export async function updateSimpleHookMatcher(
+  event: SimpleHookEvent,
+  matcherIndex: number,
+  matcher: SimpleHookMatcher,
+  location: SaveLocation,
+  workingDirectory: string = process.cwd(),
+): Promise<void> {
+  const hooks = loadHooksFromLocation(location, workingDirectory);
+  const eventMatchers = hooks[event] as SimpleHookMatcher[] | undefined;
+
+  if (
+    !eventMatchers ||
+    matcherIndex < 0 ||
+    matcherIndex >= eventMatchers.length
+  ) {
+    throw new Error(`Invalid matcher index ${matcherIndex} for event ${event}`);
+  }
+
+  eventMatchers[matcherIndex] = matcher;
+
+  await saveHooksToLocation(hooks, location, workingDirectory);
+}
+
+/**
+ * Hook matcher with source tracking for display (tool events)
  */
 export interface HookMatcherWithSource extends HookMatcher {
   source: SaveLocation;
@@ -162,21 +225,33 @@ export interface HookMatcherWithSource extends HookMatcher {
 }
 
 /**
- * Load all hooks for an event with source tracking
- * Returns matchers tagged with their source location
+ * Simple hook matcher with source tracking for display (simple events)
  */
-export function loadHooksWithSource(
-  event: HookEvent,
+export interface SimpleHookMatcherWithSource extends SimpleHookMatcher {
+  source: SaveLocation;
+  sourceIndex: number; // Index within that source file
+}
+
+/**
+ * Union type for hooks with source tracking
+ */
+export type HookWithSource =
+  | HookMatcherWithSource
+  | SimpleHookMatcherWithSource;
+
+/**
+ * Load all hook matchers for a tool event with source tracking
+ */
+export function loadMatchersWithSource(
+  event: ToolHookEvent,
   workingDirectory: string = process.cwd(),
 ): HookMatcherWithSource[] {
   const result: HookMatcherWithSource[] = [];
-
-  // Load from each location and tag with source
   const locations: SaveLocation[] = ["project-local", "project", "user"];
 
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
-    const matchers = hooks[event] || [];
+    const matchers = (hooks[event] || []) as HookMatcher[];
 
     for (let i = 0; i < matchers.length; i++) {
       const matcher = matchers[i];
@@ -194,6 +269,59 @@ export function loadHooksWithSource(
 }
 
 /**
+ * Load all hook matchers for a simple event with source tracking
+ */
+export function loadSimpleMatchersWithSource(
+  event: SimpleHookEvent,
+  workingDirectory: string = process.cwd(),
+): SimpleHookMatcherWithSource[] {
+  const result: SimpleHookMatcherWithSource[] = [];
+  const locations: SaveLocation[] = ["project-local", "project", "user"];
+
+  for (const location of locations) {
+    const hooks = loadHooksFromLocation(location, workingDirectory);
+    const matchers = (hooks[event] || []) as SimpleHookMatcher[];
+
+    for (let i = 0; i < matchers.length; i++) {
+      const matcher = matchers[i];
+      if (matcher) {
+        result.push({
+          ...matcher,
+          source: location,
+          sourceIndex: i,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Load all hooks for an event with source tracking
+ * @deprecated Use loadMatchersWithSource for tool events or loadSimpleMatchersWithSource for simple events
+ */
+export function loadHooksWithSource(
+  event: HookEvent,
+  workingDirectory: string = process.cwd(),
+): HookMatcherWithSource[] {
+  if (!isToolEvent(event)) {
+    // For simple events, wrap in HookMatcher format for backwards compatibility
+    const simpleMatchers = loadSimpleMatchersWithSource(
+      event as SimpleHookEvent,
+      workingDirectory,
+    );
+    return simpleMatchers.map((m: SimpleHookMatcherWithSource) => ({
+      matcher: "*",
+      hooks: m.hooks,
+      source: m.source,
+      sourceIndex: m.sourceIndex,
+    }));
+  }
+  return loadMatchersWithSource(event as ToolHookEvent, workingDirectory);
+}
+
+/**
  * Count total hooks across all events and locations
  */
 export function countTotalHooks(
@@ -206,9 +334,19 @@ export function countTotalHooks(
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
     for (const event of Object.keys(hooks) as HookEvent[]) {
-      const matchers = hooks[event] || [];
-      for (const matcher of matchers) {
-        count += matcher.hooks.length;
+      if (isToolEvent(event)) {
+        // Tool events have HookMatcher[] with nested hooks
+        const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
+        for (const matcher of matchers) {
+          count += matcher.hooks.length;
+        }
+      } else {
+        // Simple events have SimpleHookMatcher[] with nested hooks
+        const matchers = (hooks[event as SimpleHookEvent] ||
+          []) as SimpleHookMatcher[];
+        for (const matcher of matchers) {
+          count += matcher.hooks.length;
+        }
       }
     }
   }
@@ -229,9 +367,19 @@ export function countHooksForEvent(
 
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
-    const matchers = hooks[event] || [];
-    for (const matcher of matchers) {
-      count += matcher.hooks.length;
+    if (isToolEvent(event)) {
+      // Tool events have HookMatcher[] with nested hooks
+      const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
+      for (const matcher of matchers) {
+        count += matcher.hooks.length;
+      }
+    } else {
+      // Simple events have SimpleHookMatcher[] with nested hooks
+      const matchers = (hooks[event as SimpleHookEvent] ||
+        []) as SimpleHookMatcher[];
+      for (const matcher of matchers) {
+        count += matcher.hooks.length;
+      }
     }
   }
 

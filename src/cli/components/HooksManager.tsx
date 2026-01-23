@@ -4,14 +4,24 @@
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { memo, useCallback, useEffect, useState } from "react";
-import type { HookEvent, HookMatcher } from "../../hooks/types";
+import {
+  type HookEvent,
+  type HookMatcher,
+  isToolEvent,
+  type SimpleHookEvent,
+  type SimpleHookMatcher,
+  type ToolHookEvent,
+} from "../../hooks/types";
 import {
   addHookMatcher,
+  addSimpleHookMatcher,
   countHooksForEvent,
   countTotalHooks,
   type HookMatcherWithSource,
-  loadHooksWithSource,
-  removeHookMatcher,
+  type HookWithSource,
+  loadMatchersWithSource,
+  loadSimpleMatchersWithSource,
+  removeHook,
   type SaveLocation,
 } from "../../hooks/writer";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
@@ -31,8 +41,8 @@ interface HooksManagerProps {
 
 type Screen =
   | "events"
-  | "matchers"
-  | "add-matcher"
+  | "hooks-list" // Was "matchers" - now handles both matchers and commands
+  | "add-matcher" // For tool events only
   | "add-command"
   | "save-location"
   | "delete-confirm";
@@ -127,7 +137,8 @@ export const HooksManager = memo(function HooksManager({
   const [screen, setScreen] = useState<Screen>("events");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedEvent, setSelectedEvent] = useState<HookEvent | null>(null);
-  const [matchers, setMatchers] = useState<HookMatcherWithSource[]>([]);
+  // For tool events: HookMatcherWithSource[], for simple events: HookCommandWithSource[]
+  const [hooks, setHooks] = useState<HookWithSource[]>([]);
   const [totalHooks, setTotalHooks] = useState(0);
 
   // New hook state
@@ -136,8 +147,11 @@ export const HooksManager = memo(function HooksManager({
   const [selectedLocation, setSelectedLocation] = useState(0);
 
   // Delete confirmation
-  const [deleteMatcherIndex, setDeleteMatcherIndex] = useState(-1);
+  const [deleteHookIndex, setDeleteHookIndex] = useState(-1);
   const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(1); // Default to No
+
+  // Helper to check if current event is a tool event
+  const isCurrentToolEvent = selectedEvent ? isToolEvent(selectedEvent) : false;
 
   // Refresh counts - called when hooks change
   const refreshCounts = useCallback(() => {
@@ -151,10 +165,13 @@ export const HooksManager = memo(function HooksManager({
     }
   }, [screen, refreshCounts]);
 
-  // Load matchers when event is selected
-  const loadMatchers = useCallback((event: HookEvent) => {
-    const loaded = loadHooksWithSource(event);
-    setMatchers(loaded);
+  // Load hooks when event is selected (matchers for both tool and simple events)
+  const loadHooks = useCallback((event: HookEvent) => {
+    if (isToolEvent(event)) {
+      setHooks(loadMatchersWithSource(event as ToolHookEvent));
+    } else {
+      setHooks(loadSimpleMatchersWithSource(event as SimpleHookEvent));
+    }
   }, []);
 
   // Handle adding a hook
@@ -164,52 +181,59 @@ export const HooksManager = memo(function HooksManager({
     const location = SAVE_LOCATIONS[selectedLocation]?.location;
     if (!location) return;
 
-    const matcher: HookMatcher = {
-      matcher: newMatcher.trim() || "*",
-      hooks: [{ type: "command", command: newCommand.trim() }],
-    };
+    if (isToolEvent(selectedEvent)) {
+      // Tool events use HookMatcher with matcher pattern
+      const matcher: HookMatcher = {
+        matcher: newMatcher.trim() || "*",
+        hooks: [{ type: "command", command: newCommand.trim() }],
+      };
+      await addHookMatcher(selectedEvent as ToolHookEvent, matcher, location);
+    } else {
+      // Simple events use SimpleHookMatcher (same structure, just no matcher field)
+      const matcher: SimpleHookMatcher = {
+        hooks: [{ type: "command", command: newCommand.trim() }],
+      };
+      await addSimpleHookMatcher(
+        selectedEvent as SimpleHookEvent,
+        matcher,
+        location,
+      );
+    }
 
-    await addHookMatcher(selectedEvent, matcher, location);
-    loadMatchers(selectedEvent);
+    loadHooks(selectedEvent);
     refreshCounts();
 
-    // Reset and go back to matchers
+    // Reset and go back to hooks list
     setNewMatcher("");
     setNewCommand("");
     setSelectedLocation(0);
-    setScreen("matchers");
+    setScreen("hooks-list");
     setSelectedIndex(0);
   }, [
     selectedEvent,
     newMatcher,
     newCommand,
     selectedLocation,
-    loadMatchers,
+    loadHooks,
     refreshCounts,
   ]);
 
   // Handle deleting a hook
   const handleDeleteHook = useCallback(async () => {
-    if (deleteMatcherIndex < 0 || !selectedEvent) return;
+    if (deleteHookIndex < 0 || !selectedEvent) return;
 
-    const matcher = matchers[deleteMatcherIndex];
-    if (!matcher) return;
+    const hook = hooks[deleteHookIndex];
+    if (!hook) return;
 
-    await removeHookMatcher(selectedEvent, matcher.sourceIndex, matcher.source);
-    loadMatchers(selectedEvent);
+    await removeHook(selectedEvent, hook.sourceIndex, hook.source);
+    loadHooks(selectedEvent);
     refreshCounts();
 
-    // Reset and go back to matchers
-    setDeleteMatcherIndex(-1);
-    setScreen("matchers");
+    // Reset and go back to hooks list
+    setDeleteHookIndex(-1);
+    setScreen("hooks-list");
     setSelectedIndex(0);
-  }, [
-    deleteMatcherIndex,
-    selectedEvent,
-    matchers,
-    loadMatchers,
-    refreshCounts,
-  ]);
+  }, [deleteHookIndex, selectedEvent, hooks, loadHooks, refreshCounts]);
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel
@@ -228,16 +252,16 @@ export const HooksManager = memo(function HooksManager({
         const selected = HOOK_EVENTS[selectedIndex];
         if (selected) {
           setSelectedEvent(selected.event);
-          loadMatchers(selected.event);
-          setScreen("matchers");
+          loadHooks(selected.event);
+          setScreen("hooks-list");
           setSelectedIndex(0);
         }
       } else if (key.escape) {
         onClose();
       }
-    } else if (screen === "matchers") {
-      // Items: [+ Add new matcher] + existing matchers
-      const itemCount = matchers.length + 1;
+    } else if (screen === "hooks-list") {
+      // Items: [+ Add new hook] + existing hooks
+      const itemCount = hooks.length + 1;
 
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
@@ -245,15 +269,20 @@ export const HooksManager = memo(function HooksManager({
         setSelectedIndex((prev) => Math.min(itemCount - 1, prev + 1));
       } else if (key.return) {
         if (selectedIndex === 0) {
-          // Add new matcher
-          setScreen("add-matcher");
-          setNewMatcher("");
+          // Add new hook - for tool events, go to matcher screen; for simple, go to command
+          if (isCurrentToolEvent) {
+            setScreen("add-matcher");
+            setNewMatcher("");
+          } else {
+            setScreen("add-command");
+            setNewCommand("");
+          }
         } else {
           // Could add edit functionality here
         }
       } else if ((input === "d" || input === "D") && selectedIndex > 0) {
-        // Delete selected matcher
-        setDeleteMatcherIndex(selectedIndex - 1);
+        // Delete selected hook
+        setDeleteHookIndex(selectedIndex - 1);
         setDeleteConfirmIndex(1); // Default to No
         setScreen("delete-confirm");
       } else if (key.escape) {
@@ -262,12 +291,12 @@ export const HooksManager = memo(function HooksManager({
         setSelectedEvent(null);
       }
     } else if (screen === "add-matcher") {
-      // Text input handles most keys
+      // Text input handles most keys (tool events only)
       if (key.return && !key.shift) {
         setScreen("add-command");
         setNewCommand("");
       } else if (key.escape) {
-        setScreen("matchers");
+        setScreen("hooks-list");
         setSelectedIndex(0);
         setNewMatcher("");
       }
@@ -276,7 +305,13 @@ export const HooksManager = memo(function HooksManager({
         setScreen("save-location");
         setSelectedLocation(0);
       } else if (key.escape) {
-        setScreen("add-matcher");
+        // Go back to matcher screen for tool events, or hooks list for simple
+        if (isCurrentToolEvent) {
+          setScreen("add-matcher");
+        } else {
+          setScreen("hooks-list");
+          setSelectedIndex(0);
+        }
       }
     } else if (screen === "save-location") {
       if (key.upArrow) {
@@ -297,10 +332,10 @@ export const HooksManager = memo(function HooksManager({
         if (deleteConfirmIndex === 0) {
           handleDeleteHook();
         } else {
-          setScreen("matchers");
+          setScreen("hooks-list");
         }
       } else if (key.escape) {
-        setScreen("matchers");
+        setScreen("hooks-list");
       }
     }
   });
@@ -342,49 +377,76 @@ export const HooksManager = memo(function HooksManager({
     );
   }
 
-  // Render Matchers List
-  if (screen === "matchers" && selectedEvent) {
+  // Render Hooks List (matchers for tool events, commands for simple events)
+  if (screen === "hooks-list" && selectedEvent) {
+    const title = isCurrentToolEvent
+      ? ` ${selectedEvent} - Tool Matchers `
+      : ` ${selectedEvent} - Hooks `;
+    const addLabel = isCurrentToolEvent
+      ? "+ Add new matcher..."
+      : "+ Add new hook...";
+
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
-        <Text>{boxLine(` ${selectedEvent} - Tool Matchers `, boxWidth)}</Text>
+        <Text>{boxLine(title, boxWidth)}</Text>
         <Text>{boxBottom(boxWidth)}</Text>
 
-        <Text dimColor>Input to command is JSON of tool call arguments.</Text>
-        <Text dimColor>Exit code 0 - stdout/stderr not shown</Text>
-        <Text dimColor>
-          Exit code 2 - show stderr to model and block tool call
-        </Text>
-        <Text dimColor>
-          Other exit codes - show stderr to user only but continue
-        </Text>
+        {isCurrentToolEvent ? (
+          <>
+            <Text dimColor>
+              Input to command is JSON of tool call arguments.
+            </Text>
+            <Text dimColor>Exit code 0 - stdout/stderr not shown</Text>
+            <Text dimColor>
+              Exit code 2 - show stderr to model and block tool call
+            </Text>
+            <Text dimColor>
+              Other exit codes - show stderr to user only but continue
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text dimColor>Exit code 0 - success, continue</Text>
+            <Text dimColor>Exit code 2 - show stderr to model and block</Text>
+            <Text dimColor>Other exit codes - show stderr to user only</Text>
+          </>
+        )}
         <Text> </Text>
 
-        {/* Add new matcher option */}
+        {/* Add new hook option */}
         <Text>
           <Text color={selectedIndex === 0 ? colors.input.prompt : undefined}>
             {selectedIndex === 0 ? "❯" : " "} 1.{" "}
           </Text>
-          <Text color="green">+ Add new matcher...</Text>
+          <Text color="green">{addLabel}</Text>
         </Text>
 
-        {/* Existing matchers */}
-        {matchers.map((matcher, index) => {
+        {/* Existing hooks */}
+        {hooks.map((hook, index) => {
           const isSelected = index + 1 === selectedIndex;
           const prefix = isSelected ? "❯" : " ";
-          const sourceLabel = `[${getSourceLabel(matcher.source)}]`;
-          const matcherPattern = matcher.matcher || "*";
-          const command = matcher.hooks[0]?.command || "";
+          const sourceLabel = `[${getSourceLabel(hook.source)}]`;
+
+          // Handle both tool matchers (with matcher field) and simple matchers (without)
+          const isToolMatcher = "matcher" in hook;
+          const matcherPattern = isToolMatcher
+            ? (hook as HookMatcherWithSource).matcher || "*"
+            : null;
+          // Both types have hooks array
+          const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
           const truncatedCommand =
             command.length > 30 ? `${command.slice(0, 27)}...` : command;
 
           return (
-            <Text key={`${matcher.source}-${index}`}>
+            <Text key={`${hook.source}-${index}`}>
               <Text color={isSelected ? colors.input.prompt : undefined}>
                 {prefix} {index + 2}.{" "}
               </Text>
               <Text color="cyan">{sourceLabel}</Text>
-              <Text> {matcherPattern.padEnd(12)} </Text>
+              {matcherPattern !== null && (
+                <Text> {matcherPattern.padEnd(12)} </Text>
+              )}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
           );
@@ -440,18 +502,20 @@ export const HooksManager = memo(function HooksManager({
     );
   }
 
-  // Render Add Matcher - Command Input
+  // Render Add Command Input
   if (screen === "add-command" && selectedEvent) {
+    const title = isCurrentToolEvent
+      ? ` Add new matcher for ${selectedEvent} `
+      : ` Add new hook for ${selectedEvent} `;
+
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
-        <Text>
-          {boxLine(` Add new matcher for ${selectedEvent} `, boxWidth)}
-        </Text>
+        <Text>{boxLine(title, boxWidth)}</Text>
         <Text>{boxBottom(boxWidth)}</Text>
 
-        <Text>Matcher: {newMatcher || "*"}</Text>
-        <Text> </Text>
+        {isCurrentToolEvent && <Text>Matcher: {newMatcher || "*"}</Text>}
+        {isCurrentToolEvent && <Text> </Text>}
 
         <Text>Command:</Text>
         <Text>{boxTop(boxWidth - 2)}</Text>
@@ -481,7 +545,7 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         <Text>Event: {selectedEvent}</Text>
-        <Text>Matcher: {newMatcher || "*"}</Text>
+        {isCurrentToolEvent && <Text>Matcher: {newMatcher || "*"}</Text>}
         <Text>Command: {newCommand}</Text>
         <Text> </Text>
 
@@ -509,8 +573,14 @@ export const HooksManager = memo(function HooksManager({
   }
 
   // Render Delete Confirmation
-  if (screen === "delete-confirm" && deleteMatcherIndex >= 0) {
-    const matcher = matchers[deleteMatcherIndex];
+  if (screen === "delete-confirm" && deleteHookIndex >= 0) {
+    const hook = hooks[deleteHookIndex];
+    const isToolMatcher = hook && "matcher" in hook;
+    const matcherPattern = isToolMatcher
+      ? (hook as HookMatcherWithSource).matcher || "*"
+      : null;
+    // Both types have hooks array
+    const command = hook && "hooks" in hook ? hook.hooks[0]?.command : "";
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -519,9 +589,9 @@ export const HooksManager = memo(function HooksManager({
         <Text>{boxBottom(boxWidth)}</Text>
         <Text> </Text>
 
-        <Text>Matcher: {matcher?.matcher || "*"}</Text>
-        <Text>Command: {matcher?.hooks[0]?.command}</Text>
-        <Text>Source: {matcher ? getSourceLabel(matcher.source) : ""}</Text>
+        {matcherPattern !== null && <Text>Matcher: {matcherPattern}</Text>}
+        <Text>Command: {command}</Text>
+        <Text>Source: {hook ? getSourceLabel(hook.source) : ""}</Text>
         <Text> </Text>
 
         <Text>

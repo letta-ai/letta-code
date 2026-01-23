@@ -535,17 +535,16 @@ describe("Settings Manager - Hooks", () => {
   test("Hooks configuration persists to disk", async () => {
     settingsManager.updateSettings({
       hooks: {
+        // Tool event with HookMatcher[]
         PreToolUse: [
           {
             matcher: "*",
             hooks: [{ type: "command", command: "echo persisted" }],
           },
         ],
+        // Simple event with SimpleHookMatcher[]
         SessionStart: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "echo session" }],
-          },
+          { hooks: [{ type: "command", command: "echo session" }] },
         ],
       },
     });
@@ -594,11 +593,9 @@ describe("Settings Manager - Hooks", () => {
     settingsManager.updateLocalProjectSettings(
       {
         hooks: {
+          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
           UserPromptSubmit: [
-            {
-              matcher: "*",
-              hooks: [{ type: "command", command: "echo local-hook" }],
-            },
+            { hooks: [{ type: "command", command: "echo local-hook" }] },
           ],
         },
       },
@@ -616,12 +613,8 @@ describe("Settings Manager - Hooks", () => {
     settingsManager.updateLocalProjectSettings(
       {
         hooks: {
-          Stop: [
-            {
-              matcher: "*",
-              hooks: [{ type: "command", command: "echo stop-hook" }],
-            },
-          ],
+          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
+          Stop: [{ hooks: [{ type: "command", command: "echo stop-hook" }] }],
         },
       },
       testProjectDir,
@@ -637,6 +630,7 @@ describe("Settings Manager - Hooks", () => {
       await settingsManager.loadLocalProjectSettings(testProjectDir);
 
     expect(reloaded.hooks?.Stop).toHaveLength(1);
+    // Simple event hooks are in SimpleHookMatcher format with hooks array
     expect(reloaded.hooks?.Stop?.[0]?.hooks[0]?.command).toBe("echo stop-hook");
   });
 

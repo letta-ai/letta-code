@@ -2,12 +2,17 @@
 // Types for Letta Code hooks system (Claude Code-compatible)
 
 /**
- * Hook event types that can trigger hooks
+ * Tool-related hook events that require matchers to specify which tools to match
  */
-export type HookEvent =
+export type ToolHookEvent =
   | "PreToolUse" // Runs before tool calls (can block them)
   | "PostToolUse" // Runs after tool calls complete (cannot block)
-  | "PermissionRequest" // Runs when a permission dialog is shown (can allow or deny)
+  | "PermissionRequest"; // Runs when a permission dialog is shown (can allow or deny)
+
+/**
+ * Simple hook events that don't require matchers
+ */
+export type SimpleHookEvent =
   | "UserPromptSubmit" // Runs when the user submits a prompt (can block)
   | "Notification" // Runs when a notification is sent (cannot block)
   | "Stop" // Runs when the agent finishes responding (can block)
@@ -16,6 +21,11 @@ export type HookEvent =
   | "Setup" // Runs when invoked with --init, --init-only, or --maintenance flags
   | "SessionStart" // Runs when a new session starts or is resumed
   | "SessionEnd"; // Runs when session ends (cannot block)
+
+/**
+ * All hook event types
+ */
+export type HookEvent = ToolHookEvent | SimpleHookEvent;
 
 /**
  * Individual hook command configuration
@@ -30,7 +40,7 @@ export interface HookCommand {
 }
 
 /**
- * Hook matcher configuration - matches hooks to specific tools/events
+ * Hook matcher configuration for tool events - matches hooks to specific tools
  */
 export interface HookMatcher {
   /**
@@ -45,11 +55,39 @@ export interface HookMatcher {
 }
 
 /**
+ * Simple hook matcher for non-tool events - no matcher needed, just hooks
+ */
+export interface SimpleHookMatcher {
+  /** List of hooks to run */
+  hooks: HookCommand[];
+}
+
+/**
  * Full hooks configuration stored in settings
+ * - Tool events (PreToolUse, PostToolUse, PermissionRequest) use HookMatcher[] with matcher patterns
+ * - Simple events use SimpleHookMatcher[] (same structure, just no matcher field)
  */
 export type HooksConfig = {
-  [K in HookEvent]?: HookMatcher[];
+  [K in ToolHookEvent]?: HookMatcher[];
+} & {
+  [K in SimpleHookEvent]?: SimpleHookMatcher[];
 };
+
+/**
+ * Set of tool events that require matchers
+ */
+export const TOOL_EVENTS: Set<HookEvent> = new Set([
+  "PreToolUse",
+  "PostToolUse",
+  "PermissionRequest",
+]);
+
+/**
+ * Type guard to check if an event is a tool event
+ */
+export function isToolEvent(event: HookEvent): event is ToolHookEvent {
+  return TOOL_EVENTS.has(event);
+}
 
 /**
  * Exit codes from hook execution
