@@ -57,7 +57,8 @@ function getApiKey(): string {
  * Create a Letta client with auth from env/settings
  */
 function createClient(): LettaClient {
-  return new Letta({ apiKey: getApiKey() });
+  const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
+  return new Letta({ apiKey: getApiKey(), baseUrl });
 }
 
 /**
@@ -113,8 +114,16 @@ async function restoreMemory(
     // Manifest is optional
   }
 
-  // Get current agent blocks
-  const blocksResponse = await client.agents.blocks.list(agentId);
+  // Get current agent blocks using direct fetch (SDK may hit wrong server)
+  const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
+  const blocksResp = await fetch(`${baseUrl}/v1/agents/${agentId}/core-memory`, {
+    headers: { Authorization: `Bearer ${getApiKey()}` },
+  });
+  if (!blocksResp.ok) {
+    throw new Error(`Failed to list blocks: ${blocksResp.status}`);
+  }
+  const blocksJson = (await blocksResp.json()) as { blocks: unknown[] };
+  const blocksResponse = blocksJson.blocks;
   const currentBlocks = Array.isArray(blocksResponse)
     ? blocksResponse
     : (blocksResponse as { items?: unknown[] }).items ||
@@ -162,12 +171,21 @@ async function restoreMemory(
       const existingBlock = blocksByLabel.get(label);
 
       if (existingBlock) {
-        // Update existing block (always update, even if unchanged)
+        // Update existing block using block ID (not label, which may contain /)
         if (!options.dryRun) {
-          await client.agents.blocks.update(label, {
-            agent_id: agentId,
-            value: newValue,
+          const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
+          const url = `${baseUrl}/v1/blocks/${existingBlock.id}`;
+          const resp = await fetch(url, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${getApiKey()}`,
+            },
+            body: JSON.stringify({ value: newValue }),
           });
+          if (!resp.ok) {
+            throw new Error(`${resp.status} ${await resp.text()}`);
+          }
         }
 
         const oldLen = existingBlock.value?.length || 0;

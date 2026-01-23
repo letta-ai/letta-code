@@ -70,7 +70,8 @@ function getApiKey(): string {
  * Create a Letta client with auth from env/settings
  */
 function createClient(): LettaClient {
-  return new Letta({ apiKey: getApiKey() });
+  const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
+  return new Letta({ apiKey: getApiKey(), baseUrl });
 }
 
 /**
