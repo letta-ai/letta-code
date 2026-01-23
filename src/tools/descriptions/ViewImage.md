@@ -6,4 +6,3 @@ Usage:
 - The `path` parameter must be an absolute path to a local image file
 - Supported formats: PNG, JPG, JPEG, GIF, WEBP, BMP
 - Large images are automatically resized to fit API limits
-- This tool is for images only; use Read to view text files
