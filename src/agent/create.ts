@@ -136,7 +136,6 @@ export async function createAgent(
   const defaultBaseTools = options.baseTools ?? [
     baseMemoryTool,
     "web_search",
-    "conversation_search",
     "fetch_webpage",
   ];
 
