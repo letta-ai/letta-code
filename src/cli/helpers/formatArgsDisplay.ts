@@ -248,14 +248,14 @@ export function formatArgsDisplay(
           }
 
           // Read tools: show file path + any other useful args (limit, offset)
-          if (isFileReadTool(toolName) && parsed.file_path) {
-            const filePath = String(parsed.file_path);
+          if (isFileReadTool(toolName) && (parsed.file_path || parsed.path)) {
+            const filePath = String(parsed.file_path || parsed.path);
             const relativePath = formatDisplayPath(filePath);
 
             // Collect other non-hidden args
             const otherArgs: string[] = [];
             for (const [k, v] of Object.entries(parsed)) {
-              if (k === "file_path") continue;
+              if (k === "file_path" || k === "path") continue;
               if (v === undefined || v === null) continue;
               if (typeof v === "boolean" || typeof v === "number") {
                 otherArgs.push(`${k}: ${v}`);

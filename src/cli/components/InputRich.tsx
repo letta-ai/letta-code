@@ -118,11 +118,12 @@ EventEmitter.defaultMaxListeners = 20;
 export function Input({
   visible = true,
   streaming,
-  bashRunning = false,
   tokenCount,
   thinkingMessage,
   onSubmit,
   onBashSubmit,
+  bashRunning = false,
+  onBashInterrupt,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -146,11 +147,12 @@ export function Input({
 }: {
   visible?: boolean;
   streaming: boolean;
-  bashRunning?: boolean;
   tokenCount: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
+  bashRunning?: boolean;
+  onBashInterrupt?: () => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -277,22 +279,28 @@ export function Input({
     onEscapeCancel();
   });
 
-  // Handle escape key for interrupt (when streaming or bash running) or double-escape-to-clear (when not)
+  // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!visible) return;
     // Debug logging for escape key detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
       // eslint-disable-next-line no-console
       console.error(
-        `[debug:InputRich:escape] escape=${key.escape} visible=${visible} onEscapeCancel=${!!onEscapeCancel} streaming=${streaming} bashRunning=${bashRunning}`,
+        `[debug:InputRich:escape] escape=${key.escape} visible=${visible} onEscapeCancel=${!!onEscapeCancel} streaming=${streaming}`,
       );
     }
     // Skip if onEscapeCancel is provided - handled by the confirmation handler above
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When streaming or bash command running, use Esc to interrupt
-      if ((streaming || bashRunning) && onInterrupt && !interruptRequested) {
+      // When bash command running, use Esc to interrupt (LET-7199)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
+      // When agent streaming, use Esc to interrupt
+      if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.
@@ -321,15 +329,15 @@ export function Input({
   useInput((input, key) => {
     if (!visible) return;
 
-    // Handle CTRL-C
+    // Handle CTRL-C for double-ctrl-c-to-exit
+    // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
-      // If bash command or streaming is running, interrupt it (like normal terminal)
-      if ((bashRunning || streaming) && onInterrupt && !interruptRequested) {
-        onInterrupt();
+      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
         return;
       }
 
-      // Otherwise, double-ctrl-c-to-exit behavior
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
@@ -616,6 +624,9 @@ export function Input({
     // Handle bash mode submission
     if (isBashMode) {
       if (!previousValue.trim()) return;
+
+      // Input locking - don't accept new commands while one is running (LET-7199)
+      if (bashRunning) return;
 
       // Add to history if not empty and not a duplicate of the last entry
       if (previousValue.trim() !== history[history.length - 1]) {

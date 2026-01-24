@@ -37,6 +37,7 @@ function buildModelSettings(
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
+  const isBedrock = modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -111,6 +112,25 @@ function buildModelSettings(
         updateArgs.temperature as number;
     }
     settings = googleVertexSettings;
+  } else if (isBedrock) {
+    // AWS Bedrock - supports Anthropic Claude models with thinking config
+    const bedrockSettings: Record<string, unknown> = {
+      provider_type: "bedrock",
+      parallel_tool_calls: true,
+    };
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
+      bedrockSettings.thinking = {
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
+      };
+    }
+    settings = bedrockSettings;
   } else {
     // For BYOK/unknown providers, return generic settings with parallel_tool_calls
     settings = {};

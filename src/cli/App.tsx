@@ -43,7 +43,7 @@ import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
-import { getModelDisplayName, getModelInfo } from "../agent/model";
+import { getModelInfo, getModelShortName } from "../agent/model";
 import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
@@ -759,9 +759,6 @@ export default function App({
   const [commandRunning, setCommandRunning, commandRunningRef] =
     useSyncedState(false);
 
-  // Whether a bash mode command is running (for escape key cancellation)
-  const [bashRunning, setBashRunning] = useState(false);
-
   // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
     name: string;
@@ -790,7 +787,8 @@ export default function App({
   >(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
 
-  // AbortController for bash mode command cancellation
+  // Bash mode state - track running commands for input locking and ESC cancellation
+  const [bashRunning, setBashRunning] = useState(false);
   const bashAbortControllerRef = useRef<AbortController | null>(null);
 
   // Eager approval checking: only enabled when resuming a session (LET-7101)
@@ -1055,7 +1053,7 @@ export default function App({
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
   const currentModelDisplay = currentModelLabel
-    ? (getModelDisplayName(currentModelLabel) ??
+    ? (getModelShortName(currentModelLabel) ??
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
@@ -1122,12 +1120,10 @@ export default function App({
     };
   }, []);
 
-  // Cleanup abort timeout on unmount
   useEffect(() => {
     return () => {
-      if (abortTimeoutIdRef.current) {
-        clearTimeout(abortTimeoutIdRef.current);
-        abortTimeoutIdRef.current = null;
+      if (queueAppendTimeoutRef.current) {
+        clearTimeout(queueAppendTimeoutRef.current);
       }
     };
   }, []);
@@ -1156,9 +1152,6 @@ export default function App({
   // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Timeout for graceful cancellation (waits for stop_reason before force-aborting)
-  const abortTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
-
   // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
 
@@ -1171,7 +1164,11 @@ export default function App({
   // Message queue state for queueing messages during streaming
   const [messageQueue, setMessageQueue] = useState<string[]>([]);
 
-  // Queue cancellation: when any message is queued, we send cancel and wait for stream to end
+  const messageQueueRef = useRef<string[]>([]); // For synchronous access
+  useEffect(() => {
+    messageQueueRef.current = messageQueue;
+  }, [messageQueue]);
+
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<string[]>([]);
   const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
@@ -1179,6 +1176,8 @@ export default function App({
   useEffect(() => {
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
+
+  const queueAppendTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 15s append mode timeout
 
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
@@ -1202,6 +1201,18 @@ export default function App({
       abortControllerRef.current !== null
     );
   }, [isExecutingTool]);
+
+  // Consume queued messages for appending to tool results (clears queue + timeout)
+  const consumeQueuedMessages = useCallback((): string[] | null => {
+    if (messageQueueRef.current.length === 0) return null;
+    if (queueAppendTimeoutRef.current) {
+      clearTimeout(queueAppendTimeoutRef.current);
+      queueAppendTimeoutRef.current = null;
+    }
+    const messages = [...messageQueueRef.current];
+    setMessageQueue([]);
+    return messages;
+  }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
   // Closes overlay and sets commandRunning before executing, releases lock in finally
@@ -2450,12 +2461,6 @@ export default function App({
 
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
-            // Clear the force-abort timeout since we received graceful cancellation
-            if (abortTimeoutIdRef.current) {
-              clearTimeout(abortTimeoutIdRef.current);
-              abortTimeoutIdRef.current = null;
-            }
-
             setStreaming(false);
 
             // Cache user message on premature interrupt (cancelled before any response)
@@ -2848,7 +2853,37 @@ export default function App({
                   return;
                 }
 
-                // Check if user queued messages during auto-allowed tool execution
+                // Append queued messages if any (from 15s append mode)
+                const queuedMessagesToAppend = consumeQueuedMessages();
+                if (queuedMessagesToAppend?.length) {
+                  for (const msg of queuedMessagesToAppend) {
+                    const userId = uid("user");
+                    buffersRef.current.byId.set(userId, {
+                      kind: "user",
+                      id: userId,
+                      text: msg,
+                    });
+                    buffersRef.current.order.push(userId);
+                  }
+                  setThinkingMessage(getRandomThinkingVerb());
+                  refreshDerived();
+                  toolResultsInFlightRef.current = true;
+                  await processConversation(
+                    [
+                      { type: "approval", approvals: allResults },
+                      ...queuedMessagesToAppend.map((msg) => ({
+                        type: "message" as const,
+                        role: "user" as const,
+                        content: msg as unknown as MessageCreate["content"],
+                      })),
+                    ],
+                    { allowReentry: true },
+                  );
+                  toolResultsInFlightRef.current = false;
+                  return;
+                }
+
+                // Cancel mode - queue results and let dequeue effect handle
                 if (waitingForQueueCancelRef.current) {
                   // Queue results - dequeue effect will pick them up via onSubmit
                   if (allResults.length > 0) {
@@ -2871,7 +2906,6 @@ export default function App({
                   return;
                 }
 
-                // Rotate to a new thinking message
                 setThinkingMessage(getRandomThinkingVerb());
                 refreshDerived();
 
@@ -3472,6 +3506,7 @@ export default function App({
       updateStreamingOutput,
       needsEagerApprovalCheck,
       queueApprovalResults,
+      consumeQueuedMessages,
     ],
   );
 
@@ -3513,14 +3548,6 @@ export default function App({
   );
 
   const handleInterrupt = useCallback(async () => {
-    // If we're running a bash mode command, abort it
-    if (bashAbortControllerRef.current) {
-      bashAbortControllerRef.current.abort();
-      // Don't null the ref here - the finally block in handleBashSubmit will do that
-      // Just return since the bash command will handle its own cleanup
-      return;
-    }
-
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
@@ -3629,18 +3656,11 @@ export default function App({
       // Mark any running subagents as interrupted
       interruptActiveSubagents(INTERRUPTED_BY_USER);
 
-      // DON'T abort immediately - wait for server to send stop_reason: cancelled
-      // This gives server time to gracefully shut down and avoids GeneratorExit errors
-      // Set timeout as safety net in case server doesn't respond
-      const abortTimeoutId = setTimeout(() => {
-        if (abortControllerRef.current) {
-          debugWarn("EAGER_CANCEL", "Forcing abort after 30s timeout");
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-      }, 30000); // 30 seconds
-
-      abortTimeoutIdRef.current = abortTimeoutId;
+      // NOW abort the stream - interrupted flag is already set
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null; // Clear ref so isAgentBusy() returns false
+      }
 
       // Set cancellation flag to prevent processConversation from starting
       userCancelledRef.current = true;
@@ -3764,7 +3784,10 @@ export default function App({
   }, [processConversation]);
 
   const handleAgentSelect = useCallback(
-    async (targetAgentId: string, _opts?: { profileName?: string }) => {
+    async (
+      targetAgentId: string,
+      opts?: { profileName?: string; conversationId?: string },
+    ) => {
       // Close selector immediately
       setActiveOverlay(null);
 
@@ -3827,9 +3850,8 @@ export default function App({
         // Fetch new agent
         const agent = await client.agents.retrieve(targetAgentId);
 
-        // Use the agent's default conversation when switching agents
-        // User can /new to start a fresh conversation if needed
-        const targetConversationId = "default";
+        // Use specified conversation or default to the agent's default conversation
+        const targetConversationId = opts?.conversationId ?? "default";
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
@@ -3862,13 +3884,20 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
-        // Build success message - resumed default conversation
+        // Build success message
         const agentLabel = agent.name || targetAgentId;
-        const successOutput = [
-          `Resumed the default conversation with **${agentLabel}**.`,
-          `⎿  Type /resume to browse all conversations`,
-          `⎿  Type /new to start a new conversation`,
-        ].join("\n");
+        const isSpecificConv =
+          opts?.conversationId && opts.conversationId !== "default";
+        const successOutput = isSpecificConv
+          ? [
+              `Switched to **${agentLabel}**`,
+              `⎿  Conversation: ${opts.conversationId}`,
+            ].join("\n")
+          : [
+              `Resumed the default conversation with **${agentLabel}**.`,
+              `⎿  Type /resume to browse all conversations`,
+              `⎿  Type /new to start a new conversation`,
+            ].join("\n");
         const successItem: StaticItem = {
           kind: "command",
           id: uid("cmd"),
@@ -3996,15 +4025,18 @@ export default function App({
 
   // Handle bash mode command submission
   // Expands aliases from shell config files, then runs with spawnCommand
+  // Implements input locking and ESC cancellation (LET-7199)
   const handleBashSubmit = useCallback(
     async (command: string) => {
+      // Input locking - prevent multiple concurrent bash commands
+      if (bashRunning) return;
+
       const cmdId = uid("bash");
       const startTime = Date.now();
 
-      // Create AbortController for this bash command
-      const bashAbortController = new AbortController();
-      bashAbortControllerRef.current = bashAbortController;
+      // Set up state for input locking and cancellation
       setBashRunning(true);
+      bashAbortControllerRef.current = new AbortController();
 
       // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
@@ -4041,8 +4073,8 @@ export default function App({
         const result = await spawnCommand(finalCommand, {
           cwd: process.cwd(),
           env: getShellEnv(),
-          timeout: 30000, // 30 second timeout
-          signal: bashAbortController.signal,
+          timeout: 0, // No timeout - user must ESC to interrupt (LET-7199)
+          signal: bashAbortControllerRef.current.signal,
           onOutput: (chunk, stream) => {
             const entry = buffersRef.current.byId.get(cmdId);
             if (entry && entry.kind === "bash_command") {
@@ -4066,11 +4098,16 @@ export default function App({
         const success = result.exitCode === 0;
 
         // Update line with output, clear streaming state
+        const displayOutput =
+          output ||
+          (success
+            ? "(Command completed with no output)"
+            : `Exit code: ${result.exitCode}`);
         buffersRef.current.byId.set(cmdId, {
           kind: "bash_command",
           id: cmdId,
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: displayOutput,
           phase: "finished",
           success,
           streaming: undefined,
@@ -4079,67 +4116,59 @@ export default function App({
         // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
-          output: output || (success ? "" : `Exit code: ${result.exitCode}`),
+          output: displayOutput,
         });
       } catch (error: unknown) {
-        // Check if this was an abort/interrupt
+        // Check if this was an abort (user pressed ESC)
         const err = error as { name?: string; code?: string; message?: string };
         const isAbort =
-          bashAbortController.signal.aborted ||
+          bashAbortControllerRef.current?.signal.aborted ||
           err.code === "ABORT_ERR" ||
           err.name === "AbortError" ||
           err.message === "The operation was aborted";
 
+        let errOutput: string;
         if (isAbort) {
-          // User interrupted the command
-          buffersRef.current.byId.set(cmdId, {
-            kind: "bash_command",
-            id: cmdId,
-            input: command,
-            output: INTERRUPTED_BY_USER,
-            phase: "finished",
-            success: false,
-            streaming: undefined,
-          });
-          bashCommandCacheRef.current.push({
-            input: command,
-            output: INTERRUPTED_BY_USER,
-          });
+          errOutput = INTERRUPTED_BY_USER;
         } else {
-          // Handle other command errors (timeout, etc.)
-          const errOutput =
+          // Handle command errors (timeout, other failures)
+          errOutput =
             error instanceof Error
               ? (error as { stderr?: string; stdout?: string }).stderr ||
                 (error as { stdout?: string }).stdout ||
                 error.message
               : String(error);
-
-          buffersRef.current.byId.set(cmdId, {
-            kind: "bash_command",
-            id: cmdId,
-            input: command,
-            output: errOutput,
-            phase: "finished",
-            success: false,
-            streaming: undefined,
-          });
-
-          // Still cache for next user message (even failures are visible to agent)
-          bashCommandCacheRef.current.push({
-            input: command,
-            output: errOutput,
-          });
         }
+
+        buffersRef.current.byId.set(cmdId, {
+          kind: "bash_command",
+          id: cmdId,
+          input: command,
+          output: errOutput,
+          phase: "finished",
+          success: false,
+          streaming: undefined,
+        });
+
+        // Still cache for next user message (even failures are visible to agent)
+        bashCommandCacheRef.current.push({ input: command, output: errOutput });
       } finally {
-        // Clear the abort controller ref and state
-        bashAbortControllerRef.current = null;
+        // Clean up state
         setBashRunning(false);
+        bashAbortControllerRef.current = null;
       }
 
       refreshDerived();
     },
-    [refreshDerived, refreshDerivedStreaming],
+    [bashRunning, refreshDerived, refreshDerivedStreaming],
   );
+
+  // Handle ESC interrupt for bash mode commands (LET-7199)
+  const handleBashInterrupt = useCallback(() => {
+    if (bashAbortControllerRef.current) {
+      bashAbortControllerRef.current.abort();
+    }
+  }, []);
 
   /**
    * Check and handle any pending approvals before sending a slash command.
@@ -4467,64 +4496,49 @@ export default function App({
         setMessageQueue((prev) => {
           const newQueue = [...prev, msg];
 
-          // For slash commands, just queue and wait - don't interrupt the agent.
-          // For regular messages, cancel the stream so the new message can be sent.
           const isSlashCommand = msg.startsWith("/");
 
+          // Regular messages: use append mode (wait 15s for tools, then append to API call)
           if (
             !isSlashCommand &&
             streamingRef.current &&
-            !waitingForQueueCancelRef.current
+            !waitingForQueueCancelRef.current &&
+            !queueAppendTimeoutRef.current
           ) {
-            waitingForQueueCancelRef.current = true;
-            queueSnapshotRef.current = [...newQueue];
-            debugLog(
-              "queue",
-              `Initiating queue-cancel: queueing "${msg.slice(0, 50)}${msg.length > 50 ? "..." : ""}", sending cancel to server`,
-            );
-
-            // Abort client-side tool execution if in progress
-            // This makes tool interruption visible immediately instead of waiting for completion
-            if (toolAbortControllerRef.current) {
-              toolAbortControllerRef.current.abort();
-            }
-
-            // Send cancel request to backend (fire-and-forget)
-            getClient()
-              .then((client) => {
-                // Use agents API for "default" conversation (primary message history)
-                if (conversationIdRef.current === "default") {
-                  return client.agents.messages.cancel(agentIdRef.current);
-                }
-                return client.conversations.cancel(conversationIdRef.current);
-              })
-              .then(() => {})
-              .catch(() => {
-                // Reset flag if cancel fails
-                waitingForQueueCancelRef.current = false;
-              });
-
-            // Timeout fallback: if server cancel is slow or fails, abort client-side
-            // after 3 seconds to prevent "Thinking..." from hanging forever
-            setTimeout(() => {
-              // Only abort if we're still waiting AND stream is still active
-              // (If stream ended naturally or user pressed ESC, these will be false/null)
-              if (
-                waitingForQueueCancelRef.current &&
-                abortControllerRef.current
-              ) {
-                debugLog(
-                  "queue",
-                  "Timeout fallback: aborting stream after 3s (server cancel was slow/failed)",
-                );
-                abortControllerRef.current.abort();
-
-                // Reset flags here because the abort may cause early returns
-                // in processConversation that skip the completion handlers
-                waitingForQueueCancelRef.current = false;
-                queueSnapshotRef.current = [];
+            queueAppendTimeoutRef.current = setTimeout(() => {
+              if (messageQueueRef.current.length === 0) {
+                queueAppendTimeoutRef.current = null;
+                return;
               }
-            }, 3000);
+              queueAppendTimeoutRef.current = null;
+
+              // 15s expired - fall back to cancel
+              waitingForQueueCancelRef.current = true;
+              queueSnapshotRef.current = [...messageQueueRef.current];
+              if (toolAbortControllerRef.current) {
+                toolAbortControllerRef.current.abort();
+              }
+              getClient()
+                .then((client) => {
+                  if (conversationIdRef.current === "default") {
+                    return client.agents.messages.cancel(agentIdRef.current);
+                  }
+                  return client.conversations.cancel(conversationIdRef.current);
+                })
+                .catch(() => {
+                  waitingForQueueCancelRef.current = false;
+                });
+              setTimeout(() => {
+                if (
+                  waitingForQueueCancelRef.current &&
+                  abortControllerRef.current
+                ) {
+                  abortControllerRef.current.abort();
+                  waitingForQueueCancelRef.current = false;
+                  queueSnapshotRef.current = [];
+                }
+              }, 3000);
+            }, 15000);
           }
 
           return newQueue;
@@ -5212,14 +5226,9 @@ export default function App({
             }
 
             const client = await getClient();
-            // SDK types are out of date - compact returns CompactionResponse, not void
-            const result = (await client.agents.messages.compact(
-              agentId,
-            )) as unknown as {
-              num_messages_before: number;
-              num_messages_after: number;
-              summary: string;
-            };
+            const result = await client.conversations.messages.compact(
+              conversationIdRef.current,
+            );
 
             // Format success message with before/after counts and summary
             const outputLines = [
@@ -6985,8 +6994,9 @@ ${SYSTEM_REMINDER_CLOSE}
             approvals: queuedApprovalResults,
           });
         } else {
-          console.warn(
-            "[WARN] Dropping stale queued approval results for mismatched conversation or generation",
+          debugWarn(
+            "queue",
+            "Dropping stale queued approval results for mismatched conversation or generation",
           );
         }
         queueApprovalResults(null);
@@ -7242,14 +7252,29 @@ ${SYSTEM_REMINDER_CLOSE}
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
-          // Continue conversation with all results
+          const queuedMessagesToAppend = consumeQueuedMessages();
+          const input: Array<MessageCreate | ApprovalCreate> = [
+            { type: "approval", approvals: allResults as ApprovalResult[] },
+          ];
+          if (queuedMessagesToAppend?.length) {
+            for (const msg of queuedMessagesToAppend) {
+              const userId = uid("user");
+              buffersRef.current.byId.set(userId, {
+                kind: "user",
+                id: userId,
+                text: msg,
+              });
+              buffersRef.current.order.push(userId);
+              input.push({
+                type: "message",
+                role: "user",
+                content: msg as unknown as MessageCreate["content"],
+              });
+            }
+            refreshDerived();
+          }
           toolResultsInFlightRef.current = true;
-          await processConversation([
-            {
-              type: "approval",
-              approvals: allResults as ApprovalResult[],
-            },
-          ]);
+          await processConversation(input);
           toolResultsInFlightRef.current = false;
 
           // Clear any stale queued results from previous interrupts.
@@ -7278,6 +7303,7 @@ ${SYSTEM_REMINDER_CLOSE}
       setStreaming,
       updateStreamingOutput,
       queueApprovalResults,
+      consumeQueuedMessages,
     ],
   );
 
@@ -8786,7 +8812,9 @@ Plan file path: ${planFilePath}`;
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
             ) : item.kind === "separator" ? (
-              <Text dimColor>{"─".repeat(columns)}</Text>
+              <Box marginTop={1}>
+                <Text dimColor>{"─".repeat(columns)}</Text>
+              </Box>
             ) : item.kind === "command" ? (
               <CommandMessage line={item} />
             ) : item.kind === "bash_command" ? (
@@ -9010,11 +9038,12 @@ Plan file path: ${planFilePath}`;
                 streaming={
                   streaming && !abortControllerRef.current?.signal.aborted
                 }
-                bashRunning={bashRunning}
                 tokenCount={tokenCount}
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
+                bashRunning={bashRunning}
+                onBashInterrupt={handleBashInterrupt}
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}
@@ -9390,6 +9419,185 @@ Plan file path: ${planFilePath}`;
               <MessageSearch
                 onClose={closeOverlay}
                 initialQuery={searchQuery || undefined}
+                agentId={agentId}
+                conversationId={conversationId}
+                onOpenConversation={async (targetAgentId, targetConvId) => {
+                  closeOverlay();
+
+                  // Different agent: use handleAgentSelect (which supports optional conversationId)
+                  if (targetAgentId !== agentId) {
+                    await handleAgentSelect(targetAgentId, {
+                      conversationId: targetConvId,
+                    });
+                    return;
+                  }
+
+                  // Normalize undefined/null to "default"
+                  const actualTargetConv = targetConvId || "default";
+
+                  // Same agent, same conversation: nothing to do
+                  if (actualTargetConv === conversationId) {
+                    return;
+                  }
+
+                  // Same agent, different conversation: switch conversation
+                  // (Reuses ConversationSelector's onSelect logic pattern)
+                  if (isAgentBusy()) {
+                    setQueuedOverlayAction({
+                      type: "switch_conversation",
+                      conversationId: actualTargetConv,
+                    });
+                    const cmdId = uid("cmd");
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/search",
+                      output: `Conversation switch queued – will switch after current task completes`,
+                      phase: "finished",
+                      success: true,
+                    });
+                    buffersRef.current.order.push(cmdId);
+                    refreshDerived();
+                    return;
+                  }
+
+                  setCommandRunning(true);
+                  const cmdId = uid("cmd");
+                  buffersRef.current.byId.set(cmdId, {
+                    kind: "command",
+                    id: cmdId,
+                    input: "/search",
+                    output: "Switching conversation...",
+                    phase: "running",
+                  });
+                  buffersRef.current.order.push(cmdId);
+                  refreshDerived();
+
+                  try {
+                    if (agentState) {
+                      const client = await getClient();
+                      const resumeData = await getResumeData(
+                        client,
+                        agentState,
+                        actualTargetConv,
+                      );
+
+                      setConversationId(actualTargetConv);
+                      settingsManager.setLocalLastSession(
+                        { agentId, conversationId: actualTargetConv },
+                        process.cwd(),
+                      );
+                      settingsManager.setGlobalLastSession({
+                        agentId,
+                        conversationId: actualTargetConv,
+                      });
+
+                      // Clear current transcript and static items
+                      buffersRef.current.byId.clear();
+                      buffersRef.current.order = [];
+                      buffersRef.current.tokenCount = 0;
+                      emittedIdsRef.current.clear();
+                      setStaticItems([]);
+                      setStaticRenderEpoch((e) => e + 1);
+
+                      const currentAgentName =
+                        agentState.name || "Unnamed Agent";
+                      const successOutput = [
+                        `Switched to conversation with "${currentAgentName}"`,
+                        `⎿  Conversation: ${actualTargetConv}`,
+                      ].join("\n");
+                      const successItem: StaticItem = {
+                        kind: "command",
+                        id: uid("cmd"),
+                        input: "/search",
+                        output: successOutput,
+                        phase: "finished",
+                        success: true,
+                      };
+
+                      // Backfill message history
+                      if (resumeData.messageHistory.length > 0) {
+                        hasBackfilledRef.current = false;
+                        backfillBuffers(
+                          buffersRef.current,
+                          resumeData.messageHistory,
+                        );
+                        const backfilledItems: StaticItem[] = [];
+                        for (const id of buffersRef.current.order) {
+                          const ln = buffersRef.current.byId.get(id);
+                          if (!ln) continue;
+                          emittedIdsRef.current.add(id);
+                          backfilledItems.push({ ...ln } as StaticItem);
+                        }
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([
+                          separator,
+                          ...backfilledItems,
+                          successItem,
+                        ]);
+                        setLines(toLines(buffersRef.current));
+                        hasBackfilledRef.current = true;
+                      } else {
+                        const separator = {
+                          kind: "separator" as const,
+                          id: uid("sep"),
+                        };
+                        setStaticItems([separator, successItem]);
+                        setLines(toLines(buffersRef.current));
+                      }
+
+                      // Restore pending approvals if any
+                      if (resumeData.pendingApprovals.length > 0) {
+                        setPendingApprovals(resumeData.pendingApprovals);
+                        try {
+                          const contexts = await Promise.all(
+                            resumeData.pendingApprovals.map(
+                              async (approval) => {
+                                const parsedArgs = safeJsonParseOr<
+                                  Record<string, unknown>
+                                >(approval.toolArgs, {});
+                                return await analyzeToolApproval(
+                                  approval.toolName,
+                                  parsedArgs,
+                                );
+                              },
+                            ),
+                          );
+                          setApprovalContexts(contexts);
+                        } catch {
+                          // If analysis fails, leave context as null
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    let errorMsg = "Unknown error";
+                    if (error instanceof APIError) {
+                      if (error.status === 404) {
+                        errorMsg = "Conversation not found";
+                      } else if (error.status === 422) {
+                        errorMsg = "Invalid conversation ID";
+                      } else {
+                        errorMsg = error.message;
+                      }
+                    } else if (error instanceof Error) {
+                      errorMsg = error.message;
+                    }
+                    buffersRef.current.byId.set(cmdId, {
+                      kind: "command",
+                      id: cmdId,
+                      input: "/search",
+                      output: `Failed: ${errorMsg}`,
+                      phase: "finished",
+                      success: false,
+                    });
+                    refreshDerived();
+                  } finally {
+                    setCommandRunning(false);
+                  }
+                }}
               />
             )}
 
