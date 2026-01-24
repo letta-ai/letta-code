@@ -264,11 +264,11 @@ export const commands: Record<string, Command> = {
 
   // === Session management (order 40-49) ===
   "/connect": {
-    desc: "Connect an existing account (/connect codex or /connect zai <api-key>)",
+    desc: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
     order: 40,
     handler: () => {
-      // Handled specially in App.tsx
-      return "Initiating account connection...";
+      // Handled specially in App.tsx - opens ProviderSelector
+      return "Opening provider connection...";
     },
   },
   "/disconnect": {

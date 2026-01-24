@@ -15,8 +15,18 @@ const SOLID_LINE = "─";
 
 const VISIBLE_ITEMS = 8;
 
-type ModelCategory = "supported" | "all";
-const MODEL_CATEGORIES: ModelCategory[] = ["supported", "all"];
+type ModelCategory = "supported" | "byok" | "byok-all" | "all";
+
+// BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
+const BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+
+// Get tab order based on billing tier (free = BYOK first, paid = BYOK last)
+function getModelCategories(billingTier?: string): ModelCategory[] {
+  const isFreeTier = billingTier?.toLowerCase() === "free";
+  return isFreeTier
+    ? ["byok", "byok-all", "supported", "all"]
+    : ["supported", "all", "byok", "byok-all"];
+}
 
 type UiModel = {
   id: string;
@@ -25,6 +35,7 @@ type UiModel = {
   description: string;
   isDefault?: boolean;
   isFeatured?: boolean;
+  free?: boolean;
   updateArgs?: Record<string, unknown>;
 };
 
@@ -36,6 +47,8 @@ interface ModelSelectorProps {
   filterProvider?: string;
   /** Force refresh the models list on mount */
   forceRefresh?: boolean;
+  /** User's billing tier - affects tab ordering (free = BYOK first) */
+  billingTier?: string;
 }
 
 export function ModelSelector({
@@ -44,11 +57,20 @@ export function ModelSelector({
   onCancel,
   filterProvider,
   forceRefresh: forceRefreshOnMount,
+  billingTier,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
-  const [category, setCategory] = useState<ModelCategory>("supported");
+
+  // Tab order depends on billing tier (free = BYOK first)
+  const modelCategories = useMemo(
+    () => getModelCategories(billingTier),
+    [billingTier],
+  );
+  const defaultCategory = modelCategories[0] ?? "supported";
+
+  const [category, setCategory] = useState<ModelCategory>(defaultCategory);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // undefined: not loaded yet (show spinner)
@@ -117,6 +139,8 @@ export function ModelSelector({
   // Supported models: models.json entries that are available
   // Featured models first, then non-featured, preserving JSON order within each group
   // If filterProvider is set, only show models from that provider
+  // For free tier, free models go first
+  const isFreeTier = billingTier?.toLowerCase() === "free";
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available =
@@ -139,25 +163,155 @@ export function ModelSelector({
           m.handle.toLowerCase().includes(query),
       );
     }
+
+    // For free tier, put free models first, then others with standard ordering
+    if (isFreeTier) {
+      const freeModels = available.filter((m) => m.free);
+      const paidModels = available.filter((m) => !m.free);
+      const featured = paidModels.filter((m) => m.isFeatured);
+      const nonFeatured = paidModels.filter((m) => !m.isFeatured);
+      return [...freeModels, ...featured, ...nonFeatured];
+    }
+
     const featured = available.filter((m) => m.isFeatured);
     const nonFeatured = available.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
-  }, [typedModels, availableHandles, filterProvider, searchQuery]);
+  }, [typedModels, availableHandles, filterProvider, searchQuery, isFreeTier]);
 
-  // All other models: API handles not in models.json
+  // BYOK models: models from chatgpt-plus-pro or lc-* providers
+  const isByokHandle = useCallback(
+    (handle: string) =>
+      BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix)),
+    [],
+  );
+
+  // All other models: API handles not in models.json and not BYOK
   const otherModelHandles = useMemo(() => {
     const filtered = allApiHandles.filter(
-      (handle) => !staticModelHandles.has(handle),
+      (handle) => !staticModelHandles.has(handle) && !isByokHandle(handle),
     );
     if (!searchQuery) return filtered;
     const query = searchQuery.toLowerCase();
     return filtered.filter((handle) => handle.toLowerCase().includes(query));
-  }, [allApiHandles, staticModelHandles, searchQuery]);
+  }, [allApiHandles, staticModelHandles, searchQuery, isByokHandle]);
+
+  // Provider name mappings for BYOK -> models.json lookup
+  // Maps BYOK provider prefix to models.json provider prefix
+  const BYOK_PROVIDER_ALIASES: Record<string, string> = {
+    "lc-anthropic": "anthropic",
+    "lc-openai": "openai",
+    "lc-zai": "zai",
+    "lc-gemini": "google_ai",
+    "chatgpt-plus-pro": "chatgpt-plus-pro", // No change needed
+  };
+
+  // Convert BYOK handle to base provider handle for models.json lookup
+  // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
+  // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
+  const toBaseHandle = useCallback((handle: string): string => {
+    const slashIndex = handle.indexOf("/");
+    if (slashIndex === -1) return handle;
+
+    const provider = handle.slice(0, slashIndex);
+    const model = handle.slice(slashIndex + 1);
+    const baseProvider = BYOK_PROVIDER_ALIASES[provider];
+
+    if (baseProvider) {
+      return `${baseProvider}/${model}`;
+    }
+    return handle;
+  }, []);
+
+  // BYOK (recommended): BYOK API handles that have matching entries in models.json
+  const byokModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+
+    // Get all BYOK handles from API
+    const byokHandles = allApiHandles.filter(isByokHandle);
+
+    // Find models.json entries that match (using alias for lc-* providers)
+    const matched: UiModel[] = [];
+    for (const handle of byokHandles) {
+      const baseHandle = toBaseHandle(handle);
+      const staticModel = typedModels.find((m) => m.handle === baseHandle);
+      if (staticModel) {
+        // Use models.json data but with the BYOK handle as the ID
+        matched.push({
+          ...staticModel,
+          id: handle,
+          handle: handle,
+        });
+      }
+    }
+
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return matched.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
+
+    return matched;
+  }, [
+    availableHandles,
+    allApiHandles,
+    typedModels,
+    searchQuery,
+    isByokHandle,
+    toBaseHandle,
+  ]);
+
+  // BYOK (all): BYOK handles from API that don't have matching models.json entries
+  const byokAllModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+
+    // Get BYOK handles that don't have a match in models.json (using alias)
+    const byokHandles = allApiHandles.filter((handle) => {
+      if (!isByokHandle(handle)) return false;
+      const baseHandle = toBaseHandle(handle);
+      // Exclude if there's a matching entry in models.json
+      return !staticModelHandles.has(baseHandle);
+    });
+
+    // Apply search filter
+    let filtered = byokHandles;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = byokHandles.filter((handle) =>
+        handle.toLowerCase().includes(query),
+      );
+    }
+
+    return filtered;
+  }, [
+    availableHandles,
+    allApiHandles,
+    staticModelHandles,
+    searchQuery,
+    isByokHandle,
+    toBaseHandle,
+  ]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
     if (category === "supported") {
       return supportedModels;
+    }
+    if (category === "byok") {
+      return byokModels;
+    }
+    if (category === "byok-all") {
+      // Convert raw handles to UiModel
+      return byokAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      }));
     }
     // For "all" category, convert handles to simple UiModel objects
     return otherModelHandles.map((handle) => ({
@@ -166,7 +320,7 @@ export function ModelSelector({
       label: handle,
       description: "",
     }));
-  }, [category, supportedModels, otherModelHandles]);
+  }, [category, supportedModels, byokModels, byokAllModels, otherModelHandles]);
 
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
@@ -191,14 +345,14 @@ export function ModelSelector({
   // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
-      const idx = MODEL_CATEGORIES.indexOf(current);
-      return MODEL_CATEGORIES[
-        (idx + 1) % MODEL_CATEGORIES.length
+      const idx = modelCategories.indexOf(current);
+      return modelCategories[
+        (idx + 1) % modelCategories.length
       ] as ModelCategory;
     });
     setSelectedIndex(0);
     setSearchQuery("");
-  }, []);
+  }, [modelCategories]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
@@ -253,9 +407,9 @@ export function ModelSelector({
       if (key.leftArrow) {
         // Cycle backwards through categories
         setCategory((current) => {
-          const idx = MODEL_CATEGORIES.indexOf(current);
-          return MODEL_CATEGORIES[
-            idx === 0 ? MODEL_CATEGORIES.length - 1 : idx - 1
+          const idx = modelCategories.indexOf(current);
+          return modelCategories[
+            idx === 0 ? modelCategories.length - 1 : idx - 1
           ] as ModelCategory;
         });
         setSelectedIndex(0);
@@ -272,7 +426,23 @@ export function ModelSelector({
         return;
       }
 
-      // Disable other inputs while loading
+      // Capture text input for search (allow typing even with 0 results)
+      // Exclude special keys like Enter, arrows, etc.
+      if (
+        input &&
+        input.length === 1 &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.return &&
+        !key.upArrow &&
+        !key.downArrow
+      ) {
+        setSearchQuery((prev) => prev + input);
+        setSelectedIndex(0);
+        return;
+      }
+
+      // Disable navigation/selection while loading or no results
       if (isLoading || refreshing || currentList.length === 0) {
         return;
       }
@@ -286,10 +456,6 @@ export function ModelSelector({
         if (selectedModel) {
           onSelect(selectedModel.id);
         }
-      } else if (input && input.length === 1) {
-        // Capture text input for search
-        setSearchQuery((prev) => prev + input);
-        setSelectedIndex(0);
       }
     },
     // Keep active so ESC and 'r' work while loading.
@@ -297,14 +463,34 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
-    if (cat === "supported") return `Recommended (${supportedModels.length})`;
-    return `All Available (${otherModelHandles.length})`;
+    if (cat === "supported") return `Letta API [${supportedModels.length}]`;
+    if (cat === "byok") return `BYOK [${byokModels.length}]`;
+    if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
+    return `Letta API (all) [${otherModelHandles.length}]`;
+  };
+
+  const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "supported") {
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "Recommended models on the Letta API";
+    }
+    if (cat === "byok")
+      return "Recommended models via your API keys (use /connect to add more)";
+    if (cat === "byok-all")
+      return "All models via your API keys (use /connect to add more)";
+    if (cat === "all") {
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "All models on the Letta API";
+    }
+    return "All models on the Letta API";
   };
 
   // Render tab bar (matches AgentSelector style)
   const renderTabBar = () => (
     <Box flexDirection="row" gap={2}>
-      {MODEL_CATEGORIES.map((cat) => {
+      {modelCategories.map((cat) => {
         const isActive = cat === category;
         return (
           <Text
@@ -338,7 +524,15 @@ export function ModelSelector({
         {!isLoading && !refreshing && (
           <Box flexDirection="column" paddingLeft={1}>
             {renderTabBar()}
-            <Text dimColor> Search: {searchQuery || "(type to filter)"}</Text>
+            <Text dimColor> {getCategoryDescription(category)}</Text>
+            <Text>
+              <Text dimColor> Search: </Text>
+              {searchQuery ? (
+                <Text>{searchQuery}</Text>
+              ) : (
+                <Text dimColor>(type to filter)</Text>
+              )}
+            </Text>
           </Box>
         )}
       </Box>
@@ -380,6 +574,11 @@ export function ModelSelector({
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
           const isCurrent = model.id === currentModelId;
+          // Show lock for non-free models when on free tier (only for Letta API tabs)
+          const showLock =
+            isFreeTier &&
+            !model.free &&
+            (category === "supported" || category === "all");
 
           return (
             <Box key={model.id} flexDirection="row">
@@ -388,6 +587,7 @@ export function ModelSelector({
               >
                 {isSelected ? "> " : "  "}
               </Text>
+              {showLock && <Text dimColor>🔒 </Text>}
               <Text
                 bold={isSelected}
                 color={
