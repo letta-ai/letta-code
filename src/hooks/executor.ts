@@ -275,11 +275,12 @@ export async function executeHooks(
     const result = await executeHookCommand(hook, input, workingDirectory);
     results.push(result);
 
-    // Collect feedback from stdout when hook blocks
+    // Collect feedback from stderr when hook blocks
+    // Format: [command]: {stderr} per spec
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
-      if (result.stdout) {
-        feedback.push(result.stdout);
+      if (result.stderr) {
+        feedback.push(`[${hook.command}]: ${result.stderr}`);
       }
       // Stop processing more hooks after a block
       break;
@@ -320,11 +321,17 @@ export async function executeHooksParallel(
   let blocked = false;
   let errored = false;
 
-  for (const result of results) {
+  // Zip hooks with results to access command for formatting
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const hook = hooks[i];
+    if (!result || !hook) continue;
+
+    // Format: [command]: {stderr} per spec
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
-      if (result.stdout) {
-        feedback.push(result.stdout);
+      if (result.stderr) {
+        feedback.push(`[${hook.command}]: ${result.stderr}`);
       }
     }
     if (result.exitCode === HookExitCode.ERROR) {

@@ -188,7 +188,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
     test("stops on first blocking hook", async () => {
       const hooks: HookCommand[] = [
         { type: "command", command: "echo 'allowed'" },
-        { type: "command", command: "echo 'blocked' && exit 2" },
+        { type: "command", command: "echo 'blocked' >&2 && exit 2" },
         { type: "command", command: "echo 'should not run'" },
       ];
 
@@ -203,7 +203,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       expect(result.blocked).toBe(true);
       expect(result.results).toHaveLength(2); // Only first two ran
-      expect(result.feedback).toContain("blocked");
+      expect(result.feedback[0]).toContain("blocked");
     });
 
     test("continues after error but tracks it", async () => {
@@ -247,7 +247,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const hooks: HookCommand[] = [
         {
           type: "command",
-          command: "echo 'Reason: file is dangerous' && exit 2",
+          command: "echo 'Reason: file is dangerous' >&2 && exit 2",
         },
       ];
 
@@ -261,7 +261,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const result = await executeHooks(hooks, input, tempDir);
 
       expect(result.blocked).toBe(true);
-      expect(result.feedback).toContain("Reason: file is dangerous");
+      expect(result.feedback[0]).toContain("Reason: file is dangerous");
     });
 
     test("collects error feedback from stderr", async () => {
