@@ -1,6 +1,7 @@
 // src/hooks/index.ts
 // Main hooks module - provides high-level API for running hooks
 
+import { sessionPermissions } from "../permissions/session";
 import { executeHooks, executeHooksParallel } from "./executor";
 import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
 import type {
@@ -120,6 +121,7 @@ export async function runPermissionRequestHooks(
       type: permissionType,
       scope,
     },
+    session_permissions: sessionPermissions.getRules(),
   };
 
   // Run sequentially - first hook that returns 0 or 2 determines outcome
