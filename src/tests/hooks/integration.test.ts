@@ -110,7 +110,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
             hooks: [
               {
                 type: "command",
-                command: "echo 'Blocked: write to sensitive file' && exit 2",
+                command: "echo 'Blocked: write to sensitive file' >&2 && exit 2",
               },
             ],
           },
@@ -125,7 +125,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
 
       expect(result.blocked).toBe(true);
-      expect(result.feedback).toContain("Blocked: write to sensitive file");
+      expect(result.feedback[0]).toContain("Blocked: write to sensitive file");
     });
 
     test("matches by tool name pattern", async () => {
@@ -277,7 +277,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
             hooks: [
               {
                 type: "command",
-                command: "echo 'Denied: dangerous command' && exit 2",
+                command: "echo 'Denied: dangerous command' >&2 && exit 2",
               },
             ],
           },
@@ -293,7 +293,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
 
       expect(result.blocked).toBe(true);
-      expect(result.feedback).toContain("Denied: dangerous command");
+      expect(result.feedback[0]).toContain("Denied: dangerous command");
     });
 
     test("receives permission type and scope in input", async () => {
@@ -599,7 +599,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
             hooks: [
               {
                 type: "command",
-                command: "echo 'Cannot compact now' && exit 2",
+                command: "echo 'Cannot compact now' >&2 && exit 2",
               },
             ],
           },
@@ -615,7 +615,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
 
       expect(result.blocked).toBe(true);
-      expect(result.feedback).toContain("Cannot compact now");
+      expect(result.feedback[0]).toContain("Cannot compact now");
     });
 
     test("receives context info in input", async () => {
@@ -887,7 +887,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
             matcher: "*",
             hooks: [
               { type: "command", command: "echo 'check 1'" },
-              { type: "command", command: "echo 'BLOCKED' && exit 2" },
+              { type: "command", command: "echo 'BLOCKED' >&2 && exit 2" },
               { type: "command", command: "echo 'should not run'" },
             ],
           },
@@ -898,7 +898,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
 
       expect(result.blocked).toBe(true);
       expect(result.results).toHaveLength(2);
-      expect(result.feedback).toContain("BLOCKED");
+      expect(result.feedback[0]).toContain("BLOCKED");
     });
 
     test("error hooks do not block subsequent hooks", async () => {
