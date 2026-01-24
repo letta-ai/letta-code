@@ -110,7 +110,8 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
             hooks: [
               {
                 type: "command",
-                command: "echo 'Blocked: write to sensitive file' >&2 && exit 2",
+                command:
+                  "echo 'Blocked: write to sensitive file' >&2 && exit 2",
               },
             ],
           },
