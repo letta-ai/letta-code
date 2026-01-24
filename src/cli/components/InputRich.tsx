@@ -51,6 +51,7 @@ const InputFooter = memo(function InputFooter({
   agentName,
   currentModel,
   isOpenAICodexProvider,
+  isByokProvider,
   isAutocompleteActive,
 }: {
   ctrlCPressed: boolean;
@@ -62,6 +63,7 @@ const InputFooter = memo(function InputFooter({
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
   isOpenAICodexProvider: boolean;
+  isByokProvider: boolean;
   isAutocompleteActive: boolean;
 }) {
   // Hide footer when autocomplete is showing
@@ -96,11 +98,12 @@ const InputFooter = memo(function InputFooter({
       )}
       <Text>
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
-        <Text
-          dimColor={!isOpenAICodexProvider}
-          color={isOpenAICodexProvider ? "#74AA9C" : undefined}
-        >
-          {` [${currentModel ?? "unknown"}]`}
+        <Text dimColor>
+          {` [${currentModel ?? "unknown"}`}
+          {isByokProvider && (
+            <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}> ▲</Text>
+          )}
+          {"]"}
         </Text>
       </Text>
     </Box>
@@ -901,6 +904,10 @@ export function Input({
           agentName={agentName}
           currentModel={currentModel}
           isOpenAICodexProvider={
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isByokProvider={
+            currentModelProvider?.startsWith("lc-") ||
             currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
           }
           isAutocompleteActive={isAutocompleteActive}

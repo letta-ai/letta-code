@@ -117,6 +117,7 @@ import { ModelSelector } from "./components/ModelSelector";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
+import { ProviderSelector } from "./components/ProviderSelector";
 // QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 
@@ -978,6 +979,7 @@ export default function App({
     | "mcp-connect"
     | "help"
     | "hooks"
+    | "connect"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
@@ -1052,6 +1054,40 @@ export default function App({
       currentModelLabel.split("/").pop())
     : null;
   const currentModelProvider = llmConfig?.provider_name ?? null;
+
+  // Billing tier for conditional UI (fetched once on mount)
+  const [billingTier, setBillingTier] = useState<string | null>(null);
+
+  // Fetch billing tier once on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const settings = settingsManager.getSettings();
+        const baseURL =
+          process.env.LETTA_BASE_URL ||
+          settings.env?.LETTA_BASE_URL ||
+          "https://api.letta.com";
+        const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+
+        const response = await fetch(`${baseURL}/v1/metadata/balance`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            "X-Letta-Source": "letta-code",
+          },
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as { billing_tier?: string };
+          if (data.billing_tier) {
+            setBillingTier(data.billing_tier);
+          }
+        }
+      } catch {
+        // Silently ignore - billing tier is optional context
+      }
+    })();
+  }, []);
 
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
@@ -4707,11 +4743,14 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /connect command - OAuth connection
-        if (msg.trim().startsWith("/connect")) {
-          // Handle all /connect commands through the unified handler
-          // For codex: uses local ChatGPT OAuth server (no dialog needed)
-          // For zai: requires API key as argument
+        // Special handling for /connect command - opens provider selector
+        if (msg.trim() === "/connect") {
+          setActiveOverlay("connect");
+          return { submitted: true };
+        }
+
+        // /connect codex - direct OAuth flow (kept for backwards compatibility)
+        if (msg.trim().startsWith("/connect codex")) {
           const { handleConnect } = await import("./commands/connect");
           await handleConnect(
             {
@@ -9094,6 +9133,34 @@ Plan file path: ${planFilePath}`;
                 onCancel={closeOverlay}
                 filterProvider={modelSelectorOptions.filterProvider}
                 forceRefresh={modelSelectorOptions.forceRefresh}
+                billingTier={billingTier ?? undefined}
+              />
+            )}
+
+            {/* Provider Selector - for connecting BYOK providers */}
+            {activeOverlay === "connect" && (
+              <ProviderSelector
+                onCancel={closeOverlay}
+                onStartOAuth={async () => {
+                  // Close selector and start OAuth flow
+                  closeOverlay();
+                  const { handleConnect } = await import("./commands/connect");
+                  await handleConnect(
+                    {
+                      buffersRef,
+                      refreshDerived,
+                      setCommandRunning,
+                      onCodexConnected: () => {
+                        setModelSelectorOptions({
+                          filterProvider: "chatgpt-plus-pro",
+                          forceRefresh: true,
+                        });
+                        setActiveOverlay("model");
+                      },
+                    },
+                    "/connect codex",
+                  );
+                }}
               />
             )}
 

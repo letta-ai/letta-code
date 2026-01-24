@@ -503,6 +503,7 @@
     "label": "GLM-4.7",
     "description": "The best open weights coding model",
     "isFeatured": true,
+    "free": true,
     "updateArgs": {
       "context_window": 200000
     }
