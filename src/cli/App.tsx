@@ -44,6 +44,7 @@ import { type AgentProvenance, createAgent } from "../agent/create";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
 import { getModelInfo, getModelShortName } from "../agent/model";
+import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
 import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
@@ -1173,6 +1174,11 @@ export default function App({
 
   const queueAppendTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 15s append mode timeout
 
+  // Cache last sent input - cleared on successful completion, remains if interrupted
+  const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
+    null,
+  );
+
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
@@ -1904,7 +1910,7 @@ export default function App({
       };
 
       // Copy so we can safely mutate for retry recovery flows
-      const currentInput = [...initialInput];
+      let currentInput = [...initialInput];
       const allowReentry = options?.allowReentry ?? false;
 
       // Use provided generation (from onSubmit) or capture current
@@ -1950,6 +1956,38 @@ export default function App({
 
         setStreaming(true);
         abortControllerRef.current = new AbortController();
+
+        // Recover interrupted message: if cache contains ONLY user messages, prepend them
+        // Note: type="message" is a local discriminator (not in SDK types) to distinguish from approvals
+        const originalInput = currentInput;
+        const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
+          (m) => m.type === "message" && m.role === "user",
+        );
+        if (cacheIsAllUserMsgs && lastSentInputRef.current) {
+          currentInput = [
+            ...lastSentInputRef.current,
+            ...currentInput.map((m) =>
+              m.type === "message" && m.role === "user"
+                ? {
+                    ...m,
+                    content: [
+                      { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
+                      ...(typeof m.content === "string"
+                        ? [{ type: "text" as const, text: m.content }]
+                        : m.content),
+                    ],
+                  }
+                : m,
+            ),
+          ];
+          // Cache old + new for chained recovery
+          lastSentInputRef.current = [
+            ...lastSentInputRef.current,
+            ...originalInput,
+          ];
+        } else {
+          lastSentInputRef.current = originalInput;
+        }
 
         // Clear any stale pending tool calls from previous turns
         // If we're sending a new message, old pending state is no longer relevant
@@ -2358,6 +2396,7 @@ export default function App({
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
+            lastSentInputRef.current = null; // Clear - no recovery needed
 
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
@@ -2498,6 +2537,7 @@ export default function App({
             // Clear stale state immediately to prevent ID mismatch bugs
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
+            lastSentInputRef.current = null; // Clear - message was received by server
 
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
