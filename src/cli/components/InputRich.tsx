@@ -20,7 +20,7 @@ import {
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
-import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
@@ -50,7 +50,9 @@ const InputFooter = memo(function InputFooter({
   showExitHint,
   agentName,
   currentModel,
-  isAnthropicProvider,
+  isOpenAICodexProvider,
+  isByokProvider,
+  isAutocompleteActive,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -60,8 +62,15 @@ const InputFooter = memo(function InputFooter({
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
-  isAnthropicProvider: boolean;
+  isOpenAICodexProvider: boolean;
+  isByokProvider: boolean;
+  isAutocompleteActive: boolean;
 }) {
+  // Hide footer when autocomplete is showing
+  if (isAutocompleteActive) {
+    return null;
+  }
+
   return (
     <Box justifyContent="space-between" marginBottom={1}>
       {ctrlCPressed ? (
@@ -89,11 +98,12 @@ const InputFooter = memo(function InputFooter({
       )}
       <Text>
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
-        <Text
-          dimColor={!isAnthropicProvider}
-          color={isAnthropicProvider ? "#FFC787" : undefined}
-        >
-          {` [${currentModel ?? "unknown"}]`}
+        <Text dimColor>
+          {` [${currentModel ?? "unknown"}`}
+          {isByokProvider && (
+            <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}> ▲</Text>
+          )}
+          {"]"}
         </Text>
       </Text>
     </Box>
@@ -115,6 +125,8 @@ export type InputProps = {
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
+  bashRunning?: boolean;
+  onBashInterrupt?: () => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -131,6 +143,10 @@ export type InputProps = {
   ralphPending?: boolean;
   ralphPendingYolo?: boolean;
   onRalphExit?: () => void;
+  conversationId?: string;
+  onPasteError?: (message: string) => void;
+  restoredInput?: string | null;
+  onRestoredInputConsumed?: () => void;
 };
 
 export function Input({
@@ -140,6 +156,8 @@ export function Input({
   thinkingMessage,
   onSubmit,
   onBashSubmit,
+  bashRunning = false,
+  onBashInterrupt,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -156,6 +174,10 @@ export function Input({
   ralphPending = false,
   ralphPendingYolo = false,
   onRalphExit,
+  conversationId,
+  onPasteError,
+  restoredInput,
+  onRestoredInputConsumed,
 }: InputProps) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -181,6 +203,17 @@ export function Input({
 
   // Bash mode state
   const [isBashMode, setIsBashMode] = useState(false);
+
+  // Restore input from error (only if current value is empty)
+  useEffect(() => {
+    if (restoredInput && value === "") {
+      setValue(restoredInput);
+      onRestoredInputConsumed?.();
+    } else if (restoredInput && value !== "") {
+      // Input has content, don't clobber - just consume the restored value
+      onRestoredInputConsumed?.();
+    }
+  }, [restoredInput, value, onRestoredInputConsumed]);
 
   const handleBangAtEmpty = () => {
     if (isBashMode) return false;
@@ -265,7 +298,13 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When streaming, use Esc to interrupt
+      // When bash command running, use Esc to interrupt (LET-7199)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
+      // When agent streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
@@ -298,6 +337,12 @@ export function Input({
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
+      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
@@ -359,8 +404,9 @@ export function Input({
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!visible) return;
-    // Don't interfere with autocomplete navigation
-    if (isAutocompleteActive) {
+    // Don't interfere with autocomplete navigation, BUT allow history navigation
+    // when we're already browsing history (historyIndex !== -1)
+    if (isAutocompleteActive && historyIndex === -1) {
       return;
     }
 
@@ -397,7 +443,12 @@ export function Input({
 
         // On first wrapped line
         // First press: move to start, second press: queue edit or history
-        if (currentCursorPosition > 0 && !atStartBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition > 0 &&
+          !atStartBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to start
           setCursorPos(0);
           setAtStartBoundary(true);
@@ -432,11 +483,15 @@ export function Input({
           setTemporaryInput(value);
           // Go to most recent command
           setHistoryIndex(history.length - 1);
-          setValue(history[history.length - 1] ?? "");
+          const historyEntry = history[history.length - 1] ?? "";
+          setValue(historyEntry);
+          setCursorPos(historyEntry.length); // Cursor at end (traditional terminal behavior)
         } else if (historyIndex > 0) {
           // Go to older command
           setHistoryIndex(historyIndex - 1);
-          setValue(history[historyIndex - 1] ?? "");
+          const olderEntry = history[historyIndex - 1] ?? "";
+          setValue(olderEntry);
+          setCursorPos(olderEntry.length); // Cursor at end (traditional terminal behavior)
         }
       } else if (key.downArrow) {
         if (currentWrappedLine < totalWrappedLines - 1) {
@@ -460,7 +515,12 @@ export function Input({
 
         // On last wrapped line
         // First press: move to end, second press: navigate history
-        if (currentCursorPosition < value.length && !atEndBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition < value.length &&
+          !atEndBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to end
           setCursorPos(value.length);
           setAtEndBoundary(true);
@@ -475,11 +535,14 @@ export function Input({
         if (historyIndex < history.length - 1) {
           // Go to newer command
           setHistoryIndex(historyIndex + 1);
-          setValue(history[historyIndex + 1] ?? "");
+          const newerEntry = history[historyIndex + 1] ?? "";
+          setValue(newerEntry);
+          setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
         } else {
           // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
+          setCursorPos(temporaryInput.length); // Cursor at end for user's draft
         }
       }
     }
@@ -567,6 +630,9 @@ export function Input({
     if (isBashMode) {
       if (!previousValue.trim()) return;
 
+      // Input locking - don't accept new commands while one is running (LET-7199)
+      if (bashRunning) return;
+
       // Add to history if not empty and not a duplicate of the last entry
       if (previousValue.trim() !== history[history.length - 1]) {
         setHistory([...history, previousValue]);
@@ -577,7 +643,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      setIsBashMode(false); // Exit bash mode after submitting
+      // Stay in bash mode - user exits with backspace on empty input
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
@@ -803,6 +869,7 @@ export function Input({
               focus={!onEscapeCancel}
               onBangAtEmpty={handleBangAtEmpty}
               onBackspaceAtEmpty={handleBackspaceAtEmpty}
+              onPasteError={onPasteError}
             />
           </Box>
         </Box>
@@ -826,6 +893,7 @@ export function Input({
           agentName={agentName}
           serverUrl={serverUrl}
           workingDirectory={process.cwd()}
+          conversationId={conversationId}
         />
 
         <InputFooter
@@ -837,7 +905,14 @@ export function Input({
           showExitHint={ralphActive || ralphPending}
           agentName={agentName}
           currentModel={currentModel}
-          isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+          isOpenAICodexProvider={
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isByokProvider={
+            currentModelProvider?.startsWith("lc-") ||
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isAutocompleteActive={isAutocompleteActive}
         />
       </Box>
     </Box>

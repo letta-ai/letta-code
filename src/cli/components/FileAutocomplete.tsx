@@ -68,7 +68,6 @@ export function FileAutocomplete({
     maxVisible: 10,
     onSelect: onSelect ? (item) => onSelect(item.path) : undefined,
     manageActiveState: false, // We manage active state manually due to async loading
-    disabled: isLoading,
   });
 
   useEffect(() => {
@@ -81,6 +80,7 @@ export function FileAutocomplete({
 
     if (!result) {
       setMatches([]);
+      setIsLoading(false);
       onActiveChange?.(false);
       return;
     }
@@ -96,6 +96,7 @@ export function FileAutocomplete({
       // Always hide if there's more non-whitespace content after, or another @
       if (afterSpace.trim().length > 0 || afterSpace.includes("@")) {
         setMatches([]);
+        setIsLoading(false);
         onActiveChange?.(false);
         return;
       }
@@ -107,12 +108,14 @@ export function FileAutocomplete({
         if (matches[0]?.path !== query) {
           setMatches([{ path: query, type: "file" }]);
         }
+        setIsLoading(false);
         onActiveChange?.(false); // Don't block Enter key
         return;
       }
 
       // No valid selection was made, hide
       setMatches([]);
+      setIsLoading(false);
       onActiveChange?.(false);
       return;
     }
@@ -138,6 +141,7 @@ export function FileAutocomplete({
     // Check if it's a URL pattern (no debounce)
     if (query.startsWith("http://") || query.startsWith("https://")) {
       setMatches([{ path: query, type: "url" }]);
+      setIsLoading(false);
       onActiveChange?.(true);
       return;
     }

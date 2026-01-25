@@ -7,12 +7,39 @@ import {
   getAvailableModelsCacheInfo,
 } from "../../agent/available-models";
 import { models } from "../../agent/model";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 
-const PAGE_SIZE = 10;
+// Horizontal line character (matches approval dialogs)
+const SOLID_LINE = "─";
 
-type ModelCategory = "supported" | "all";
-const MODEL_CATEGORIES: ModelCategory[] = ["supported", "all"];
+const VISIBLE_ITEMS = 8;
+
+type ModelCategory =
+  | "supported"
+  | "byok"
+  | "byok-all"
+  | "all"
+  | "server-recommended"
+  | "server-all";
+
+// BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
+const BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
+
+// Get tab order based on billing tier (free = BYOK first, paid = BYOK last)
+// For self-hosted servers, only show server-specific tabs
+function getModelCategories(
+  billingTier?: string,
+  isSelfHosted?: boolean,
+): ModelCategory[] {
+  if (isSelfHosted) {
+    return ["server-recommended", "server-all"];
+  }
+  const isFreeTier = billingTier?.toLowerCase() === "free";
+  return isFreeTier
+    ? ["byok", "byok-all", "supported", "all"]
+    : ["supported", "all", "byok", "byok-all"];
+}
 
 type UiModel = {
   id: string;
@@ -21,6 +48,7 @@ type UiModel = {
   description: string;
   isDefault?: boolean;
   isFeatured?: boolean;
+  free?: boolean;
   updateArgs?: Record<string, unknown>;
 };
 
@@ -28,16 +56,38 @@ interface ModelSelectorProps {
   currentModelId?: string;
   onSelect: (modelId: string) => void;
   onCancel: () => void;
+  /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
+  filterProvider?: string;
+  /** Force refresh the models list on mount */
+  forceRefresh?: boolean;
+  /** User's billing tier - affects tab ordering (free = BYOK first) */
+  billingTier?: string;
+  /** Whether connected to a self-hosted server (not api.letta.com) */
+  isSelfHosted?: boolean;
 }
 
 export function ModelSelector({
   currentModelId,
   onSelect,
   onCancel,
+  filterProvider,
+  forceRefresh: forceRefreshOnMount,
+  billingTier,
+  isSelfHosted,
 }: ModelSelectorProps) {
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
-  const [category, setCategory] = useState<ModelCategory>("supported");
-  const [currentPage, setCurrentPage] = useState(0);
+
+  // Tab order depends on billing tier (free = BYOK first)
+  // For self-hosted, only show server-specific tabs
+  const modelCategories = useMemo(
+    () => getModelCategories(billingTier, isSelfHosted),
+    [billingTier, isSelfHosted],
+  );
+  const defaultCategory = modelCategories[0] ?? "supported";
+
+  const [category, setCategory] = useState<ModelCategory>(defaultCategory);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // undefined: not loaded yet (show spinner)
@@ -94,8 +144,8 @@ export function ModelSelector({
   });
 
   useEffect(() => {
-    loadModels.current(false);
-  }, []);
+    loadModels.current(forceRefreshOnMount ?? false);
+  }, [forceRefreshOnMount]);
 
   // Handles from models.json (for filtering "all" category)
   const staticModelHandles = useMemo(
@@ -105,31 +155,226 @@ export function ModelSelector({
 
   // Supported models: models.json entries that are available
   // Featured models first, then non-featured, preserving JSON order within each group
+  // If filterProvider is set, only show models from that provider
+  // For free tier, free models go first
+  const isFreeTier = billingTier?.toLowerCase() === "free";
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
-    const available =
+    let available =
       availableHandles === null
         ? typedModels // fallback
         : typedModels.filter((m) => availableHandles.has(m.handle));
+    // Apply provider filter if specified
+    if (filterProvider) {
+      available = available.filter((m) =>
+        m.handle.startsWith(`${filterProvider}/`),
+      );
+    }
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      available = available.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
+
+    // For free tier, put free models first, then others with standard ordering
+    if (isFreeTier) {
+      const freeModels = available.filter((m) => m.free);
+      const paidModels = available.filter((m) => !m.free);
+      const featured = paidModels.filter((m) => m.isFeatured);
+      const nonFeatured = paidModels.filter((m) => !m.isFeatured);
+      return [...freeModels, ...featured, ...nonFeatured];
+    }
+
     const featured = available.filter((m) => m.isFeatured);
     const nonFeatured = available.filter((m) => !m.isFeatured);
     return [...featured, ...nonFeatured];
-  }, [typedModels, availableHandles]);
+  }, [typedModels, availableHandles, filterProvider, searchQuery, isFreeTier]);
 
-  // All other models: API handles not in models.json
+  // BYOK models: models from chatgpt-plus-pro or lc-* providers
+  const isByokHandle = useCallback(
+    (handle: string) =>
+      BYOK_PROVIDER_PREFIXES.some((prefix) => handle.startsWith(prefix)),
+    [],
+  );
+
+  // All other models: API handles not in models.json and not BYOK
   const otherModelHandles = useMemo(() => {
     const filtered = allApiHandles.filter(
-      (handle) => !staticModelHandles.has(handle),
+      (handle) => !staticModelHandles.has(handle) && !isByokHandle(handle),
     );
     if (!searchQuery) return filtered;
     const query = searchQuery.toLowerCase();
     return filtered.filter((handle) => handle.toLowerCase().includes(query));
-  }, [allApiHandles, staticModelHandles, searchQuery]);
+  }, [allApiHandles, staticModelHandles, searchQuery, isByokHandle]);
+
+  // Provider name mappings for BYOK -> models.json lookup
+  // Maps BYOK provider prefix to models.json provider prefix
+  const BYOK_PROVIDER_ALIASES: Record<string, string> = {
+    "lc-anthropic": "anthropic",
+    "lc-openai": "openai",
+    "lc-zai": "zai",
+    "lc-gemini": "google_ai",
+    "chatgpt-plus-pro": "chatgpt-plus-pro", // No change needed
+  };
+
+  // Convert BYOK handle to base provider handle for models.json lookup
+  // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
+  // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
+  const toBaseHandle = useCallback((handle: string): string => {
+    const slashIndex = handle.indexOf("/");
+    if (slashIndex === -1) return handle;
+
+    const provider = handle.slice(0, slashIndex);
+    const model = handle.slice(slashIndex + 1);
+    const baseProvider = BYOK_PROVIDER_ALIASES[provider];
+
+    if (baseProvider) {
+      return `${baseProvider}/${model}`;
+    }
+    return handle;
+  }, []);
+
+  // BYOK (recommended): BYOK API handles that have matching entries in models.json
+  const byokModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+
+    // Get all BYOK handles from API
+    const byokHandles = allApiHandles.filter(isByokHandle);
+
+    // Find models.json entries that match (using alias for lc-* providers)
+    const matched: UiModel[] = [];
+    for (const handle of byokHandles) {
+      const baseHandle = toBaseHandle(handle);
+      const staticModel = typedModels.find((m) => m.handle === baseHandle);
+      if (staticModel) {
+        // Use models.json data but with the BYOK handle as the ID
+        matched.push({
+          ...staticModel,
+          id: handle,
+          handle: handle,
+        });
+      }
+    }
+
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return matched.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
+
+    return matched;
+  }, [
+    availableHandles,
+    allApiHandles,
+    typedModels,
+    searchQuery,
+    isByokHandle,
+    toBaseHandle,
+  ]);
+
+  // BYOK (all): BYOK handles from API that don't have matching models.json entries
+  const byokAllModels = useMemo(() => {
+    if (availableHandles === undefined) return [];
+
+    // Get BYOK handles that don't have a match in models.json (using alias)
+    const byokHandles = allApiHandles.filter((handle) => {
+      if (!isByokHandle(handle)) return false;
+      const baseHandle = toBaseHandle(handle);
+      // Exclude if there's a matching entry in models.json
+      return !staticModelHandles.has(baseHandle);
+    });
+
+    // Apply search filter
+    let filtered = byokHandles;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = byokHandles.filter((handle) =>
+        handle.toLowerCase().includes(query),
+      );
+    }
+
+    return filtered;
+  }, [
+    availableHandles,
+    allApiHandles,
+    staticModelHandles,
+    searchQuery,
+    isByokHandle,
+    toBaseHandle,
+  ]);
+
+  // Server-recommended models: models.json entries available on the server (for self-hosted)
+  // Filter out letta/letta-free legacy model
+  const serverRecommendedModels = useMemo(() => {
+    if (!isSelfHosted || availableHandles === undefined) return [];
+    const available = typedModels.filter(
+      (m) =>
+        availableHandles !== null &&
+        availableHandles.has(m.handle) &&
+        m.handle !== "letta/letta-free",
+    );
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return available.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
+    return available;
+  }, [isSelfHosted, typedModels, availableHandles, searchQuery]);
+
+  // Server-all models: ALL handles from the server (for self-hosted)
+  // Filter out letta/letta-free legacy model
+  const serverAllModels = useMemo(() => {
+    if (!isSelfHosted) return [];
+    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      handles = handles.filter((h) => h.toLowerCase().includes(query));
+    }
+    return handles;
+  }, [isSelfHosted, allApiHandles, searchQuery]);
 
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
     if (category === "supported") {
       return supportedModels;
+    }
+    if (category === "byok") {
+      return byokModels;
+    }
+    if (category === "byok-all") {
+      // Convert raw handles to UiModel
+      return byokAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      }));
+    }
+    if (category === "server-recommended") {
+      return serverRecommendedModels;
+    }
+    if (category === "server-all") {
+      // Convert raw handles to UiModel
+      return serverAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      }));
     }
     // For "all" category, convert handles to simple UiModel objects
     return otherModelHandles.map((handle) => ({
@@ -138,50 +383,66 @@ export function ModelSelector({
       label: handle,
       description: "",
     }));
-  }, [category, supportedModels, otherModelHandles]);
+  }, [
+    category,
+    supportedModels,
+    byokModels,
+    byokAllModels,
+    otherModelHandles,
+    serverRecommendedModels,
+    serverAllModels,
+  ]);
 
-  // Pagination
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(currentList.length / PAGE_SIZE)),
-    [currentList.length],
-  );
+  // Show 1 fewer item because Search line takes space
+  const visibleCount = VISIBLE_ITEMS - 1;
+
+  // Scrolling - keep selectedIndex in view
+  const startIndex = useMemo(() => {
+    // Keep selected item in the visible window
+    if (selectedIndex < visibleCount) return 0;
+    return Math.min(
+      selectedIndex - visibleCount + 1,
+      Math.max(0, currentList.length - visibleCount),
+    );
+  }, [selectedIndex, currentList.length, visibleCount]);
 
   const visibleModels = useMemo(() => {
-    const start = currentPage * PAGE_SIZE;
-    return currentList.slice(start, start + PAGE_SIZE);
-  }, [currentList, currentPage]);
+    return currentList.slice(startIndex, startIndex + visibleCount);
+  }, [currentList, startIndex, visibleCount]);
 
-  // Reset page and selection when category changes
+  const showScrollDown = startIndex + visibleCount < currentList.length;
+  const itemsBelow = currentList.length - startIndex - visibleCount;
+
+  // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
-      const idx = MODEL_CATEGORIES.indexOf(current);
-      return MODEL_CATEGORIES[
-        (idx + 1) % MODEL_CATEGORIES.length
+      const idx = modelCategories.indexOf(current);
+      return modelCategories[
+        (idx + 1) % modelCategories.length
       ] as ModelCategory;
     });
-    setCurrentPage(0);
     setSelectedIndex(0);
     setSearchQuery("");
-  }, []);
+  }, [modelCategories]);
 
   // Set initial selection to current model on mount
   const initializedRef = useRef(false);
   useEffect(() => {
-    if (!initializedRef.current && visibleModels.length > 0) {
-      const index = visibleModels.findIndex((m) => m.id === currentModelId);
+    if (!initializedRef.current && currentList.length > 0) {
+      const index = currentList.findIndex((m) => m.id === currentModelId);
       if (index >= 0) {
         setSelectedIndex(index);
       }
       initializedRef.current = true;
     }
-  }, [visibleModels, currentModelId]);
+  }, [currentList, currentModelId]);
 
   // Clamp selectedIndex when list changes
   useEffect(() => {
-    if (selectedIndex >= visibleModels.length && visibleModels.length > 0) {
-      setSelectedIndex(visibleModels.length - 1);
+    if (selectedIndex >= currentList.length && currentList.length > 0) {
+      setSelectedIndex(currentList.length - 1);
     }
-  }, [selectedIndex, visibleModels.length]);
+  }, [selectedIndex, currentList.length]);
 
   useInput(
     (input, key) => {
@@ -195,7 +456,6 @@ export function ModelSelector({
       if (key.escape) {
         if (searchQuery) {
           setSearchQuery("");
-          setCurrentPage(0);
           setSelectedIndex(0);
         } else {
           onCancel();
@@ -209,8 +469,22 @@ export function ModelSelector({
         return;
       }
 
-      if (key.tab) {
+      // Tab or left/right arrows to switch categories
+      if (key.tab || key.rightArrow) {
         cycleCategory();
+        return;
+      }
+
+      if (key.leftArrow) {
+        // Cycle backwards through categories
+        setCategory((current) => {
+          const idx = modelCategories.indexOf(current);
+          return modelCategories[
+            idx === 0 ? modelCategories.length - 1 : idx - 1
+          ] as ModelCategory;
+        });
+        setSelectedIndex(0);
+        setSearchQuery("");
         return;
       }
 
@@ -218,51 +492,41 @@ export function ModelSelector({
       if (key.backspace || key.delete) {
         if (searchQuery) {
           setSearchQuery((prev) => prev.slice(0, -1));
-          setCurrentPage(0);
           setSelectedIndex(0);
         }
         return;
       }
 
-      // Disable other inputs while loading
-      if (isLoading || refreshing || visibleModels.length === 0) {
+      // Capture text input for search (allow typing even with 0 results)
+      // Exclude special keys like Enter, arrows, etc.
+      if (
+        input &&
+        input.length === 1 &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.return &&
+        !key.upArrow &&
+        !key.downArrow
+      ) {
+        setSearchQuery((prev) => prev + input);
+        setSelectedIndex(0);
+        return;
+      }
+
+      // Disable navigation/selection while loading or no results
+      if (isLoading || refreshing || currentList.length === 0) {
         return;
       }
 
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) =>
-          Math.min(visibleModels.length - 1, prev + 1),
-        );
-      } else if (input === "j" || input === "J") {
-        // Previous page
-        if (currentPage > 0) {
-          setCurrentPage((prev) => prev - 1);
-          setSelectedIndex(0);
-        }
-      } else if (input === "k" || input === "K") {
-        // Next page
-        if (currentPage < totalPages - 1) {
-          setCurrentPage((prev) => prev + 1);
-          setSelectedIndex(0);
-        }
-      } else if (key.leftArrow && currentPage > 0) {
-        setCurrentPage((prev) => prev - 1);
-        setSelectedIndex(0);
-      } else if (key.rightArrow && currentPage < totalPages - 1) {
-        setCurrentPage((prev) => prev + 1);
-        setSelectedIndex(0);
+        setSelectedIndex((prev) => Math.min(currentList.length - 1, prev + 1));
       } else if (key.return) {
-        const selectedModel = visibleModels[selectedIndex];
+        const selectedModel = currentList[selectedIndex];
         if (selectedModel) {
           onSelect(selectedModel.id);
         }
-      } else if (category === "all" && input && input.length === 1) {
-        // Capture text input for search (only in "all" category)
-        setSearchQuery((prev) => prev + input);
-        setCurrentPage(0);
-        setSelectedIndex(0);
       }
     },
     // Keep active so ESC and 'r' work while loading.
@@ -270,66 +534,104 @@ export function ModelSelector({
   );
 
   const getCategoryLabel = (cat: ModelCategory) => {
-    if (cat === "supported") return `Recommended (${supportedModels.length})`;
-    return `All Available Models (${otherModelHandles.length})`;
+    if (cat === "supported") return `Letta API [${supportedModels.length}]`;
+    if (cat === "byok") return `BYOK [${byokModels.length}]`;
+    if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
+    if (cat === "server-recommended")
+      return `Recommended [${serverRecommendedModels.length}]`;
+    if (cat === "server-all") return `All models [${serverAllModels.length}]`;
+    return `Letta API (all) [${otherModelHandles.length}]`;
   };
 
+  const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "server-recommended") {
+      return "Recommended models on the server";
+    }
+    if (cat === "server-all") {
+      return "All models on the server";
+    }
+    if (cat === "supported") {
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "Recommended models on the Letta API";
+    }
+    if (cat === "byok")
+      return "Recommended models via your API keys (use /connect to add more)";
+    if (cat === "byok-all")
+      return "All models via your API keys (use /connect to add more)";
+    if (cat === "all") {
+      return isFreeTier
+        ? "Upgrade your account to access more models"
+        : "All models on the Letta API";
+    }
+    return "All models on the Letta API";
+  };
+
+  // Render tab bar (matches AgentSelector style)
+  const renderTabBar = () => (
+    <Box flexDirection="row" gap={2}>
+      {modelCategories.map((cat) => {
+        const isActive = cat === category;
+        return (
+          <Text
+            key={cat}
+            backgroundColor={
+              isActive ? colors.selector.itemHighlighted : undefined
+            }
+            color={isActive ? "black" : undefined}
+            bold={isActive}
+          >
+            {` ${getCategoryLabel(cat)} `}
+          </Text>
+        );
+      })}
+    </Box>
+  );
+
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box flexDirection="column">
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /model"}</Text>
+      <Text dimColor>{solidLine}</Text>
+
+      <Box height={1} />
+
+      {/* Title and tabs */}
+      <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
-          Select Model (↑↓ navigate, ←→/jk page, Tab category, Enter select, ESC
-          cancel)
+          Swap your agent's model
         </Text>
         {!isLoading && !refreshing && (
-          <Box>
-            <Text dimColor>Category: </Text>
-            {MODEL_CATEGORIES.map((cat, i) => (
-              <Text key={cat}>
-                {i > 0 && <Text dimColor> · </Text>}
-                <Text
-                  bold={cat === category}
-                  dimColor={cat !== category}
-                  color={
-                    cat === category
-                      ? colors.selector.itemHighlighted
-                      : undefined
-                  }
-                >
-                  {getCategoryLabel(cat)}
-                </Text>
-              </Text>
-            ))}
-            <Text dimColor> (Tab to switch)</Text>
-          </Box>
-        )}
-        {!isLoading && !refreshing && (
-          <Box flexDirection="column">
-            <Text dimColor>
-              Page {currentPage + 1}/{totalPages}
-              {isCached ? " · cached" : ""} · 'r' to refresh
+          <Box flexDirection="column" paddingLeft={1}>
+            {renderTabBar()}
+            <Text dimColor> {getCategoryDescription(category)}</Text>
+            <Text>
+              <Text dimColor> Search: </Text>
+              {searchQuery ? (
+                <Text>{searchQuery}</Text>
+              ) : (
+                <Text dimColor>(type to filter)</Text>
+              )}
             </Text>
-            {category === "all" && (
-              <Text dimColor>Search: {searchQuery || "(type to search)"}</Text>
-            )}
           </Box>
         )}
       </Box>
 
+      {/* Loading states */}
       {isLoading && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>Loading available models...</Text>
         </Box>
       )}
 
       {refreshing && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>Refreshing models...</Text>
         </Box>
       )}
 
       {error && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text color="yellow">
             Warning: Could not fetch available models. Showing all models.
           </Text>
@@ -337,7 +639,7 @@ export function ModelSelector({
       )}
 
       {!isLoading && !refreshing && visibleModels.length === 0 && (
-        <Box>
+        <Box paddingLeft={2}>
           <Text dimColor>
             {category === "supported"
               ? "No supported models available."
@@ -346,40 +648,67 @@ export function ModelSelector({
         </Box>
       )}
 
+      {/* Model list */}
       <Box flexDirection="column">
         {visibleModels.map((model, index) => {
-          const isSelected = index === selectedIndex;
+          const actualIndex = startIndex + index;
+          const isSelected = actualIndex === selectedIndex;
           const isCurrent = model.id === currentModelId;
+          // Show lock for non-free models when on free tier (only for Letta API tabs)
+          const showLock =
+            isFreeTier &&
+            !model.free &&
+            (category === "supported" || category === "all");
 
           return (
-            <Box key={model.id} flexDirection="row" gap={1}>
+            <Box key={model.id} flexDirection="row">
               <Text
                 color={isSelected ? colors.selector.itemHighlighted : undefined}
               >
-                {isSelected ? "›" : " "}
+                {isSelected ? "> " : "  "}
               </Text>
-              <Box flexDirection="row">
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected
-                      ? colors.selector.itemHighlighted
-                      : isCurrent
-                        ? colors.selector.itemCurrent
-                        : undefined
-                  }
-                >
-                  {model.label}
-                  {isCurrent && <Text> (current)</Text>}
-                </Text>
-                {model.description && (
-                  <Text dimColor> {model.description}</Text>
-                )}
-              </Box>
+              {showLock && <Text dimColor>🔒 </Text>}
+              <Text
+                bold={isSelected}
+                color={
+                  isSelected
+                    ? colors.selector.itemHighlighted
+                    : isCurrent
+                      ? colors.selector.itemCurrent
+                      : undefined
+                }
+              >
+                {model.label}
+                {isCurrent && <Text> (current)</Text>}
+              </Text>
+              {model.description && (
+                <Text dimColor> · {model.description}</Text>
+              )}
             </Box>
           );
         })}
+        {showScrollDown ? (
+          <Text dimColor>
+            {"  "}↓ {itemsBelow} more below
+          </Text>
+        ) : currentList.length > visibleCount ? (
+          <Text> </Text>
+        ) : null}
       </Box>
+
+      {/* Footer */}
+      {!isLoading && !refreshing && currentList.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>
+            {"  "}
+            {currentList.length} models{isCached ? " · cached" : ""} · R to
+            refresh
+          </Text>
+          <Text dimColor>
+            {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

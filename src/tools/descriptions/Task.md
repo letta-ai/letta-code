@@ -14,6 +14,8 @@ Launch a subagent to perform a task. Parameters:
 - **prompt**: Detailed, self-contained instructions for the agent (agents cannot ask questions mid-execution)
 - **description**: Short 3-5 word summary for tracking
 - **model** (optional): Override the model for this agent
+- **agent_id** (optional): Deploy an existing agent instead of creating a new one
+- **conversation_id** (optional): Resume from an existing conversation
 
 ### Refresh
 Re-scan the `.letta/agents/` directories to discover new or updated custom subagents:
@@ -44,6 +46,57 @@ Use this after creating or modifying custom subagent definitions.
 - **Context-aware**: Agents see full conversation history and can reference earlier context
 - **Parallel execution**: Launch multiple agents concurrently by calling Task multiple times in a single response
 - **Specify return format**: Tell agents exactly what information to include in their report
+
+## Deploying an Existing Agent
+
+Instead of spawning a fresh subagent from a template, you can deploy an existing agent to work in your local codebase.
+
+### Access Levels (subagent_type)
+Use subagent_type to control what tools the deployed agent can access:
+- **explore**: Read-only access (Read, Glob, Grep) - safer for exploration tasks
+- **general-purpose**: Full read-write access (Bash, Edit, Write, etc.) - for implementation tasks
+
+If subagent_type is not specified when deploying an existing agent, it defaults to "general-purpose".
+
+### Parameters
+
+- **agent_id**: The ID of an existing agent to deploy (e.g., "agent-abc123")
+  - Starts a new conversation with that agent
+  - The agent keeps its own system prompt and memory
+  - Tool access is controlled by subagent_type
+
+- **conversation_id**: Resume from an existing conversation (e.g., "conv-xyz789")
+  - Does NOT require agent_id (conversation IDs are unique and encode the agent)
+  - Continues from the conversation's existing message history
+  - Use this to continue context from:
+    - A prior Task tool invocation that returned a conversation_id
+    - A message thread started via the messaging-agents skill
+
+### Examples
+
+```typescript
+// Deploy agent with read-only access
+Task({
+  agent_id: "agent-abc123",
+  subagent_type: "explore",
+  description: "Find auth code",
+  prompt: "Find all auth-related code in this codebase"
+})
+
+// Deploy agent with full access (default)
+Task({
+  agent_id: "agent-abc123",
+  description: "Fix auth bug",
+  prompt: "Fix the bug in auth.ts"
+})
+
+// Continue an existing conversation
+Task({
+  conversation_id: "conv-xyz789",
+  description: "Continue implementation",
+  prompt: "Now implement the fix we discussed"
+})
+```
 
 ## Examples:
 

@@ -29,6 +29,7 @@ import SkillDescription from "./descriptions/Skill.md";
 import TaskDescription from "./descriptions/Task.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
+import ViewImageDescription from "./descriptions/ViewImage.md";
 import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
@@ -63,6 +64,7 @@ import { skill } from "./impl/Skill";
 import { task } from "./impl/Task";
 import { todo_write } from "./impl/TodoWrite";
 import { update_plan } from "./impl/UpdatePlan";
+import { view_image } from "./impl/ViewImage";
 import { write } from "./impl/Write";
 import { write_file_gemini } from "./impl/WriteFileGemini";
 import { write_todos } from "./impl/WriteTodosGemini";
@@ -97,6 +99,7 @@ import SkillSchema from "./schemas/Skill.json";
 import TaskSchema from "./schemas/Task.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
+import ViewImageSchema from "./schemas/ViewImage.json";
 import WriteSchema from "./schemas/Write.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
@@ -169,6 +172,11 @@ const toolDefinitions = {
     schema: ReadSchema,
     description: ReadDescription.trim(),
     impl: read as unknown as ToolImplementation,
+  },
+  view_image: {
+    schema: ViewImageSchema,
+    description: ViewImageDescription.trim(),
+    impl: view_image as unknown as ToolImplementation,
   },
   // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
   ReadLSP: {

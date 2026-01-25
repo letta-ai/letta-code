@@ -2,7 +2,7 @@ import { getClient } from "../agent/client";
 import { resolveModel } from "../agent/model";
 import { toolFilter } from "./filter";
 import {
-  clearTools,
+  clearToolsWithLock,
   GEMINI_PASCAL_TOOLS,
   getToolNames,
   isOpenAIModel,
@@ -53,6 +53,14 @@ export async function ensureCorrectMemoryTool(
     });
     const currentTools = agentWithTools.tools || [];
     const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
+
+    // If agent has no memory tool at all, don't add one
+    // This preserves stateless agents (like Incognito) that intentionally have no memory
+    const hasAnyMemoryTool =
+      mapByName.has("memory") || mapByName.has("memory_apply_patch");
+    if (!hasAnyMemoryTool) {
+      return;
+    }
 
     // Determine which memory tool we want
     // Only OpenAI (Codex) uses memory_apply_patch; Claude and Gemini use memory
@@ -113,14 +121,14 @@ export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
   agentId: string,
 ): Promise<void> {
-  // Clear currently loaded tools
-  clearTools();
-
   // Load the appropriate toolset
-  // Map toolset name to a model identifier for loading
+  // Note: loadTools/loadSpecificTools acquire a switch lock that causes
+  // sendMessageStream to wait, preventing messages from being sent with
+  // stale or partial tools during the switch.
   let modelForLoading: string;
   if (toolsetName === "none") {
-    // Just clear tools, no loading needed
+    // Clear tools with lock protection so sendMessageStream() waits
+    clearToolsWithLock();
     return;
   } else if (toolsetName === "codex") {
     await loadSpecificTools([...CODEX_TOOLS]);
@@ -166,8 +174,9 @@ export async function switchToolsetForModel(
   // Resolve model ID to handle when possible so provider checks stay consistent
   const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
 
-  // Clear currently loaded tools and load the appropriate set for the target model
-  clearTools();
+  // Load the appropriate set for the target model
+  // Note: loadTools acquires a switch lock that causes sendMessageStream to wait,
+  // preventing messages from being sent with stale or partial tools during the switch.
   await loadTools(resolvedModel);
 
   // If no tools were loaded (e.g., unexpected handle or edge-case filter),

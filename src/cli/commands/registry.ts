@@ -6,6 +6,7 @@ type CommandHandler = (args: string[]) => Promise<string> | string;
 interface Command {
   desc: string;
   handler: CommandHandler;
+  args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
   hidden?: boolean; // Hidden commands don't show in autocomplete but still work
   order?: number; // Lower numbers appear first in autocomplete (default: 100)
 }
@@ -60,29 +61,37 @@ export const commands: Record<string, Command> = {
     },
   },
   "/search": {
-    desc: "Search messages across all agents",
+    desc: "Search messages across all agents (/search [query])",
     order: 16,
     handler: () => {
       // Handled specially in App.tsx to show message search
       return "Opening message search...";
     },
   },
-  "/clear": {
-    desc: "Clear conversation history (keep memory)",
+  "/connect": {
+    desc: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
     order: 17,
     handler: () => {
-      // Handled specially in App.tsx to access client and agent ID
-      return "Clearing messages...";
+      // Handled specially in App.tsx - opens ProviderSelector
+      return "Opening provider connection...";
+    },
+  },
+  "/clear": {
+    desc: "Clear in-context messages",
+    order: 18,
+    handler: () => {
+      // Handled specially in App.tsx to reset agent messages
+      return "Clearing in-context messages...";
     },
   },
 
   // === Page 2: Agent management (order 20-29) ===
   "/new": {
-    desc: "Create a new agent and switch to it",
+    desc: "Start a new conversation (keep agent memory)",
     order: 20,
     handler: () => {
-      // Handled specially in App.tsx
-      return "Creating new agent...";
+      // Handled specially in App.tsx to create new conversation
+      return "Starting new conversation...";
     },
   },
   "/pin": {
@@ -160,7 +169,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/mcp": {
-    desc: "Manage MCP servers",
+    desc: "Manage MCP servers (add, connect with OAuth)",
     order: 32,
     handler: () => {
       // Handled specially in App.tsx to show MCP server selector
@@ -192,9 +201,17 @@ export const commands: Record<string, Command> = {
       return "Opening help...";
     },
   },
+  "/hooks": {
+    desc: "Manage hooks configuration",
+    order: 36,
+    handler: () => {
+      // Handled specially in App.tsx to open hooks manager
+      return "Opening hooks manager...";
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
-    order: 36,
+    order: 37,
     handler: async (args: string[]) => {
       const {
         detectTerminalType,
@@ -246,16 +263,16 @@ export const commands: Record<string, Command> = {
   },
 
   // === Session management (order 40-49) ===
-  "/connect": {
-    desc: "Connect an existing Claude account (/connect claude)",
+  "/plan": {
+    desc: "Enter plan mode",
     order: 40,
     handler: () => {
       // Handled specially in App.tsx
-      return "Initiating OAuth connection...";
+      return "Entering plan mode...";
     },
   },
   "/disconnect": {
-    desc: "Disconnect from Claude OAuth",
+    desc: "Disconnect an existing account (/disconnect codex|claude|zai)",
     order: 41,
     handler: () => {
       // Handled specially in App.tsx
@@ -316,7 +333,6 @@ export const commands: Record<string, Command> = {
   },
   "/compact": {
     desc: "Summarize conversation history (compaction)",
-    hidden: true,
     handler: () => {
       // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
@@ -339,11 +355,12 @@ export const commands: Record<string, Command> = {
     },
   },
   "/resume": {
-    desc: "Browse and switch to another agent",
-    hidden: true, // Backwards compatibility alias for /agents
+    desc: "Resume a previous conversation",
+    args: "[conversation_id]",
+    order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show agent selector
-      return "Opening agent selector...";
+      // Handled specially in App.tsx to show conversation selector or switch directly
+      return "Opening conversation selector...";
     },
   },
   "/pinned": {
@@ -367,7 +384,7 @@ export const commands: Record<string, Command> = {
  */
 export async function executeCommand(
   input: string,
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; notFound?: boolean }> {
   const [command, ...args] = input.trim().split(/\s+/);
 
   if (!command) {
@@ -382,6 +399,7 @@ export async function executeCommand(
     return {
       success: false,
       output: `Unknown command: ${command}`,
+      notFound: true,
     };
   }
 

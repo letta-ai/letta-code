@@ -5,8 +5,8 @@ export type ActiveOverlay =
   | "model"
   | "toolset"
   | "system"
-  | "agent"
   | "resume"
+  | "conversations"
   | "search"
   | "subagent"
   | "feedback"
@@ -14,8 +14,10 @@ export type ActiveOverlay =
   | "pin"
   | "new"
   | "mcp"
+  | "mcp-connect"
   | "help"
-  | "oauth"
+  | "hooks"
+  | "connect"
   | null;
 
 export type UiAction =

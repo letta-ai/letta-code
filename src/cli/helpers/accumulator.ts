@@ -6,6 +6,95 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { findLastSafeSplitPoint } from "./markdownSplit";
+import { isShellTool } from "./toolNameMapping";
+
+// Constants for streaming output
+const MAX_TAIL_LINES = 5;
+const MAX_BUFFER_SIZE = 100_000; // 100KB
+
+/**
+ * A line of streaming output with its source (stdout or stderr).
+ */
+export interface StreamingLine {
+  text: string;
+  isStderr: boolean;
+}
+
+/**
+ * Streaming state for bash/shell tools.
+ * Tracks a rolling window of output during execution.
+ */
+export interface StreamingState {
+  tailLines: StreamingLine[]; // Last 5 complete lines (for rolling display)
+  partialLine: string; // Incomplete line being accumulated
+  partialIsStderr: boolean; // Whether partial line is from stderr
+  totalLineCount: number; // Total lines seen (for "+N more" count)
+  startTime: number; // For elapsed time display
+}
+
+/**
+ * Append a chunk of output to the streaming state.
+ * Maintains a tail buffer of the last N lines and handles partial line accumulation.
+ */
+export function appendStreamingOutput(
+  state: StreamingState | undefined,
+  chunk: string,
+  startTime: number,
+  isStderr = false,
+): StreamingState {
+  const current = state || {
+    tailLines: [],
+    partialLine: "",
+    partialIsStderr: false,
+    totalLineCount: 0,
+    startTime,
+  };
+
+  const tailLines = [...current.tailLines];
+  let totalLineCount = current.totalLineCount;
+  let partialLine = current.partialLine;
+  const partialIsStderr = current.partialIsStderr;
+
+  // If stream type changed and we have a partial, flush it as a complete line
+  if (partialLine && isStderr !== partialIsStderr) {
+    tailLines.push({ text: partialLine, isStderr: partialIsStderr });
+    totalLineCount++;
+    partialLine = "";
+  }
+
+  // Append chunk to partial line
+  let buffer = partialLine + chunk;
+
+  // Size limit check - slice at line boundary to avoid corrupted lines
+  if (buffer.length > MAX_BUFFER_SIZE) {
+    const truncated = buffer.slice(-MAX_BUFFER_SIZE);
+    const firstNewline = truncated.indexOf("\n");
+    buffer = firstNewline >= 0 ? truncated.slice(firstNewline + 1) : truncated;
+  }
+
+  // Split into complete lines + remainder
+  const lines = buffer.split("\n");
+  const newPartialLine = lines.pop() || ""; // Last element is incomplete
+
+  // Convert string lines to StreamingLine objects with current stream's stderr flag
+  const newLines: StreamingLine[] = lines.map((text) => ({
+    text,
+    isStderr,
+  }));
+
+  // Update tail with new complete lines (keep empty lines for accurate display)
+  const allLines = [...tailLines, ...newLines];
+  const finalTailLines = allLines.slice(-MAX_TAIL_LINES);
+
+  return {
+    tailLines: finalTailLines,
+    partialLine: newPartialLine,
+    partialIsStderr: isStderr,
+    totalLineCount: totalLineCount + lines.length,
+    startTime: current.startTime,
+  };
+}
 
 // One line per transcript row. Tool calls evolve in-place.
 // For tool call returns, merge into the tool call matching the toolCallId
@@ -16,12 +105,14 @@ export type Line =
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no header)
     }
   | {
       kind: "assistant";
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no bullet)
     }
   | {
       kind: "tool_call";
@@ -36,6 +127,8 @@ export type Line =
       resultOk?: boolean;
       // state that's useful for rendering
       phase: "streaming" | "ready" | "running" | "finished";
+      // streaming output state (for shell tools during execution)
+      streaming?: StreamingState;
     }
   | { kind: "error"; id: string; text: string }
   | {
@@ -54,6 +147,8 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
+      // streaming output state (during execution)
+      streaming?: StreamingState;
     }
   | {
       kind: "status";
@@ -82,6 +177,9 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
+  // Aggressive static promotion: split streaming content at paragraph boundaries
+  tokenStreamingEnabled?: boolean;
+  splitCounters: Map<string, number>; // tracks split count per original otid
 };
 
 export function createBuffers(): Buffers {
@@ -102,6 +200,8 @@ export function createBuffers(): Buffers {
       reasoningTokens: 0,
       stepCount: 0,
     },
+    tokenStreamingEnabled: false,
+    splitCounters: new Map(),
   };
 }
 
@@ -180,9 +280,23 @@ export function markCurrentLineAsFinished(b: Buffers) {
  *   with concurrent processConversation calls reading the flag.
  * @returns true if any tool calls were marked as cancelled
  */
+export type CancelReason =
+  | "user_interrupt"
+  | "stream_error"
+  | "internal_cancel"
+  | "approval_cancel";
+
+const CANCEL_REASON_TEXT: Record<CancelReason, string> = {
+  user_interrupt: INTERRUPTED_BY_USER,
+  stream_error: "Stream error",
+  internal_cancel: "Cancelled",
+  approval_cancel: "Approval cancelled",
+};
+
 export function markIncompleteToolsAsCancelled(
   b: Buffers,
   setInterruptedFlag = true,
+  reason: CancelReason = "internal_cancel",
 ): boolean {
   // Mark buffer as interrupted to skip stale throttled refreshes
   // (only when actually interrupting, not when clearing stale state at startup)
@@ -197,7 +311,7 @@ export function markIncompleteToolsAsCancelled(
         ...line,
         phase: "finished" as const,
         resultOk: false,
-        resultText: INTERRUPTED_BY_USER,
+        resultText: CANCEL_REASON_TEXT[reason],
       };
       b.byId.set(id, updatedLine);
       anyToolsCancelled = true;
@@ -229,6 +343,63 @@ function extractTextPart(v: unknown): string {
     return getStringProp(v, "text") ?? getStringProp(v, "delta") ?? "";
   }
   return "";
+}
+
+/**
+ * Attempts to split content at a paragraph boundary for aggressive static promotion.
+ * If split found, creates a committed line for "before" and updates original with "after".
+ * Returns true if split occurred, false otherwise.
+ */
+function trySplitContent(
+  b: Buffers,
+  id: string,
+  kind: "assistant" | "reasoning",
+  newText: string,
+): boolean {
+  if (!b.tokenStreamingEnabled) return false;
+
+  const splitPoint = findLastSafeSplitPoint(newText);
+  if (splitPoint >= newText.length) return false; // No safe split point
+
+  const beforeText = newText.substring(0, splitPoint);
+  const afterText = newText.substring(splitPoint);
+
+  // Get or initialize split counter for this original ID
+  const counter = b.splitCounters.get(id) ?? 0;
+  b.splitCounters.set(id, counter + 1);
+
+  // Create committed line for "before" content
+  // Only the first split (counter=0) shows the bullet/header; subsequent splits are continuations
+  const commitId = `${id}-split-${counter}`;
+  const committedLine = {
+    kind,
+    id: commitId,
+    text: beforeText,
+    phase: "finished" as const,
+    isContinuation: counter > 0, // First split shows bullet, subsequent don't
+  };
+  b.byId.set(commitId, committedLine);
+
+  // Insert committed line BEFORE the original in order array
+  const originalIndex = b.order.indexOf(id);
+  if (originalIndex !== -1) {
+    b.order.splice(originalIndex, 0, commitId);
+  } else {
+    // Should not happen, but handle gracefully
+    b.order.push(commitId);
+  }
+
+  // Update original line with just the "after" content (keep streaming)
+  // Mark it as a continuation so it doesn't show bullet/header
+  const originalLine = b.byId.get(id);
+  if (
+    originalLine &&
+    (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
+  ) {
+    b.byId.set(id, { ...originalLine, text: afterText, isContinuation: true });
+  }
+
+  return true;
 }
 
 // Feed one SDK chunk; mutate buffers in place.
@@ -265,11 +436,15 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         phase: "streaming",
       }));
       if (delta) {
-        // Immutable update: create new object with updated text
-        const updatedLine = { ...line, text: line.text + delta };
-        b.byId.set(id, updatedLine);
+        const newText = line.text + delta;
         b.tokenCount += delta.length;
-        // console.log(`[REASONING] Updated ${id}, phase=${updatedLine.phase}, textLen=${updatedLine.text.length}`);
+
+        // Try to split at paragraph boundary (only if streaming enabled)
+        if (!trySplitContent(b, id, "reasoning", newText)) {
+          // No split - normal accumulation
+          b.byId.set(id, { ...line, text: newText });
+        }
+        // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
       }
       break;
     }
@@ -289,10 +464,14 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         phase: "streaming",
       }));
       if (delta) {
-        // Immutable update: create new object with updated text
-        const updatedLine = { ...line, text: line.text + delta };
-        b.byId.set(id, updatedLine);
+        const newText = line.text + delta;
         b.tokenCount += delta.length;
+
+        // Try to split at paragraph boundary (only if streaming enabled)
+        if (!trySplitContent(b, id, "assistant", newText)) {
+          // No split - normal accumulation
+          b.byId.set(id, { ...line, text: newText });
+        }
       }
       break;
     }
@@ -507,4 +686,36 @@ export function toLines(b: Buffers): Line[] {
     if (line) out.push(line);
   }
   return out;
+}
+
+/**
+ * Set tool calls to "running" phase before execution.
+ * This updates the UI to show the formatted args instead of ellipsis.
+ */
+export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
+  for (const toolCallId of toolCallIds) {
+    const lineId = b.toolCallIdToLineId.get(toolCallId);
+    if (lineId) {
+      const line = b.byId.get(lineId);
+      if (line && line.kind === "tool_call") {
+        const shouldSeedStreaming =
+          line.name && isShellTool(line.name) && !line.streaming;
+        b.byId.set(lineId, {
+          ...line,
+          phase: "running",
+          ...(shouldSeedStreaming
+            ? {
+                streaming: {
+                  tailLines: [],
+                  partialLine: "",
+                  partialIsStderr: false,
+                  totalLineCount: 0,
+                  startTime: Date.now(),
+                },
+              }
+            : {}),
+        });
+      }
+    }
+  }
 }

@@ -9,6 +9,7 @@ type Props = {
   onApprove: () => void;
   onApproveAndAcceptEdits: () => void;
   onKeepPlanning: (reason: string) => void;
+  onCancel: () => void; // For CTRL-C to queue denial (like other approval screens)
   isFocused?: boolean;
 };
 
@@ -28,6 +29,7 @@ export const StaticPlanApproval = memo(
     onApprove,
     onApproveAndAcceptEdits,
     onKeepPlanning,
+    onCancel,
     isFocused = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
@@ -50,9 +52,9 @@ export const StaticPlanApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: keep planning with cancel message
+        // CTRL-C: cancel and queue denial (like other approval screens)
         if (key.ctrl && input === "c") {
-          onKeepPlanning("User pressed CTRL-C to cancel");
+          onCancel();
           return;
         }
 

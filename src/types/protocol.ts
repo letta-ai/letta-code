@@ -81,6 +81,7 @@ export interface SystemInitMessage extends MessageEnvelope {
   type: "system";
   subtype: "init";
   agent_id: string;
+  conversation_id: string;
   model: string;
   tools: string[];
   cwd: string;
@@ -197,6 +198,22 @@ export interface RetryMessage extends MessageEnvelope {
   run_id?: string;
 }
 
+/**
+ * Recovery message emitted when the CLI detects and recovers from errors.
+ * Used for approval state conflicts and other recoverable errors.
+ */
+export interface RecoveryMessage extends MessageEnvelope {
+  type: "recovery";
+  /** Type of recovery performed */
+  recovery_type:
+    | "approval_pending"
+    | "approval_desync"
+    | "invalid_tool_call_ids";
+  /** Human-readable description of what happened */
+  message: string;
+  run_id?: string;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // RESULT
 // ═══════════════════════════════════════════════════════════════
@@ -217,6 +234,7 @@ export interface ResultMessage extends MessageEnvelope {
   type: "result";
   subtype: ResultSubtype;
   agent_id: string;
+  conversation_id: string;
   duration_ms: number;
   duration_api_ms: number;
   num_turns: number;
@@ -327,6 +345,7 @@ export type WireMessage =
   | AutoApprovalMessage
   | ErrorMessage
   | RetryMessage
+  | RecoveryMessage
   | ResultMessage
   | ControlResponse
   | ControlRequest; // CLI → SDK control requests (e.g., can_use_tool)

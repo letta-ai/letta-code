@@ -5,6 +5,7 @@ import anthropicPrompt from "./prompts/claude.md";
 import codexPrompt from "./prompts/codex.md";
 import geminiPrompt from "./prompts/gemini.md";
 import humanPrompt from "./prompts/human.mdx";
+import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 // init_memory.md is now a bundled skill at src/skills/builtin/init/SKILL.md
 import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
@@ -14,6 +15,7 @@ import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
+import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
@@ -30,11 +32,13 @@ export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
+export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 
 export const MEMORY_PROMPTS: Record<string, string> = {
   "persona.mdx": personaPrompt,
   "persona_claude.mdx": personaClaudePrompt,
   "persona_kawaii.mdx": personaKawaiiPrompt,
+  "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,

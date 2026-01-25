@@ -36,6 +36,19 @@
     }
   },
   {
+    "id": "bedrock-opus",
+    "handle": "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0",
+    "label": "Bedrock Opus 4.5",
+    "shortLabel": "Opus 4.5 BR",
+    "description": "Anthropic's best model (via AWS Bedrock)",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 180000,
+      "max_output_tokens": 64000,
+      "max_reasoning_tokens": 31999
+    }
+  },
+  {
     "id": "haiku",
     "handle": "anthropic/claude-haiku-4-5-20251001",
     "label": "Haiku 4.5",
@@ -47,46 +60,111 @@
     }
   },
   {
-    "id": "sonnet-4.5-pro-max",
-    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
-    "label": "Sonnet 4.5",
-    "description": "Sonnet 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-codex-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+    "label": "GPT-5.2 Codex",
+    "description": "GPT-5.2 Codex (med reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "sonnet-4.5-no-reasoning-pro-max",
-    "handle": "claude-pro-max/claude-sonnet-4-5-20250929",
-    "label": "Sonnet 4.5",
-    "description": "Sonnet 4.5 (no reasoning) via Claude Pro/Max Plan",
+    "id": "gpt-5.2-codex-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.2-codex",
+    "label": "GPT-5.2 Codex",
+    "description": "GPT-5.2 Codex (high reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "enable_reasoner": false,
-      "context_window": 180000,
-      "max_output_tokens": 64000
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "opus-pro-max",
-    "handle": "claude-pro-max/claude-opus-4-5-20251101",
-    "label": "Opus 4.5",
-    "description": "Opus 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.2",
+    "label": "GPT-5.2",
+    "description": "GPT-5.2 (med reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000,
-      "max_reasoning_tokens": 31999
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
-    "id": "haiku-pro-max",
-    "handle": "claude-pro-max/claude-haiku-4-5-20251001",
-    "label": "Haiku 4.5",
-    "description": "Haiku 4.5 via Claude Pro/Max Plan",
+    "id": "gpt-5.2-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.2",
+    "label": "GPT-5.2",
+    "description": "GPT-5.2 (high reasoning) via ChatGPT Plus/Pro",
     "updateArgs": {
-      "context_window": 180000,
-      "max_output_tokens": 64000
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.1-codex",
+    "label": "GPT-5.1 Codex",
+    "description": "GPT-5.1 Codex (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.1-codex",
+    "label": "GPT-5.1 Codex",
+    "description": "GPT-5.1 Codex (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-max-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+    "label": "GPT-5.1 Codex Max",
+    "description": "GPT-5.1 Codex Max (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-max-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+    "label": "GPT-5.1 Codex Max",
+    "description": "GPT-5.1 Codex Max (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-max-plus-pro-xhigh",
+    "handle": "chatgpt-plus-pro/gpt-5.1-codex-max",
+    "label": "GPT-5.1 Codex Max",
+    "description": "GPT-5.1 Codex Max (extra-high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -155,6 +233,67 @@
     "handle": "openai/gpt-5.2",
     "label": "GPT-5.2",
     "description": "Latest general-purpose GPT (max reasoning)",
+    "updateArgs": {
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-codex-none",
+    "handle": "openai/gpt-5.2-codex",
+    "label": "GPT-5.2-Codex",
+    "description": "GPT-5.2 variant (no reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "none",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-codex-low",
+    "handle": "openai/gpt-5.2-codex",
+    "label": "GPT-5.2-Codex",
+    "description": "GPT-5.2 variant (low reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-codex-medium",
+    "handle": "openai/gpt-5.2-codex",
+    "label": "GPT-5.2-Codex",
+    "description": "GPT-5.2 variant (med reasoning) optimized for coding",
+    "isFeatured": true,
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-codex-high",
+    "handle": "openai/gpt-5.2-codex",
+    "label": "GPT-5.2-Codex",
+    "description": "GPT-5.2 variant (high reasoning) optimized for coding",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.2-codex-xhigh",
+    "handle": "openai/gpt-5.2-codex",
+    "label": "GPT-5.2-Codex",
+    "description": "GPT-5.2 variant (max reasoning) optimized for coding",
     "updateArgs": {
       "reasoning_effort": "xhigh",
       "verbosity": "medium",
@@ -364,6 +503,7 @@
     "label": "GLM-4.7",
     "description": "The best open weights coding model",
     "isFeatured": true,
+    "free": true,
     "updateArgs": {
       "context_window": 200000
     }

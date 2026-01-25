@@ -61,6 +61,70 @@ describe("isReadOnlyShellCommand", () => {
     });
   });
 
+  describe("gh commands", () => {
+    test("allows read-only gh pr commands", () => {
+      expect(isReadOnlyShellCommand("gh pr list")).toBe(true);
+      expect(isReadOnlyShellCommand("gh pr view 123")).toBe(true);
+      expect(isReadOnlyShellCommand("gh pr diff 123")).toBe(true);
+      expect(isReadOnlyShellCommand("gh pr checks 123")).toBe(true);
+      expect(isReadOnlyShellCommand("gh pr status")).toBe(true);
+      expect(
+        isReadOnlyShellCommand(
+          "gh pr list --state merged --limit 20 --json number,title",
+        ),
+      ).toBe(true);
+    });
+
+    test("blocks write gh pr commands", () => {
+      expect(isReadOnlyShellCommand("gh pr create")).toBe(false);
+      expect(isReadOnlyShellCommand("gh pr merge 123")).toBe(false);
+      expect(isReadOnlyShellCommand("gh pr close 123")).toBe(false);
+      expect(isReadOnlyShellCommand("gh pr edit 123")).toBe(false);
+    });
+
+    test("allows read-only gh issue commands", () => {
+      expect(isReadOnlyShellCommand("gh issue list")).toBe(true);
+      expect(isReadOnlyShellCommand("gh issue view 123")).toBe(true);
+      expect(isReadOnlyShellCommand("gh issue status")).toBe(true);
+    });
+
+    test("blocks write gh issue commands", () => {
+      expect(isReadOnlyShellCommand("gh issue create")).toBe(false);
+      expect(isReadOnlyShellCommand("gh issue close 123")).toBe(false);
+    });
+
+    test("allows gh search commands", () => {
+      expect(isReadOnlyShellCommand("gh search repos letta")).toBe(true);
+      expect(isReadOnlyShellCommand("gh search issues bug")).toBe(true);
+      expect(isReadOnlyShellCommand("gh search prs fix")).toBe(true);
+    });
+
+    test("allows gh api commands", () => {
+      expect(isReadOnlyShellCommand("gh api repos/owner/repo")).toBe(true);
+      expect(
+        isReadOnlyShellCommand("gh api repos/owner/repo/pulls/123/comments"),
+      ).toBe(true);
+    });
+
+    test("allows gh status command", () => {
+      expect(isReadOnlyShellCommand("gh status")).toBe(true);
+    });
+
+    test("blocks unsafe gh categories", () => {
+      expect(isReadOnlyShellCommand("gh auth login")).toBe(false);
+      expect(isReadOnlyShellCommand("gh config set")).toBe(false);
+      expect(isReadOnlyShellCommand("gh secret set")).toBe(false);
+    });
+
+    test("blocks bare gh", () => {
+      expect(isReadOnlyShellCommand("gh")).toBe(false);
+    });
+
+    test("blocks gh with unknown category", () => {
+      expect(isReadOnlyShellCommand("gh unknown")).toBe(false);
+    });
+  });
+
   describe("find command", () => {
     test("allows safe find", () => {
       expect(isReadOnlyShellCommand("find . -name '*.js'")).toBe(true);

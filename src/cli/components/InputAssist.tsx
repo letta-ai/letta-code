@@ -15,6 +15,7 @@ interface InputAssistProps {
   agentName?: string | null;
   serverUrl?: string;
   workingDirectory?: string;
+  conversationId?: string;
 }
 
 /**
@@ -34,6 +35,7 @@ export function InputAssist({
   agentName,
   serverUrl,
   workingDirectory,
+  conversationId,
 }: InputAssistProps) {
   const showFileAutocomplete = currentInput.includes("@");
   const showCommandAutocomplete =
@@ -79,6 +81,7 @@ export function InputAssist({
           agentId={agentId}
           agentName={agentName}
           serverUrl={serverUrl}
+          conversationId={conversationId}
         />
       </Box>
     );

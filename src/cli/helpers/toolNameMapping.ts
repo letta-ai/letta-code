@@ -15,9 +15,10 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
   if (rawName === "read") return "Read";
+  if (rawName === "view_image" || rawName === "ViewImage") return "View Image";
   if (rawName === "bash") return "Bash";
-  if (rawName === "grep") return "Grep";
-  if (rawName === "glob") return "Glob";
+  if (rawName === "grep" || rawName === "Grep") return "Search";
+  if (rawName === "glob" || rawName === "Glob") return "Glob";
   if (rawName === "ls") return "LS";
   if (rawName === "todo_write" || rawName === "TodoWrite") return "TODO";
   if (rawName === "EnterPlanMode" || rawName === "ExitPlanMode")
@@ -29,7 +30,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
-  if (rawName === "grep_files") return "Grep";
+  if (rawName === "grep_files") return "Search";
   if (rawName === "apply_patch") return "Patch";
 
   // Codex toolset (PascalCase)
@@ -37,7 +38,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "ShellCommand" || rawName === "Shell") return "Bash";
   if (rawName === "ReadFile") return "Read";
   if (rawName === "ListDir") return "LS";
-  if (rawName === "GrepFiles") return "Grep";
+  if (rawName === "GrepFiles") return "Search";
   if (rawName === "ApplyPatch") return "Patch";
 
   // Gemini toolset (snake_case)
@@ -45,7 +46,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "read_file_gemini") return "Read";
   if (rawName === "list_directory") return "LS";
   if (rawName === "glob_gemini") return "Glob";
-  if (rawName === "search_file_content") return "Grep";
+  if (rawName === "search_file_content") return "Search";
   if (rawName === "write_file_gemini") return "Write";
   if (rawName === "write_todos") return "TODO";
   if (rawName === "read_many_files") return "Read Multiple";
@@ -55,7 +56,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "ReadFileGemini") return "Read";
   if (rawName === "ListDirectory") return "LS";
   if (rawName === "GlobGemini") return "Glob";
-  if (rawName === "SearchFileContent") return "Grep";
+  if (rawName === "SearchFileContent") return "Search";
   if (rawName === "WriteFileGemini") return "Write";
   if (rawName === "WriteTodos") return "TODO";
   if (rawName === "ReadManyFiles") return "Read Multiple";
@@ -180,6 +181,8 @@ export function isFileReadTool(name: string): boolean {
   return (
     name === "read" ||
     name === "Read" ||
+    name === "view_image" ||
+    name === "ViewImage" ||
     name === "ReadFile" ||
     name === "read_file" ||
     name === "read_file_gemini" ||
@@ -208,5 +211,31 @@ export function isShellTool(name: string): boolean {
     n === "shellcommand" ||
     n === "run_shell_command" ||
     n === "runshellcommand"
+  );
+}
+
+/**
+ * Checks if a tool is a search/grep tool
+ */
+export function isSearchTool(name: string): boolean {
+  return (
+    name === "grep" ||
+    name === "Grep" ||
+    name === "grep_files" ||
+    name === "GrepFiles" ||
+    name === "search_file_content" ||
+    name === "SearchFileContent"
+  );
+}
+
+/**
+ * Checks if a tool is a glob tool
+ */
+export function isGlobTool(name: string): boolean {
+  return (
+    name === "glob" ||
+    name === "Glob" ||
+    name === "glob_gemini" ||
+    name === "GlobGemini"
   );
 }

@@ -8,7 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -25,14 +25,19 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  const isOpenAI = modelHandle.startsWith("openai/");
-  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  const isOpenAI =
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+    modelHandle.startsWith("claude-pro-max/");
+  const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
+  const isBedrock = modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -70,6 +75,13 @@ function buildModelSettings(
       };
     }
     settings = anthropicSettings;
+  } else if (isZai) {
+    // Zai uses the same model_settings structure as other providers.
+    // Ensure parallel_tool_calls is enabled.
+    settings = {
+      provider_type: "zai",
+      parallel_tool_calls: true,
+    };
   } else if (isGoogleAI) {
     const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
@@ -100,6 +112,25 @@ function buildModelSettings(
         updateArgs.temperature as number;
     }
     settings = googleVertexSettings;
+  } else if (isBedrock) {
+    // AWS Bedrock - supports Anthropic Claude models with thinking config
+    const bedrockSettings: Record<string, unknown> = {
+      provider_type: "bedrock",
+      parallel_tool_calls: true,
+    };
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
+      bedrockSettings.thinking = {
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
+      };
+    }
+    settings = bedrockSettings;
   } else {
     // For BYOK/unknown providers, return generic settings with parallel_tool_calls
     settings = {};

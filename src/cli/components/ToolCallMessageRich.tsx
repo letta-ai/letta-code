@@ -15,9 +15,11 @@ import {
   isFileEditTool,
   isFileReadTool,
   isFileWriteTool,
+  isGlobTool,
   isMemoryTool,
   isPatchTool,
   isPlanTool,
+  isSearchTool,
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
@@ -29,9 +31,11 @@ function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
 }
 
+import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { BlinkDot } from "./BlinkDot.js";
+import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";
 import {
   EditRenderer,
@@ -41,6 +45,7 @@ import {
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
+import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
 import { TodoRenderer } from "./TodoRenderer.js";
 
 type ToolCallLine = {
@@ -52,7 +57,24 @@ type ToolCallLine = {
   resultText?: string;
   resultOk?: boolean;
   phase: "streaming" | "ready" | "running" | "finished";
+  streaming?: StreamingState;
 };
+
+/**
+ * Check if tool is a shell/bash tool that supports streaming output
+ */
+function isShellTool(name: string): boolean {
+  const shellTools = [
+    "Bash",
+    "Shell",
+    "shell",
+    "shell_command",
+    "run_shell_command",
+    "RunShellCommand",
+    "ShellCommand",
+  ];
+  return shellTools.includes(name);
+}
 
 /**
  * ToolCallMessageRich - Rich formatting version with old layout logic
@@ -69,10 +91,12 @@ export const ToolCallMessage = memo(
     line,
     precomputedDiffs,
     lastPlanFilePath,
+    isStreaming,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     lastPlanFilePath?: string | null;
+    isStreaming?: boolean;
   }) => {
     const columns = useTerminalWidth();
 
@@ -124,13 +148,35 @@ export const ToolCallMessage = memo(
       }
     }
 
-    // Format arguments for display using the old formatting logic
-    // Pass rawName to enable special formatting for file tools
-    const formatted = formatArgsDisplay(argsText, rawName);
-    // Hide args for question tool (shown in result instead)
-    const args = isQuestionTool(rawName) ? "" : `(${formatted.display})`;
-
     const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
+
+    // Determine args display:
+    // - Question tool: hide args (shown in result instead)
+    // - Still streaming + phase "ready": args may be incomplete, show ellipsis
+    // - Phase "running"/"finished" or stream done: args complete, show formatted
+    let args = "";
+    if (!isQuestionTool(rawName)) {
+      // Args are complete once running, finished, or stream is done
+      const argsComplete =
+        line.phase === "running" || line.phase === "finished" || !isStreaming;
+
+      if (!argsComplete) {
+        args = "(…)";
+      } else {
+        const formatted = formatArgsDisplay(argsText, rawName);
+        // Normalize newlines to spaces to prevent forced line breaks
+        const normalizedDisplay = formatted.display.replace(/\n/g, " ");
+        // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
+        const argsBoxWidth = rightWidth - displayName.length;
+        const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
+
+        const needsTruncation = normalizedDisplay.length > maxArgsChars;
+        const truncatedDisplay = needsTruncation
+          ? `${normalizedDisplay.slice(0, maxArgsChars - 1)}…`
+          : normalizedDisplay;
+        args = `(${truncatedDisplay})`;
+      }
+    }
 
     // If name exceeds available width, fall back to simple wrapped rendering
     const fallback = displayName.length >= rightWidth;
@@ -548,12 +594,30 @@ export const ToolCallMessage = memo(
         }
       }
 
-      // Check if this is a file read tool - show line count summary
+      // Check if this is a file read tool - show line count or image summary
       if (
         isFileReadTool(rawName) &&
         line.resultOk !== false &&
         line.resultText
       ) {
+        // Check if this is an image result (starts with "[Image: filename]")
+        const isImageResult = line.resultText.startsWith("[Image: ");
+
+        if (isImageResult) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Read <Text bold>1</Text> image
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+
         // Count lines in the result (the content returned by Read tool)
         const lineCount = line.resultText.split("\n").length;
         return (
@@ -563,11 +627,103 @@ export const ToolCallMessage = memo(
             </Box>
             <Box flexGrow={1} width={contentWidth}>
               <Text>
-                Read <Text bold>{lineCount}</Text> lines
+                Read <Text bold>{lineCount}</Text> line
+                {lineCount !== 1 ? "s" : ""}
               </Text>
             </Box>
           </Box>
         );
+      }
+
+      // Check if this is a search/grep tool - show line/file count summary
+      if (isSearchTool(rawName) && line.resultOk !== false && line.resultText) {
+        const text = line.resultText;
+        // Match "Found N file(s)" at start of output (files_with_matches mode)
+        const filesMatch = text.match(/^Found (\d+) files?/);
+        const noFilesMatch = text === "No files found";
+        const noMatchesMatch = text === "No matches found";
+
+        if (filesMatch?.[1]) {
+          const count = parseInt(filesMatch[1], 10);
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else if (noFilesMatch || noMatchesMatch) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>0</Text> {noFilesMatch ? "files" : "matches"}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else {
+          // Content mode - count lines in the output
+          const lineCount = text.split("\n").length;
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{lineCount}</Text> line
+                  {lineCount !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+      }
+
+      // Check if this is a glob tool - show file count summary
+      if (isGlobTool(rawName) && line.resultOk !== false && line.resultText) {
+        const text = line.resultText;
+        const filesMatch = text.match(/^Found (\d+) files?/);
+        const noFilesMatch = text === "No files found";
+
+        if (filesMatch?.[1]) {
+          const count = parseInt(filesMatch[1], 10);
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else if (noFilesMatch) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>0</Text> files
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+        // Fall through to default if no match pattern found
       }
 
       // Regular result handling
@@ -656,8 +812,31 @@ export const ToolCallMessage = memo(
           </Box>
         </Box>
 
-        {/* Tool result (if present) */}
-        {getResultElement()}
+        {/* Streaming output for shell tools during execution */}
+        {isShellTool(rawName) && line.phase === "running" && line.streaming && (
+          <StreamingOutputDisplay streaming={line.streaming} />
+        )}
+
+        {/* Collapsed output for shell tools after completion */}
+        {isShellTool(rawName) &&
+          line.phase === "finished" &&
+          line.resultText &&
+          line.resultOk !== false && (
+            <CollapsedOutputDisplay output={line.resultText} />
+          )}
+
+        {/* Tool result for non-shell tools or shell tool errors */}
+        {(() => {
+          // Show default result element when:
+          // - Not a shell tool (always show result)
+          // - Shell tool with error (show error message)
+          // - Shell tool in streaming/ready phase (show default "Running..." etc)
+          const showDefaultResult =
+            !isShellTool(rawName) ||
+            (line.phase === "finished" && line.resultOk === false) ||
+            (line.phase !== "running" && line.phase !== "finished");
+          return showDefaultResult ? getResultElement() : null;
+        })()}
       </Box>
     );
   },

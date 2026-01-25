@@ -38,7 +38,7 @@ async function runBidirectional(
         "stream-json",
         "--output-format",
         "stream-json",
-        "--new",
+        "--new-agent",
         "-m",
         "haiku",
         "--yolo",
@@ -46,7 +46,8 @@ async function runBidirectional(
       ],
       {
         cwd: process.cwd(),
-        env: { ...process.env },
+        // Mark as subagent to prevent polluting user's LRU settings
+        env: { ...process.env, LETTA_CODE_AGENT_ROLE: "subagent" },
       },
     );
 
@@ -452,5 +453,39 @@ describe.skipIf(!process.env.LETTA_API_KEY)("input-format stream-json", () => {
       expect(errorMsg?.message).toContain("Invalid JSON");
     },
     { timeout: 200000 },
+  );
+
+  test(
+    "Task tool with explore subagent works",
+    async () => {
+      // Prescriptive prompt to ensure Task tool is used
+      const objects = (await runBidirectional(
+        [
+          JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content:
+                "You MUST use the Task tool with subagent_type='explore' to find TypeScript files (*.ts) in the src directory. " +
+                "Return only the subagent's report, nothing else.",
+            },
+          }),
+        ],
+        [],
+        300000, // 5 min timeout - subagent spawn + execution can be slow
+      )) as WireMessage[];
+
+      // Should have a successful result
+      const result = objects.find(
+        (o): o is ResultMessage => o.type === "result",
+      );
+      expect(result).toBeDefined();
+      expect(result?.subtype).toBe("success");
+
+      // Should have auto_approval events (Task tool was auto-approved via --yolo)
+      const autoApprovals = objects.filter((o) => o.type === "auto_approval");
+      expect(autoApprovals.length).toBeGreaterThan(0);
+    },
+    { timeout: 320000 },
   );
 });
