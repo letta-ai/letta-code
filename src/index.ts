@@ -1514,8 +1514,37 @@ async function main(): Promise<void> {
             return;
           }
 
-          // Use selected server model (from self-hosted model picker) if available
-          const effectiveModel = selectedServerModel || model;
+          // Determine effective model:
+          // 1. Use selectedServerModel if user picked from self-hosted picker
+          // 2. Use model if --model flag was passed
+          // 3. Otherwise, use billing-tier-aware default (free tier gets glm-4.7)
+          let effectiveModel = selectedServerModel || model;
+          if (!effectiveModel && !selfHostedBaseUrl) {
+            // On Letta API without explicit model - check billing tier for appropriate default
+            const { getDefaultModelForTier } = await import("./agent/model");
+            let billingTier: string | null = null;
+            try {
+              const baseURL =
+                process.env.LETTA_BASE_URL ||
+                settings.env?.LETTA_BASE_URL ||
+                LETTA_CLOUD_API_URL;
+              const apiKey =
+                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+              const response = await fetch(`${baseURL}/v1/metadata/balance`, {
+                headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+              });
+              if (response.ok) {
+                const data = (await response.json()) as {
+                  billing_tier?: string;
+                };
+                billingTier = data.billing_tier ?? null;
+              }
+            } catch {
+              // Ignore - will use standard default
+            }
+            effectiveModel = getDefaultModelForTier(billingTier);
+          }
+
           const updateArgs = getModelUpdateArgs(effectiveModel);
           const result = await createAgent(
             undefined,
