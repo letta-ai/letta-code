@@ -114,16 +114,16 @@ export async function ensureDefaultAgents(
       settingsManager.pinGlobal(agent.id);
     }
 
-    // Check/create Incognito
-    const existingIncognito = await findDefaultAgent(client, INCOGNITO_TAG);
-    if (existingIncognito) {
-      // Ensure it's pinned (might not be if settings were cleared or new machine)
-      settingsManager.pinGlobal(existingIncognito.id);
-    } else {
-      const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.incognito);
-      await addTagToAgent(client, agent.id, INCOGNITO_TAG);
-      settingsManager.pinGlobal(agent.id);
-    }
+    // NOTE: Incognito agent creation disabled for now - can be re-enabled later
+    // const existingIncognito = await findDefaultAgent(client, INCOGNITO_TAG);
+    // if (existingIncognito) {
+    //   // Ensure it's pinned (might not be if settings were cleared or new machine)
+    //   settingsManager.pinGlobal(existingIncognito.id);
+    // } else {
+    //   const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.incognito);
+    //   await addTagToAgent(client, agent.id, INCOGNITO_TAG);
+    //   settingsManager.pinGlobal(agent.id);
+    // }
   } catch (err) {
     // Re-throw so caller can handle/exit appropriately
     throw new Error(
