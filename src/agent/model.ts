@@ -17,6 +17,12 @@ export function resolveModel(modelIdentifier: string): string | null {
   const byHandle = models.find((m) => m.handle === modelIdentifier);
   if (byHandle) return byHandle.handle;
 
+  // For self-hosted servers: if it looks like a handle (contains /), pass it through
+  // This allows using models not in models.json (e.g., from server's /v1/models)
+  if (modelIdentifier.includes("/")) {
+    return modelIdentifier;
+  }
+
   return null;
 }
 

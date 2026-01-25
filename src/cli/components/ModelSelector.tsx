@@ -15,13 +15,26 @@ const SOLID_LINE = "─";
 
 const VISIBLE_ITEMS = 8;
 
-type ModelCategory = "supported" | "byok" | "byok-all" | "all";
+type ModelCategory =
+  | "supported"
+  | "byok"
+  | "byok-all"
+  | "all"
+  | "server-recommended"
+  | "server-all";
 
 // BYOK provider prefixes (ChatGPT OAuth + lc-* providers from /connect)
 const BYOK_PROVIDER_PREFIXES = ["chatgpt-plus-pro/", "lc-"];
 
 // Get tab order based on billing tier (free = BYOK first, paid = BYOK last)
-function getModelCategories(billingTier?: string): ModelCategory[] {
+// For self-hosted servers, only show server-specific tabs
+function getModelCategories(
+  billingTier?: string,
+  isSelfHosted?: boolean,
+): ModelCategory[] {
+  if (isSelfHosted) {
+    return ["server-recommended", "server-all"];
+  }
   const isFreeTier = billingTier?.toLowerCase() === "free";
   return isFreeTier
     ? ["byok", "byok-all", "supported", "all"]
@@ -49,6 +62,8 @@ interface ModelSelectorProps {
   forceRefresh?: boolean;
   /** User's billing tier - affects tab ordering (free = BYOK first) */
   billingTier?: string;
+  /** Whether connected to a self-hosted server (not api.letta.com) */
+  isSelfHosted?: boolean;
 }
 
 export function ModelSelector({
@@ -58,15 +73,17 @@ export function ModelSelector({
   filterProvider,
   forceRefresh: forceRefreshOnMount,
   billingTier,
+  isSelfHosted,
 }: ModelSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const typedModels = models as UiModel[];
 
   // Tab order depends on billing tier (free = BYOK first)
+  // For self-hosted, only show server-specific tabs
   const modelCategories = useMemo(
-    () => getModelCategories(billingTier),
-    [billingTier],
+    () => getModelCategories(billingTier, isSelfHosted),
+    [billingTier, isSelfHosted],
   );
   const defaultCategory = modelCategories[0] ?? "supported";
 
@@ -296,6 +313,40 @@ export function ModelSelector({
     toBaseHandle,
   ]);
 
+  // Server-recommended models: models.json entries available on the server (for self-hosted)
+  // Filter out letta/letta-free legacy model
+  const serverRecommendedModels = useMemo(() => {
+    if (!isSelfHosted || availableHandles === undefined) return [];
+    const available = typedModels.filter(
+      (m) =>
+        availableHandles !== null &&
+        availableHandles.has(m.handle) &&
+        m.handle !== "letta/letta-free",
+    );
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return available.filter(
+        (m) =>
+          m.label.toLowerCase().includes(query) ||
+          m.description.toLowerCase().includes(query) ||
+          m.handle.toLowerCase().includes(query),
+      );
+    }
+    return available;
+  }, [isSelfHosted, typedModels, availableHandles, searchQuery]);
+
+  // Server-all models: ALL handles from the server (for self-hosted)
+  // Filter out letta/letta-free legacy model
+  const serverAllModels = useMemo(() => {
+    if (!isSelfHosted) return [];
+    let handles = allApiHandles.filter((h) => h !== "letta/letta-free");
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      handles = handles.filter((h) => h.toLowerCase().includes(query));
+    }
+    return handles;
+  }, [isSelfHosted, allApiHandles, searchQuery]);
+
   // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
     if (category === "supported") {
@@ -313,6 +364,18 @@ export function ModelSelector({
         description: "",
       }));
     }
+    if (category === "server-recommended") {
+      return serverRecommendedModels;
+    }
+    if (category === "server-all") {
+      // Convert raw handles to UiModel
+      return serverAllModels.map((handle) => ({
+        id: handle,
+        handle,
+        label: handle,
+        description: "",
+      }));
+    }
     // For "all" category, convert handles to simple UiModel objects
     return otherModelHandles.map((handle) => ({
       id: handle,
@@ -320,7 +383,15 @@ export function ModelSelector({
       label: handle,
       description: "",
     }));
-  }, [category, supportedModels, byokModels, byokAllModels, otherModelHandles]);
+  }, [
+    category,
+    supportedModels,
+    byokModels,
+    byokAllModels,
+    otherModelHandles,
+    serverRecommendedModels,
+    serverAllModels,
+  ]);
 
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
@@ -466,10 +537,19 @@ export function ModelSelector({
     if (cat === "supported") return `Letta API [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
+    if (cat === "server-recommended")
+      return `Recommended [${serverRecommendedModels.length}]`;
+    if (cat === "server-all") return `All models [${serverAllModels.length}]`;
     return `Letta API (all) [${otherModelHandles.length}]`;
   };
 
   const getCategoryDescription = (cat: ModelCategory) => {
+    if (cat === "server-recommended") {
+      return "Recommended models on the server";
+    }
+    if (cat === "server-all") {
+      return "All models on the server";
+    }
     if (cat === "supported") {
       return isFreeTier
         ? "Upgrade your account to access more models"
