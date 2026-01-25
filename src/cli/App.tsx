@@ -9143,6 +9143,14 @@ Plan file path: ${planFilePath}`;
                 filterProvider={modelSelectorOptions.filterProvider}
                 forceRefresh={modelSelectorOptions.forceRefresh}
                 billingTier={billingTier ?? undefined}
+                isSelfHosted={(() => {
+                  const settings = settingsManager.getSettings();
+                  const baseURL =
+                    process.env.LETTA_BASE_URL ||
+                    settings.env?.LETTA_BASE_URL ||
+                    "https://api.letta.com";
+                  return !baseURL.includes("api.letta.com");
+                })()}
               />
             )}
 
