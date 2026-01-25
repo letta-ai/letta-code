@@ -41,6 +41,22 @@ export function getDefaultModel(): string {
 }
 
 /**
+ * Get the default model handle based on billing tier.
+ * Free tier users get glm-4.7, everyone else gets the standard default.
+ * @param billingTier - The user's billing tier (e.g., "free", "pro", "enterprise")
+ * @returns The model handle to use as default
+ */
+export function getDefaultModelForTier(billingTier?: string | null): string {
+  // Free tier gets glm-4.7 (a free model)
+  if (billingTier?.toLowerCase() === "free") {
+    const freeDefault = models.find((m) => m.id === "glm-4.7");
+    if (freeDefault) return freeDefault.handle;
+  }
+  // Everyone else (pro, enterprise, unknown) gets the standard default
+  return getDefaultModel();
+}
+
+/**
  * Format available models for error messages
  */
 export function formatAvailableModels(): string {

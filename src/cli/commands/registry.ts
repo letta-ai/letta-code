@@ -68,12 +68,12 @@ export const commands: Record<string, Command> = {
       return "Opening message search...";
     },
   },
-  "/plan": {
-    desc: "Enter plan mode",
+  "/connect": {
+    desc: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
     order: 17,
     handler: () => {
-      // Handled specially in App.tsx
-      return "Entering plan mode...";
+      // Handled specially in App.tsx - opens ProviderSelector
+      return "Opening provider connection...";
     },
   },
   "/clear": {
@@ -263,12 +263,12 @@ export const commands: Record<string, Command> = {
   },
 
   // === Session management (order 40-49) ===
-  "/connect": {
-    desc: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
+  "/plan": {
+    desc: "Enter plan mode",
     order: 40,
     handler: () => {
-      // Handled specially in App.tsx - opens ProviderSelector
-      return "Opening provider connection...";
+      // Handled specially in App.tsx
+      return "Entering plan mode...";
     },
   },
   "/disconnect": {
