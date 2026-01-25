@@ -1003,6 +1003,19 @@ async function main(): Promise<void> {
     const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
       null,
     );
+    // For self-hosted: available model handles from server and user's selection
+    const [availableServerModels, setAvailableServerModels] = useState<
+      string[]
+    >([]);
+    const [selectedServerModel, setSelectedServerModel] = useState<
+      string | null
+    >(null);
+    const [selfHostedDefaultModel, setSelfHostedDefaultModel] = useState<
+      string | null
+    >(null);
+    const [selfHostedBaseUrl, setSelfHostedBaseUrl] = useState<string | null>(
+      null,
+    );
 
     // Release notes to display (checked once on mount)
     const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
@@ -1098,6 +1111,35 @@ async function main(): Promise<void> {
         const localSettings = settingsManager.getLocalProjectSettings();
         let globalPinned = settingsManager.getGlobalPinnedAgents();
         const client = await getClient();
+
+        // For self-hosted servers, pre-fetch available models
+        // This is needed so ProfileSelectionInline can show model picker
+        // if the default model isn't available
+        const baseURL =
+          process.env.LETTA_BASE_URL ||
+          settings.env?.LETTA_BASE_URL ||
+          LETTA_CLOUD_API_URL;
+        const isSelfHosted = !baseURL.includes("api.letta.com");
+
+        if (isSelfHosted) {
+          setSelfHostedBaseUrl(baseURL);
+          try {
+            const { getDefaultModel } = await import("./agent/model");
+            const defaultModel = getDefaultModel();
+            setSelfHostedDefaultModel(defaultModel);
+            const modelsList = await client.models.list();
+            const handles = modelsList
+              .map((m) => m.handle)
+              .filter((h): h is string => typeof h === "string");
+
+            // Only set if default model isn't available
+            if (!handles.includes(defaultModel)) {
+              setAvailableServerModels(handles);
+            }
+          } catch {
+            // Ignore errors - will fail naturally during agent creation if needed
+          }
+        }
 
         // =====================================================================
         // TOP-LEVEL PATH: --conversation <id>
@@ -1466,10 +1508,18 @@ async function main(): Promise<void> {
 
         // Priority 3: Check if --new flag was passed or user requested new from selector
         if (!agent && shouldCreateNew) {
-          const updateArgs = getModelUpdateArgs(model);
+          // For self-hosted: if default model unavailable and no model selected yet, show picker
+          if (availableServerModels.length > 0 && !selectedServerModel) {
+            setLoadingState("selecting_global");
+            return;
+          }
+
+          // Use selected server model (from self-hosted model picker) if available
+          const effectiveModel = selectedServerModel || model;
+          const updateArgs = getModelUpdateArgs(effectiveModel);
           const result = await createAgent(
             undefined,
-            model,
+            effectiveModel,
             undefined,
             updateArgs,
             skillsDirectory,
@@ -1862,12 +1912,22 @@ async function main(): Promise<void> {
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         failedAgentMessage: failedAgentMessage ?? undefined,
+        // For self-hosted: pass available models so user can pick one when creating new agent
+        serverModelsForNewAgent:
+          availableServerModels.length > 0 ? availableServerModels : undefined,
+        defaultModelHandle: selfHostedDefaultModel ?? undefined,
+        serverBaseUrl: selfHostedBaseUrl ?? undefined,
         onSelect: (agentId: string) => {
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");
         },
         onCreateNew: () => {
           setUserRequestedNewAgent(true);
+          setLoadingState("assembling");
+        },
+        onCreateNewWithModel: (modelHandle: string) => {
+          setUserRequestedNewAgent(true);
+          setSelectedServerModel(modelHandle);
           setLoadingState("assembling");
         },
         onExit: () => {
