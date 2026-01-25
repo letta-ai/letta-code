@@ -174,3 +174,54 @@ jobs:
           bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output text --parallel on
           bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output json --parallel on
           bun run src/tests/headless-scenario.ts --model "${{ matrix.model }}" --output stream-json --parallel on
+
+  docker:
+    needs: check
+    name: Docker Integration
+    runs-on: ubuntu-latest
+    # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun install
+
+      - name: Build bundle
+        run: bun run build
+
+      - name: Start Letta Docker server
+        run: |
+          docker run -d \
+            --name letta-server \
+            -p 8283:8283 \
+            -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
+            letta/letta:latest
+
+      - name: Wait for Letta server to be ready
+        run: |
+          echo "Waiting for Letta server to be healthy..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8283/v1/health; do sleep 2; done'
+          echo "Letta server is ready!"
+
+      - name: Docker smoke test
+        env:
+          LETTA_BASE_URL: http://localhost:8283
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: ./letta.js --prompt "ping" --tools "" --permission-mode plan --model haiku
+
+      - name: Docker logs (on failure)
+        if: failure()
+        run: docker logs letta-server
+
+      - name: Stop Letta Docker server
+        if: always()
+        run: docker stop letta-server || true
