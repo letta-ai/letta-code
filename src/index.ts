@@ -999,6 +999,10 @@ async function main(): Promise<void> {
     >(null);
     // Track when user explicitly requested new agent from selector (not via --new flag)
     const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
+    // Message to show when LRU/selected agent failed to load
+    const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
+      null,
+    );
 
     // Release notes to display (checked once on mount)
     const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
@@ -1158,12 +1162,12 @@ async function main(): Promise<void> {
               return;
             } catch {
               // Local agent doesn't exist, try global
-              console.log(
+              setFailedAgentMessage(
                 `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
               );
             }
           } else {
-            console.log("No recent agent in .letta/, using global (~/.letta)");
+            // No recent agent locally, silently fall through to global
           }
 
           // Try global LRU
@@ -1209,7 +1213,7 @@ async function main(): Promise<void> {
               return;
             } catch {
               // Local agent doesn't exist, try global
-              console.log(
+              setFailedAgentMessage(
                 `Unable to locate agent ${localAgentId} in .letta/, checking global (~/.letta)`,
               );
             }
@@ -1288,7 +1292,7 @@ async function main(): Promise<void> {
             return;
           } catch {
             // LRU agent doesn't exist, show message and fall through to selector
-            console.log(
+            setFailedAgentMessage(
               `Unable to locate recently used agent ${localSettings.lastAgent}`,
             );
           }
@@ -1818,9 +1822,17 @@ async function main(): Promise<void> {
       return null;
     }
 
-    // Don't render anything during initial "selecting" phase - wait for checkAndStart
+    // During initial "selecting" phase, render ProfileSelectionInline with loading state
+    // to prevent component tree switch whitespace artifacts
     if (loadingState === "selecting") {
-      return null;
+      return React.createElement(ProfileSelectionInline, {
+        lruAgentId: null,
+        loading: true, // Show loading state while checking
+        freshRepoMode: true,
+        onSelect: () => {},
+        onCreateNew: () => {},
+        onExit: () => process.exit(0),
+      });
     }
 
     // Show conversation selector for --resume flag
@@ -1849,6 +1861,7 @@ async function main(): Promise<void> {
         lruAgentId: null, // No LRU in fresh repo
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
+        failedAgentMessage: failedAgentMessage ?? undefined,
         onSelect: (agentId: string) => {
           setSelectedGlobalAgentId(agentId);
           setLoadingState("assembling");

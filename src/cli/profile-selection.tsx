@@ -65,11 +65,13 @@ function ProfileSelectionUI({
   lruAgentId,
   externalLoading,
   externalFreshRepoMode,
+  failedAgentMessage,
   onComplete,
 }: {
   lruAgentId: string | null;
   externalLoading?: boolean;
   externalFreshRepoMode?: boolean;
+  failedAgentMessage?: string;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
   const [options, setOptions] = useState<ProfileOption[]>([]);
@@ -173,7 +175,7 @@ function ProfileSelectionUI({
       } else {
         onComplete({ type: "new" });
       }
-    } else if (key.escape) {
+    } else if (key.escape || (key.ctrl && _input === "c")) {
       onComplete({ type: "exit" });
     }
   });
@@ -196,12 +198,21 @@ function ProfileSelectionUI({
       />
       <Box height={1} />
 
+      {failedAgentMessage && (
+        <>
+          <Text color="yellow">{failedAgentMessage}</Text>
+          <Box height={1} />
+        </>
+      )}
+
       {loading ? (
         <Text dimColor>Loading pinned agents...</Text>
       ) : (
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
-          <Text bold>Which agent would you like to use?</Text>
+          {options.length > 0 && (
+            <Text bold>Which agent would you like to use?</Text>
+          )}
 
           <Box flexDirection="column" gap={1}>
             {displayOptions.map((option, index) => {
@@ -218,7 +229,7 @@ function ProfileSelectionUI({
                         isSelected ? colors.selector.itemHighlighted : undefined
                       }
                     >
-                      {isSelected ? "→ " : "  "}
+                      {isSelected ? "> " : "  "}
                     </Text>
                     <Text
                       bold={isSelected}
@@ -260,7 +271,7 @@ function ProfileSelectionUI({
                       : undefined
                   }
                 >
-                  {selectedIndex === displayOptions.length ? "→ " : "  "}
+                  {selectedIndex === displayOptions.length ? "> " : "  "}
                   View all {options.length} profiles
                 </Text>
               </Box>
@@ -274,14 +285,14 @@ function ProfileSelectionUI({
                     : undefined
                 }
               >
-                {selectedIndex === totalItems - 1 ? "→ " : "  "}
+                {selectedIndex === totalItems - 1 ? "> " : "  "}
                 Create a new agent
               </Text>
               <Text dimColor> (--new)</Text>
             </Box>
           </Box>
 
-          <Box marginTop={1}>
+          <Box>
             <Text dimColor>↑↓ navigate · Enter select · Esc exit</Text>
           </Box>
         </Box>
@@ -297,6 +308,7 @@ export function ProfileSelectionInline({
   lruAgentId,
   loading: externalLoading,
   freshRepoMode,
+  failedAgentMessage,
   onSelect,
   onCreateNew,
   onExit,
@@ -304,6 +316,7 @@ export function ProfileSelectionInline({
   lruAgentId: string | null;
   loading?: boolean;
   freshRepoMode?: boolean;
+  failedAgentMessage?: string;
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
   onExit: () => void;
@@ -322,6 +335,7 @@ export function ProfileSelectionInline({
     lruAgentId,
     externalLoading,
     externalFreshRepoMode: freshRepoMode,
+    failedAgentMessage,
     onComplete: handleComplete,
   });
 }
