@@ -17,6 +17,7 @@ const SOLID_LINE = "─";
 type ViewState =
   | { type: "list" }
   | { type: "input"; provider: ByokProvider }
+  | { type: "multiInput"; provider: ByokProvider }
   | { type: "options"; provider: ByokProvider; providerId: string };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid";
@@ -46,6 +47,9 @@ export function ProviderSelector({
     useState<ValidationState>("idle");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [optionIndex, setOptionIndex] = useState(0);
+  // Multi-field input state (for providers like Bedrock)
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -107,8 +111,15 @@ export function ProviderSelector({
           setViewState({ type: "options", provider, providerId });
           setOptionIndex(0);
         }
+      } else if ("fields" in provider && provider.fields) {
+        // Multi-field provider (like Bedrock) - show multi-input view
+        setViewState({ type: "multiInput", provider });
+        setFieldValues({});
+        setFocusedFieldIndex(0);
+        setValidationState("idle");
+        setValidationError(null);
       } else {
-        // Show API key input for new provider
+        // Single API key input for regular providers
         setViewState({ type: "input", provider });
         setApiKeyInput("");
         setValidationState("idle");
@@ -170,6 +181,75 @@ export function ProviderSelector({
       }
     }
   }, [viewState, apiKeyInput, validationState]);
+
+  // Handle multi-field validation and saving (for providers like Bedrock)
+  const handleMultiFieldValidateAndSave = useCallback(async () => {
+    if (viewState.type !== "multiInput") return;
+    if (!("fields" in viewState.provider) || !viewState.provider.fields) return;
+
+    const { provider } = viewState;
+    const fields = provider.fields;
+
+    // Check all required fields are filled
+    const allFilled = fields.every((field) => fieldValues[field.key]?.trim());
+    if (!allFilled) return;
+
+    const apiKey = fieldValues.apiKey?.trim() || "";
+    const accessKey = fieldValues.accessKey?.trim();
+    const region = fieldValues.region?.trim();
+
+    // If already validated, save
+    if (validationState === "valid") {
+      try {
+        await createOrUpdateProvider(
+          provider.providerType,
+          provider.providerName,
+          apiKey,
+          accessKey,
+          region,
+        );
+        // Refresh connected providers
+        const providers = await getConnectedProviders();
+        if (mountedRef.current) {
+          setConnectedProviders(providers);
+          setViewState({ type: "list" });
+          setFieldValues({});
+          setValidationState("idle");
+        }
+      } catch (err) {
+        if (mountedRef.current) {
+          setValidationError(
+            err instanceof Error ? err.message : "Failed to save",
+          );
+          setValidationState("invalid");
+        }
+      }
+      return;
+    }
+
+    // Validate the credentials
+    setValidationState("validating");
+    setValidationError(null);
+
+    try {
+      await checkProviderApiKey(
+        provider.providerType,
+        apiKey,
+        accessKey,
+        region,
+      );
+      if (mountedRef.current) {
+        setValidationState("valid");
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setValidationState("invalid");
+        setValidationError(
+          err instanceof Error ? err.message : "Invalid credentials",
+        );
+      }
+    }
+  }, [viewState, fieldValues, validationState]);
 
   // Handle disconnect
   const handleDisconnect = useCallback(async () => {
@@ -243,6 +323,54 @@ export function ProviderSelector({
       } else if (input && !key.ctrl && !key.meta) {
         setApiKeyInput((prev) => prev + input);
         // Reset validation if key changed
+        if (validationState !== "idle") {
+          setValidationState("idle");
+          setValidationError(null);
+        }
+      }
+    } else if (viewState.type === "multiInput") {
+      if (!("fields" in viewState.provider) || !viewState.provider.fields)
+        return;
+      const fields = viewState.provider.fields;
+      const currentField = fields[focusedFieldIndex];
+      if (!currentField) return;
+
+      if (key.escape) {
+        // Back to list
+        setViewState({ type: "list" });
+        setFieldValues({});
+        setFocusedFieldIndex(0);
+        setValidationState("idle");
+        setValidationError(null);
+      } else if (key.tab) {
+        // Move to next/prev field
+        if (key.shift) {
+          setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
+        } else {
+          setFocusedFieldIndex((prev) => Math.min(fields.length - 1, prev + 1));
+        }
+      } else if (key.upArrow) {
+        setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setFocusedFieldIndex((prev) => Math.min(fields.length - 1, prev + 1));
+      } else if (key.return) {
+        handleMultiFieldValidateAndSave();
+      } else if (key.backspace || key.delete) {
+        setFieldValues((prev) => ({
+          ...prev,
+          [currentField.key]: (prev[currentField.key] || "").slice(0, -1),
+        }));
+        // Reset validation if value changed
+        if (validationState !== "idle") {
+          setValidationState("idle");
+          setValidationError(null);
+        }
+      } else if (input && !key.ctrl && !key.meta) {
+        setFieldValues((prev) => ({
+          ...prev,
+          [currentField.key]: (prev[currentField.key] || "") + input,
+        }));
+        // Reset validation if value changed
         if (validationState !== "idle") {
           setValidationState("idle");
           setValidationError(null);
@@ -389,6 +517,105 @@ export function ProviderSelector({
     );
   };
 
+  // Render multi-input view (for providers like Bedrock)
+  const renderMultiInputView = () => {
+    if (viewState.type !== "multiInput") return null;
+    if (!("fields" in viewState.provider) || !viewState.provider.fields)
+      return null;
+
+    const { provider } = viewState;
+    const fields = provider.fields;
+
+    // Check if all fields are filled
+    const allFilled = fields.every((field) => fieldValues[field.key]?.trim());
+
+    const statusText =
+      validationState === "validating"
+        ? " (validating...)"
+        : validationState === "valid"
+          ? " (credentials validated!)"
+          : validationState === "invalid"
+            ? ` (invalid${validationError ? `: ${validationError}` : ""})`
+            : "";
+
+    const statusColor =
+      validationState === "valid"
+        ? "green"
+        : validationState === "invalid"
+          ? "red"
+          : undefined;
+
+    const footerText =
+      validationState === "valid"
+        ? "Enter to save · Esc cancel"
+        : allFilled
+          ? "Enter to validate · Tab/↑↓ navigate · Esc cancel"
+          : "Tab/↑↓ navigate · Esc cancel";
+
+    return (
+      <>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Connect {provider.displayName}
+          </Text>
+        </Box>
+
+        <Box flexDirection="column">
+          {fields.map((field, index) => {
+            const isFocused = index === focusedFieldIndex;
+            const value = fieldValues[field.key] || "";
+            const displayValue = field.secret ? maskApiKey(value) : value;
+
+            return (
+              <Box key={field.key} flexDirection="row">
+                <Text
+                  color={
+                    isFocused ? colors.selector.itemHighlighted : undefined
+                  }
+                >
+                  {isFocused ? "> " : "  "}
+                </Text>
+                <Text dimColor={!isFocused} bold={isFocused}>
+                  {field.label}:
+                </Text>
+                <Text> </Text>
+                <Text
+                  color={
+                    isFocused ? colors.selector.itemHighlighted : undefined
+                  }
+                >
+                  {displayValue ||
+                    (isFocused
+                      ? `(${field.placeholder || "enter value"})`
+                      : "")}
+                </Text>
+              </Box>
+            );
+          })}
+        </Box>
+
+        {(validationState !== "idle" || validationError) && (
+          <Box marginTop={1}>
+            <Text
+              color={statusColor}
+              dimColor={validationState === "validating"}
+            >
+              {"  "}
+              {statusText}
+            </Text>
+          </Box>
+        )}
+
+        <Box marginTop={1}>
+          <Text dimColor>
+            {"  "}
+            {footerText}
+          </Text>
+        </Box>
+      </>
+    );
+  };
+
   // Render options view (for connected providers)
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
@@ -450,6 +677,7 @@ export function ProviderSelector({
 
       {viewState.type === "list" && renderListView()}
       {viewState.type === "input" && renderInputView()}
+      {viewState.type === "multiInput" && renderMultiInputView()}
       {viewState.type === "options" && renderOptionsView()}
     </Box>
   );
