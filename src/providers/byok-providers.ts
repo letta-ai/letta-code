@@ -6,6 +6,14 @@
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
+// Field definition for multi-field providers (like Bedrock)
+export interface ProviderField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean; // If true, mask input like a password
+}
+
 // Provider configuration for the /connect UI
 export const BYOK_PROVIDERS = [
   {
@@ -44,6 +52,18 @@ export const BYOK_PROVIDERS = [
     providerType: "google_ai",
     providerName: "lc-gemini",
   },
+  {
+    id: "bedrock",
+    displayName: "AWS Bedrock",
+    description: "Connect to Claude on Amazon Bedrock",
+    providerType: "bedrock",
+    providerName: "lc-bedrock",
+    fields: [
+      { key: "accessKey", label: "AWS Access Key ID", placeholder: "AKIA..." },
+      { key: "apiKey", label: "AWS Secret Access Key", secret: true },
+      { key: "region", label: "AWS Region", placeholder: "us-east-1" },
+    ] as ProviderField[],
+  },
 ] as const;
 
 export type ByokProviderId = (typeof BYOK_PROVIDERS)[number]["id"];
@@ -56,6 +76,8 @@ export interface ProviderResponse {
   provider_type: string;
   api_key?: string;
   base_url?: string;
+  access_key?: string;
+  region?: string;
 }
 
 /**
@@ -161,10 +183,14 @@ export async function getProviderByName(
 export async function checkProviderApiKey(
   providerType: string,
   apiKey: string,
+  accessKey?: string,
+  region?: string,
 ): Promise<void> {
   await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
     provider_type: providerType,
     api_key: apiKey,
+    ...(accessKey && { access_key: accessKey }),
+    ...(region && { region }),
   });
 }
 
@@ -175,11 +201,15 @@ export async function createProvider(
   providerType: string,
   providerName: string,
   apiKey: string,
+  accessKey?: string,
+  region?: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
     provider_type: providerType,
     api_key: apiKey,
+    ...(accessKey && { access_key: accessKey }),
+    ...(region && { region }),
   });
 }
 
@@ -189,12 +219,16 @@ export async function createProvider(
 export async function updateProvider(
   providerId: string,
   apiKey: string,
+  accessKey?: string,
+  region?: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
       api_key: apiKey,
+      ...(accessKey && { access_key: accessKey }),
+      ...(region && { region }),
     },
   );
 }
@@ -214,14 +248,16 @@ export async function createOrUpdateProvider(
   providerType: string,
   providerName: string,
   apiKey: string,
+  accessKey?: string,
+  region?: string,
 ): Promise<ProviderResponse> {
   const existing = await getProviderByName(providerName);
 
   if (existing) {
-    return updateProvider(existing.id, apiKey);
+    return updateProvider(existing.id, apiKey, accessKey, region);
   }
 
-  return createProvider(providerType, providerName, apiKey);
+  return createProvider(providerType, providerName, apiKey, accessKey, region);
 }
 
 /**
