@@ -1673,26 +1673,22 @@ async function main(): Promise<void> {
         // If resuming and a model or system prompt was specified, apply those changes
         if (resuming && (model || systemPromptPreset)) {
           if (model) {
-            const { resolveModel } = await import("./agent/model");
+            const { resolveModel, getModelUpdateArgs } = await import(
+              "./agent/model"
+            );
             const modelHandle = resolveModel(model);
             if (!modelHandle) {
               console.error(`Error: Invalid model "${model}"`);
               process.exit(1);
             }
 
-            // Optimization: Skip update if agent is already using the specified model
-            const currentModel = agent.llm_config?.model;
-            const currentEndpointType = agent.llm_config?.model_endpoint_type;
-            const currentHandle = `${currentEndpointType}/${currentModel}`;
-
-            if (currentHandle !== modelHandle) {
-              const { updateAgentLLMConfig } = await import("./agent/modify");
-              const { getModelUpdateArgs } = await import("./agent/model");
-              const updateArgs = getModelUpdateArgs(model);
-              await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-              // Refresh agent state after model update
-              agent = await client.agents.retrieve(agent.id);
-            }
+            // Always apply model update - different model IDs can share the same
+            // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
+            const { updateAgentLLMConfig } = await import("./agent/modify");
+            const updateArgs = getModelUpdateArgs(model);
+            await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+            // Refresh agent state after model update
+            agent = await client.agents.retrieve(agent.id);
           }
 
           if (systemPromptPreset) {
