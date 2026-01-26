@@ -21,7 +21,7 @@ import json
 import os
 import sys
 import difflib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import urllib.request
@@ -36,7 +36,11 @@ def get_logs_dir(working_dir: Optional[str] = None) -> Path:
     """Get the memory logs directory."""
     if working_dir:
         return Path(working_dir) / ".letta" / "memory_logs"
-    return Path.cwd() / ".letta" / "memory_logs"
+    # For CLI usage, look relative to the script's parent directory (project root)
+    # since the script lives in /hooks/memory_logger.py
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    return project_root / ".letta" / "memory_logs"
 
 
 def get_letta_settings() -> dict:
@@ -50,11 +54,43 @@ def get_letta_settings() -> dict:
     return {}
 
 
+def get_api_key_from_keychain() -> Optional[str]:
+    """Get the Letta API key from macOS keychain via Bun helper."""
+    import subprocess
+
+    # Use Bun helper script (uses Bun's existing keychain access)
+    hooks_dir = Path(__file__).parent
+    helper_script = hooks_dir / "get-api-key.ts"
+
+    if helper_script.exists():
+        try:
+            result = subprocess.run(
+                ["bun", str(helper_script)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    return None
+
+
 def get_api_key() -> Optional[str]:
-    """Get the Letta API key from settings or environment."""
+    """Get the Letta API key from keychain, environment, or settings."""
+    # Try macOS keychain first
+    api_key = get_api_key_from_keychain()
+    if api_key:
+        return api_key
+
+    # Fall back to environment variable
     api_key = os.environ.get("LETTA_API_KEY")
     if api_key:
         return api_key
+
+    # Fall back to settings file
     settings = get_letta_settings()
     env_settings = settings.get("env", {})
     return env_settings.get("LETTA_API_KEY")
@@ -74,15 +110,20 @@ def get_base_url() -> str:
 # Letta API
 # =============================================================================
 
-def fetch_all_memory_blocks(agent_id: str) -> list[dict]:
+def fetch_all_memory_blocks(agent_id: str, verbose: bool = False) -> list[dict]:
     """Fetch all memory blocks for an agent from the Letta API."""
     api_key = get_api_key()
     base_url = get_base_url()
 
     if not api_key:
+        if verbose:
+            print("  ERROR: No API key available")
         return []
 
     url = f"{base_url}/v1/agents/{agent_id}/core-memory/blocks"
+
+    if verbose:
+        print(f"  URL: {url}")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -93,8 +134,25 @@ def fetch_all_memory_blocks(agent_id: str) -> list[dict]:
         req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
+            if verbose:
+                print(f"  Response type: {type(data).__name__}")
             return data if isinstance(data, list) else []
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
+    except urllib.error.HTTPError as e:
+        if verbose:
+            print(f"  HTTP Error: {e.code} {e.reason}")
+            try:
+                body = e.read().decode("utf-8")
+                print(f"  Response: {body[:200]}")
+            except:
+                pass
+        return []
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
+        if verbose:
+            print(f"  Error: {type(e).__name__}: {e}")
+        return []
+    except Exception as e:
+        if verbose:
+            print(f"  Unexpected error: {type(e).__name__}: {e}")
         return []
 
 
@@ -123,77 +181,75 @@ def create_unified_diff(old_content: str, new_content: str, block_name: str) -> 
 
 
 def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
-    """Apply or reverse a unified diff to content."""
-    lines = content.splitlines(keepends=True)
-    if lines and not lines[-1].endswith('\n'):
-        lines[-1] += '\n'
+    """Apply or reverse a unified diff (pure Python implementation)."""
+    lines = content.splitlines()
+    diff_lines = diff_text.splitlines()
 
-    diff_lines = diff_text.splitlines(keepends=True)
+    # Parse hunks from diff
+    hunks = []
+    current_hunk = None
 
-    # Parse the diff
-    result_lines = []
-    line_idx = 0
-    i = 0
-
-    while i < len(diff_lines):
-        line = diff_lines[i]
-
-        # Skip header lines
-        if line.startswith('---') or line.startswith('+++'):
-            i += 1
-            continue
-
-        # Parse hunk header: @@ -start,count +start,count @@
+    for line in diff_lines:
         if line.startswith('@@'):
-            parts = line.split()
-            if len(parts) >= 3:
-                old_range = parts[1]  # -start,count
-                new_range = parts[2]  # +start,count
+            # Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
+            import re
+            match = re.match(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+            if match:
+                old_start = int(match.group(1))
+                new_start = int(match.group(3))
+                current_hunk = {
+                    'old_start': old_start,
+                    'new_start': new_start,
+                    'changes': []
+                }
+                hunks.append(current_hunk)
+        elif current_hunk is not None:
+            if line.startswith('-'):
+                current_hunk['changes'].append(('-', line[1:]))
+            elif line.startswith('+'):
+                current_hunk['changes'].append(('+', line[1:]))
+            elif line.startswith(' '):
+                current_hunk['changes'].append((' ', line[1:]))
 
-                old_start = int(old_range.split(',')[0].lstrip('-'))
+    if not hunks:
+        return content
 
-                # Copy lines before this hunk
-                while line_idx < old_start - 1 and line_idx < len(lines):
-                    result_lines.append(lines[line_idx])
-                    line_idx += 1
-            i += 1
-            continue
+    # Apply hunks (in reverse order to preserve line numbers)
+    result = lines[:]
 
-        # Process diff content
-        if line.startswith('-'):
-            if reverse:
-                # In reverse mode, '-' lines are added back
-                result_lines.append(line[1:])
-            else:
-                # In forward mode, skip '-' lines (they're removed)
-                line_idx += 1
-            i += 1
-        elif line.startswith('+'):
-            if reverse:
-                # In reverse mode, '+' lines are removed (skip them)
-                pass
-            else:
-                # In forward mode, add '+' lines
-                result_lines.append(line[1:])
-            i += 1
-        elif line.startswith(' '):
-            # Context line - keep it
-            result_lines.append(line[1:])
-            line_idx += 1
-            i += 1
+    for hunk in reversed(hunks):
+        if reverse:
+            # Reverse: swap + and -
+            start = hunk['new_start'] - 1
         else:
-            i += 1
+            start = hunk['old_start'] - 1
 
-    # Copy remaining lines
-    while line_idx < len(lines):
-        result_lines.append(lines[line_idx])
-        line_idx += 1
+        # Calculate changes
+        new_lines = []
+        old_idx = start
+        for op, text in hunk['changes']:
+            if reverse:
+                # Swap operations for reverse
+                if op == '-':
+                    op = '+'
+                elif op == '+':
+                    op = '-'
 
-    result = "".join(result_lines)
-    # Remove trailing newline if original didn't have one
-    if result.endswith('\n') and not content.endswith('\n'):
-        result = result[:-1]
-    return result
+            if op == ' ':
+                new_lines.append(text)
+                old_idx += 1
+            elif op == '-':
+                old_idx += 1  # Skip this line
+            elif op == '+':
+                new_lines.append(text)
+
+        # Calculate how many lines to replace
+        old_count = sum(1 for op, _ in hunk['changes'] if (op == '-' if not reverse else op == '+') or op == ' ')
+
+        # Replace lines
+        result[start:start + old_count] = new_lines
+
+    return '\n'.join(result)
 
 
 # =============================================================================
@@ -220,7 +276,7 @@ def save_current_state(logs_dir: Path, block_name: str, content: str, metadata: 
     data = {
         "block_name": block_name,
         "content": content,
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     if metadata:
         data.update(metadata)
@@ -234,7 +290,7 @@ def append_diff_log(logs_dir: Path, block_name: str, diff_text: str, metadata: d
     log_file = logs_dir / f"{block_name}.jsonl"
 
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "diff": diff_text,
     }
     if metadata:
@@ -378,6 +434,51 @@ def cmd_show(logs_dir: Path, block_name: str):
         print(f"Error reading block: {e}")
 
 
+def cmd_debug(agent_id: str):
+    """Debug command to test API connectivity."""
+    print("=== Memory Logger Debug ===\n")
+
+    # Check API key sources
+    keychain_key = get_api_key_from_keychain()
+    env_key = os.environ.get("LETTA_API_KEY")
+    settings = get_letta_settings()
+    settings_key = settings.get("env", {}).get("LETTA_API_KEY")
+
+    api_key = keychain_key or env_key or settings_key
+    if api_key:
+        masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
+        source = "keychain" if keychain_key else ("env" if env_key else "settings")
+        print(f"API Key: {masked} (from {source})")
+    else:
+        print("API Key: NOT FOUND")
+        print("  - macOS Keychain (service: letta-code, account: letta-api-key)")
+        print("  - Environment variable: LETTA_API_KEY")
+        print("  - Settings file: ~/.letta/settings.json -> env.LETTA_API_KEY")
+        return
+
+    # Check base URL
+    base_url = get_base_url()
+    print(f"Base URL: {base_url}")
+
+    # Test API call
+    print(f"\nFetching memory blocks for agent: {agent_id}")
+    blocks = fetch_all_memory_blocks(agent_id, verbose=True)
+
+    if blocks:
+        print(f"\nSuccess! Found {len(blocks)} memory block(s):\n")
+        for block in blocks:
+            label = block.get("label", "unknown")
+            value = block.get("value", "")
+            preview = value[:50] + "..." if len(value) > 50 else value
+            preview = preview.replace("\n", "\\n")
+            print(f"  - {label}: {preview}")
+    else:
+        print("\nNo blocks returned. Possible issues:")
+        print("  - Invalid agent_id")
+        print("  - API key doesn't have access to this agent")
+        print("  - Network/API error")
+
+
 def cmd_history(logs_dir: Path, block_name: str):
     """Interactive history navigation for a memory block."""
     state_file = logs_dir / f"{block_name}.json"
@@ -402,10 +503,12 @@ def cmd_history(logs_dir: Path, block_name: str):
         print(current_content)
         return
 
-    # Build version list by applying diffs in reverse
+    # Build version list by applying diffs in reverse from current state
+    # versions[0] = oldest, versions[-1] = current
     versions = [{"content": current_content, "timestamp": "current", "diff": None}]
     content = current_content
 
+    # Apply diffs in reverse order to reconstruct previous versions
     for entry in reversed(history):
         diff_text = entry.get("diff", "")
         if diff_text:
@@ -416,94 +519,72 @@ def cmd_history(logs_dir: Path, block_name: str):
                 "diff": diff_text,
             })
 
-    # Interactive navigation
+    # Interactive navigation with instant key response
+    import tty
+    import termios
+
+    def getch():
+        """Read a single character without waiting for Enter."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            # Handle escape sequences (arrow keys)
+            if ch == '\x1b':
+                ch2 = sys.stdin.read(1)
+                if ch2 == '[':
+                    ch3 = sys.stdin.read(1)
+                    if ch3 == 'D':  # Left arrow
+                        return 'left'
+                    elif ch3 == 'C':  # Right arrow
+                        return 'right'
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    def display_version(idx):
+        version = versions[idx]
+        label = "current" if version["timestamp"] == "current" else version["timestamp"]
+        # Clear screen and move cursor to top
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.write(f"=== {block_name} - Version {idx + 1}/{len(versions)} ({label}) ===\n")
+        sys.stdout.write("← → to navigate | d=diff | q=quit\n")
+        sys.stdout.write("-" * 50 + "\n")
+        sys.stdout.write(version["content"] + "\n")
+        sys.stdout.write("-" * 50 + "\n")
+        sys.stdout.flush()
+
+    current_idx = len(versions) - 1  # Start at current version
+    display_version(current_idx)
+
     try:
-        import curses
-        curses_available = True
-    except ImportError:
-        curses_available = False
-
-    if curses_available and sys.stdout.isatty():
-        run_interactive_history(versions, block_name)
-    else:
-        # Fallback: print all versions
-        print(f"History for '{block_name}' ({len(versions)} versions):")
-        print("=" * 60)
-        for i, v in enumerate(versions):
-            label = "current" if v["timestamp"] == "current" else v["timestamp"]
-            print(f"\n[Version {i + 1}] {label}")
-            print("-" * 40)
-            print(v["content"])
-            print()
-
-
-def run_interactive_history(versions: list[dict], block_name: str):
-    """Run interactive curses-based history viewer."""
-    import curses
-
-    def main(stdscr):
-        curses.curs_set(0)  # Hide cursor
-        stdscr.clear()
-
-        current_idx = len(versions) - 1  # Start at current version
-
         while True:
-            stdscr.clear()
-            height, width = stdscr.getmaxyx()
+            key = getch()
 
-            version = versions[current_idx]
-            label = "current" if version["timestamp"] == "current" else version["timestamp"]
-
-            # Header
-            header = f" {block_name} - Version {current_idx + 1}/{len(versions)} ({label}) "
-            stdscr.addstr(0, 0, header.center(width, "=")[:width-1])
-            stdscr.addstr(1, 0, " Use ← → arrows to navigate, 'd' for diff, 'q' to quit "[:width-1])
-            stdscr.addstr(2, 0, "-" * (width - 1))
-
-            # Content
-            content_lines = version["content"].splitlines()
-            max_lines = height - 5
-
-            for i, line in enumerate(content_lines[:max_lines]):
-                if i + 3 < height - 1:
-                    stdscr.addstr(i + 3, 0, line[:width-1])
-
-            if len(content_lines) > max_lines:
-                stdscr.addstr(height - 2, 0, f"... ({len(content_lines) - max_lines} more lines)"[:width-1])
-
-            stdscr.refresh()
-
-            # Handle input
-            key = stdscr.getch()
-
-            if key == ord('q') or key == 27:  # q or ESC
+            if key in ('q', '\x03'):  # q or Ctrl+C
+                sys.stdout.write("\n")
+                sys.stdout.flush()
                 break
-            elif key == curses.KEY_LEFT or key == ord('h'):
+            elif key in ('left', 'p', 'h'):
                 if current_idx > 0:
                     current_idx -= 1
-            elif key == curses.KEY_RIGHT or key == ord('l'):
+                display_version(current_idx)
+            elif key in ('right', 'n', 'l'):
                 if current_idx < len(versions) - 1:
                     current_idx += 1
-            elif key == ord('d'):
-                # Show diff
+                display_version(current_idx)
+            elif key == 'd':
+                version = versions[current_idx]
                 if version["diff"]:
-                    stdscr.clear()
-                    stdscr.addstr(0, 0, f" Diff for version {current_idx + 1} ".center(width, "=")[:width-1])
-                    diff_lines = version["diff"].splitlines()
-                    for i, line in enumerate(diff_lines[:height-3]):
-                        if i + 2 < height - 1:
-                            # Color diff lines
-                            if line.startswith('+') and not line.startswith('+++'):
-                                stdscr.addstr(i + 2, 0, line[:width-1], curses.A_BOLD)
-                            elif line.startswith('-') and not line.startswith('---'):
-                                stdscr.addstr(i + 2, 0, line[:width-1], curses.A_DIM)
-                            else:
-                                stdscr.addstr(i + 2, 0, line[:width-1])
-                    stdscr.addstr(height - 1, 0, "Press any key to continue..."[:width-1])
-                    stdscr.refresh()
-                    stdscr.getch()
-
-    curses.wrapper(main)
+                    sys.stdout.write("\n" + version["diff"] + "\n")
+                    sys.stdout.write("\nPress any key...")
+                    sys.stdout.flush()
+                    getch()
+                display_version(current_idx)
+    except (EOFError, KeyboardInterrupt):
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 # =============================================================================
@@ -542,6 +623,12 @@ def main():
             return
         cmd_history(logs_dir, args[1])
 
+    elif command == "debug":
+        if len(args) < 2:
+            print("Usage: memory_logger.py debug <agent_id>")
+            return
+        cmd_debug(args[1])
+
     else:
         print("Memory Logger - Track memory block changes")
         print()
@@ -549,6 +636,7 @@ def main():
         print("  list              List all tracked memory blocks")
         print("  show <name>       Show current contents of a block")
         print("  history <name>    Interactive history navigation")
+        print("  debug <agent_id>  Test API key and connectivity")
         print()
         print("This script also runs as a PostToolUse hook to track changes.")
 
