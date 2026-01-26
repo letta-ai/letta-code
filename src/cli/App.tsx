@@ -9798,7 +9798,7 @@ Plan file path: ${planFilePath}`;
 
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (
-              <HooksManager onClose={closeOverlay} />
+              <HooksManager onClose={closeOverlay} agentId={agentId} />
             )}
 
             {/* New Agent Dialog - for naming new agent before creation */}

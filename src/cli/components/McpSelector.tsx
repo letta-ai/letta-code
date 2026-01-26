@@ -111,10 +111,9 @@ export const McpSelector = memo(function McpSelector({
 
   const fetchAttachedToolIds = useCallback(
     async (client: Awaited<ReturnType<typeof getClient>>) => {
-      const agent = await client.agents.retrieve(agentId, {
-        include: ["agent.tools"],
-      });
-      return new Set(agent.tools?.map((t) => t.id) || []);
+      // Use dedicated tools endpoint instead of fetching whole agent
+      const toolsPage = await client.agents.tools.list(agentId);
+      return new Set(toolsPage.items?.map((t) => t.id) || []);
     },
     [agentId],
   );

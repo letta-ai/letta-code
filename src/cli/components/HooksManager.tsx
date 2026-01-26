@@ -37,6 +37,7 @@ const BOX_VERTICAL = "│";
 
 interface HooksManagerProps {
   onClose: () => void;
+  agentId?: string;
 }
 
 type Screen =
@@ -62,8 +63,8 @@ const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "SessionEnd", description: "When a session ends" },
 ];
 
-// Available tools for matcher suggestions
-const TOOL_NAMES = [
+// Fallback tool names if agent tools can't be fetched
+const FALLBACK_TOOL_NAMES = [
   "Task",
   "Bash",
   "Glob",
@@ -71,14 +72,13 @@ const TOOL_NAMES = [
   "Read",
   "Edit",
   "Write",
-  "WebFetch",
   "TodoWrite",
-  "WebSearch",
   "AskUserQuestion",
   "Skill",
   "EnterPlanMode",
   "ExitPlanMode",
-  "KillShell",
+  "BashOutput",
+  "KillBash",
 ];
 
 // Save location options
@@ -130,6 +130,7 @@ function boxBottom(width: number): string {
 
 export const HooksManager = memo(function HooksManager({
   onClose,
+  agentId,
 }: HooksManagerProps) {
   const terminalWidth = useTerminalWidth();
   const boxWidth = Math.min(terminalWidth - 4, 70);
@@ -140,6 +141,34 @@ export const HooksManager = memo(function HooksManager({
   // For tool events: HookMatcherWithSource[], for simple events: HookCommandWithSource[]
   const [hooks, setHooks] = useState<HookWithSource[]>([]);
   const [totalHooks, setTotalHooks] = useState(0);
+
+  // Dynamic tool names from agent
+  const [toolNames, setToolNames] = useState<string[]>(FALLBACK_TOOL_NAMES);
+
+  // Fetch agent tools on mount
+  useEffect(() => {
+    if (!agentId) return;
+
+    const fetchAgentTools = async () => {
+      try {
+        const { getClient } = await import("../../agent/client");
+        const client = await getClient();
+        // Use dedicated tools endpoint instead of fetching whole agent
+        const toolsPage = await client.agents.tools.list(agentId);
+        const names = toolsPage.items
+          ?.map((t) => t.name)
+          .filter((n): n is string => !!n);
+        if (names && names.length > 0) {
+          // Sort alphabetically for easier scanning
+          setToolNames(names.sort());
+        }
+      } catch {
+        // Keep fallback tool names on error
+      }
+    };
+
+    fetchAgentTools();
+  }, [agentId]);
 
   // New hook state
   const [newMatcher, setNewMatcher] = useState("");
@@ -476,7 +505,7 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         <Text dimColor>Possible matcher values for field tool_name:</Text>
-        <Text dimColor>{TOOL_NAMES.join(", ")}</Text>
+        <Text dimColor>{toolNames.join(", ")}</Text>
         <Text> </Text>
 
         <Text>Tool matcher:</Text>
