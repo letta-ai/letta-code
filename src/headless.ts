@@ -740,8 +740,8 @@ export async function handleHeadlessCommand(
     return;
   }
 
-  // Create buffers to accumulate stream
-  const buffers = createBuffers();
+  // Create buffers to accumulate stream (pass agent.id for server-side tool hooks)
+  const buffers = createBuffers(agent.id);
 
   // Initialize session stats
   const sessionStats = new SessionStats();
@@ -911,7 +911,11 @@ export async function handleHeadlessCommand(
           // no-op
         }
       } else {
-        await drainStreamWithResume(approvalStream, createBuffers(), () => {});
+        await drainStreamWithResume(
+          approvalStream,
+          createBuffers(agent.id),
+          () => {},
+        );
       }
     }
   };
@@ -1993,7 +1997,7 @@ async function runBidirectionalMode(
       currentAbortController = new AbortController();
 
       try {
-        const buffers = createBuffers();
+        const buffers = createBuffers(agent.id);
         const startTime = performance.now();
         let numTurns = 0;
 

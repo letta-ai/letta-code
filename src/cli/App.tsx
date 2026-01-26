@@ -1493,6 +1493,11 @@ export default function App({
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
 
+  // Keep buffers in sync with agentId for server-side tool hooks
+  useEffect(() => {
+    buffersRef.current.agentId = agentState?.id;
+  }, [agentState?.id]);
+
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(

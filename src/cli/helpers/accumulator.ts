@@ -6,6 +6,7 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -157,6 +158,17 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
+/**
+ * Tracks server-side tool calls for hook triggering.
+ * Server-side tools (tool_call_message) are executed by the Letta server,
+ * not the client, so we need to trigger hooks when we receive the stream messages.
+ */
+export interface ServerToolCallInfo {
+  toolName: string;
+  toolArgs: string;
+  preToolUseTriggered: boolean;
+}
+
 // Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
@@ -180,9 +192,13 @@ export type Buffers = {
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
+  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Agent ID for passing to hooks (needed for server-side tools like memory)
+  agentId?: string;
 };
 
-export function createBuffers(): Buffers {
+export function createBuffers(agentId?: string): Buffers {
   return {
     tokenCount: 0,
     order: [],
@@ -202,6 +218,8 @@ export function createBuffers(): Buffers {
     },
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
+    serverToolCalls: new Map(),
+    agentId,
   };
 }
 
@@ -591,6 +609,40 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
       }
+
+      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
+      if (chunk.message_type === "tool_call_message" && toolCallId) {
+        const existing = b.serverToolCalls.get(toolCallId);
+        const toolInfo: ServerToolCallInfo = existing || {
+          toolName: "",
+          toolArgs: "",
+          preToolUseTriggered: false,
+        };
+
+        if (name) toolInfo.toolName = name;
+        if (argsText) toolInfo.toolArgs += argsText;
+        b.serverToolCalls.set(toolCallId, toolInfo);
+
+        if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
+          toolInfo.preToolUseTriggered = true;
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            if (toolInfo.toolArgs) {
+              parsedArgs = JSON.parse(toolInfo.toolArgs);
+            }
+          } catch {
+            // Args may be incomplete JSON
+          }
+          runPreToolUseHooks(
+            toolInfo.toolName,
+            parsedArgs,
+            toolCallId,
+            undefined,
+            b.agentId,
+          ).catch(() => {});
+        }
+      }
+
       break;
     }
 
@@ -651,6 +703,35 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
+        if (toolCallId) {
+          const serverToolInfo = b.serverToolCalls.get(toolCallId);
+          if (serverToolInfo) {
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              if (serverToolInfo.toolArgs) {
+                parsedArgs = JSON.parse(serverToolInfo.toolArgs);
+              }
+            } catch {
+              // Args parsing failed
+            }
+
+            runPostToolUseHooks(
+              serverToolInfo.toolName,
+              parsedArgs,
+              {
+                status: status === "success" ? "success" : "error",
+                output: resultText,
+              },
+              toolCallId,
+              undefined,
+              b.agentId,
+            ).catch(() => {});
+
+            b.serverToolCalls.delete(toolCallId);
+          }
+        }
       }
       break;
     }
