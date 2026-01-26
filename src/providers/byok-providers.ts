@@ -46,6 +46,13 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-zai",
   },
   {
+    id: "minimax",
+    displayName: "MiniMax API",
+    description: "Connect a MiniMax key or coding plan",
+    providerType: "minimax",
+    providerName: "lc-minimax",
+  },
+  {
     id: "gemini",
     displayName: "Gemini API",
     description: "Connect a Google Gemini API key",
