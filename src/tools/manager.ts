@@ -407,7 +407,12 @@ export async function checkToolPermission(
   const { loadPermissions } = await import("../permissions/loader");
 
   const permissions = await loadPermissions(workingDirectory);
-  return checkPermissionWithHooks(toolName, toolArgs, permissions, workingDirectory);
+  return checkPermissionWithHooks(
+    toolName,
+    toolArgs,
+    permissions,
+    workingDirectory,
+  );
 }
 
 /**
