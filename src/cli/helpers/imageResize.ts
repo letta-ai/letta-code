@@ -1,6 +1,7 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-import sharp from "sharp";
+// Rewritten to use imgkit (Rust-based, faster than sharp, easier to package)
+import { metadata, toJpeg, toPng, transform } from "imgkit";
 
 // Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests
 // We use 2000 to stay safe when conversation history accumulates multiple images
@@ -37,9 +38,9 @@ async function compressToFitByteLimit(
   // Try progressive JPEG quality reduction
   const qualities = [85, 70, 55, 40];
   for (const quality of qualities) {
-    const compressed = await sharp(buffer).jpeg({ quality }).toBuffer();
+    const compressed = await toJpeg(buffer, { quality });
     if (compressed.length <= MAX_IMAGE_BYTES) {
-      const meta = await sharp(compressed).metadata();
+      const meta = await metadata(compressed);
       return {
         data: compressed.toString("base64"),
         mediaType: "image/jpeg",
@@ -55,15 +56,19 @@ async function compressToFitByteLimit(
   for (const scale of scales) {
     const scaledWidth = Math.floor(currentWidth * scale);
     const scaledHeight = Math.floor(currentHeight * scale);
-    const reduced = await sharp(buffer)
-      .resize(scaledWidth, scaledHeight, {
+    const reduced = await transform(buffer, {
+      resize: {
+        width: scaledWidth,
+        height: scaledHeight,
         fit: "inside",
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: 70 })
-      .toBuffer();
+      },
+      output: {
+        format: "jpeg",
+        jpeg: { quality: 70 },
+      },
+    });
     if (reduced.length <= MAX_IMAGE_BYTES) {
-      const meta = await sharp(reduced).metadata();
+      const meta = await metadata(reduced);
       return {
         data: reduced.toString("base64"),
         mediaType: "image/jpeg",
@@ -89,11 +94,10 @@ export async function resizeImageIfNeeded(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  const image = sharp(buffer);
-  const metadata = await image.metadata();
-  const width = metadata.width ?? 0;
-  const height = metadata.height ?? 0;
-  const format = metadata.format;
+  const meta = await metadata(buffer);
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  const format = meta.format;
 
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
 
@@ -118,26 +122,40 @@ export async function resizeImageIfNeeded(
   if (needsResize) {
     // Resize preserving aspect ratio
     // Use 'inside' fit which is equivalent to Codex's resize behavior
-    const resized = image.resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
-      fit: "inside",
-      withoutEnlargement: true,
-    });
-
     // Output as PNG for lossless quality (or JPEG if input was JPEG)
     let outputBuffer: Buffer;
     let outputMediaType: string;
 
     if (format === "jpeg") {
       // Preserve JPEG format with good quality (Codex uses 85)
-      outputBuffer = await resized.jpeg({ quality: 85 }).toBuffer();
+      outputBuffer = await transform(buffer, {
+        resize: {
+          width: MAX_IMAGE_WIDTH,
+          height: MAX_IMAGE_HEIGHT,
+          fit: "inside",
+        },
+        output: {
+          format: "jpeg",
+          jpeg: { quality: 85 },
+        },
+      });
       outputMediaType = "image/jpeg";
     } else {
       // Default to PNG for everything else
-      outputBuffer = await resized.png().toBuffer();
+      outputBuffer = await transform(buffer, {
+        resize: {
+          width: MAX_IMAGE_WIDTH,
+          height: MAX_IMAGE_HEIGHT,
+          fit: "inside",
+        },
+        output: {
+          format: "png",
+        },
+      });
       outputMediaType = "image/png";
     }
 
-    const resizedMeta = await sharp(outputBuffer).metadata();
+    const resizedMeta = await metadata(outputBuffer);
     const resizedWidth = resizedMeta.width ?? 0;
     const resizedHeight = resizedMeta.height ?? 0;
 
@@ -161,7 +179,7 @@ export async function resizeImageIfNeeded(
   }
 
   // No resize needed but format needs conversion (e.g., HEIC, TIFF, etc.)
-  const outputBuffer = await image.png().toBuffer();
+  const outputBuffer = await toPng(buffer);
 
   // Check byte limit after format conversion
   const compressed = await compressToFitByteLimit(outputBuffer, width, height);

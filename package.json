@@ -32,9 +32,9 @@
   "dependencies": {
     "@letta-ai/letta-client": "^1.7.6",
     "glob": "^13.0.0",
+    "imgkit": "^2.1.0",
     "ink-link": "^5.0.0",
-    "open": "^10.2.0",
-    "sharp": "^0.34.5"
+    "open": "^10.2.0"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
