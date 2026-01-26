@@ -164,6 +164,7 @@ import {
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
+import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -8274,6 +8275,31 @@ ${SYSTEM_REMINDER_CLOSE}
                 version: process.env.npm_package_version || "unknown",
                 platform: process.platform,
                 settings: JSON.stringify(safeSettings),
+                // Additional context for debugging
+                system_info: {
+                  local_time: getLocalTime(),
+                  device_type: getDeviceType(),
+                  cwd: process.cwd(),
+                },
+                session_stats: (() => {
+                  const stats = sessionStatsRef.current?.getSnapshot();
+                  if (!stats) return undefined;
+                  return {
+                    total_api_ms: stats.totalApiMs,
+                    total_wall_ms: stats.totalWallMs,
+                    step_count: stats.usage.stepCount,
+                    prompt_tokens: stats.usage.promptTokens,
+                    completion_tokens: stats.usage.completionTokens,
+                  };
+                })(),
+                agent_info: {
+                  agent_name: agentName,
+                  agent_description: agentDescription,
+                  model: currentModelId,
+                },
+                account_info: {
+                  billing_tier: billingTier,
+                },
               }),
             },
           );
@@ -8309,7 +8335,16 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       });
     },
-    [agentId, refreshDerived, withCommandLock, closeOverlay],
+    [
+      agentId,
+      agentName,
+      agentDescription,
+      currentModelId,
+      billingTier,
+      refreshDerived,
+      withCommandLock,
+      closeOverlay,
+    ],
   );
 
   const handleProfileEscapeCancel = useCallback(() => {
