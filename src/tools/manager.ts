@@ -403,11 +403,16 @@ export async function checkToolPermission(
   matchedRule?: string;
   reason?: string;
 }> {
-  const { checkPermission } = await import("../permissions/checker");
+  const { checkPermissionWithHooks } = await import("../permissions/checker");
   const { loadPermissions } = await import("../permissions/loader");
 
   const permissions = await loadPermissions(workingDirectory);
-  return checkPermission(toolName, toolArgs, permissions, workingDirectory);
+  return checkPermissionWithHooks(
+    toolName,
+    toolArgs,
+    permissions,
+    workingDirectory,
+  );
 }
 
 /**

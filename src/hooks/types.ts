@@ -194,6 +194,12 @@ export interface PermissionRequestHookInput extends HookInputBase {
     type: "allow" | "deny" | "ask";
     scope?: "session" | "project" | "user";
   };
+  /** Current session permissions (in-memory only, cleared on exit) */
+  session_permissions?: {
+    allow?: string[];
+    deny?: string[];
+    ask?: string[];
+  };
 }
 
 /**
