@@ -62,44 +62,10 @@ show_permissions() {
 show_permissions "$HOME/.letta/settings.json" "Global Settings (User)" "$BLUE"
 
 # Project settings (.letta/settings.json)
-show_permissions "$working_dir/.letta/settings.json" "Project Settings (Shared)" "$YELLOW"
+show_permissions "$working_dir/.letta/settings.json" "Project Settings" "$YELLOW"
 
 # Project local settings (.letta/settings.local.json)
 show_permissions "$working_dir/.letta/settings.local.json" "Project Local Settings (Git-ignored)" "$GREEN"
-
-# Session permissions (from input JSON)
-session_allow=$(echo "$input" | jq -r '.session_permissions.allow // [] | .[]' 2>/dev/null)
-session_deny=$(echo "$input" | jq -r '.session_permissions.deny // [] | .[]' 2>/dev/null)
-session_ask=$(echo "$input" | jq -r '.session_permissions.ask // [] | .[]' 2>/dev/null)
-
-if [ -n "$session_allow" ] || [ -n "$session_deny" ] || [ -n "$session_ask" ]; then
-  echo -e "${BLUE}${BOLD}Session Permissions (In-Memory)${RESET}"
-  echo -e "${DIM}Cleared when session ends${RESET}"
-
-  if [ -n "$session_allow" ]; then
-    echo -e "  ${GREEN}Allow:${RESET}"
-    echo "$session_allow" | while read -r rule; do
-      [ -n "$rule" ] && echo -e "    ${GREEN}✓${RESET} $rule"
-    done
-  fi
-
-  if [ -n "$session_deny" ]; then
-    echo -e "  ${RED}Deny:${RESET}"
-    echo "$session_deny" | while read -r rule; do
-      [ -n "$rule" ] && echo -e "    ${RED}✗${RESET} $rule"
-    done
-  fi
-
-  if [ -n "$session_ask" ]; then
-    echo -e "  ${YELLOW}Ask:${RESET}"
-    echo "$session_ask" | while read -r rule; do
-      [ -n "$rule" ] && echo -e "    ${YELLOW}?${RESET} $rule"
-    done
-  fi
-  echo ""
-else
-  echo -e "${DIM}No session permissions active.${RESET}\n"
-fi
 
 echo -e "${BOLD}═══════════════════════════════════════════════════════════════${RESET}\n"
 
