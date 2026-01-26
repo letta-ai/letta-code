@@ -610,11 +610,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         b.tokenCount += argsText.length;
       }
 
-      // ========== SERVER-SIDE TOOL HOOKS ==========
-      // For tool_call_message (server-side tools), track the call and trigger PreToolUse hook.
-      // approval_request_message (client-side tools) already has hooks in executeTool().
+      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
       if (chunk.message_type === "tool_call_message" && toolCallId) {
-        // Get or create server tool tracking entry
         const existing = b.serverToolCalls.get(toolCallId);
         const toolInfo: ServerToolCallInfo = existing || {
           toolName: "",
@@ -622,39 +619,29 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           preToolUseTriggered: false,
         };
 
-        // Update tool info
         if (name) toolInfo.toolName = name;
         if (argsText) toolInfo.toolArgs += argsText;
-
         b.serverToolCalls.set(toolCallId, toolInfo);
 
-        // Trigger PreToolUse hook when we have the tool name (fire-and-forget)
-        // Note: For server-side tools, execution has already started on the server,
-        // so PreToolUse cannot block execution, but hooks can still log/notify.
         if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
           toolInfo.preToolUseTriggered = true;
-          // Parse args if they look complete (valid JSON)
           let parsedArgs: Record<string, unknown> = {};
           try {
             if (toolInfo.toolArgs) {
               parsedArgs = JSON.parse(toolInfo.toolArgs);
             }
           } catch {
-            // Args may not be complete JSON yet - use empty object
+            // Args may be incomplete JSON
           }
-          // Fire-and-forget (async, non-blocking)
           runPreToolUseHooks(
             toolInfo.toolName,
             parsedArgs,
             toolCallId,
-            undefined, // workingDirectory - use default
+            undefined,
             b.agentId,
-          ).catch(() => {
-            // Silently ignore hook errors for server-side tools
-          });
+          ).catch(() => {});
         }
       }
-      // ========== END SERVER-SIDE TOOL HOOKS ==========
 
       break;
     }
@@ -717,23 +704,19 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         };
         b.byId.set(id, updatedLine);
 
-        // ========== SERVER-SIDE TOOL HOOKS (PostToolUse) ==========
-        // Trigger PostToolUse hook for server-side tools.
-        // Check if this toolCallId was tracked as a server-side tool.
+        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
         if (toolCallId) {
           const serverToolInfo = b.serverToolCalls.get(toolCallId);
           if (serverToolInfo) {
-            // Parse the accumulated args
             let parsedArgs: Record<string, unknown> = {};
             try {
               if (serverToolInfo.toolArgs) {
                 parsedArgs = JSON.parse(serverToolInfo.toolArgs);
               }
             } catch {
-              // Args parsing failed - use empty object
+              // Args parsing failed
             }
 
-            // Fire-and-forget PostToolUse hook (async, non-blocking)
             runPostToolUseHooks(
               serverToolInfo.toolName,
               parsedArgs,
@@ -742,17 +725,13 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
                 output: resultText,
               },
               toolCallId,
-              undefined, // workingDirectory - use default
+              undefined,
               b.agentId,
-            ).catch(() => {
-              // Silently ignore hook errors
-            });
+            ).catch(() => {});
 
-            // Clean up tracking (tool call is complete)
             b.serverToolCalls.delete(toolCallId);
           }
         }
-        // ========== END SERVER-SIDE TOOL HOOKS ==========
       }
       break;
     }

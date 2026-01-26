@@ -19,6 +19,7 @@ CLI:
 
 import json
 import os
+import re
 import sys
 import difflib
 from datetime import datetime, timezone
@@ -143,7 +144,7 @@ def fetch_all_memory_blocks(agent_id: str, verbose: bool = False) -> list[dict]:
             try:
                 body = e.read().decode("utf-8")
                 print(f"  Response: {body[:200]}")
-            except:
+            except Exception:
                 pass
         return []
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
@@ -191,8 +192,6 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
 
     for line in diff_lines:
         if line.startswith('@@'):
-            # Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
-            import re
             match = re.match(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
             if match:
                 old_start = int(match.group(1))
@@ -226,10 +225,8 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
 
         # Calculate changes
         new_lines = []
-        old_idx = start
         for op, text in hunk['changes']:
             if reverse:
-                # Swap operations for reverse
                 if op == '-':
                     op = '+'
                 elif op == '+':
@@ -237,9 +234,6 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
 
             if op == ' ':
                 new_lines.append(text)
-                old_idx += 1
-            elif op == '-':
-                old_idx += 1  # Skip this line
             elif op == '+':
                 new_lines.append(text)
 
