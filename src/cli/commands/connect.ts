@@ -9,6 +9,12 @@ import {
   startOpenAIOAuth,
 } from "../../auth/openai-oauth";
 import {
+  createOrUpdateMinimaxProvider,
+  getMinimaxProvider,
+  MINIMAX_PROVIDER_NAME,
+  removeMinimaxProvider,
+} from "../../providers/minimax-provider";
+import {
   checkOpenAICodexEligibility,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
@@ -110,18 +116,18 @@ export async function handleConnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex          - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>   - Connect to Zai with your API key",
+      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex             - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>     - Connect to zAI with your API key\n  \u2022 minimax <api_key> - Connect to MiniMax with your API key",
       false,
     );
     return;
   }
 
-  if (provider !== "codex" && provider !== "zai") {
+  if (provider !== "codex" && provider !== "zai" && provider !== "minimax") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai\nUsage: /connect <provider> [options]`,
+      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai, minimax\nUsage: /connect <provider> [options]`,
       false,
     );
     return;
@@ -130,6 +136,12 @@ export async function handleConnect(
   // Zai is handled separately in App.tsx, but add a fallback just in case
   if (provider === "zai") {
     await handleConnectZai(ctx, msg);
+    return;
+  }
+
+  // MiniMax is handled separately in App.tsx, but add a fallback just in case
+  if (provider === "minimax") {
+    await handleConnectMinimax(ctx, msg);
     return;
   }
 
@@ -373,6 +385,137 @@ async function handleConnectCodex(
 }
 
 /**
+ * Handle /disconnect minimax
+ */
+async function handleDisconnectMinimax(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  // Check if MiniMax provider exists
+  const existing = await getMinimaxProvider();
+  if (!existing) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Not currently connected to MiniMax.\n\nUse /connect minimax <api_key> to connect.",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Disconnecting from MiniMax...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Remove provider from Letta
+    await removeMinimaxProvider();
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2713 Disconnected from MiniMax.\n\n` +
+        `Provider '${MINIMAX_PROVIDER_NAME}' removed from Letta.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2717 Failed to disconnect from MiniMax: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /connect minimax command
+ * Usage: /connect minimax <api_key>
+ *
+ * Creates the minimax-coding-plan provider with the provided API key
+ */
+export async function handleConnectMinimax(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  const parts = msg.trim().split(/\s+/);
+  // Join all remaining parts in case the API key got split
+  const apiKey = parts.slice(2).join("");
+
+  // If no API key provided, show usage
+  if (!apiKey || apiKey.length === 0) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Usage: /connect minimax <api_key>\n\n" +
+        "Connect to MiniMax by providing your API key.\n\n" +
+        "Example: /connect minimax <api_key>...",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Creating MiniMax coding plan provider...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Create or update the MiniMax provider with the API key
+    await createOrUpdateMinimaxProvider(apiKey);
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2713 Successfully connected to MiniMax!\n\n` +
+        `Provider '${MINIMAX_PROVIDER_NAME}' created in Letta.\n\n` +
+        `The models are populated in /model \u2192 "All Available Models"`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2717 Failed to create MiniMax provider: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
  * Handle /disconnect command
  * Usage: /disconnect <provider>
  */
@@ -389,7 +532,7 @@ export async function handleDisconnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai",
+      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai, minimax",
       false,
     );
     return;
@@ -398,6 +541,12 @@ export async function handleDisconnect(
   // Handle /disconnect zai
   if (provider === "zai") {
     await handleDisconnectZai(ctx, msg);
+    return;
+  }
+
+  // Handle /disconnect minimax
+  if (provider === "minimax") {
+    await handleDisconnectMinimax(ctx, msg);
     return;
   }
 
@@ -418,7 +567,7 @@ export async function handleDisconnect(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai\nUsage: /disconnect <provider>`,
+    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai, minimax\nUsage: /disconnect <provider>`,
     false,
   );
 }
