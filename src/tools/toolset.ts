@@ -48,6 +48,7 @@ export async function ensureCorrectMemoryTool(
       : isOpenAIModel(resolvedModel);
 
   try {
+    // Need full agent state for tool_rules, so use retrieve with include
     const agentWithTools = await client.agents.retrieve(agentId, {
       include: ["agent.tools"],
     });
