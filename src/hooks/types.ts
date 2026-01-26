@@ -160,6 +160,8 @@ export interface PreToolUseHookInput extends HookInputBase {
   tool_input: Record<string, unknown>;
   /** Tool call ID */
   tool_call_id?: string;
+  /** Agent ID (for server-side tools like memory) */
+  agent_id?: string;
 }
 
 /**
@@ -178,6 +180,8 @@ export interface PostToolUseHookInput extends HookInputBase {
     status: "success" | "error";
     output?: string;
   };
+  /** Agent ID (for server-side tools like memory) */
+  agent_id?: string;
 }
 
 /**

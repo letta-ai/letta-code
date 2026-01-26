@@ -6,6 +6,7 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -157,6 +158,17 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
+/**
+ * Tracks server-side tool calls for hook triggering.
+ * Server-side tools (tool_call_message) are executed by the Letta server,
+ * not the client, so we need to trigger hooks when we receive the stream messages.
+ */
+export interface ServerToolCallInfo {
+  toolName: string;
+  toolArgs: string;
+  preToolUseTriggered: boolean;
+}
+
 // Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
@@ -180,9 +192,13 @@ export type Buffers = {
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
+  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Agent ID for passing to hooks (needed for server-side tools like memory)
+  agentId?: string;
 };
 
-export function createBuffers(): Buffers {
+export function createBuffers(agentId?: string): Buffers {
   return {
     tokenCount: 0,
     order: [],
@@ -202,6 +218,8 @@ export function createBuffers(): Buffers {
     },
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
+    serverToolCalls: new Map(),
+    agentId,
   };
 }
 
@@ -591,6 +609,53 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
       }
+
+      // ========== SERVER-SIDE TOOL HOOKS ==========
+      // For tool_call_message (server-side tools), track the call and trigger PreToolUse hook.
+      // approval_request_message (client-side tools) already has hooks in executeTool().
+      if (chunk.message_type === "tool_call_message" && toolCallId) {
+        // Get or create server tool tracking entry
+        const existing = b.serverToolCalls.get(toolCallId);
+        const toolInfo: ServerToolCallInfo = existing || {
+          toolName: "",
+          toolArgs: "",
+          preToolUseTriggered: false,
+        };
+
+        // Update tool info
+        if (name) toolInfo.toolName = name;
+        if (argsText) toolInfo.toolArgs += argsText;
+
+        b.serverToolCalls.set(toolCallId, toolInfo);
+
+        // Trigger PreToolUse hook when we have the tool name (fire-and-forget)
+        // Note: For server-side tools, execution has already started on the server,
+        // so PreToolUse cannot block execution, but hooks can still log/notify.
+        if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
+          toolInfo.preToolUseTriggered = true;
+          // Parse args if they look complete (valid JSON)
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            if (toolInfo.toolArgs) {
+              parsedArgs = JSON.parse(toolInfo.toolArgs);
+            }
+          } catch {
+            // Args may not be complete JSON yet - use empty object
+          }
+          // Fire-and-forget (async, non-blocking)
+          runPreToolUseHooks(
+            toolInfo.toolName,
+            parsedArgs,
+            toolCallId,
+            undefined, // workingDirectory - use default
+            b.agentId,
+          ).catch(() => {
+            // Silently ignore hook errors for server-side tools
+          });
+        }
+      }
+      // ========== END SERVER-SIDE TOOL HOOKS ==========
+
       break;
     }
 
@@ -651,6 +716,43 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        // ========== SERVER-SIDE TOOL HOOKS (PostToolUse) ==========
+        // Trigger PostToolUse hook for server-side tools.
+        // Check if this toolCallId was tracked as a server-side tool.
+        if (toolCallId) {
+          const serverToolInfo = b.serverToolCalls.get(toolCallId);
+          if (serverToolInfo) {
+            // Parse the accumulated args
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              if (serverToolInfo.toolArgs) {
+                parsedArgs = JSON.parse(serverToolInfo.toolArgs);
+              }
+            } catch {
+              // Args parsing failed - use empty object
+            }
+
+            // Fire-and-forget PostToolUse hook (async, non-blocking)
+            runPostToolUseHooks(
+              serverToolInfo.toolName,
+              parsedArgs,
+              {
+                status: status === "success" ? "success" : "error",
+                output: resultText,
+              },
+              toolCallId,
+              undefined, // workingDirectory - use default
+              b.agentId,
+            ).catch(() => {
+              // Silently ignore hook errors
+            });
+
+            // Clean up tracking (tool call is complete)
+            b.serverToolCalls.delete(toolCallId);
+          }
+        }
+        // ========== END SERVER-SIDE TOOL HOOKS ==========
       }
       break;
     }
