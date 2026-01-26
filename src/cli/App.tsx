@@ -1911,9 +1911,7 @@ export default function App({
 
       try {
         await ensureMemoryFilesystemBlock(agentId);
-        const result = await syncMemoryFilesystem(agentId, {
-          cwd: process.cwd(),
-        });
+        const result = await syncMemoryFilesystem(agentId);
 
         if (result.conflicts.length > 0) {
           memorySyncCommandIdRef.current = commandId ?? null;
@@ -1932,7 +1930,7 @@ export default function App({
           return;
         }
 
-        await updateMemoryFilesystemBlock(agentId, process.cwd());
+        await updateMemoryFilesystemBlock(agentId);
 
         if (commandId) {
           updateMemorySyncCommand(commandId, formatMemorySyncSummary(result), true);
@@ -2018,7 +2016,6 @@ export default function App({
 
       try {
         const result = await syncMemoryFilesystem(agentId, {
-          cwd: process.cwd(),
           resolutions,
         });
 
@@ -2037,7 +2034,7 @@ export default function App({
           return;
         }
 
-        await updateMemoryFilesystemBlock(agentId, process.cwd());
+        await updateMemoryFilesystemBlock(agentId);
 
         if (commandId) {
           updateMemorySyncCommand(

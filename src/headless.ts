@@ -589,16 +589,14 @@ export async function handleHeadlessCommand(
   // Sync filesystem-backed memory before creating conversations
   try {
     await ensureMemoryFilesystemBlock(agent.id);
-    const syncResult = await syncMemoryFilesystem(agent.id, {
-      cwd: process.cwd(),
-    });
+    const syncResult = await syncMemoryFilesystem(agent.id);
     if (syncResult.conflicts.length > 0) {
       console.error(
         `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
       );
       process.exit(1);
     }
-    await updateMemoryFilesystemBlock(agent.id, process.cwd());
+    await updateMemoryFilesystemBlock(agent.id);
     if (
       syncResult.updatedBlocks.length > 0 ||
       syncResult.createdBlocks.length > 0 ||

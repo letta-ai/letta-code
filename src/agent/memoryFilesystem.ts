@@ -2,13 +2,16 @@ import { createHash } from "node:crypto";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
-export const MEMORY_FS_ROOT = ".letta/memory";
+export const MEMORY_FS_ROOT = ".letta";
+export const MEMORY_FS_AGENTS_DIR = "agents";
+export const MEMORY_FS_MEMORY_DIR = "memory";
 export const MEMORY_SYSTEM_DIR = "system";
 export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
@@ -45,26 +48,50 @@ export type MemorySyncResolution = {
   resolution: "file" | "block";
 };
 
-export function getMemoryFilesystemRoot(cwd: string = process.cwd()): string {
-  return join(cwd, MEMORY_FS_ROOT);
+export function getMemoryFilesystemRoot(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(
+    homeDir,
+    MEMORY_FS_ROOT,
+    MEMORY_FS_AGENTS_DIR,
+    agentId,
+    MEMORY_FS_MEMORY_DIR,
+  );
 }
 
-export function getMemorySystemDir(cwd: string = process.cwd()): string {
-  return join(getMemoryFilesystemRoot(cwd), MEMORY_SYSTEM_DIR);
+export function getMemorySystemDir(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
 }
 
-export function getMemoryUserDir(cwd: string = process.cwd()): string {
-  return join(getMemoryFilesystemRoot(cwd), MEMORY_USER_DIR);
+export function getMemoryUserDir(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_USER_DIR);
 }
 
-function getMemoryStatePath(cwd: string = process.cwd()): string {
-  return join(getMemoryFilesystemRoot(cwd), MEMORY_FS_STATE_FILE);
+function getMemoryStatePath(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(
+    getMemoryFilesystemRoot(agentId, homeDir),
+    MEMORY_FS_STATE_FILE,
+  );
 }
 
-export function ensureMemoryFilesystemDirs(cwd: string = process.cwd()): void {
-  const root = getMemoryFilesystemRoot(cwd);
-  const systemDir = getMemorySystemDir(cwd);
-  const userDir = getMemoryUserDir(cwd);
+export function ensureMemoryFilesystemDirs(
+  agentId: string,
+  homeDir: string = homedir(),
+): void {
+  const root = getMemoryFilesystemRoot(agentId, homeDir);
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
 
   if (!existsSync(root)) {
     mkdirSync(root, { recursive: true });
@@ -81,8 +108,8 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function loadSyncState(cwd: string = process.cwd()): SyncState {
-  const statePath = getMemoryStatePath(cwd);
+function loadSyncState(agentId: string, homeDir: string = homedir()): SyncState {
+  const statePath = getMemoryStatePath(agentId, homeDir);
   if (!existsSync(statePath)) {
     return {
       systemBlocks: {},
@@ -120,8 +147,12 @@ function loadSyncState(cwd: string = process.cwd()): SyncState {
   }
 }
 
-async function saveSyncState(state: SyncState, cwd: string = process.cwd()) {
-  const statePath = getMemoryStatePath(cwd);
+async function saveSyncState(
+  state: SyncState,
+  agentId: string,
+  homeDir: string = homedir(),
+) {
+  const statePath = getMemoryStatePath(agentId, homeDir);
   await writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
@@ -298,13 +329,13 @@ function buildStateHashes(
 
 export async function syncMemoryFilesystem(
   agentId: string,
-  options: { cwd?: string; resolutions?: MemorySyncResolution[] } = {},
+  options: { homeDir?: string; resolutions?: MemorySyncResolution[] } = {},
 ): Promise<MemorySyncResult> {
-  const cwd = options.cwd ?? process.cwd();
-  ensureMemoryFilesystemDirs(cwd);
+  const homeDir = options.homeDir ?? homedir();
+  ensureMemoryFilesystemDirs(agentId, homeDir);
 
-  const systemDir = getMemorySystemDir(cwd);
-  const userDir = getMemoryUserDir(cwd);
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
   const systemFiles = await readMemoryFiles(systemDir);
   const userFiles = await readMemoryFiles(userDir);
   systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
@@ -317,7 +348,7 @@ export async function syncMemoryFilesystem(
   );
   systemBlockMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
 
-  const lastState = loadSyncState(cwd);
+  const lastState = loadSyncState(agentId, homeDir);
   const conflicts: MemorySyncConflict[] = [];
 
   const updatedBlocks: string[] = [];
@@ -591,7 +622,7 @@ export async function syncMemoryFilesystem(
       updatedUserFilesMap,
       userBlockIds,
     );
-    await saveSyncState(nextState, cwd);
+    await saveSyncState(nextState, agentId, homeDir);
   }
 
   return {
@@ -607,10 +638,10 @@ export async function syncMemoryFilesystem(
 
 export async function updateMemoryFilesystemBlock(
   agentId: string,
-  cwd: string = process.cwd(),
+  homeDir: string = homedir(),
 ) {
-  const systemDir = getMemorySystemDir(cwd);
-  const userDir = getMemoryUserDir(cwd);
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
 
   const systemFiles = await readMemoryFiles(systemDir);
   const userFiles = await readMemoryFiles(userDir);
@@ -657,17 +688,17 @@ export async function ensureMemoryFilesystemBlock(agentId: string) {
 
 export async function refreshMemoryFilesystemTree(
   agentId: string,
-  cwd: string = process.cwd(),
+  homeDir: string = homedir(),
 ) {
-  ensureMemoryFilesystemDirs(cwd);
-  await updateMemoryFilesystemBlock(agentId, cwd);
+  ensureMemoryFilesystemDirs(agentId, homeDir);
+  await updateMemoryFilesystemBlock(agentId, homeDir);
 }
 
 export async function collectMemorySyncConflicts(
   agentId: string,
-  cwd: string = process.cwd(),
+  homeDir: string = homedir(),
 ): Promise<MemorySyncConflict[]> {
-  const result = await syncMemoryFilesystem(agentId, { cwd });
+  const result = await syncMemoryFilesystem(agentId, { homeDir });
   return result.conflicts;
 }
 

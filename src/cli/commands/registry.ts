@@ -61,7 +61,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memory-sync": {
-    desc: "Sync memory blocks with .letta/memory",
+    desc: "Sync memory blocks with ~/.letta/agents/<agent-id>/memory",
     order: 15.5,
     handler: () => {
       // Handled specially in App.tsx to run filesystem sync
