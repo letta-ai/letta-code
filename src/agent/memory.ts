@@ -18,6 +18,7 @@ export const PROJECT_BLOCK_LABELS = [
   "project",
   "skills",
   "loaded_skills",
+  "memory_filesystem",
 ] as const;
 
 /**
@@ -37,7 +38,11 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
  * Block labels that should be read-only (agent cannot modify via memory tools).
  * These blocks are managed by specific tools (e.g., Skill tool for skills/loaded_skills).
  */
-export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+export const READ_ONLY_BLOCK_LABELS = [
+  "skills",
+  "loaded_skills",
+  "memory_filesystem",
+] as const;
 
 /**
  * Block labels that should be isolated per-conversation.

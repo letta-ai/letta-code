@@ -60,6 +60,14 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
+  "/memory-sync": {
+    desc: "Sync memory blocks with .letta/memory",
+    order: 15.5,
+    handler: () => {
+      // Handled specially in App.tsx to run filesystem sync
+      return "Syncing memory filesystem...";
+    },
+  },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
     order: 16,

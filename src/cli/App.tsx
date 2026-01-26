@@ -41,6 +41,14 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import {
+  ensureMemoryFilesystemBlock,
+  formatMemorySyncSummary,
+  type MemorySyncConflict,
+  type MemorySyncResolution,
+  syncMemoryFilesystem,
+  updateMemoryFilesystemBlock,
+} from "../agent/memoryFilesystem";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
 import { getModelInfo, getModelShortName } from "../agent/model";
@@ -118,7 +126,7 @@ import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
-// QuestionDialog removed - now using InlineQuestionApproval
+import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 
 import { formatUsageStats } from "./components/SessionStats";
@@ -975,6 +983,7 @@ export default function App({
     | "subagent"
     | "feedback"
     | "memory"
+    | "memory-sync"
     | "pin"
     | "new"
     | "mcp"
@@ -984,6 +993,13 @@ export default function App({
     | "connect"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  const [memorySyncConflicts, setMemorySyncConflicts] = useState<
+    MemorySyncConflict[] | null
+  >(null);
+  const memorySyncProcessedToolCallsRef = useRef<Set<string>>(new Set());
+  const memorySyncCommandIdRef = useRef<string | null>(null);
+  const memorySyncInFlightRef = useRef(false);
+  const memoryFilesystemInitializedRef = useRef(false);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
@@ -1864,6 +1880,202 @@ export default function App({
     [refreshDerived, currentModelId],
   );
 
+  const updateMemorySyncCommand = useCallback(
+    (commandId: string, output: string, success: boolean) => {
+      buffersRef.current.byId.set(commandId, {
+        kind: "command",
+        id: commandId,
+        input: "/memory-sync",
+        output,
+        phase: "finished",
+        success,
+      });
+      refreshDerived();
+    },
+    [refreshDerived],
+  );
+
+  const runMemoryFilesystemSync = useCallback(
+    async (
+      source: "startup" | "auto" | "command",
+      commandId?: string,
+    ) => {
+      if (!agentId || agentId === "loading") {
+        return;
+      }
+      if (memorySyncInFlightRef.current) {
+        return;
+      }
+
+      memorySyncInFlightRef.current = true;
+
+      try {
+        await ensureMemoryFilesystemBlock(agentId);
+        const result = await syncMemoryFilesystem(agentId, {
+          cwd: process.cwd(),
+        });
+
+        if (result.conflicts.length > 0) {
+          memorySyncCommandIdRef.current = commandId ?? null;
+          setMemorySyncConflicts(result.conflicts);
+          setActiveOverlay("memory-sync");
+
+          if (commandId) {
+            updateMemorySyncCommand(
+              commandId,
+              `Memory sync paused — resolve ${result.conflicts.length} conflict${
+                result.conflicts.length === 1 ? "" : "s"
+              } to continue.`,
+              false,
+            );
+          }
+          return;
+        }
+
+        await updateMemoryFilesystemBlock(agentId, process.cwd());
+
+        if (commandId) {
+          updateMemorySyncCommand(commandId, formatMemorySyncSummary(result), true);
+        }
+      } catch (error) {
+        const errorText = formatErrorDetails(error, agentId);
+        if (commandId) {
+          updateMemorySyncCommand(commandId, `Failed: ${errorText}`, false);
+        } else if (source !== "startup") {
+          appendError(`Memory sync failed: ${errorText}`);
+        } else {
+          console.error(`Memory sync failed: ${errorText}`);
+        }
+      } finally {
+        memorySyncInFlightRef.current = false;
+      }
+    },
+    [agentId, appendError, updateMemorySyncCommand],
+  );
+
+  const maybeSyncMemoryFilesystemAfterTurn = useCallback(async () => {
+    const newToolCallIds: string[] = [];
+    for (const line of buffersRef.current.byId.values()) {
+      if (line.kind !== "tool_call") continue;
+      if (!line.toolCallId || !line.name) continue;
+      if (line.name !== "memory" && line.name !== "memory_apply_patch") continue;
+      if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId)) continue;
+      newToolCallIds.push(line.toolCallId);
+    }
+
+    if (newToolCallIds.length === 0) {
+      return;
+    }
+
+    newToolCallIds.forEach((id) =>
+      memorySyncProcessedToolCallsRef.current.add(id),
+    );
+    await runMemoryFilesystemSync("auto");
+  }, [runMemoryFilesystemSync]);
+
+  useEffect(() => {
+    if (loadingState !== "ready") {
+      return;
+    }
+    if (!agentId || agentId === "loading") {
+      return;
+    }
+    if (memoryFilesystemInitializedRef.current) {
+      return;
+    }
+
+    memoryFilesystemInitializedRef.current = true;
+    runMemoryFilesystemSync("startup");
+  }, [agentId, loadingState, runMemoryFilesystemSync]);
+
+  const handleMemorySyncConflictSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      if (!agentId || agentId === "loading" || !memorySyncConflicts) {
+        return;
+      }
+
+      const commandId = memorySyncCommandIdRef.current;
+      memorySyncCommandIdRef.current = null;
+
+      const resolutions: MemorySyncResolution[] = memorySyncConflicts.map(
+        (conflict) => {
+          const answer = answers[`Conflict for ${conflict.label}`];
+          return {
+            label: conflict.label,
+            resolution: answer === "Use file version" ? "file" : "block",
+          };
+        },
+      );
+
+      setMemorySyncConflicts(null);
+      setActiveOverlay(null);
+
+      if (memorySyncInFlightRef.current) {
+        return;
+      }
+
+      memorySyncInFlightRef.current = true;
+
+      try {
+        const result = await syncMemoryFilesystem(agentId, {
+          cwd: process.cwd(),
+          resolutions,
+        });
+
+        if (result.conflicts.length > 0) {
+          setMemorySyncConflicts(result.conflicts);
+          setActiveOverlay("memory-sync");
+          if (commandId) {
+            updateMemorySyncCommand(
+              commandId,
+              `Memory sync paused — resolve ${result.conflicts.length} conflict${
+                result.conflicts.length === 1 ? "" : "s"
+              } to continue.`,
+              false,
+            );
+          }
+          return;
+        }
+
+        await updateMemoryFilesystemBlock(agentId, process.cwd());
+
+        if (commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            formatMemorySyncSummary(result),
+            true,
+          );
+        }
+      } catch (error) {
+        const errorText = formatErrorDetails(error, agentId);
+        if (commandId) {
+          updateMemorySyncCommand(commandId, `Failed: ${errorText}`, false);
+        } else {
+          appendError(`Memory sync failed: ${errorText}`);
+        }
+      } finally {
+        memorySyncInFlightRef.current = false;
+      }
+    },
+    [
+      agentId,
+      appendError,
+      memorySyncConflicts,
+      updateMemorySyncCommand,
+    ],
+  );
+
+  const handleMemorySyncConflictCancel = useCallback(() => {
+    const commandId = memorySyncCommandIdRef.current;
+    memorySyncCommandIdRef.current = null;
+    setMemorySyncConflicts(null);
+    setActiveOverlay(null);
+
+    if (commandId) {
+      updateMemorySyncCommand(commandId, "Memory sync cancelled.", false);
+    }
+  }, [updateMemorySyncCommand]);
+
   // Core streaming function - iterative loop that processes conversation turns
   const processConversation = useCallback(
     async (
@@ -2519,6 +2731,8 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
+
+            await maybeSyncMemoryFilesystemAfterTurn();
 
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
@@ -5913,6 +6127,30 @@ export default function App({
           } finally {
             setCommandRunning(false);
           }
+          return { submitted: true };
+        }
+
+        // Special handling for /memory-sync command - sync filesystem memory
+        if (trimmed === "/memory-sync") {
+          const cmdId = uid("cmd");
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: "Syncing memory filesystem...",
+            phase: "running",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+
+          setCommandRunning(true);
+
+          try {
+            await runMemoryFilesystemSync("command", cmdId);
+          } finally {
+            setCommandRunning(false);
+          }
+
           return { submitted: true };
         }
 
@@ -9753,6 +9991,29 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 onClose={closeOverlay}
                 conversationId={conversationId}
+              />
+            )}
+
+            {/* Memory Sync Conflict Resolver */}
+            {activeOverlay === "memory-sync" && memorySyncConflicts && (
+              <QuestionDialog
+                questions={memorySyncConflicts.map((conflict) => ({
+                  header: "Memory sync",
+                  question: `Conflict for ${conflict.label}`,
+                  options: [
+                    {
+                      label: "Use file version",
+                      description: "Overwrite memory block with file contents",
+                    },
+                    {
+                      label: "Use block version",
+                      description: "Overwrite file with memory block contents",
+                    },
+                  ],
+                  multiSelect: false,
+                }))}
+                onSubmit={handleMemorySyncConflictSubmit}
+                onCancel={handleMemorySyncConflictCancel}
               />
             )}
 

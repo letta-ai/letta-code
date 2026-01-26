@@ -1,0 +1,694 @@
+import { createHash } from "node:crypto";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
+
+import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
+import { getClient } from "./client";
+
+export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
+export const MEMORY_FS_ROOT = ".letta/memory";
+export const MEMORY_SYSTEM_DIR = "system";
+export const MEMORY_USER_DIR = "user";
+export const MEMORY_FS_STATE_FILE = ".sync-state.json";
+
+const MANAGED_BLOCK_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
+
+type SyncState = {
+  systemBlocks: Record<string, string>;
+  systemFiles: Record<string, string>;
+  userBlocks: Record<string, string>;
+  userFiles: Record<string, string>;
+  userBlockIds: Record<string, string>;
+  lastSync: string | null;
+};
+
+export type MemorySyncConflict = {
+  label: string;
+  blockValue: string | null;
+  fileValue: string | null;
+};
+
+export type MemorySyncResult = {
+  updatedBlocks: string[];
+  createdBlocks: string[];
+  deletedBlocks: string[];
+  updatedFiles: string[];
+  createdFiles: string[];
+  deletedFiles: string[];
+  conflicts: MemorySyncConflict[];
+};
+
+export type MemorySyncResolution = {
+  label: string;
+  resolution: "file" | "block";
+};
+
+export function getMemoryFilesystemRoot(cwd: string = process.cwd()): string {
+  return join(cwd, MEMORY_FS_ROOT);
+}
+
+export function getMemorySystemDir(cwd: string = process.cwd()): string {
+  return join(getMemoryFilesystemRoot(cwd), MEMORY_SYSTEM_DIR);
+}
+
+export function getMemoryUserDir(cwd: string = process.cwd()): string {
+  return join(getMemoryFilesystemRoot(cwd), MEMORY_USER_DIR);
+}
+
+function getMemoryStatePath(cwd: string = process.cwd()): string {
+  return join(getMemoryFilesystemRoot(cwd), MEMORY_FS_STATE_FILE);
+}
+
+export function ensureMemoryFilesystemDirs(cwd: string = process.cwd()): void {
+  const root = getMemoryFilesystemRoot(cwd);
+  const systemDir = getMemorySystemDir(cwd);
+  const userDir = getMemoryUserDir(cwd);
+
+  if (!existsSync(root)) {
+    mkdirSync(root, { recursive: true });
+  }
+  if (!existsSync(systemDir)) {
+    mkdirSync(systemDir, { recursive: true });
+  }
+  if (!existsSync(userDir)) {
+    mkdirSync(userDir, { recursive: true });
+  }
+}
+
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function loadSyncState(cwd: string = process.cwd()): SyncState {
+  const statePath = getMemoryStatePath(cwd);
+  if (!existsSync(statePath)) {
+    return {
+      systemBlocks: {},
+      systemFiles: {},
+      userBlocks: {},
+      userFiles: {},
+      userBlockIds: {},
+      lastSync: null,
+    };
+  }
+
+  try {
+    const raw = readFileSync(statePath, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<SyncState> & {
+      blocks?: Record<string, string>;
+      files?: Record<string, string>;
+    };
+    return {
+      systemBlocks: parsed.systemBlocks || parsed.blocks || {},
+      systemFiles: parsed.systemFiles || parsed.files || {},
+      userBlocks: parsed.userBlocks || {},
+      userFiles: parsed.userFiles || {},
+      userBlockIds: parsed.userBlockIds || {},
+      lastSync: parsed.lastSync || null,
+    };
+  } catch {
+    return {
+      systemBlocks: {},
+      systemFiles: {},
+      userBlocks: {},
+      userFiles: {},
+      userBlockIds: {},
+      lastSync: null,
+    };
+  }
+}
+
+async function saveSyncState(state: SyncState, cwd: string = process.cwd()) {
+  const statePath = getMemoryStatePath(cwd);
+  await writeFile(statePath, JSON.stringify(state, null, 2));
+}
+
+async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...(await scanMdFiles(fullPath, baseDir)));
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      results.push(relative(baseDir, fullPath));
+    }
+  }
+
+  return results;
+}
+
+function labelFromRelativePath(relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/");
+  return normalized.replace(/\.md$/, "");
+}
+
+async function readMemoryFiles(
+  dir: string,
+): Promise<Map<string, { content: string; path: string }>> {
+  const files = await scanMdFiles(dir);
+  const entries = new Map<string, { content: string; path: string }>();
+
+  for (const relativePath of files) {
+    const label = labelFromRelativePath(relativePath);
+    const fullPath = join(dir, relativePath);
+    const content = await readFile(fullPath, "utf-8");
+    entries.set(label, { content, path: fullPath });
+  }
+
+  return entries;
+}
+
+async function ensureFilePath(filePath: string) {
+  const parent = dirname(filePath);
+  if (!existsSync(parent)) {
+    mkdirSync(parent, { recursive: true });
+  }
+}
+
+async function writeMemoryFile(dir: string, label: string, content: string) {
+  const filePath = join(dir, `${label}.md`);
+  await ensureFilePath(filePath);
+  await writeFile(filePath, content, "utf-8");
+}
+
+async function deleteMemoryFile(dir: string, label: string) {
+  const filePath = join(dir, `${label}.md`);
+  if (existsSync(filePath)) {
+    await unlink(filePath);
+  }
+}
+
+async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
+  const client = await getClient();
+  const blocksResponse = await client.agents.blocks.list(agentId);
+  const blocks = Array.isArray(blocksResponse)
+    ? blocksResponse
+    : (blocksResponse as { items?: Block[] }).items ||
+      (blocksResponse as { blocks?: Block[] }).blocks ||
+      [];
+
+  return blocks;
+}
+
+export function renderMemoryFilesystemTree(
+  systemLabels: string[],
+  userLabels: string[],
+): string {
+  type TreeNode = { children: Map<string, TreeNode>; isFile: boolean };
+
+  const makeNode = (): TreeNode => ({ children: new Map(), isFile: false });
+  const root = makeNode();
+
+  const insertPath = (base: string, label: string) => {
+    const parts = [base, ...label.split("/")];
+    let current = root;
+    for (let i = 0; i < parts.length; i += 1) {
+      const part = i === parts.length - 1 ? `${parts[i]}.md` : parts[i];
+      if (!current.children.has(part)) {
+        current.children.set(part, makeNode());
+      }
+      current = current.children.get(part) as TreeNode;
+      if (i === parts.length - 1) {
+        current.isFile = true;
+      }
+    }
+  };
+
+  systemLabels.forEach((label) => insertPath(MEMORY_SYSTEM_DIR, label));
+  userLabels.forEach((label) => insertPath(MEMORY_USER_DIR, label));
+
+  if (!root.children.has(MEMORY_SYSTEM_DIR)) {
+    root.children.set(MEMORY_SYSTEM_DIR, makeNode());
+  }
+  if (!root.children.has(MEMORY_USER_DIR)) {
+    root.children.set(MEMORY_USER_DIR, makeNode());
+  }
+
+  const sortedEntries = (node: TreeNode) => {
+    const entries = Array.from(node.children.entries());
+    return entries.sort(([nameA, nodeA], [nameB, nodeB]) => {
+      if (nodeA.isFile !== nodeB.isFile) {
+        return nodeA.isFile ? 1 : -1;
+      }
+      return nameA.localeCompare(nameB);
+    });
+  };
+
+  const lines: string[] = ["/memory/"];
+
+  const render = (node: TreeNode, prefix: string) => {
+    const entries = sortedEntries(node);
+    entries.forEach(([name, child], index) => {
+      const isLast = index === entries.length - 1;
+      const branch = isLast ? "└──" : "├──";
+      lines.push(`${prefix}${branch} ${name}${child.isFile ? "" : "/"}`);
+      if (child.children.size > 0) {
+        const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
+        render(child, nextPrefix);
+      }
+    });
+  };
+
+  render(root, "");
+
+  return lines.join("\n");
+}
+
+function buildStateHashes(
+  systemBlocks: Map<string, { value: string }>,
+  systemFiles: Map<string, { content: string }>,
+  userBlocks: Map<string, { value: string }>,
+  userFiles: Map<string, { content: string }>,
+  userBlockIds: Record<string, string>,
+): SyncState {
+  const systemBlockHashes: Record<string, string> = {};
+  const systemFileHashes: Record<string, string> = {};
+  const userBlockHashes: Record<string, string> = {};
+  const userFileHashes: Record<string, string> = {};
+
+  systemBlocks.forEach((block, label) => {
+    systemBlockHashes[label] = hashContent(block.value || "");
+  });
+
+  systemFiles.forEach((file, label) => {
+    systemFileHashes[label] = hashContent(file.content || "");
+  });
+
+  userBlocks.forEach((block, label) => {
+    userBlockHashes[label] = hashContent(block.value || "");
+  });
+
+  userFiles.forEach((file, label) => {
+    userFileHashes[label] = hashContent(file.content || "");
+  });
+
+  return {
+    systemBlocks: systemBlockHashes,
+    systemFiles: systemFileHashes,
+    userBlocks: userBlockHashes,
+    userFiles: userFileHashes,
+    userBlockIds,
+    lastSync: new Date().toISOString(),
+  };
+}
+
+export async function syncMemoryFilesystem(
+  agentId: string,
+  options: { cwd?: string; resolutions?: MemorySyncResolution[] } = {},
+): Promise<MemorySyncResult> {
+  const cwd = options.cwd ?? process.cwd();
+  ensureMemoryFilesystemDirs(cwd);
+
+  const systemDir = getMemorySystemDir(cwd);
+  const userDir = getMemoryUserDir(cwd);
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+  systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const attachedBlocks = await fetchAgentBlocks(agentId);
+  const systemBlockMap = new Map(
+    attachedBlocks
+      .filter((block) => block.label)
+      .map((block) => [block.label as string, block]),
+  );
+  systemBlockMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const lastState = loadSyncState(cwd);
+  const conflicts: MemorySyncConflict[] = [];
+
+  const updatedBlocks: string[] = [];
+  const createdBlocks: string[] = [];
+  const deletedBlocks: string[] = [];
+  const updatedFiles: string[] = [];
+  const createdFiles: string[] = [];
+  const deletedFiles: string[] = [];
+
+  const resolutions = new Map(
+    (options.resolutions ?? []).map((resolution) => [resolution.label, resolution]),
+  );
+
+  const client = await getClient();
+
+  const userBlockIds = { ...lastState.userBlockIds };
+  const userBlockMap = new Map<string, Block>();
+  for (const [label, blockId] of Object.entries(userBlockIds)) {
+    try {
+      const block = await client.blocks.retrieve(blockId);
+      userBlockMap.set(label, block as Block);
+    } catch {
+      delete userBlockIds[label];
+    }
+  }
+
+  const systemLabels = new Set<string>([
+    ...Array.from(systemFiles.keys()),
+    ...Array.from(systemBlockMap.keys()),
+    ...Object.keys(lastState.systemBlocks),
+    ...Object.keys(lastState.systemFiles),
+  ]);
+
+  for (const label of Array.from(systemLabels).sort()) {
+    if (MANAGED_BLOCK_LABELS.has(label)) {
+      continue;
+    }
+
+    const fileEntry = systemFiles.get(label);
+    const blockEntry = systemBlockMap.get(label);
+
+    const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
+
+    const lastFileHash = lastState.systemFiles[label] || null;
+    const lastBlockHash = lastState.systemBlocks[label] || null;
+
+    const fileChanged = fileHash !== lastFileHash;
+    const blockChanged = blockHash !== lastBlockHash;
+
+    const resolution = resolutions.get(label);
+
+    if (fileEntry && !blockEntry) {
+      if (lastBlockHash && !fileChanged) {
+        // Block was deleted elsewhere; delete file.
+        await deleteMemoryFile(systemDir, label);
+        deletedFiles.push(label);
+        continue;
+      }
+
+      // Create block from file
+      const createdBlock = await client.blocks.create({
+        label,
+        value: fileEntry.content,
+        description: `Memory block: ${label}`,
+        limit: 20000,
+      });
+      if (createdBlock.id) {
+        await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
+      }
+      createdBlocks.push(label);
+      continue;
+    }
+
+    if (!fileEntry && blockEntry) {
+      if (lastFileHash && !blockChanged) {
+        // File deleted, block unchanged -> delete block
+        if (blockEntry.id) {
+          await client.agents.blocks.detach(blockEntry.id, { agent_id: agentId });
+        }
+        deletedBlocks.push(label);
+        continue;
+      }
+
+      // Create file from block
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      createdFiles.push(label);
+      continue;
+    }
+
+    if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    if (fileChanged && blockChanged && !resolution) {
+      conflicts.push({
+        label,
+        blockValue: blockEntry.value || "",
+        fileValue: fileEntry.content,
+      });
+      continue;
+    }
+
+    if (resolution?.resolution === "file") {
+      await client.agents.blocks.update(label, {
+        agent_id: agentId,
+        value: fileEntry.content,
+      });
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (resolution?.resolution === "block") {
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+      continue;
+    }
+
+    if (fileChanged && !blockChanged) {
+      await client.agents.blocks.update(label, {
+        agent_id: agentId,
+        value: fileEntry.content,
+      });
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (!fileChanged && blockChanged) {
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+    }
+  }
+
+  const userLabels = new Set<string>([
+    ...Array.from(userFiles.keys()),
+    ...Array.from(userBlockMap.keys()),
+    ...Object.keys(lastState.userBlocks),
+    ...Object.keys(lastState.userFiles),
+  ]);
+
+  for (const label of Array.from(userLabels).sort()) {
+    const fileEntry = userFiles.get(label);
+    const blockEntry = userBlockMap.get(label);
+
+    const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
+
+    const lastFileHash = lastState.userFiles[label] || null;
+    const lastBlockHash = lastState.userBlocks[label] || null;
+
+    const fileChanged = fileHash !== lastFileHash;
+    const blockChanged = blockHash !== lastBlockHash;
+
+    const resolution = resolutions.get(label);
+
+    if (fileEntry && !blockEntry) {
+      if (lastBlockHash && !fileChanged) {
+        // Block was deleted elsewhere; delete file.
+        await deleteMemoryFile(userDir, label);
+        deletedFiles.push(label);
+        delete userBlockIds[label];
+        continue;
+      }
+
+      const createdBlock = await client.blocks.create({
+        label,
+        value: fileEntry.content,
+        description: `Memory block: ${label}`,
+        limit: 20000,
+      });
+      if (createdBlock.id) {
+        userBlockIds[label] = createdBlock.id;
+        userBlockMap.set(label, createdBlock as Block);
+      }
+      createdBlocks.push(label);
+      continue;
+    }
+
+    if (!fileEntry && blockEntry) {
+      if (lastFileHash && !blockChanged) {
+        // File deleted, block unchanged -> delete block
+        if (blockEntry.id) {
+          await client.blocks.delete(blockEntry.id);
+        }
+        deletedBlocks.push(label);
+        delete userBlockIds[label];
+        continue;
+      }
+
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      createdFiles.push(label);
+      continue;
+    }
+
+    if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    if (fileChanged && blockChanged && !resolution) {
+      conflicts.push({
+        label,
+        blockValue: blockEntry.value || "",
+        fileValue: fileEntry.content,
+      });
+      continue;
+    }
+
+    if (resolution?.resolution === "file") {
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+          label,
+        });
+      }
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (resolution?.resolution === "block") {
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+      continue;
+    }
+
+    if (fileChanged && !blockChanged) {
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+          label,
+        });
+      }
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (!fileChanged && blockChanged) {
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+    }
+  }
+
+  if (conflicts.length === 0) {
+    const updatedBlocksList = await fetchAgentBlocks(agentId);
+    const updatedSystemBlockMap = new Map(
+      updatedBlocksList
+        .filter(
+          (block) =>
+            block.label && block.label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
+        )
+        .map((block) => [block.label as string, { value: block.value || "" }]),
+    );
+
+    const updatedSystemFilesMap = await readMemoryFiles(systemDir);
+    updatedSystemFilesMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+    const updatedUserFilesMap = await readMemoryFiles(userDir);
+    const refreshedUserBlocks = new Map<string, { value: string }>();
+
+    for (const [label, blockId] of Object.entries(userBlockIds)) {
+      try {
+        const block = await client.blocks.retrieve(blockId);
+        refreshedUserBlocks.set(label, { value: block.value || "" });
+      } catch {
+        delete userBlockIds[label];
+      }
+    }
+
+    const nextState = buildStateHashes(
+      updatedSystemBlockMap,
+      updatedSystemFilesMap,
+      refreshedUserBlocks,
+      updatedUserFilesMap,
+      userBlockIds,
+    );
+    await saveSyncState(nextState, cwd);
+  }
+
+  return {
+    updatedBlocks,
+    createdBlocks,
+    deletedBlocks,
+    updatedFiles,
+    createdFiles,
+    deletedFiles,
+    conflicts,
+  };
+}
+
+export async function updateMemoryFilesystemBlock(
+  agentId: string,
+  cwd: string = process.cwd(),
+) {
+  const systemDir = getMemorySystemDir(cwd);
+  const userDir = getMemoryUserDir(cwd);
+
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+
+  const tree = renderMemoryFilesystemTree(
+    Array.from(systemFiles.keys()).filter(
+      (label) => label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
+    ),
+    Array.from(userFiles.keys()),
+  );
+
+  const client = await getClient();
+  await client.agents.blocks.update(MEMORY_FILESYSTEM_BLOCK_LABEL, {
+    agent_id: agentId,
+    value: tree,
+  });
+
+  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, tree);
+}
+
+export async function ensureMemoryFilesystemBlock(agentId: string) {
+  const client = await getClient();
+  const blocks = await fetchAgentBlocks(agentId);
+  const exists = blocks.some(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (exists) {
+    return;
+  }
+
+  const createdBlock = await client.blocks.create({
+    label: MEMORY_FILESYSTEM_BLOCK_LABEL,
+    value: "/memory/",
+    description: "Filesystem view of memory blocks",
+    limit: 20000,
+    read_only: true,
+  });
+
+  if (createdBlock.id) {
+    await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
+  }
+}
+
+export async function refreshMemoryFilesystemTree(
+  agentId: string,
+  cwd: string = process.cwd(),
+) {
+  ensureMemoryFilesystemDirs(cwd);
+  await updateMemoryFilesystemBlock(agentId, cwd);
+}
+
+export async function collectMemorySyncConflicts(
+  agentId: string,
+  cwd: string = process.cwd(),
+): Promise<MemorySyncConflict[]> {
+  const result = await syncMemoryFilesystem(agentId, { cwd });
+  return result.conflicts;
+}
+
+export function formatMemorySyncSummary(result: MemorySyncResult): string {
+  const lines = ["Memory filesystem sync complete:"];
+  const pushCount = (label: string, count: number) => {
+    if (count > 0) {
+      lines.push(`⎿  ${label}: ${count}`);
+    }
+  };
+
+  pushCount("Blocks updated", result.updatedBlocks.length);
+  pushCount("Blocks created", result.createdBlocks.length);
+  pushCount("Blocks deleted", result.deletedBlocks.length);
+  pushCount("Files updated", result.updatedFiles.length);
+  pushCount("Files created", result.createdFiles.length);
+  pushCount("Files deleted", result.deletedFiles.length);
+
+  if (result.conflicts.length > 0) {
+    lines.push(`⎿  Conflicts: ${result.conflicts.length}`);
+  }
+
+  return lines.join("\n");
+}
