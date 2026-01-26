@@ -15,8 +15,10 @@ npm install -g @letta-ai/letta-code
 ```
 Navigate to your project directory and run `letta` (see various command-line options [on the docs](https://docs.letta.com/letta-code/commands)). 
 
+Run `/connect` to configure your own LLM API keys (OpenAI, Anthropic, etc.), and use `/model` to swap models.
+
 > [!NOTE]
->  By default, Letta Code will to connect to the [Letta API](https://app.letta.com/). Use `/connect` to use your own LLM API keys and coding plans (Codex, Z.ai) for free. You can also connect to a [Docker server](https://docs.letta.com/letta-code/configuration#docker) by setting `LETTA_BASE_URL`.
+>  By default, Letta Code will to connect to the [Letta API](https://app.letta.com/). Use `/connect` to use your own LLM API keys and coding plans (Codex, zAI, Minimax) for free. Set `LETTA_BASE_URL` to connect to an external [Docker server](https://docs.letta.com/letta-code/docker).
 
 ## Philosophy 
 Letta Code is built around long-lived agents that persist across sessions and improve with use. Rather than working in independent sessions, each session is tied to a persisted agent that learns.
