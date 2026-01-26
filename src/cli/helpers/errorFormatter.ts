@@ -174,7 +174,7 @@ export function formatErrorDetails(
       const { billingTier } = getErrorContext();
 
       if (billingTier?.toLowerCase() === "free") {
-        return `You've reached the agent limit for the Free plan. Delete agents at: ${LETTA_AGENTS_URL}\nOr upgrade to Pro for unlimited agents at: ${LETTA_USAGE_URL}`;
+        return `You've reached the agent limit (3) for the Free Plan. Delete agents at: ${LETTA_AGENTS_URL}\nOr upgrade to Pro for unlimited agents at: ${LETTA_USAGE_URL}`;
       }
 
       // Fallback for paid tiers (shouldn't normally hit this, but just in case)
