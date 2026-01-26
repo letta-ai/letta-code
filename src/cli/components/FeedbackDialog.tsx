@@ -1,7 +1,10 @@
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
+import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+
+const SOLID_LINE = "─";
 
 interface FeedbackDialogProps {
   onSubmit: (message: string) => void;
@@ -14,6 +17,9 @@ export function FeedbackDialog({
   onCancel,
   initialValue = "",
 }: FeedbackDialogProps) {
+  const terminalWidth = useTerminalWidth();
+  const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
+
   const [feedbackText, setFeedbackText] = useState(initialValue);
   const [error, setError] = useState("");
 
@@ -43,42 +49,38 @@ export function FeedbackDialog({
   };
 
   return (
-    <Box flexDirection="column" paddingY={1}>
-      <Box marginBottom={1}>
-        <Text color={colors.approval.header} bold>
-          Send Feedback to the Letta Team
-        </Text>
-      </Box>
+    <Box flexDirection="column">
+      {/* Command header */}
+      <Text dimColor>{"> /feedback"}</Text>
+      <Text dimColor>{solidLine}</Text>
 
-      <Box marginBottom={1}>
-        <Text dimColor>
-          Share your thoughts, report issues, or suggest improvements.
-        </Text>
-      </Box>
+      <Box height={1} />
 
       <Box flexDirection="column" marginBottom={1}>
-        <Box marginBottom={1}>
-          <Text>Enter your feedback:</Text>
-        </Box>
-        <Box>
-          <Text color={colors.approval.header}>&gt; </Text>
-          <PasteAwareTextInput
-            value={feedbackText}
-            onChange={setFeedbackText}
-            onSubmit={handleSubmit}
-            placeholder="Type your feedback here..."
-          />
-        </Box>
+        <Text>{"  "}Enter your feedback:</Text>
+      </Box>
+
+      <Box flexDirection="row">
+        <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
+        <PasteAwareTextInput
+          value={feedbackText}
+          onChange={setFeedbackText}
+          onSubmit={handleSubmit}
+          placeholder="(type your feedback)"
+        />
       </Box>
 
       {error && (
-        <Box marginBottom={1}>
-          <Text color="red">{error}</Text>
+        <Box marginTop={1}>
+          <Text color="red">
+            {"  "}
+            {error}
+          </Text>
         </Box>
       )}
 
-      <Box>
-        <Text dimColor>Press Enter to submit • Esc to cancel</Text>
+      <Box marginTop={1}>
+        <Text dimColor>{"  "}Enter to submit · Esc cancel</Text>
       </Box>
     </Box>
   );

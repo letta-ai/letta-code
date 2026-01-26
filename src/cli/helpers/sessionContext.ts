@@ -23,7 +23,7 @@ interface SessionContextOptions {
 /**
  * Get the current local time in a human-readable format
  */
-function getLocalTime(): string {
+export function getLocalTime(): string {
   const now = new Date();
   return now.toLocaleString(undefined, {
     weekday: "long",
@@ -39,7 +39,7 @@ function getLocalTime(): string {
 /**
  * Get device type based on platform
  */
-function getDeviceType(): string {
+export function getDeviceType(): string {
   const p = platform();
   switch (p) {
     case "darwin":
