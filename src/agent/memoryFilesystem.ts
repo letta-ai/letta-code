@@ -272,14 +272,14 @@ async function deleteMemoryFile(dir: string, label: string) {
 
 async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
   const client = await getClient();
-  const blocksResponse = await client.agents.blocks.list(agentId);
-  const blocks = Array.isArray(blocksResponse)
-    ? blocksResponse
-    : (blocksResponse as { items?: Block[] }).items ||
-      (blocksResponse as { blocks?: Block[] }).blocks ||
-      [];
+  const allBlocks: Block[] = [];
 
-  return blocks;
+  // PagePromise implements AsyncIterable, so we can iterate through all pages
+  for await (const block of client.agents.blocks.list(agentId)) {
+    allBlocks.push(block as Block);
+  }
+
+  return allBlocks;
 }
 
 export function renderMemoryFilesystemTree(
