@@ -89,7 +89,7 @@ OPTIONS
   --new                 Create new conversation (for concurrent sessions)
   --new-agent           Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")
-  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,conversation_search")
+  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,fetch_webpage")
   -a, --agent <id>      Use a specific agent ID
   -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
