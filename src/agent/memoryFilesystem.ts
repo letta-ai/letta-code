@@ -516,6 +516,11 @@ export async function syncMemoryFilesystem(
       continue;
     }
 
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
+      continue;
+    }
+
     if (fileChanged && blockChanged && !resolution) {
       conflicts.push({
         label,
@@ -645,6 +650,11 @@ export async function syncMemoryFilesystem(
     }
 
     if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
       continue;
     }
 
