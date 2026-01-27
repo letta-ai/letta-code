@@ -11,12 +11,7 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-<<<<<<< Updated upstream
-
-=======
-import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
 import { getLettaCodeHeaders } from "./agent/http-headers";
->>>>>>> Stashed changes
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
