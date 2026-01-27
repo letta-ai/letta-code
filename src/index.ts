@@ -122,7 +122,7 @@ BEHAVIOR
 EXAMPLES
   # when installed as an executable
   letta                    # Show profile selector or create new
-  letta --new              # Create new agent directly
+  letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
 
   # inside the interactive session
