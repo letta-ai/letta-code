@@ -73,7 +73,7 @@ async function addTagToAgent(
 /**
  * Create a fresh default Memo agent and pin it globally.
  * Always creates a new agent — does NOT search by tag to avoid picking up
- * agents created by CI or other users on shared Letta Cloud orgs.
+ * agents created by other users on shared Letta Cloud orgs.
  *
  * Respects `createDefaultAgents` setting (defaults to true).
  *

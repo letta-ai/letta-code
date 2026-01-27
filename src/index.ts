@@ -1267,7 +1267,7 @@ async function main(): Promise<void> {
         if (wouldShowSelector && globalPinned.length === 0) {
           // New user with no pinned agents - create a fresh Memo agent
           // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
-          // picking up agents created by CI or other users on shared orgs.
+          // picking up agents created by other users on shared orgs.
           const { ensureDefaultAgents } = await import("./agent/defaults");
           try {
             const memoAgent = await ensureDefaultAgents(client);
