@@ -4522,6 +4522,12 @@ export default function App({
         return { submitted: false };
       }
 
+      // Capture successful hook feedback to inject into agent context
+      const userPromptSubmitHookFeedback =
+        hookResult.feedback.length > 0
+          ? `${SYSTEM_REMINDER_OPEN}\n${hookResult.feedback.join("\n")}\n${SYSTEM_REMINDER_CLOSE}`
+          : "";
+
       // Capture the generation at submission time, BEFORE any async work.
       // This allows detecting if ESC was pressed during async operations.
       const submissionGeneration = conversationGenerationRef.current;
@@ -6433,7 +6439,7 @@ ${SYSTEM_REMINDER_CLOSE}
         lastNotifiedModeRef.current = currentMode;
       }
 
-      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then memory reminder)
+      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then hook feedback, then memory reminder)
       const allReminders =
         sessionContextReminder +
         permissionModeAlert +
@@ -6441,6 +6447,7 @@ ${SYSTEM_REMINDER_CLOSE}
         ralphModeReminder +
         skillUnloadReminder +
         bashCommandPrefix +
+        userPromptSubmitHookFeedback +
         memoryReminderContent;
       const messageContent =
         allReminders && typeof contentParts === "string"
