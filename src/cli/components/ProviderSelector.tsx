@@ -188,9 +188,10 @@ export function ProviderSelector({
   const handleSelectAwsProfile = useCallback(
     (provider: ByokProvider, profile: AwsProfile) => {
       // Find the IAM auth method to use its fields
-      const iamMethod = "authMethods" in provider
-        ? provider.authMethods?.find((m) => m.id === "iam")
-        : undefined;
+      const iamMethod =
+        "authMethods" in provider
+          ? provider.authMethods?.find((m) => m.id === "iam")
+          : undefined;
 
       if (!iamMethod) return;
 
@@ -268,7 +269,9 @@ export function ProviderSelector({
 
     const { provider, authMethod } = viewState;
     // Get fields from authMethod if present, otherwise from provider
-    const fields: ProviderField[] | undefined = authMethod?.fields || ("fields" in provider ? provider.fields as ProviderField[] : undefined);
+    const fields: ProviderField[] | undefined =
+      authMethod?.fields ||
+      ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return;
 
     // Check all required fields are filled
@@ -407,7 +410,10 @@ export function ProviderSelector({
       }
     } else if (viewState.type === "methodSelect") {
       // Handle auth method selection
-      if (!("authMethods" in viewState.provider) || !viewState.provider.authMethods)
+      if (
+        !("authMethods" in viewState.provider) ||
+        !viewState.provider.authMethods
+      )
         return;
       const authMethods = viewState.provider.authMethods;
 
@@ -447,14 +453,21 @@ export function ProviderSelector({
       }
     } else if (viewState.type === "multiInput") {
       // Get fields from authMethod if present, otherwise from provider
-      const fields: ProviderField[] | undefined = viewState.authMethod?.fields || ("fields" in viewState.provider ? viewState.provider.fields as ProviderField[] : undefined);
+      const fields: ProviderField[] | undefined =
+        viewState.authMethod?.fields ||
+        ("fields" in viewState.provider
+          ? (viewState.provider.fields as ProviderField[])
+          : undefined);
       if (!fields) return;
       const currentField = fields[focusedFieldIndex];
       if (!currentField) return;
 
       if (key.escape) {
         // Back to method select if provider has authMethods, otherwise back to list
-        if ("authMethods" in viewState.provider && viewState.provider.authMethods) {
+        if (
+          "authMethods" in viewState.provider &&
+          viewState.provider.authMethods
+        ) {
           setViewState({ type: "methodSelect", provider: viewState.provider });
           setMethodIndex(0);
         } else {
@@ -640,7 +653,10 @@ export function ProviderSelector({
   // Render method select view (for providers with multiple auth options)
   const renderMethodSelectView = () => {
     if (viewState.type !== "methodSelect") return null;
-    if (!("authMethods" in viewState.provider) || !viewState.provider.authMethods)
+    if (
+      !("authMethods" in viewState.provider) ||
+      !viewState.provider.authMethods
+    )
       return null;
 
     const { provider } = viewState;
@@ -696,14 +712,12 @@ export function ProviderSelector({
 
     if (isLoadingProfiles) {
       return (
-        <>
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold color={colors.selector.title}>
-              Connect {provider.displayName}
-            </Text>
-            <Text dimColor>Loading AWS profiles...</Text>
-          </Box>
-        </>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={colors.selector.title}>
+            Connect {provider.displayName}
+          </Text>
+          <Text dimColor>Loading AWS profiles...</Text>
+        </Box>
       );
     }
 
@@ -738,7 +752,8 @@ export function ProviderSelector({
         <Box flexDirection="column">
           {awsProfiles.map((profile, index) => {
             const isSelected = index === profileIndex;
-            const hasCredentials = profile.accessKeyId && profile.secretAccessKey;
+            const hasCredentials =
+              profile.accessKeyId && profile.secretAccessKey;
             return (
               <Box key={profile.name} flexDirection="row">
                 <Text
@@ -785,11 +800,15 @@ export function ProviderSelector({
 
     const { provider, authMethod } = viewState;
     // Get fields from authMethod if present, otherwise from provider
-    const fields: ProviderField[] | undefined = authMethod?.fields || ("fields" in provider ? provider.fields as ProviderField[] : undefined);
+    const fields: ProviderField[] | undefined =
+      authMethod?.fields ||
+      ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return null;
 
     // Check if all fields are filled
-    const allFilled = fields.every((field: ProviderField) => fieldValues[field.key]?.trim());
+    const allFilled = fields.every((field: ProviderField) =>
+      fieldValues[field.key]?.trim(),
+    );
 
     const statusText =
       validationState === "validating"

@@ -79,7 +79,11 @@ export const BYOK_PROVIDERS = [
         label: "AWS Access Keys",
         description: "Enter access key and secret key manually",
         fields: [
-          { key: "accessKey", label: "AWS Access Key ID", placeholder: "AKIA..." },
+          {
+            key: "accessKey",
+            label: "AWS Access Key ID",
+            placeholder: "AKIA...",
+          },
           { key: "apiKey", label: "AWS Secret Access Key", secret: true },
           { key: "region", label: "AWS Region", placeholder: "us-east-1" },
         ],
@@ -308,10 +312,25 @@ export async function createOrUpdateProvider(
   const existing = await getProviderByName(providerName);
 
   if (existing) {
-    return updateProvider(existing.id, apiKey, accessKey, region, profile, bedrockApiKey);
+    return updateProvider(
+      existing.id,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+      bedrockApiKey,
+    );
   }
 
-  return createProvider(providerType, providerName, apiKey, accessKey, region, profile, bedrockApiKey);
+  return createProvider(
+    providerType,
+    providerName,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+    bedrockApiKey,
+  );
 }
 
 /**

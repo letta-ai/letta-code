@@ -9,6 +9,10 @@ import {
   startOpenAIOAuth,
 } from "../../auth/openai-oauth";
 import {
+  getProviderByName,
+  removeProviderByName,
+} from "../../providers/byok-providers";
+import {
   createOrUpdateMinimaxProvider,
   getMinimaxProvider,
   MINIMAX_PROVIDER_NAME,
@@ -27,10 +31,6 @@ import {
   removeZaiProvider,
   ZAI_PROVIDER_NAME,
 } from "../../providers/zai-provider";
-import {
-  getProviderByName,
-  removeProviderByName,
-} from "../../providers/byok-providers";
 import { settingsManager } from "../../settings-manager";
 import { getErrorMessage } from "../../utils/error";
 import type { Buffers, Line } from "../helpers/accumulator";
@@ -126,7 +126,12 @@ export async function handleConnect(
     return;
   }
 
-  if (provider !== "codex" && provider !== "zai" && provider !== "minimax" && provider !== "bedrock") {
+  if (
+    provider !== "codex" &&
+    provider !== "zai" &&
+    provider !== "minimax" &&
+    provider !== "bedrock"
+  ) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -471,7 +476,7 @@ async function handleDisconnectBedrock(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Not currently connected to AWS Bedrock.\n\nUse /connect and select \"AWS Bedrock\" to connect.",
+      'Not currently connected to AWS Bedrock.\n\nUse /connect and select "AWS Bedrock" to connect.',
       false,
     );
     return;
@@ -600,7 +605,7 @@ export async function handleConnectBedrock(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "To connect AWS Bedrock, use /connect and select \"AWS Bedrock\" from the list.\n\n" +
+    'To connect AWS Bedrock, use /connect and select "AWS Bedrock" from the list.\n\n' +
       "The interactive UI will guide you through:\n" +
       "  • Choosing an authentication method (IAM, Profile, or Default)\n" +
       "  • Entering your credentials\n" +

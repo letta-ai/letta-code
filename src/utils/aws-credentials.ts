@@ -2,9 +2,9 @@
  * Utility to parse AWS credentials from ~/.aws/credentials
  */
 
-import { readFile } from "fs/promises";
-import { homedir } from "os";
-import { join } from "path";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface AwsProfile {
   name: string;
@@ -62,8 +62,8 @@ function parseIniFile(
 
     // Check for profile header
     const headerMatch = trimmed.match(/^\[(.+)\]$/);
-    if (headerMatch) {
-      let profileName = headerMatch[1];
+    if (headerMatch?.[1]) {
+      let profileName: string = headerMatch[1];
       // In config file, profiles are prefixed with "profile " (except default)
       if (isConfig && profileName.startsWith("profile ")) {
         profileName = profileName.slice(8);
@@ -79,10 +79,11 @@ function parseIniFile(
     // Parse key=value pairs
     if (currentProfile) {
       const kvMatch = trimmed.match(/^([^=]+)=(.*)$/);
-      if (kvMatch) {
+      if (kvMatch?.[1] && kvMatch[2] !== undefined) {
         const key = kvMatch[1].trim();
         const value = kvMatch[2].trim();
-        const profile = profiles.get(currentProfile)!;
+        const profile = profiles.get(currentProfile);
+        if (!profile) continue;
 
         switch (key) {
           case "aws_access_key_id":

@@ -319,9 +319,7 @@ export function ModelSelector({
     if (!isSelfHosted || availableHandles === undefined) return [];
     const available = typedModels.filter(
       (m) =>
-        availableHandles !== null &&
-        availableHandles.has(m.handle) &&
-        m.handle !== "letta/letta-free",
+        availableHandles?.has(m.handle) && m.handle !== "letta/letta-free",
     );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
