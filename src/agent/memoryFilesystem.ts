@@ -171,7 +171,7 @@ async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
   return results;
 }
 
-function labelFromRelativePath(relativePath: string): string {
+export function labelFromRelativePath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.replace(/\.md$/, "");
 }
@@ -435,11 +435,18 @@ export async function syncMemoryFilesystem(
       if (lastFileHash && !blockChanged) {
         // File deleted, block unchanged -> delete block
         if (blockEntry.id) {
-          await client.agents.blocks.detach(blockEntry.id, {
-            agent_id: agentId,
-          });
+          try {
+            await client.agents.blocks.detach(blockEntry.id, {
+              agent_id: agentId,
+            });
+            deletedBlocks.push(label);
+          } catch (err) {
+            // Block may have been manually deleted already - ignore
+            if (!(err instanceof Error && err.message.includes("Not Found"))) {
+              throw err;
+            }
+          }
         }
-        deletedBlocks.push(label);
         continue;
       }
 
@@ -463,11 +470,31 @@ export async function syncMemoryFilesystem(
     }
 
     if (resolution?.resolution === "file") {
-      await client.agents.blocks.update(label, {
-        agent_id: agentId,
-        value: fileEntry.content,
-      });
-      updatedBlocks.push(label);
+      try {
+        await client.agents.blocks.update(label, {
+          agent_id: agentId,
+          value: fileEntry.content,
+        });
+        updatedBlocks.push(label);
+      } catch (err) {
+        // Block may have been manually deleted - create it
+        if (err instanceof Error && err.message.includes("Not Found")) {
+          const createdBlock = await client.blocks.create({
+            label,
+            value: fileEntry.content,
+            description: `Memory block: ${label}`,
+            limit: 20000,
+          });
+          if (createdBlock.id) {
+            await client.agents.blocks.attach(createdBlock.id, {
+              agent_id: agentId,
+            });
+          }
+          createdBlocks.push(label);
+        } else {
+          throw err;
+        }
+      }
       continue;
     }
 
@@ -478,11 +505,31 @@ export async function syncMemoryFilesystem(
     }
 
     if (fileChanged && !blockChanged) {
-      await client.agents.blocks.update(label, {
-        agent_id: agentId,
-        value: fileEntry.content,
-      });
-      updatedBlocks.push(label);
+      try {
+        await client.agents.blocks.update(label, {
+          agent_id: agentId,
+          value: fileEntry.content,
+        });
+        updatedBlocks.push(label);
+      } catch (err) {
+        // Block may have been manually deleted - create it
+        if (err instanceof Error && err.message.includes("Not Found")) {
+          const createdBlock = await client.blocks.create({
+            label,
+            value: fileEntry.content,
+            description: `Memory block: ${label}`,
+            limit: 20000,
+          });
+          if (createdBlock.id) {
+            await client.agents.blocks.attach(createdBlock.id, {
+              agent_id: agentId,
+            });
+          }
+          createdBlocks.push(label);
+        } else {
+          throw err;
+        }
+      }
       continue;
     }
 
