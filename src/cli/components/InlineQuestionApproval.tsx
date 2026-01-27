@@ -256,7 +256,7 @@ export const InlineQuestionApproval = memo(
     );
 
     // Generate horizontal line
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
 
     // Memoize the static header content so it doesn't re-render on keystroke
     // This prevents flicker when typing in the custom input field

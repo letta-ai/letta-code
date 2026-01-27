@@ -1,4 +1,4 @@
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../../hooks/useTerminalWidth";
 import { colors } from "../colors";
@@ -20,8 +20,8 @@ type Props = {
  */
 export const PlanPreview = memo(({ plan }: Props) => {
   const columns = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
-  const dottedLine = DOTTED_LINE.repeat(Math.max(columns - 2, 10));
+  const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+  const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
   return (
     <>
@@ -36,8 +36,10 @@ export const PlanPreview = memo(({ plan }: Props) => {
       {/* Dotted separator before plan content */}
       <Text dimColor>{dottedLine}</Text>
 
-      {/* Plan content */}
-      <MarkdownDisplay text={plan} />
+      {/* Plan content - Box with explicit width enables proper word-level wrapping */}
+      <Box width={columns}>
+        <MarkdownDisplay text={plan} />
+      </Box>
 
       {/* Dotted separator after plan content */}
       <Text dimColor>{dottedLine}</Text>
