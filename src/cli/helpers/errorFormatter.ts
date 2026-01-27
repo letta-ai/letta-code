@@ -197,7 +197,7 @@ export function formatErrorDetails(
       // Free plan users get a special message about BYOK and free models
       if (billingTier?.toLowerCase() === "free") {
         const modelInfo = modelDisplayName ? ` (${modelDisplayName})` : "";
-        return `Selected hosted model${modelInfo} not available on Free plan. Switch to a free model with /model glm-4.7, upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys with /connect.`;
+        return `Selected hosted model${modelInfo} not available on Free plan. Switch to a free model with /model (glm-4.7 or minimax-m2.1), upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys with /connect.`;
       }
 
       return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;
