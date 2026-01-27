@@ -23,13 +23,13 @@ import {
   setConversationId,
 } from "./agent/context";
 import { createAgent } from "./agent/create";
+import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   ensureMemoryFilesystemBlock,
   formatMemorySyncSummary,
   syncMemoryFilesystem,
   updateMemoryFilesystemBlock,
 } from "./agent/memoryFilesystem";
-import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -79,10 +78,7 @@ function getMemoryStatePath(
   agentId: string,
   homeDir: string = homedir(),
 ): string {
-  return join(
-    getMemoryFilesystemRoot(agentId, homeDir),
-    MEMORY_FS_STATE_FILE,
-  );
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_FS_STATE_FILE);
 }
 
 export function ensureMemoryFilesystemDirs(
@@ -108,7 +104,10 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function loadSyncState(agentId: string, homeDir: string = homedir()): SyncState {
+function loadSyncState(
+  agentId: string,
+  homeDir: string = homedir(),
+): SyncState {
   const statePath = getMemoryStatePath(agentId, homeDir);
   if (!existsSync(statePath)) {
     return {
@@ -237,8 +236,8 @@ export function renderMemoryFilesystemTree(
   const insertPath = (base: string, label: string) => {
     const parts = [base, ...label.split("/")];
     let current = root;
-    for (let i = 0; i < parts.length; i += 1) {
-      const part = i === parts.length - 1 ? `${parts[i]}.md` : parts[i];
+    for (const [i, partName] of parts.entries()) {
+      const part = i === parts.length - 1 ? `${partName}.md` : partName;
       if (!current.children.has(part)) {
         current.children.set(part, makeNode());
       }
@@ -249,8 +248,12 @@ export function renderMemoryFilesystemTree(
     }
   };
 
-  systemLabels.forEach((label) => insertPath(MEMORY_SYSTEM_DIR, label));
-  userLabels.forEach((label) => insertPath(MEMORY_USER_DIR, label));
+  for (const label of systemLabels) {
+    insertPath(MEMORY_SYSTEM_DIR, label);
+  }
+  for (const label of userLabels) {
+    insertPath(MEMORY_USER_DIR, label);
+  }
 
   if (!root.children.has(MEMORY_SYSTEM_DIR)) {
     root.children.set(MEMORY_SYSTEM_DIR, makeNode());
@@ -359,7 +362,10 @@ export async function syncMemoryFilesystem(
   const deletedFiles: string[] = [];
 
   const resolutions = new Map(
-    (options.resolutions ?? []).map((resolution) => [resolution.label, resolution]),
+    (options.resolutions ?? []).map((resolution) => [
+      resolution.label,
+      resolution,
+    ]),
   );
 
   const client = await getClient();
@@ -417,7 +423,9 @@ export async function syncMemoryFilesystem(
         limit: 20000,
       });
       if (createdBlock.id) {
-        await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
+        await client.agents.blocks.attach(createdBlock.id, {
+          agent_id: agentId,
+        });
       }
       createdBlocks.push(label);
       continue;
@@ -427,7 +435,9 @@ export async function syncMemoryFilesystem(
       if (lastFileHash && !blockChanged) {
         // File deleted, block unchanged -> delete block
         if (blockEntry.id) {
-          await client.agents.blocks.detach(blockEntry.id, { agent_id: agentId });
+          await client.agents.blocks.detach(blockEntry.id, {
+            agent_id: agentId,
+          });
         }
         deletedBlocks.push(label);
         continue;

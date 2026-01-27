@@ -41,6 +41,7 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   ensureMemoryFilesystemBlock,
   formatMemorySyncSummary,
@@ -49,7 +50,6 @@ import {
   syncMemoryFilesystem,
   updateMemoryFilesystemBlock,
 } from "../agent/memoryFilesystem";
-import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import { sendMessageStream } from "../agent/message";
 import { getModelInfo, getModelShortName } from "../agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
@@ -1896,10 +1896,7 @@ export default function App({
   );
 
   const runMemoryFilesystemSync = useCallback(
-    async (
-      source: "startup" | "auto" | "command",
-      commandId?: string,
-    ) => {
+    async (source: "startup" | "auto" | "command", commandId?: string) => {
       if (!agentId || agentId === "loading") {
         return;
       }
@@ -1933,7 +1930,11 @@ export default function App({
         await updateMemoryFilesystemBlock(agentId);
 
         if (commandId) {
-          updateMemorySyncCommand(commandId, formatMemorySyncSummary(result), true);
+          updateMemorySyncCommand(
+            commandId,
+            formatMemorySyncSummary(result),
+            true,
+          );
         }
       } catch (error) {
         const errorText = formatErrorDetails(error, agentId);
@@ -1956,8 +1957,10 @@ export default function App({
     for (const line of buffersRef.current.byId.values()) {
       if (line.kind !== "tool_call") continue;
       if (!line.toolCallId || !line.name) continue;
-      if (line.name !== "memory" && line.name !== "memory_apply_patch") continue;
-      if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId)) continue;
+      if (line.name !== "memory" && line.name !== "memory_apply_patch")
+        continue;
+      if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId))
+        continue;
       newToolCallIds.push(line.toolCallId);
     }
 
@@ -1965,9 +1968,9 @@ export default function App({
       return;
     }
 
-    newToolCallIds.forEach((id) =>
-      memorySyncProcessedToolCallsRef.current.add(id),
-    );
+    for (const id of newToolCallIds) {
+      memorySyncProcessedToolCallsRef.current.add(id);
+    }
     await runMemoryFilesystemSync("auto");
   }, [runMemoryFilesystemSync]);
 
@@ -2054,12 +2057,7 @@ export default function App({
         memorySyncInFlightRef.current = false;
       }
     },
-    [
-      agentId,
-      appendError,
-      memorySyncConflicts,
-      updateMemorySyncCommand,
-    ],
+    [agentId, appendError, memorySyncConflicts, updateMemorySyncCommand],
   );
 
   const handleMemorySyncConflictCancel = useCallback(() => {
@@ -3781,6 +3779,7 @@ export default function App({
       needsEagerApprovalCheck,
       queueApprovalResults,
       consumeQueuedMessages,
+      maybeSyncMemoryFilesystemAfterTurn,
     ],
   );
 
