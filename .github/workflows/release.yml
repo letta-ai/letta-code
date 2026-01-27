@@ -150,8 +150,10 @@ jobs:
           name: Release ${{ steps.version.outputs.tag }}
           body: |
             Release ${{ steps.version.outputs.tag }}
-            
+
             Changes from ${{ steps.version.outputs.old_version }} to ${{ steps.version.outputs.new_version }}
+          generate_release_notes: true
+          append_body: true
           files: letta.js
           fail_on_unmatched_files: true
 
