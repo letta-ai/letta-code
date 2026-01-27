@@ -232,13 +232,15 @@ export async function checkProviderApiKey(
   profile?: string,
   bedrockApiKey?: string,
 ): Promise<void> {
+  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
+  // Server determines auth mode based on presence of access_key
+  const effectiveApiKey = bedrockApiKey || apiKey;
   await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
     provider_type: providerType,
-    api_key: apiKey,
+    api_key: effectiveApiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
-    ...(bedrockApiKey && { bedrock_api_key: bedrockApiKey }),
   });
 }
 
@@ -254,14 +256,16 @@ export async function createProvider(
   profile?: string,
   bedrockApiKey?: string,
 ): Promise<ProviderResponse> {
+  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
+  // Server determines auth mode based on presence of access_key
+  const effectiveApiKey = bedrockApiKey || apiKey;
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
     provider_type: providerType,
-    api_key: apiKey,
+    api_key: effectiveApiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
-    ...(bedrockApiKey && { bedrock_api_key: bedrockApiKey }),
   });
 }
 
@@ -276,15 +280,17 @@ export async function updateProvider(
   profile?: string,
   bedrockApiKey?: string,
 ): Promise<ProviderResponse> {
+  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
+  // Server determines auth mode based on presence of access_key
+  const effectiveApiKey = bedrockApiKey || apiKey;
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
-      api_key: apiKey,
+      api_key: effectiveApiKey,
       ...(accessKey && { access_key: accessKey }),
       ...(region && { region }),
       ...(profile && { profile }),
-      ...(bedrockApiKey && { bedrock_api_key: bedrockApiKey }),
     },
   );
 }
