@@ -1078,7 +1078,7 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        let globalPinned = settingsManager.getGlobalPinnedAgents();
+        const globalPinned = settingsManager.getGlobalPinnedAgents();
         const client = await getClient();
 
         // For self-hosted servers, pre-fetch available models
