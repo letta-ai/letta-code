@@ -12,6 +12,7 @@ import {
   discoverSkills,
   formatSkillsForMemory,
   GLOBAL_SKILLS_DIR,
+  getAgentSkillsDir,
   getBundledSkills,
   SKILLS_DIR,
 } from "../../agent/skills";
@@ -269,10 +270,17 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
 /**
  * Read skill content from file or bundled source
  * Returns both content and the path to the SKILL.md file
+ *
+ * Search order (highest priority first):
+ * 1. Project skills (.skills/)
+ * 2. Agent skills (~/.letta/agents/{id}/skills/)
+ * 3. Global skills (~/.letta/skills/)
+ * 4. Bundled skills
  */
 async function readSkillContent(
   skillId: string,
   skillsDir: string,
+  agentId?: string,
 ): Promise<{ content: string; path: string }> {
   // 1. Check bundled skills first (they have a path now)
   const bundledSkills = await getBundledSkills();
@@ -295,7 +303,22 @@ async function readSkillContent(
     // Not in global, continue
   }
 
-  // 3. Try project skills directory
+  // 3. Try agent skills directory (if agentId provided)
+  if (agentId) {
+    const agentSkillPath = join(
+      getAgentSkillsDir(agentId),
+      skillId,
+      "SKILL.md",
+    );
+    try {
+      const content = await readFile(agentSkillPath, "utf-8");
+      return { content, path: agentSkillPath };
+    } catch {
+      // Not in agent dir, continue
+    }
+  }
+
+  // 4. Try project skills directory
   const projectSkillPath = join(skillsDir, skillId, "SKILL.md");
   try {
     const content = await readFile(projectSkillPath, "utf-8");
@@ -376,8 +399,8 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     if (command === "refresh") {
       const skillsDir = await getResolvedSkillsDir(client, agentId);
 
-      // Discover skills from directory
-      const { skills, errors } = await discoverSkills(skillsDir);
+      // Discover skills from directory (including agent-scoped skills)
+      const { skills, errors } = await discoverSkills(skillsDir, agentId);
 
       // Log any errors
       if (errors.length > 0) {
@@ -389,7 +412,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
       }
 
       // Format and update the skills block
-      const formattedSkills = formatSkillsForMemory(skills, skillsDir);
+      const formattedSkills = formatSkillsForMemory(skills, skillsDir, agentId);
       await updateBlock(client, agentId, "skills", formattedSkills);
 
       const successMsg =
@@ -435,7 +458,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 
         try {
           const { content: skillContent, path: skillPath } =
-            await readSkillContent(skillId, skillsDir);
+            await readSkillContent(skillId, skillsDir, agentId);
 
           // Replace placeholder if this is the first skill (support old and new formats)
           if (
@@ -613,6 +636,7 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
 export async function preloadSkillsContent(
   skillIds: string[],
   skillsDir: string,
+  agentId?: string,
 ): Promise<string> {
   if (skillIds.length === 0) {
     return "No skills currently loaded.";
@@ -625,6 +649,7 @@ export async function preloadSkillsContent(
       const { content: skillContent, path: skillPath } = await readSkillContent(
         skillId,
         skillsDir,
+        agentId,
       );
 
       const skillDir = dirname(skillPath);
