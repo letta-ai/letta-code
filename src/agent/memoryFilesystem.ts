@@ -531,26 +531,11 @@ export async function syncMemoryFilesystem(
     }
 
     if (resolution?.resolution === "file") {
-      try {
-        await client.agents.blocks.update(label, {
-          agent_id: agentId,
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
           value: fileEntry.content,
         });
         updatedBlocks.push(label);
-      } catch (err) {
-        // Block may have been manually deleted - create it
-        if (err instanceof Error && err.message.includes("Not Found")) {
-          const blockData = parseBlockFromFileContent(fileEntry.content, label);
-          const createdBlock = await client.blocks.create(blockData);
-          if (createdBlock.id) {
-            await client.agents.blocks.attach(createdBlock.id, {
-              agent_id: agentId,
-            });
-          }
-          createdBlocks.push(blockData.label);
-        } else {
-          throw err;
-        }
       }
       continue;
     }
@@ -562,25 +547,29 @@ export async function syncMemoryFilesystem(
     }
 
     if (fileChanged && !blockChanged) {
-      try {
-        await client.agents.blocks.update(label, {
-          agent_id: agentId,
-          value: fileEntry.content,
-        });
-        updatedBlocks.push(label);
-      } catch (err) {
-        // Block may have been manually deleted - create it
-        if (err instanceof Error && err.message.includes("Not Found")) {
-          const blockData = parseBlockFromFileContent(fileEntry.content, label);
-          const createdBlock = await client.blocks.create(blockData);
-          if (createdBlock.id) {
-            await client.agents.blocks.attach(createdBlock.id, {
-              agent_id: agentId,
-            });
+      if (blockEntry.id) {
+        try {
+          await client.blocks.update(blockEntry.id, {
+            value: fileEntry.content,
+          });
+          updatedBlocks.push(label);
+        } catch (err) {
+          // Block may have been deleted - create a new one
+          if (err instanceof Error && err.message.includes("Not Found")) {
+            const blockData = parseBlockFromFileContent(
+              fileEntry.content,
+              label,
+            );
+            const createdBlock = await client.blocks.create(blockData);
+            if (createdBlock.id) {
+              await client.agents.blocks.attach(createdBlock.id, {
+                agent_id: agentId,
+              });
+            }
+            createdBlocks.push(blockData.label);
+          } else {
+            throw err;
           }
-          createdBlocks.push(blockData.label);
-        } else {
-          throw err;
         }
       }
       continue;
@@ -765,10 +754,14 @@ export async function updateMemoryFilesystemBlock(
   );
 
   const client = await getClient();
-  await client.agents.blocks.update(MEMORY_FILESYSTEM_BLOCK_LABEL, {
-    agent_id: agentId,
-    value: tree,
-  });
+  const blocks = await fetchAgentBlocks(agentId);
+  const memfsBlock = blocks.find(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (memfsBlock?.id) {
+    await client.blocks.update(memfsBlock.id, { value: tree });
+  }
 
   await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, tree);
 }
