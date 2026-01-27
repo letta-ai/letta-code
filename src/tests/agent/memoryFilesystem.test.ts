@@ -131,6 +131,43 @@ Content.`;
     expect(result.limit).toBe(20000);
     expect(result.value).toBe("Just plain content without frontmatter.");
   });
+
+  test("sets read_only from frontmatter", () => {
+    const content = `---
+label: test/block
+read_only: true
+---
+
+Read-only content.`;
+
+    const result = parseBlockFromFileContent(content, "default");
+
+    expect(result.read_only).toBe(true);
+  });
+
+  test("sets read_only for known read-only labels", () => {
+    const content = `---
+label: skills
+---
+
+Skills content.`;
+
+    const result = parseBlockFromFileContent(content, "skills");
+
+    expect(result.read_only).toBe(true);
+  });
+
+  test("does not set read_only for regular blocks", () => {
+    const content = `---
+label: persona/soul
+---
+
+Regular content.`;
+
+    const result = parseBlockFromFileContent(content, "persona/soul");
+
+    expect(result.read_only).toBeUndefined();
+  });
 });
 
 describe("labelFromRelativePath", () => {

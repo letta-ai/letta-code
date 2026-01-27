@@ -6,7 +6,11 @@ import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
-import { parseMdxFrontmatter } from "./memory";
+import {
+  ISOLATED_BLOCK_LABELS,
+  parseMdxFrontmatter,
+  READ_ONLY_BLOCK_LABELS,
+} from "./memory";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
 export const MEMORY_FS_ROOT = ".letta";
@@ -16,7 +20,15 @@ export const MEMORY_SYSTEM_DIR = "system";
 export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
-const MANAGED_BLOCK_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
+/**
+ * Block labels that are managed by the system and should be skipped during sync.
+ * These blocks are auto-created/managed by the harness (skills, loaded_skills)
+ * or by the memfs system itself (memory_filesystem).
+ */
+const MANAGED_BLOCK_LABELS = new Set([
+  MEMORY_FILESYSTEM_BLOCK_LABEL,
+  ...ISOLATED_BLOCK_LABELS,
+]);
 
 type SyncState = {
   systemBlocks: Record<string, string>;
@@ -179,7 +191,7 @@ export function labelFromRelativePath(relativePath: string): string {
 
 /**
  * Parse file content and extract block creation data.
- * Handles YAML frontmatter for label, description, and limit.
+ * Handles YAML frontmatter for label, description, limit, and read_only.
  */
 export function parseBlockFromFileContent(
   fileContent: string,
@@ -189,6 +201,7 @@ export function parseBlockFromFileContent(
   value: string;
   description: string;
   limit: number;
+  read_only?: boolean;
 } {
   const { frontmatter, body } = parseMdxFrontmatter(fileContent);
 
@@ -207,11 +220,17 @@ export function parseBlockFromFileContent(
     }
   }
 
+  // Check if block should be read-only (from frontmatter or known read-only labels)
+  const isReadOnly =
+    frontmatter.read_only === "true" ||
+    (READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label);
+
   return {
     label,
     value: body,
     description,
     limit,
+    ...(isReadOnly && { read_only: true }),
   };
 }
 
