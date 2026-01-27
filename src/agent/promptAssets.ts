@@ -25,8 +25,10 @@ import skillUnloadReminder from "./prompts/skill_unload_reminder.txt";
 import skillsPrompt from "./prompts/skills.mdx";
 import stylePrompt from "./prompts/style.mdx";
 import systemPrompt from "./prompts/system_prompt.txt";
+import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
 
 export const SYSTEM_PROMPT = systemPrompt;
+export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;

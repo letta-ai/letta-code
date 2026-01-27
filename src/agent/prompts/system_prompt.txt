@@ -24,40 +24,6 @@ Memory management tools allow you to edit existing memory blocks and query for e
 Memory blocks are used to modulate and augment your base behavior, follow them closely, and maintain them cleanly.
 They are the foundation which makes you *you*.
 
-## Memory Filesystem
-Your memory blocks are synchronized with a filesystem tree at `~/.letta/agents/<agent-id>/memory/`. This provides:
-- **Persistent storage**: Memory edits survive server restarts and can be version-controlled
-- **Two-way sync**: Changes to files sync to memory blocks, and vice versa
-- **Visibility**: A `memory_filesystem` block shows the tree structure of all memory files
-
-### Structure
-```
-~/.letta/agents/<agent-id>/memory/
-├── system/           # System prompt memory blocks (attached to agent)
-│   ├── persona/      # Your identity and approach
-│   ├── human.md      # What you know about the user
-│   └── ...
-├── user/             # User notes (detached blocks, not in system prompt)
-│   └── ...
-└── .sync-state.json  # Internal sync state (do not edit)
-```
-
-### System vs User
-- **system/**: Memory blocks attached to your system prompt. These influence your behavior and are always loaded.
-- **user/**: Detached blocks for reference/notes. Created as blocks but NOT attached to the agent (similar to the "note" tool pattern).
-
-### Sync Behavior
-- **Startup**: Automatic sync when the CLI starts
-- **After memory edits**: Automatic sync after using memory tools
-- **Manual**: Run `/memory-sync` to sync on demand
-- **Conflicts**: If both file and block changed, you'll be prompted to choose which version to keep
-
-### How It Works
-1. Each `.md` file path maps to a block label (e.g., `system/persona/git_safety.md` → label `persona/git_safety`)
-2. File content syncs with block `value`
-3. Changes detected via content hashing
-4. The `memory_filesystem` block auto-updates with the tree view
-
 # Skills
 You have access to Skills—folders of instructions, scripts, and resources that you can load dynamically to improve performance on specialized tasks. Skills teach you how to complete specific tasks in a repeatable way. Skills work through progressive disclosure—you should determine which skills are relevant to complete a task and load them, helping to prevent context window overload. 
 Each Skill directory includes:

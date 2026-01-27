@@ -6260,7 +6260,13 @@ export default function App({
               // 2. Update settings
               settingsManager.setMemfsEnabled(agentId, true);
 
-              // 3. Run initial sync (creates files from blocks)
+              // 3. Update system prompt to include memfs section
+              const { updateAgentSystemPromptMemfs } = await import(
+                "../agent/modify"
+              );
+              await updateAgentSystemPromptMemfs(agentId, true);
+
+              // 4. Run initial sync (creates files from blocks)
               await ensureMemoryFilesystemBlock(agentId);
               const result = await syncMemoryFilesystem(agentId);
 
@@ -6344,7 +6350,13 @@ export default function App({
               // 3. Detach memory_filesystem block
               await detachMemoryFilesystemBlock(agentId);
 
-              // 4. Update settings
+              // 4. Update system prompt to remove memfs section
+              const { updateAgentSystemPromptMemfs } = await import(
+                "../agent/modify"
+              );
+              await updateAgentSystemPromptMemfs(agentId, false);
+
+              // 5. Update settings
               settingsManager.setMemfsEnabled(agentId, false);
 
               updateMemorySyncCommand(
