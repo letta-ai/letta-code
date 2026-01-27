@@ -2,7 +2,7 @@
 name: memory
 description: Restructure memory blocks into focused, scannable, hierarchically-named blocks (use `/` naming)
 tools: Read, Edit, Write, Glob, Grep, Bash, conversation_search
-model: glm-4.7
+model: opus
 memoryBlocks: none
 mode: stateless
 permissionMode: bypassPermissions
@@ -271,7 +271,7 @@ Your goal is not to maximize deletion; it is to **explode monolithic memory into
 name: memory
 description: Defragment and reorganize agent memory blocks (edit/rename/split/merge/delete) into focused, scannable, hierarchically-named blocks
 tools: Read, Edit, Write, Glob, Grep, Bash, conversation_search
-model: glm-4.7
+model: opus
 memoryBlocks: none
 mode: stateless
 permissionMode: bypassPermissions
@@ -446,7 +446,7 @@ Your goal is to **explode monolithic memory into 15–25 small, hierarchically-n
 name: memory
 description: Explode memory into 15-25 hierarchically-nested files using `/` naming
 tools: Read, Edit, Write, Glob, Grep, Bash, conversation_search
-model: glm-4.7
+model: opus
 memoryBlocks: none
 mode: stateless
 permissionMode: bypassPermissions
