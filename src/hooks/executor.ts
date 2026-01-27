@@ -275,6 +275,19 @@ export async function executeHooks(
     const result = await executeHookCommand(hook, input, workingDirectory);
     results.push(result);
 
+    // Collect feedback from stdout when hook succeeds (exit 0)
+    // Only for UserPromptSubmit and SessionStart hooks
+    if (result.exitCode === HookExitCode.ALLOW) {
+      if (
+        result.stdout?.trim() &&
+        (input.event_type === "UserPromptSubmit" ||
+          input.event_type === "SessionStart")
+      ) {
+        feedback.push(result.stdout.trim());
+      }
+      continue;
+    }
+
     // Collect feedback from stderr when hook blocks
     // Format: [command]: {stderr} per spec
     if (result.exitCode === HookExitCode.BLOCK) {
