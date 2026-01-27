@@ -2107,6 +2107,7 @@ export default function App({
     const commandInput = memorySyncCommandInputRef.current;
     memorySyncCommandIdRef.current = null;
     memorySyncCommandInputRef.current = "/memory-sync";
+    memorySyncInFlightRef.current = false;
     setMemorySyncConflicts(null);
     setActiveOverlay(null);
 

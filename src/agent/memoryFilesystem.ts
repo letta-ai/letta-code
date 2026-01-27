@@ -6,6 +6,11 @@ import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
+import {
+  ISOLATED_BLOCK_LABELS,
+  parseMdxFrontmatter,
+  READ_ONLY_BLOCK_LABELS,
+} from "./memory";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
 export const MEMORY_FS_ROOT = ".letta";
@@ -15,7 +20,15 @@ export const MEMORY_SYSTEM_DIR = "system";
 export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
-const MANAGED_BLOCK_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
+/**
+ * Block labels that are managed by the system and should be skipped during sync.
+ * These blocks are auto-created/managed by the harness (skills, loaded_skills)
+ * or by the memfs system itself (memory_filesystem).
+ */
+const MANAGED_BLOCK_LABELS = new Set([
+  MEMORY_FILESYSTEM_BLOCK_LABEL,
+  ...ISOLATED_BLOCK_LABELS,
+]);
 
 type SyncState = {
   systemBlocks: Record<string, string>;
@@ -171,9 +184,54 @@ async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
   return results;
 }
 
-function labelFromRelativePath(relativePath: string): string {
+export function labelFromRelativePath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.replace(/\.md$/, "");
+}
+
+/**
+ * Parse file content and extract block creation data.
+ * Handles YAML frontmatter for label, description, limit, and read_only.
+ */
+export function parseBlockFromFileContent(
+  fileContent: string,
+  defaultLabel: string,
+): {
+  label: string;
+  value: string;
+  description: string;
+  limit: number;
+  read_only?: boolean;
+} {
+  const { frontmatter, body } = parseMdxFrontmatter(fileContent);
+
+  // Use frontmatter label if provided, otherwise use default (from file path)
+  const label = frontmatter.label || defaultLabel;
+
+  // Use frontmatter description if provided, otherwise generate from label
+  const description = frontmatter.description || `Memory block: ${label}`;
+
+  // Use frontmatter limit if provided and valid, otherwise default to 20000
+  let limit = 20000;
+  if (frontmatter.limit) {
+    const parsed = Number.parseInt(frontmatter.limit, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      limit = parsed;
+    }
+  }
+
+  // Check if block should be read-only (from frontmatter or known read-only labels)
+  const isReadOnly =
+    frontmatter.read_only === "true" ||
+    (READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label);
+
+  return {
+    label,
+    value: body,
+    description,
+    limit,
+    ...(isReadOnly && { read_only: true }),
+  };
 }
 
 async function readMemoryFiles(
@@ -214,14 +272,20 @@ async function deleteMemoryFile(dir: string, label: string) {
 
 async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
   const client = await getClient();
-  const blocksResponse = await client.agents.blocks.list(agentId);
-  const blocks = Array.isArray(blocksResponse)
-    ? blocksResponse
-    : (blocksResponse as { items?: Block[] }).items ||
-      (blocksResponse as { blocks?: Block[] }).blocks ||
-      [];
+  // Use high limit - SDK's async iterator has a bug that causes infinite loops
+  const page = await client.agents.blocks.list(agentId, { limit: 1000 });
 
-  return blocks;
+  // Handle both array response and paginated response
+  if (Array.isArray(page)) {
+    return page;
+  }
+
+  // Extract items from paginated response
+  const items =
+    (page as { items?: Block[] }).items ||
+    (page as { blocks?: Block[] }).blocks ||
+    [];
+  return items;
 }
 
 export function renderMemoryFilesystemTree(
@@ -415,19 +479,15 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
-      // Create block from file
-      const createdBlock = await client.blocks.create({
-        label,
-        value: fileEntry.content,
-        description: `Memory block: ${label}`,
-        limit: 20000,
-      });
+      // Create block from file (parsing frontmatter for description/limit)
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
       if (createdBlock.id) {
         await client.agents.blocks.attach(createdBlock.id, {
           agent_id: agentId,
         });
       }
-      createdBlocks.push(label);
+      createdBlocks.push(blockData.label);
       continue;
     }
 
@@ -435,11 +495,20 @@ export async function syncMemoryFilesystem(
       if (lastFileHash && !blockChanged) {
         // File deleted, block unchanged -> delete block
         if (blockEntry.id) {
-          await client.agents.blocks.detach(blockEntry.id, {
-            agent_id: agentId,
-          });
+          try {
+            await client.agents.blocks.detach(blockEntry.id, {
+              agent_id: agentId,
+            });
+            // Also delete the block to avoid orphaned blocks on the server
+            await client.blocks.delete(blockEntry.id);
+            deletedBlocks.push(label);
+          } catch (err) {
+            // Block may have been manually deleted already - ignore
+            if (!(err instanceof Error && err.message.includes("Not Found"))) {
+              throw err;
+            }
+          }
         }
-        deletedBlocks.push(label);
         continue;
       }
 
@@ -453,6 +522,11 @@ export async function syncMemoryFilesystem(
       continue;
     }
 
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
+      continue;
+    }
+
     if (fileChanged && blockChanged && !resolution) {
       conflicts.push({
         label,
@@ -463,11 +537,12 @@ export async function syncMemoryFilesystem(
     }
 
     if (resolution?.resolution === "file") {
-      await client.agents.blocks.update(label, {
-        agent_id: agentId,
-        value: fileEntry.content,
-      });
-      updatedBlocks.push(label);
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+        });
+        updatedBlocks.push(label);
+      }
       continue;
     }
 
@@ -478,11 +553,31 @@ export async function syncMemoryFilesystem(
     }
 
     if (fileChanged && !blockChanged) {
-      await client.agents.blocks.update(label, {
-        agent_id: agentId,
-        value: fileEntry.content,
-      });
-      updatedBlocks.push(label);
+      if (blockEntry.id) {
+        try {
+          await client.blocks.update(blockEntry.id, {
+            value: fileEntry.content,
+          });
+          updatedBlocks.push(label);
+        } catch (err) {
+          // Block may have been deleted - create a new one
+          if (err instanceof Error && err.message.includes("Not Found")) {
+            const blockData = parseBlockFromFileContent(
+              fileEntry.content,
+              label,
+            );
+            const createdBlock = await client.blocks.create(blockData);
+            if (createdBlock.id) {
+              await client.agents.blocks.attach(createdBlock.id, {
+                agent_id: agentId,
+              });
+            }
+            createdBlocks.push(blockData.label);
+          } else {
+            throw err;
+          }
+        }
+      }
       continue;
     }
 
@@ -523,17 +618,13 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
-      const createdBlock = await client.blocks.create({
-        label,
-        value: fileEntry.content,
-        description: `Memory block: ${label}`,
-        limit: 20000,
-      });
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
       if (createdBlock.id) {
-        userBlockIds[label] = createdBlock.id;
-        userBlockMap.set(label, createdBlock as Block);
+        userBlockIds[blockData.label] = createdBlock.id;
+        userBlockMap.set(blockData.label, createdBlock as Block);
       }
-      createdBlocks.push(label);
+      createdBlocks.push(blockData.label);
       continue;
     }
 
@@ -554,6 +645,11 @@ export async function syncMemoryFilesystem(
     }
 
     if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
       continue;
     }
 
@@ -664,10 +760,14 @@ export async function updateMemoryFilesystemBlock(
   );
 
   const client = await getClient();
-  await client.agents.blocks.update(MEMORY_FILESYSTEM_BLOCK_LABEL, {
-    agent_id: agentId,
-    value: tree,
-  });
+  const blocks = await fetchAgentBlocks(agentId);
+  const memfsBlock = blocks.find(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (memfsBlock?.id) {
+    await client.blocks.update(memfsBlock.id, { value: tree });
+  }
 
   await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, tree);
 }
@@ -713,7 +813,7 @@ export async function collectMemorySyncConflicts(
 }
 
 export function formatMemorySyncSummary(result: MemorySyncResult): string {
-  const lines = ["Memory filesystem sync complete:"];
+  const lines: string[] = [];
   const pushCount = (label: string, count: number) => {
     if (count > 0) {
       lines.push(`⎿  ${label}: ${count}`);
@@ -731,7 +831,11 @@ export function formatMemorySyncSummary(result: MemorySyncResult): string {
     lines.push(`⎿  Conflicts: ${result.conflicts.length}`);
   }
 
-  return lines.join("\n");
+  if (lines.length === 0) {
+    return "Memory filesystem sync complete (no changes needed)";
+  }
+
+  return `Memory filesystem sync complete:\n${lines.join("\n")}`;
 }
 
 /**
