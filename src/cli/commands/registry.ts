@@ -61,11 +61,20 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memory-sync": {
-    desc: "Sync memory blocks with ~/.letta/agents/<agent-id>/memory",
+    desc: "Sync memory blocks with filesystem (requires memfs enabled)",
     order: 15.5,
     handler: () => {
       // Handled specially in App.tsx to run filesystem sync
       return "Syncing memory filesystem...";
+    },
+  },
+  "/memfs": {
+    desc: "Enable/disable filesystem-backed memory (/memfs [enable|disable])",
+    args: "[enable|disable]",
+    order: 15.6,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing memory filesystem...";
     },
   },
   "/search": {

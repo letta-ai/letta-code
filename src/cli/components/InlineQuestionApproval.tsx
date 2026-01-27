@@ -15,6 +15,7 @@ interface Question {
   header: string;
   options: QuestionOption[];
   multiSelect: boolean;
+  allowOther?: boolean; // default true - set false to hide "Type something" option
 }
 
 type Props = {
@@ -46,12 +47,13 @@ export const InlineQuestionApproval = memo(
 
     const currentQuestion = questions[currentQuestionIndex];
 
-    // Build options list: regular options + "Type something"
+    // Build options list: regular options + "Type something" (unless allowOther=false)
     // For multi-select, we also track a separate "Submit" action
+    const showOther = currentQuestion?.allowOther !== false;
     const baseOptions = currentQuestion
       ? [
           ...currentQuestion.options,
-          { label: "Type something.", description: "" },
+          ...(showOther ? [{ label: "Type something.", description: "" }] : []),
         ]
       : [];
 
@@ -60,12 +62,12 @@ export const InlineQuestionApproval = memo(
       ? [...baseOptions, { label: "Submit", description: "" }]
       : baseOptions;
 
-    const customOptionIndex = baseOptions.length - 1; // "Type something" index
+    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type something" index (-1 if disabled)
     const submitOptionIndex = currentQuestion?.multiSelect
       ? optionsWithOther.length - 1
       : -1; // Submit index (only for multi-select)
 
-    const isOnCustomOption = selectedOption === customOptionIndex;
+    const isOnCustomOption = showOther && selectedOption === customOptionIndex;
     const isOnSubmitOption = selectedOption === submitOptionIndex;
 
     const handleSubmitAnswer = (answer: string) => {

@@ -733,3 +733,21 @@ export function formatMemorySyncSummary(result: MemorySyncResult): string {
 
   return lines.join("\n");
 }
+
+/**
+ * Detach the memory_filesystem block from an agent.
+ * Used when disabling memfs.
+ */
+export async function detachMemoryFilesystemBlock(
+  agentId: string,
+): Promise<void> {
+  const client = await getClient();
+  const blocks = await fetchAgentBlocks(agentId);
+  const memfsBlock = blocks.find(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (memfsBlock?.id) {
+    await client.agents.blocks.detach(memfsBlock.id, { agent_id: agentId });
+  }
+}

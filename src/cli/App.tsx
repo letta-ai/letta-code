@@ -43,8 +43,10 @@ import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
+  detachMemoryFilesystemBlock,
   ensureMemoryFilesystemBlock,
   formatMemorySyncSummary,
+  getMemoryFilesystemRoot,
   type MemorySyncConflict,
   type MemorySyncResolution,
   syncMemoryFilesystem,
@@ -116,6 +118,7 @@ import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
+import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
@@ -126,7 +129,6 @@ import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
-import { QuestionDialog } from "./components/QuestionDialog";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 
 import { formatUsageStats } from "./components/SessionStats";
@@ -998,6 +1000,7 @@ export default function App({
   >(null);
   const memorySyncProcessedToolCallsRef = useRef<Set<string>>(new Set());
   const memorySyncCommandIdRef = useRef<string | null>(null);
+  const memorySyncCommandInputRef = useRef<string>("/memory-sync");
   const memorySyncInFlightRef = useRef(false);
   const memoryFilesystemInitializedRef = useRef(false);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
@@ -1881,13 +1884,19 @@ export default function App({
   );
 
   const updateMemorySyncCommand = useCallback(
-    (commandId: string, output: string, success: boolean) => {
+    (
+      commandId: string,
+      output: string,
+      success: boolean,
+      input = "/memory-sync",
+      keepRunning = false, // If true, keep phase as "running" (for conflict dialogs)
+    ) => {
       buffersRef.current.byId.set(commandId, {
         kind: "command",
         id: commandId,
-        input: "/memory-sync",
+        input,
         output,
-        phase: "finished",
+        phase: keepRunning ? "running" : "finished",
         success,
       });
       refreshDerived();
@@ -1922,6 +1931,8 @@ export default function App({
                 result.conflicts.length === 1 ? "" : "s"
               } to continue.`,
               false,
+              "/memory-sync",
+              true, // keepRunning - don't commit until conflicts resolved
             );
           }
           return;
@@ -1953,6 +1964,10 @@ export default function App({
   );
 
   const maybeSyncMemoryFilesystemAfterTurn = useCallback(async () => {
+    // Only auto-sync if memfs is enabled for this agent
+    if (!agentId || agentId === "loading") return;
+    if (!settingsManager.isMemfsEnabled(agentId)) return;
+
     const newToolCallIds: string[] = [];
     for (const line of buffersRef.current.byId.values()) {
       if (line.kind !== "tool_call") continue;
@@ -1972,7 +1987,7 @@ export default function App({
       memorySyncProcessedToolCallsRef.current.add(id);
     }
     await runMemoryFilesystemSync("auto");
-  }, [runMemoryFilesystemSync]);
+  }, [agentId, runMemoryFilesystemSync]);
 
   useEffect(() => {
     if (loadingState !== "ready") {
@@ -1982,6 +1997,10 @@ export default function App({
       return;
     }
     if (memoryFilesystemInitializedRef.current) {
+      return;
+    }
+    // Only run startup sync if memfs is enabled for this agent
+    if (!settingsManager.isMemfsEnabled(agentId)) {
       return;
     }
 
@@ -1996,7 +2015,9 @@ export default function App({
       }
 
       const commandId = memorySyncCommandIdRef.current;
+      const commandInput = memorySyncCommandInputRef.current;
       memorySyncCommandIdRef.current = null;
+      memorySyncCommandInputRef.current = "/memory-sync";
 
       const resolutions: MemorySyncResolution[] = memorySyncConflicts.map(
         (conflict) => {
@@ -2032,6 +2053,8 @@ export default function App({
                 result.conflicts.length === 1 ? "" : "s"
               } to continue.`,
               false,
+              commandInput,
+              true, // keepRunning - don't commit until all conflicts resolved
             );
           }
           return;
@@ -2039,17 +2062,31 @@ export default function App({
 
         await updateMemoryFilesystemBlock(agentId);
 
+        // Format resolution summary (align with formatMemorySyncSummary which uses "⎿  " prefix)
+        const resolutionSummary = resolutions
+          .map(
+            (r) =>
+              `⎿  ${r.label}: used ${r.resolution === "file" ? "file" : "block"} version`,
+          )
+          .join("\n");
+
         if (commandId) {
           updateMemorySyncCommand(
             commandId,
-            formatMemorySyncSummary(result),
+            `${formatMemorySyncSummary(result)}\nConflicts resolved:\n${resolutionSummary}`,
             true,
+            commandInput,
           );
         }
       } catch (error) {
         const errorText = formatErrorDetails(error, agentId);
         if (commandId) {
-          updateMemorySyncCommand(commandId, `Failed: ${errorText}`, false);
+          updateMemorySyncCommand(
+            commandId,
+            `Failed: ${errorText}`,
+            false,
+            commandInput,
+          );
         } else {
           appendError(`Memory sync failed: ${errorText}`);
         }
@@ -2062,12 +2099,19 @@ export default function App({
 
   const handleMemorySyncConflictCancel = useCallback(() => {
     const commandId = memorySyncCommandIdRef.current;
+    const commandInput = memorySyncCommandInputRef.current;
     memorySyncCommandIdRef.current = null;
+    memorySyncCommandInputRef.current = "/memory-sync";
     setMemorySyncConflicts(null);
     setActiveOverlay(null);
 
     if (commandId) {
-      updateMemorySyncCommand(commandId, "Memory sync cancelled.", false);
+      updateMemorySyncCommand(
+        commandId,
+        "Memory sync cancelled.",
+        false,
+        commandInput,
+      );
     }
   }, [updateMemorySyncCommand]);
 
@@ -6128,6 +6172,23 @@ export default function App({
 
         // Special handling for /memory-sync command - sync filesystem memory
         if (trimmed === "/memory-sync") {
+          // Check if memfs is enabled for this agent
+          if (!settingsManager.isMemfsEnabled(agentId)) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                "Memory filesystem is disabled. Run `/memfs enable` first.",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
           const cmdId = uid("cmd");
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -6147,6 +6208,178 @@ export default function App({
             setCommandRunning(false);
           }
 
+          return { submitted: true };
+        }
+
+        // Special handling for /memfs command - enable/disable filesystem-backed memory
+        if (trimmed.startsWith("/memfs")) {
+          const [, subcommand] = trimmed.split(/\s+/);
+          const cmdId = uid("cmd");
+
+          if (!subcommand || subcommand === "status") {
+            // Show status
+            const enabled = settingsManager.isMemfsEnabled(agentId);
+            let output: string;
+            if (enabled) {
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              output = `Memory filesystem is enabled.\nPath: ${memoryDir}`;
+            } else {
+              output =
+                "Memory filesystem is disabled. Run `/memfs enable` to enable.";
+            }
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (subcommand === "enable") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Enabling memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              // 1. Detach memory tools from agent
+              const { detachMemoryTools } = await import("../tools/toolset");
+              await detachMemoryTools(agentId);
+
+              // 2. Update settings
+              settingsManager.setMemfsEnabled(agentId, true);
+
+              // 3. Run initial sync (creates files from blocks)
+              await ensureMemoryFilesystemBlock(agentId);
+              const result = await syncMemoryFilesystem(agentId);
+
+              if (result.conflicts.length > 0) {
+                // Handle conflicts - show overlay (keep running so it stays in liveItems)
+                memorySyncCommandIdRef.current = cmdId;
+                memorySyncCommandInputRef.current = msg;
+                setMemorySyncConflicts(result.conflicts);
+                setActiveOverlay("memory-sync");
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Memory filesystem enabled with ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} to resolve.`,
+                  false,
+                  msg,
+                  true, // keepRunning - don't commit until conflict resolved
+                );
+              } else {
+                await updateMemoryFilesystemBlock(agentId);
+                const memoryDir = getMemoryFilesystemRoot(agentId);
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Memory filesystem enabled.\nPath: ${memoryDir}\n${formatMemorySyncSummary(result)}`,
+                  true,
+                  msg,
+                );
+              }
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to enable memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          if (subcommand === "disable") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Disabling memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              // 1. Run final sync to ensure blocks are up-to-date
+              const result = await syncMemoryFilesystem(agentId);
+
+              if (result.conflicts.length > 0) {
+                // Handle conflicts - show overlay (keep running so it stays in liveItems)
+                memorySyncCommandIdRef.current = cmdId;
+                memorySyncCommandInputRef.current = msg;
+                setMemorySyncConflicts(result.conflicts);
+                setActiveOverlay("memory-sync");
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Cannot disable: resolve ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} first.`,
+                  false,
+                  msg,
+                  true, // keepRunning - don't commit until conflict resolved
+                );
+                return { submitted: true };
+              }
+
+              // 2. Re-attach memory tool
+              const { reattachMemoryTool } = await import("../tools/toolset");
+              // Use current model or default to Claude
+              const modelId = currentModelId || "anthropic/claude-sonnet-4";
+              await reattachMemoryTool(agentId, modelId);
+
+              // 3. Detach memory_filesystem block
+              await detachMemoryFilesystemBlock(agentId);
+
+              // 4. Update settings
+              settingsManager.setMemfsEnabled(agentId, false);
+
+              updateMemorySyncCommand(
+                cmdId,
+                "Memory filesystem disabled. Memory tool re-attached.\nFiles on disk have been kept.",
+                true,
+                msg,
+              );
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to disable memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, or /memfs disable.`,
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           return { submitted: true };
         }
 
@@ -9992,7 +10225,7 @@ Plan file path: ${planFilePath}`;
 
             {/* Memory Sync Conflict Resolver */}
             {activeOverlay === "memory-sync" && memorySyncConflicts && (
-              <QuestionDialog
+              <InlineQuestionApproval
                 questions={memorySyncConflicts.map((conflict) => ({
                   header: "Memory sync",
                   question: `Conflict for ${conflict.label}`,
@@ -10007,6 +10240,7 @@ Plan file path: ${planFilePath}`;
                     },
                   ],
                   multiSelect: false,
+                  allowOther: false, // Only file or block - no custom option
                 }))}
                 onSubmit={handleMemorySyncConflictSubmit}
                 onCancel={handleMemorySyncConflictCancel}

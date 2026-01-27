@@ -586,32 +586,34 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Sync filesystem-backed memory before creating conversations
-  try {
-    await ensureMemoryFilesystemBlock(agent.id);
-    const syncResult = await syncMemoryFilesystem(agent.id);
-    if (syncResult.conflicts.length > 0) {
+  // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
+  if (settingsManager.isMemfsEnabled(agent.id)) {
+    try {
+      await ensureMemoryFilesystemBlock(agent.id);
+      const syncResult = await syncMemoryFilesystem(agent.id);
+      if (syncResult.conflicts.length > 0) {
+        console.error(
+          `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
+        );
+        process.exit(1);
+      }
+      await updateMemoryFilesystemBlock(agent.id);
+      if (
+        syncResult.updatedBlocks.length > 0 ||
+        syncResult.createdBlocks.length > 0 ||
+        syncResult.deletedBlocks.length > 0 ||
+        syncResult.updatedFiles.length > 0 ||
+        syncResult.createdFiles.length > 0 ||
+        syncResult.deletedFiles.length > 0
+      ) {
+        console.log(formatMemorySyncSummary(syncResult));
+      }
+    } catch (error) {
       console.error(
-        `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
+        `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }
-    await updateMemoryFilesystemBlock(agent.id);
-    if (
-      syncResult.updatedBlocks.length > 0 ||
-      syncResult.createdBlocks.length > 0 ||
-      syncResult.deletedBlocks.length > 0 ||
-      syncResult.updatedFiles.length > 0 ||
-      syncResult.createdFiles.length > 0 ||
-      syncResult.deletedFiles.length > 0
-    ) {
-      console.log(formatMemorySyncSummary(syncResult));
-    }
-  } catch (error) {
-    console.error(
-      `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    process.exit(1);
   }
 
   // Determine which blocks to isolate for the conversation
