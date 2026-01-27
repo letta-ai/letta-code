@@ -41,6 +41,7 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { getLettaCodeHeaders } from "../agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   detachMemoryFilesystemBlock,
@@ -1099,11 +1100,7 @@ export default function App({
         const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
         const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "X-Letta-Source": "letta-code",
-          },
+          headers: getLettaCodeHeaders(apiKey),
         });
 
         if (response.ok) {
@@ -5113,11 +5110,7 @@ export default function App({
                 const balanceResponse = await fetch(
                   `${baseURL}/v1/metadata/balance`,
                   {
-                    headers: {
-                      "Content-Type": "application/json",
-                      Authorization: `Bearer ${apiKey}`,
-                      "X-Letta-Source": "letta-code",
-                    },
+                    headers: getLettaCodeHeaders(apiKey),
                   },
                 );
 
@@ -8754,9 +8747,7 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               method: "POST",
               headers: {
-                "Content-Type": "application/json",
-                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-                "X-Letta-Source": "letta-code",
+                ...getLettaCodeHeaders(apiKey),
                 "X-Letta-Code-Device-ID": settingsManager.getOrCreateDeviceId(),
               },
               body: JSON.stringify({
