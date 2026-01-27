@@ -6,6 +6,7 @@ import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
+import { parseMdxFrontmatter } from "./memory";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
 export const MEMORY_FS_ROOT = ".letta";
@@ -174,6 +175,44 @@ async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
 export function labelFromRelativePath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.replace(/\.md$/, "");
+}
+
+/**
+ * Parse file content and extract block creation data.
+ * Handles YAML frontmatter for label, description, and limit.
+ */
+export function parseBlockFromFileContent(
+  fileContent: string,
+  defaultLabel: string,
+): {
+  label: string;
+  value: string;
+  description: string;
+  limit: number;
+} {
+  const { frontmatter, body } = parseMdxFrontmatter(fileContent);
+
+  // Use frontmatter label if provided, otherwise use default (from file path)
+  const label = frontmatter.label || defaultLabel;
+
+  // Use frontmatter description if provided, otherwise generate from label
+  const description = frontmatter.description || `Memory block: ${label}`;
+
+  // Use frontmatter limit if provided and valid, otherwise default to 20000
+  let limit = 20000;
+  if (frontmatter.limit) {
+    const parsed = Number.parseInt(frontmatter.limit, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      limit = parsed;
+    }
+  }
+
+  return {
+    label,
+    value: body,
+    description,
+    limit,
+  };
 }
 
 async function readMemoryFiles(
@@ -415,19 +454,15 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
-      // Create block from file
-      const createdBlock = await client.blocks.create({
-        label,
-        value: fileEntry.content,
-        description: `Memory block: ${label}`,
-        limit: 20000,
-      });
+      // Create block from file (parsing frontmatter for description/limit)
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
       if (createdBlock.id) {
         await client.agents.blocks.attach(createdBlock.id, {
           agent_id: agentId,
         });
       }
-      createdBlocks.push(label);
+      createdBlocks.push(blockData.label);
       continue;
     }
 
@@ -439,6 +474,8 @@ export async function syncMemoryFilesystem(
             await client.agents.blocks.detach(blockEntry.id, {
               agent_id: agentId,
             });
+            // Also delete the block to avoid orphaned blocks on the server
+            await client.blocks.delete(blockEntry.id);
             deletedBlocks.push(label);
           } catch (err) {
             // Block may have been manually deleted already - ignore
@@ -479,18 +516,14 @@ export async function syncMemoryFilesystem(
       } catch (err) {
         // Block may have been manually deleted - create it
         if (err instanceof Error && err.message.includes("Not Found")) {
-          const createdBlock = await client.blocks.create({
-            label,
-            value: fileEntry.content,
-            description: `Memory block: ${label}`,
-            limit: 20000,
-          });
+          const blockData = parseBlockFromFileContent(fileEntry.content, label);
+          const createdBlock = await client.blocks.create(blockData);
           if (createdBlock.id) {
             await client.agents.blocks.attach(createdBlock.id, {
               agent_id: agentId,
             });
           }
-          createdBlocks.push(label);
+          createdBlocks.push(blockData.label);
         } else {
           throw err;
         }
@@ -514,18 +547,14 @@ export async function syncMemoryFilesystem(
       } catch (err) {
         // Block may have been manually deleted - create it
         if (err instanceof Error && err.message.includes("Not Found")) {
-          const createdBlock = await client.blocks.create({
-            label,
-            value: fileEntry.content,
-            description: `Memory block: ${label}`,
-            limit: 20000,
-          });
+          const blockData = parseBlockFromFileContent(fileEntry.content, label);
+          const createdBlock = await client.blocks.create(blockData);
           if (createdBlock.id) {
             await client.agents.blocks.attach(createdBlock.id, {
               agent_id: agentId,
             });
           }
-          createdBlocks.push(label);
+          createdBlocks.push(blockData.label);
         } else {
           throw err;
         }
@@ -570,17 +599,13 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
-      const createdBlock = await client.blocks.create({
-        label,
-        value: fileEntry.content,
-        description: `Memory block: ${label}`,
-        limit: 20000,
-      });
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
       if (createdBlock.id) {
-        userBlockIds[label] = createdBlock.id;
-        userBlockMap.set(label, createdBlock as Block);
+        userBlockIds[blockData.label] = createdBlock.id;
+        userBlockMap.set(blockData.label, createdBlock as Block);
       }
-      createdBlocks.push(label);
+      createdBlocks.push(blockData.label);
       continue;
     }
 
