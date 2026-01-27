@@ -48,21 +48,6 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
 };
 
 /**
- * Check if a default agent exists by its tag.
- */
-async function findDefaultAgent(
-  client: Letta,
-  tag: string,
-): Promise<AgentState | null> {
-  try {
-    const result = await client.agents.list({ tags: [tag], limit: 1 });
-    return result.items[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Add a tag to an existing agent.
  */
 async function addTagToAgent(
@@ -86,7 +71,10 @@ async function addTagToAgent(
 }
 
 /**
- * Ensure default agents exist. Creates missing ones and pins them globally.
+ * Create a fresh default Memo agent and pin it globally.
+ * Always creates a new agent — does NOT search by tag to avoid picking up
+ * agents created by other users on shared Letta Cloud orgs.
+ *
  * Respects `createDefaultAgents` setting (defaults to true).
  *
  * @returns The Memo agent (or null if creation disabled/failed).
@@ -98,38 +86,15 @@ export async function ensureDefaultAgents(
     return null;
   }
 
-  let memoAgent: AgentState | null = null;
-
   try {
-    // Check/create Memo
-    const existingMemo = await findDefaultAgent(client, MEMO_TAG);
-    if (existingMemo) {
-      memoAgent = existingMemo;
-      // Ensure it's pinned (might not be if settings were cleared or new machine)
-      settingsManager.pinGlobal(existingMemo.id);
-    } else {
-      const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.memo);
-      await addTagToAgent(client, agent.id, MEMO_TAG);
-      memoAgent = agent;
-      settingsManager.pinGlobal(agent.id);
-    }
-
-    // NOTE: Incognito agent creation disabled for now - can be re-enabled later
-    // const existingIncognito = await findDefaultAgent(client, INCOGNITO_TAG);
-    // if (existingIncognito) {
-    //   // Ensure it's pinned (might not be if settings were cleared or new machine)
-    //   settingsManager.pinGlobal(existingIncognito.id);
-    // } else {
-    //   const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.incognito);
-    //   await addTagToAgent(client, agent.id, INCOGNITO_TAG);
-    //   settingsManager.pinGlobal(agent.id);
-    // }
+    const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.memo);
+    await addTagToAgent(client, agent.id, MEMO_TAG);
+    settingsManager.pinGlobal(agent.id);
+    return agent;
   } catch (err) {
     // Re-throw so caller can handle/exit appropriately
     throw new Error(
       `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-
-  return memoAgent;
 }
