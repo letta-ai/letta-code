@@ -273,8 +273,7 @@ async function deleteMemoryFile(dir: string, label: string) {
 async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
   const client = await getClient();
   // Use high limit - SDK's async iterator has a bug that causes infinite loops
-  // Agents typically have < 50 memory blocks
-  const page = await client.agents.blocks.list(agentId, { limit: 100 });
+  const page = await client.agents.blocks.list(agentId, { limit: 1000 });
 
   // Handle both array response and paginated response
   if (Array.isArray(page)) {
@@ -814,7 +813,7 @@ export async function collectMemorySyncConflicts(
 }
 
 export function formatMemorySyncSummary(result: MemorySyncResult): string {
-  const lines = ["Memory filesystem sync complete:"];
+  const lines: string[] = [];
   const pushCount = (label: string, count: number) => {
     if (count > 0) {
       lines.push(`⎿  ${label}: ${count}`);
@@ -832,7 +831,11 @@ export function formatMemorySyncSummary(result: MemorySyncResult): string {
     lines.push(`⎿  Conflicts: ${result.conflicts.length}`);
   }
 
-  return lines.join("\n");
+  if (lines.length === 0) {
+    return "Memory filesystem sync complete (no changes needed)";
+  }
+
+  return `Memory filesystem sync complete:\n${lines.join("\n")}`;
 }
 
 /**
