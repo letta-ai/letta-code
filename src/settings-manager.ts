@@ -24,6 +24,17 @@ export interface SessionRef {
   conversationId: string;
 }
 
+/**
+ * Per-agent settings stored in a flat array.
+ * baseUrl is omitted/undefined for Letta API (api.letta.com).
+ */
+export interface AgentSettings {
+  agentId: string;
+  baseUrl?: string; // undefined = Letta API (api.letta.com)
+  pinned?: boolean; // true if agent is pinned
+  memfs?: boolean; // true if memory filesystem is enabled
+}
+
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
@@ -40,7 +51,9 @@ export interface Settings {
   env?: Record<string, string>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
-  pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
+  pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
+  // Unified agent settings array (replaces pinnedAgentsByServer)
+  agents?: AgentSettings[];
   // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
@@ -160,6 +173,9 @@ class SettingsManager {
 
       // Migrate tokens to secrets if they exist in settings
       await this.migrateTokensToSecrets();
+
+      // Migrate pinnedAgents/pinnedAgentsByServer to agents array
+      this.migrateToAgentsArray();
     } catch (error) {
       console.error("Error loading settings, using defaults:", error);
       this.settings = { ...DEFAULT_SETTINGS };
@@ -168,6 +184,7 @@ class SettingsManager {
       // Still check secrets support and try to migrate in case of partial failure
       await this.checkSecretsSupport();
       await this.migrateTokensToSecrets();
+      this.migrateToAgentsArray();
     }
   }
 
@@ -246,6 +263,58 @@ class SettingsManager {
     } catch (error) {
       console.warn("Failed to migrate tokens to secrets:", error);
       // Don't throw - app should still work with tokens in settings file
+    }
+  }
+
+  /**
+   * Migrate from legacy pinnedAgents/pinnedAgentsByServer to unified agents array.
+   * Runs on initialize if agents array doesn't exist yet.
+   */
+  private migrateToAgentsArray(): void {
+    if (!this.settings) return;
+    if (this.settings.agents) return; // Already migrated
+
+    const agents: AgentSettings[] = [];
+    const seen = new Set<string>(); // agentId+baseUrl dedup key
+
+    // Migrate from pinnedAgentsByServer (newest legacy format)
+    if (this.settings.pinnedAgentsByServer) {
+      for (const [serverKey, agentIds] of Object.entries(
+        this.settings.pinnedAgentsByServer,
+      )) {
+        for (const agentId of agentIds) {
+          // Normalize baseUrl: api.letta.com -> undefined
+          const baseUrl = serverKey === "api.letta.com" ? undefined : serverKey;
+          const key = `${agentId}@${baseUrl ?? "cloud"}`;
+          if (!seen.has(key)) {
+            agents.push({
+              agentId,
+              baseUrl,
+              pinned: true,
+            });
+            seen.add(key);
+          }
+        }
+      }
+    }
+
+    // Migrate from pinnedAgents (oldest legacy format - assumes Letta API)
+    if (this.settings.pinnedAgents) {
+      for (const agentId of this.settings.pinnedAgents) {
+        const key = `${agentId}@cloud`;
+        if (!seen.has(key)) {
+          agents.push({ agentId, pinned: true });
+          seen.add(key);
+        }
+      }
+    }
+
+    if (agents.length > 0) {
+      this.settings = { ...this.settings, agents };
+      // Persist the migration (async, fire-and-forget)
+      this.persistSettings().catch((error) => {
+        console.warn("Failed to persist agents array migration:", error);
+      });
     }
   }
 
@@ -1159,6 +1228,91 @@ class SettingsManager {
   unpinProfile(_name: string, _workingDirectory: string = process.cwd()): void {
     // This no longer makes sense with the new model
     console.warn("unpinProfile is deprecated, use unpinLocal(agentId) instead");
+  }
+
+  // =====================================================================
+  // Agent Settings (unified agents array) Helpers
+  // =====================================================================
+
+  /**
+   * Get settings for a specific agent on the current server.
+   * Returns undefined if agent not found in settings.
+   */
+  private getAgentSettings(agentId: string): AgentSettings | undefined {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const normalizedBaseUrl =
+      serverKey === "api.letta.com" ? undefined : serverKey;
+
+    return settings.agents?.find(
+      (a) =>
+        a.agentId === agentId && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+    );
+  }
+
+  /**
+   * Create or update settings for a specific agent on the current server.
+   */
+  private upsertAgentSettings(
+    agentId: string,
+    updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+  ): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const normalizedBaseUrl =
+      serverKey === "api.letta.com" ? undefined : serverKey;
+
+    const agents = [...(settings.agents || [])];
+    const idx = agents.findIndex(
+      (a) =>
+        a.agentId === agentId && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+    );
+
+    if (idx >= 0) {
+      // Update existing (idx >= 0 guarantees this exists)
+      const existing = agents[idx] as AgentSettings;
+      const updated: AgentSettings = {
+        agentId: existing.agentId,
+        baseUrl: existing.baseUrl,
+        // Use nullish coalescing for pinned (undefined = keep existing)
+        pinned: updates.pinned !== undefined ? updates.pinned : existing.pinned,
+        // Use nullish coalescing for memfs (undefined = keep existing)
+        memfs: updates.memfs !== undefined ? updates.memfs : existing.memfs,
+      };
+      // Clean up undefined/false values
+      if (!updated.pinned) delete updated.pinned;
+      if (!updated.memfs) delete updated.memfs;
+      if (!updated.baseUrl) delete updated.baseUrl;
+      agents[idx] = updated;
+    } else {
+      // Create new
+      const newAgent: AgentSettings = {
+        agentId,
+        baseUrl: normalizedBaseUrl,
+        ...updates,
+      };
+      // Clean up undefined/false values
+      if (!newAgent.pinned) delete newAgent.pinned;
+      if (!newAgent.memfs) delete newAgent.memfs;
+      if (!newAgent.baseUrl) delete newAgent.baseUrl;
+      agents.push(newAgent);
+    }
+
+    this.updateSettings({ agents });
+  }
+
+  /**
+   * Check if memory filesystem is enabled for an agent on the current server.
+   */
+  isMemfsEnabled(agentId: string): boolean {
+    return this.getAgentSettings(agentId)?.memfs === true;
+  }
+
+  /**
+   * Enable or disable memory filesystem for an agent on the current server.
+   */
+  setMemfsEnabled(agentId: string, enabled: boolean): void {
+    this.upsertAgentSettings(agentId, { memfs: enabled });
   }
 
   /**

@@ -12,6 +12,7 @@ import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
+import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -24,8 +25,10 @@ import skillUnloadReminder from "./prompts/skill_unload_reminder.txt";
 import skillsPrompt from "./prompts/skills.mdx";
 import stylePrompt from "./prompts/style.mdx";
 import systemPrompt from "./prompts/system_prompt.txt";
+import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
 
 export const SYSTEM_PROMPT = systemPrompt;
+export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
@@ -43,6 +46,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "project.mdx": projectPrompt,
   "skills.mdx": skillsPrompt,
   "loaded_skills.mdx": loadedSkillsPrompt,
+  "memory_filesystem.mdx": memoryFilesystemPrompt,
   "style.mdx": stylePrompt,
 };
 
