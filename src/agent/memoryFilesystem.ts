@@ -272,14 +272,21 @@ async function deleteMemoryFile(dir: string, label: string) {
 
 async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
   const client = await getClient();
-  const allBlocks: Block[] = [];
+  // Use high limit - SDK's async iterator has a bug that causes infinite loops
+  // Agents typically have < 50 memory blocks
+  const page = await client.agents.blocks.list(agentId, { limit: 100 });
 
-  // PagePromise implements AsyncIterable, so we can iterate through all pages
-  for await (const block of client.agents.blocks.list(agentId)) {
-    allBlocks.push(block as Block);
+  // Handle both array response and paginated response
+  if (Array.isArray(page)) {
+    return page;
   }
 
-  return allBlocks;
+  // Extract items from paginated response
+  const items =
+    (page as { items?: Block[] }).items ||
+    (page as { blocks?: Block[] }).blocks ||
+    [];
+  return items;
 }
 
 export function renderMemoryFilesystemTree(
