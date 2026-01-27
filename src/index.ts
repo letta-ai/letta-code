@@ -11,7 +11,7 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-
+import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -1478,7 +1478,7 @@ async function main(): Promise<void> {
               const apiKey =
                 process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
               const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-                headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+                headers: getLettaCodeHeaders(apiKey),
               });
               if (response.ok) {
                 const data = (await response.json()) as {

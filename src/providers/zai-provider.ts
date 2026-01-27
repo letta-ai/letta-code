@@ -2,6 +2,7 @@
  * Direct API calls to Letta for managing Zai provider
  */
 
+import { getLettaCodeHeaders } from "../agent/http-headers";
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
@@ -42,11 +43,7 @@ async function providersRequest<T>(
 
   const response = await fetch(url, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "X-Letta-Source": "letta-code",
-    },
+    headers: getLettaCodeHeaders(apiKey),
     ...(body && { body: JSON.stringify(body) }),
   });
 
