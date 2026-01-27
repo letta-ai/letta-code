@@ -21,6 +21,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { extname, join, relative } from "node:path";
 
+import { getLettaCodeHeaders } from "../../../../agent/http-headers";
 import type { BackupManifest } from "./backup-memory";
 
 // Use createRequire for @letta-ai/letta-client so NODE_PATH is respected
@@ -119,7 +120,7 @@ async function restoreMemory(
   const blocksResp = await fetch(
     `${baseUrl}/v1/agents/${agentId}/core-memory`,
     {
-      headers: { Authorization: `Bearer ${getApiKey()}` },
+      headers: getLettaCodeHeaders(getApiKey()),
     },
   );
   if (!blocksResp.ok) {
@@ -180,10 +181,7 @@ async function restoreMemory(
           const url = `${baseUrl}/v1/blocks/${existingBlock.id}`;
           const resp = await fetch(url, {
             method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${getApiKey()}`,
-            },
+            headers: getLettaCodeHeaders(getApiKey()),
             body: JSON.stringify({ value: newValue }),
           });
           if (!resp.ok) {

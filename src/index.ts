@@ -11,7 +11,7 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
+import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -28,37 +28,6 @@ import { markMilestone } from "./utils/timing";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
-
-/**
- * Check if pinned agents consist only of default agents (Memo + Incognito).
- * Used to auto-select Memo for fresh users without showing a selector.
- */
-async function hasOnlyDefaultAgents(
-  pinnedIds: string[],
-): Promise<{ onlyDefaults: boolean; memoId: string | null }> {
-  if (pinnedIds.length === 0) return { onlyDefaults: true, memoId: null };
-  if (pinnedIds.length > 2) return { onlyDefaults: false, memoId: null };
-
-  const client = await getClient();
-  let memoId: string | null = null;
-
-  for (const id of pinnedIds) {
-    try {
-      const agent = await client.agents.retrieve(id);
-      const tags = agent.tags || [];
-      if (tags.includes(MEMO_TAG)) {
-        memoId = agent.id;
-      } else if (!tags.includes(INCOGNITO_TAG)) {
-        // Found a non-default agent
-        return { onlyDefaults: false, memoId: null };
-      }
-    } catch {
-      // Agent doesn't exist, skip it
-    }
-  }
-
-  return { onlyDefaults: true, memoId };
-}
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -1295,18 +1264,13 @@ async function main(): Promise<void> {
         const wouldShowSelector =
           !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
 
-        // Ensure default agents (Memo/Incognito) exist for all users
-        const { ensureDefaultAgents } = await import("./agent/defaults");
-
         if (wouldShowSelector && globalPinned.length === 0) {
-          // New user with no agents - create defaults first, then trigger init
-          // NOTE: Don't set loadingState to "assembling" until we have the agent ID,
-          // otherwise init will run before we've set selectedGlobalAgentId
+          // New user with no pinned agents - create a fresh Memo agent
+          // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
+          // picking up agents created by other users on shared orgs.
+          const { ensureDefaultAgents } = await import("./agent/defaults");
           try {
             const memoAgent = await ensureDefaultAgents(client);
-            // Refresh pinned list after defaults created
-            globalPinned = settingsManager.getGlobalPinnedAgents();
-            // Auto-select Memo for fresh users
             if (memoAgent) {
               setSelectedGlobalAgentId(memoAgent.id);
               setLoadingState("assembling");
@@ -1319,11 +1283,6 @@ async function main(): Promise<void> {
             );
             process.exit(1);
           }
-        } else {
-          // Existing user - fire and forget, don't block startup
-          ensureDefaultAgents(client).catch(() => {
-            // Silently ignore - defaults may already exist
-          });
         }
 
         // If there's a local LRU, use it directly
@@ -1340,20 +1299,8 @@ async function main(): Promise<void> {
           }
         }
 
-        // Check if we should show selector or auto-select Memo
+        // Show selector if there are pinned agents to choose from
         if (wouldShowSelector && globalPinned.length > 0) {
-          // Check if only default agents are pinned
-          const { onlyDefaults, memoId } =
-            await hasOnlyDefaultAgents(globalPinned);
-
-          if (onlyDefaults && memoId) {
-            // Only defaults pinned - auto-select Memo
-            setSelectedGlobalAgentId(memoId);
-            setLoadingState("assembling");
-            return;
-          }
-
-          // Has custom agents - show selector
           setLoadingState("selecting_global");
           return;
         }
@@ -1531,7 +1478,7 @@ async function main(): Promise<void> {
               const apiKey =
                 process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
               const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-                headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+                headers: getLettaCodeHeaders(apiKey),
               });
               if (response.ok) {
                 const data = (await response.json()) as {
