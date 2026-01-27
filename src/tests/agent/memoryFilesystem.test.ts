@@ -329,11 +329,15 @@ describe("memory filesystem sync - rename handling", () => {
 describe("memory filesystem paths", () => {
   test("getMemoryFilesystemRoot returns correct path", () => {
     const root = getMemoryFilesystemRoot("agent-123", "/home/user");
-    expect(root).toBe("/home/user/.letta/agents/agent-123/memory");
+    expect(root).toBe(
+      join("/home/user", ".letta", "agents", "agent-123", "memory"),
+    );
   });
 
   test("getMemorySystemDir returns correct path", () => {
     const systemDir = getMemorySystemDir("agent-123", "/home/user");
-    expect(systemDir).toBe("/home/user/.letta/agents/agent-123/memory/system");
+    expect(systemDir).toBe(
+      join("/home/user", ".letta", "agents", "agent-123", "memory", "system"),
+    );
   });
 });
