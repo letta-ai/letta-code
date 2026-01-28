@@ -232,6 +232,32 @@ const INTERRUPT_MESSAGE =
 const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
 
+// Hint shown when Anthropic Opus 4.5 hits llm_api_error and Bedrock is available
+const OPUS_BEDROCK_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to Bedrock Opus 4.5";
+
+// Generic hint for llm_api_error when specific model suggestion not applicable
+const PROVIDER_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to another provider";
+
+// Helper to get appropriate error hint based on stop reason and current model
+function getErrorHintForStopReason(
+  stopReason: StopReasonType | null,
+  currentModelId: string | null,
+): string {
+  if (
+    currentModelId === "opus" &&
+    stopReason === "llm_api_error" &&
+    getModelInfo("bedrock-opus")
+  ) {
+    return OPUS_BEDROCK_FALLBACK_HINT;
+  }
+  if (stopReason === "llm_api_error") {
+    return PROVIDER_FALLBACK_HINT;
+  }
+  return ERROR_FEEDBACK_HINT;
+}
+
 // Interactive slash commands that open overlays immediately (bypass queueing)
 // These commands let users browse/view while the agent is working
 // Any changes made in the overlay will be queued until end_turn
@@ -3550,14 +3576,24 @@ export default function App({
                   agentIdRef.current,
                 );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   true, // Skip telemetry - already tracked above
                 );
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -3565,7 +3601,12 @@ export default function App({
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 true, // Skip telemetry - already tracked above
               );
-              appendError(ERROR_FEEDBACK_HINT, true);
+
+              // Show appropriate error hint based on stop reason
+              appendError(
+                getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                true,
+              );
 
               // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
@@ -3586,7 +3627,12 @@ export default function App({
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               true, // Skip telemetry - already tracked above
             );
-            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Show appropriate error hint based on stop reason
+            appendError(
+              getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+              true,
+            );
           }
 
           // Restore dequeued message to input on error
