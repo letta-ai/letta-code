@@ -40,7 +40,7 @@ export const brandColorsLight = {
 } as const;
 
 // Semantic color system
-export const colors = {
+const _colors = {
   // Welcome screen
   welcome: {
     border: brandColors.primaryAccent,
@@ -170,6 +170,11 @@ export const colors = {
   footer: {
     agentName: brandColors.primaryAccent,
   },
+} as const;
+
+// Combine static colors with theme-aware dynamic properties
+export const colors = {
+  ..._colors,
 
   // User messages (past prompts) - theme-aware background
   // Uses getter to read theme at render time (after async init)
@@ -179,7 +184,7 @@ export const colors = {
       background:
         theme === "light"
           ? "#e0e0e8" // subtle light gray/blue for light terminals
-          : "#1a1a2e", // subtle dark blue/purple for dark terminals
+          : "#44446a", // visible bluish-gray for dark terminals
     };
   },
 };

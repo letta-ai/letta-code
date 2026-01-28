@@ -4,11 +4,23 @@ export type TerminalTheme = "light" | "dark";
 let cachedTheme: TerminalTheme | null = null;
 
 /**
+ * Normalize a hex color component of any length to 8-bit (0-255).
+ * OSC 11 responses may return 1, 2, 3, or 4 hex digits per component.
+ */
+export function parseHexComponent(hex: string): number {
+  const value = parseInt(hex, 16);
+  const maxForLength = (1 << (hex.length * 4)) - 1;
+  return Math.round((value / maxForLength) * 255);
+}
+
+/**
  * Query terminal background color using OSC 11 escape sequence.
  * Returns the RGB values or null if query fails/times out.
  *
  * OSC 11 query: \x1b]11;?\x1b\\ or \x1b]11;?\x07
  * Response: \x1b]11;rgb:RRRR/GGGG/BBBB\x1b\\ (or \x07 terminator)
+ *
+ * IMPORTANT: Must be called before ink takes control of stdin.
  */
 async function queryTerminalBackground(
   timeoutMs = 100,
@@ -18,6 +30,10 @@ async function queryTerminalBackground(
     return null;
   }
 
+  // Capture initial stdin state to restore it reliably
+  const wasRaw = process.stdin.isRaw;
+  const wasFlowing = process.stdin.readableFlowing;
+
   return new Promise((resolve) => {
     let response = "";
     let resolved = false;
@@ -25,9 +41,16 @@ async function queryTerminalBackground(
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
-      process.stdin.setRawMode?.(false);
-      process.stdin.removeListener("data", onData);
-      process.stdin.pause();
+      try {
+        process.stdin.removeListener("data", onData);
+        // Restore stdin to its original state
+        process.stdin.setRawMode?.(wasRaw ?? false);
+        if (!wasFlowing) {
+          process.stdin.pause();
+        }
+      } catch {
+        // Ignore cleanup errors — stdin may already be in a valid state
+      }
     };
 
     const timeout = setTimeout(() => {
@@ -49,19 +72,10 @@ async function queryTerminalBackground(
         clearTimeout(timeout);
         cleanup();
 
-        // Parse hex values (may be 2 or 4 digits per component)
-        const parseComponent = (hex: string): number => {
-          // Normalize to 8-bit (0-255)
-          if (hex.length === 4) {
-            return parseInt(hex.slice(0, 2), 16);
-          }
-          return parseInt(hex, 16);
-        };
-
         resolve({
-          r: parseComponent(match[1] ?? "0"),
-          g: parseComponent(match[2] ?? "0"),
-          b: parseComponent(match[3] ?? "0"),
+          r: parseHexComponent(match[1] ?? "0"),
+          g: parseHexComponent(match[2] ?? "0"),
+          b: parseHexComponent(match[3] ?? "0"),
         });
       }
     };
@@ -87,7 +101,7 @@ async function queryTerminalBackground(
  * Returns value between 0 (black) and 1 (white).
  * Using sRGB to linear conversion and ITU-R BT.709 coefficients.
  */
-function calculateLuminance(r: number, g: number, b: number): number {
+export function calculateLuminance(r: number, g: number, b: number): number {
   // Normalize to 0-1
   const toLinear = (c: number): number => {
     const s = c / 255;
@@ -160,7 +174,3 @@ export async function initTerminalTheme(): Promise<TerminalTheme> {
   cachedTheme = await detectTerminalThemeAsync();
   return cachedTheme;
 }
-
-// For backwards compatibility - use sync detection initially
-// Colors module will use getTerminalTheme() which returns cached value
-export const terminalTheme = detectTerminalThemeSync();
