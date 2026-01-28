@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type {
   ResultMessage,
   StreamEvent,
@@ -156,6 +159,46 @@ describe.skipIf(!process.env.LETTA_API_KEY)("stream-json format", () => {
       expect(result.duration_ms).toBeGreaterThan(0);
       expect(result.uuid).toContain("result-");
       expect(result.result).toBeDefined();
+    },
+    { timeout: 200000 },
+  );
+
+  test(
+    "local tool_return_message is emitted in stream-json",
+    async () => {
+      const tmpDir = path.join(
+        process.cwd(),
+        ".tmp",
+        "headless-stream-json-format",
+      );
+      await fs.mkdir(tmpDir, { recursive: true });
+
+      const tmpFile = path.join(tmpDir, `${randomUUID()}.txt`);
+      await fs.writeFile(tmpFile, `${randomUUID()}\nsecond line\n`, "utf-8");
+
+      try {
+        const prompt =
+          "You MUST call the Read tool. " +
+          `Read the file at absolute path: ${tmpFile}. ` +
+          "Then respond with the first line of that file exactly, and nothing else.";
+
+        const lines = await runHeadlessCommand(prompt);
+
+        // For local tool executions, Letta Code synthesizes tool_return_message
+        // chunks in the CLI with id="dummy".
+        const localToolReturn = lines.find((line) => {
+          const obj = JSON.parse(line) as Record<string, unknown>;
+          return (
+            obj.type === "message" &&
+            obj.message_type === "tool_return_message" &&
+            obj.id === "dummy"
+          );
+        });
+
+        expect(localToolReturn).toBeDefined();
+      } finally {
+        await fs.rm(tmpFile, { force: true });
+      }
     },
     { timeout: 200000 },
   );
