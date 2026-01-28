@@ -29,10 +29,8 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
-  buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
   isApprovalPendingError,
-  isApprovalStateDesyncError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
 } from "../agent/approval-recovery";
@@ -2506,71 +2504,10 @@ export default function App({
                     sendDesktopNotification("Approval needed");
                     return;
                   }
-                  // No approvals found - fall through to general desync recovery
+                  // No approvals found - fall through to error handling below
                 } catch {
-                  // Fetch failed - fall through to general desync recovery
+                  // Fetch failed - fall through to error handling below
                 }
-              }
-
-              // General desync: "no tool call awaiting" or fetch failed above
-              // Recover with keep-alive prompt or strip stale approvals
-              if (
-                isApprovalStateDesyncError(errorDetail) &&
-                llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
-              ) {
-                llmApiErrorRetriesRef.current += 1;
-
-                // Show transient status (matches post-stream desync handler UX)
-                const statusId = uid("status");
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: [
-                    "Approval state desynced; resending keep-alive recovery prompt...",
-                  ],
-                });
-                buffersRef.current.order.push(statusId);
-                refreshDerived();
-
-                // Swap payload to recovery message (or strip stale approvals)
-                const isApprovalOnlyPayload =
-                  hasApprovalInPayload && currentInput.length === 1;
-                if (isApprovalOnlyPayload) {
-                  currentInput.splice(
-                    0,
-                    currentInput.length,
-                    buildApprovalRecoveryMessage(),
-                  );
-                } else {
-                  // Mixed payload: strip stale approvals, keep user message
-                  const messageItems = currentInput.filter(
-                    (item) => item?.type !== "approval",
-                  );
-                  if (messageItems.length > 0) {
-                    currentInput.splice(
-                      0,
-                      currentInput.length,
-                      ...messageItems,
-                    );
-                  } else {
-                    currentInput.splice(
-                      0,
-                      currentInput.length,
-                      buildApprovalRecoveryMessage(),
-                    );
-                  }
-                }
-
-                // Remove transient status before retry
-                buffersRef.current.byId.delete(statusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id) => id !== statusId,
-                );
-                refreshDerived();
-
-                // Reset interrupted flag so retry stream chunks are processed
-                buffersRef.current.interrupted = false;
-                continue;
               }
             }
 
@@ -3332,8 +3269,6 @@ export default function App({
           const hasApprovalInPayload = currentInput.some(
             (item) => item?.type === "approval",
           );
-          const isApprovalOnlyPayload =
-            hasApprovalInPayload && currentInput.length === 1;
 
           // Capture the most recent error text in this turn (if any)
           let latestErrorText: string | null = null;
@@ -3347,17 +3282,9 @@ export default function App({
             }
           }
 
-          // Detect approval desync once per turn
-          const detailFromRun = await fetchRunErrorDetail(lastRunId);
-          const desyncDetected =
-            isApprovalStateDesyncError(detailFromRun) ||
-            isApprovalStateDesyncError(latestErrorText);
-
-          // Track last failure info so we can emit it if retries stop
-          const lastFailureMessage = latestErrorText || detailFromRun || null;
-
-          // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+          // Check for "Invalid tool call IDs" error - server HAS pending approvals but with different IDs.
           // Fetch the actual pending approvals and show them to the user.
+          const detailFromRun = await fetchRunErrorDetail(lastRunId);
           const invalidIdsDetected =
             isInvalidToolCallIdsError(detailFromRun) ||
             isInvalidToolCallIdsError(latestErrorText);
@@ -3438,83 +3365,10 @@ export default function App({
                 sendDesktopNotification("Approval needed");
                 return;
               }
-              // No approvals found - fall through to general desync recovery
+              // No approvals found - fall through to error handling below
             } catch {
-              // Fetch failed - fall through to general desync recovery
+              // Fetch failed - fall through to error handling below
             }
-          }
-
-          // Check for approval desync errors even if stop_reason isn't llm_api_error.
-          // Handle both approval-only payloads and mixed [approval, message] payloads.
-          if (hasApprovalInPayload && desyncDetected) {
-            if (llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES) {
-              llmApiErrorRetriesRef.current += 1;
-              const statusId = uid("status");
-              buffersRef.current.byId.set(statusId, {
-                kind: "status",
-                id: statusId,
-                lines: [
-                  "Approval state desynced; resending keep-alive recovery prompt...",
-                ],
-              });
-              buffersRef.current.order.push(statusId);
-              refreshDerived();
-
-              if (isApprovalOnlyPayload) {
-                // Approval-only payload: send recovery prompt
-                currentInput.splice(
-                  0,
-                  currentInput.length,
-                  buildApprovalRecoveryMessage(),
-                );
-              } else {
-                // Mixed payload [approval, message]: strip stale approval, keep user message
-                const messageItems = currentInput.filter(
-                  (item) => item?.type !== "approval",
-                );
-                if (messageItems.length > 0) {
-                  currentInput.splice(0, currentInput.length, ...messageItems);
-                } else {
-                  // Fallback if somehow no message items remain
-                  currentInput.splice(
-                    0,
-                    currentInput.length,
-                    buildApprovalRecoveryMessage(),
-                  );
-                }
-              }
-
-              // Remove the transient status before retrying
-              buffersRef.current.byId.delete(statusId);
-              buffersRef.current.order = buffersRef.current.order.filter(
-                (id) => id !== statusId,
-              );
-              refreshDerived();
-
-              // Reset interrupted flag so retry stream chunks are processed
-              buffersRef.current.interrupted = false;
-              continue;
-            }
-
-            // No retries left: emit the failure and exit
-            const errorToShow =
-              lastFailureMessage ||
-              `An error occurred during agent execution\n(run_id: ${lastRunId ?? "unknown"}, stop_reason: ${stopReasonToHandle})`;
-            appendError(errorToShow, true);
-            appendError(ERROR_FEEDBACK_HINT, true);
-
-            // Restore dequeued message to input on error
-            if (lastDequeuedMessageRef.current) {
-              setRestoredInput(lastDequeuedMessageRef.current);
-              lastDequeuedMessageRef.current = null;
-            }
-            // Clear any remaining queue on error
-            setMessageQueue([]);
-
-            setStreaming(false);
-            sendDesktopNotification("Agent execution error", "error");
-            refreshDerived();
-            return;
           }
 
           // Check for approval pending error (sent user message while approval waiting)
