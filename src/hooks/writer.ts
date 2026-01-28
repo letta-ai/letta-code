@@ -309,7 +309,11 @@ export function countTotalHooks(
 
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
-    for (const event of Object.keys(hooks) as HookEvent[]) {
+    for (const key of Object.keys(hooks)) {
+      // Skip non-event keys like 'disabled'
+      if (key === "disabled") continue;
+
+      const event = key as HookEvent;
       if (isToolEvent(event)) {
         // Tool events have HookMatcher[] with nested hooks
         const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
