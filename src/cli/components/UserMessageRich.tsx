@@ -1,8 +1,9 @@
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { MarkdownDisplay } from "./MarkdownDisplay.js";
 
 type UserLine = {
   kind: "user";
@@ -50,47 +51,158 @@ function wordWrap(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [""];
 }
 
+/** Right-padding (in characters) added after content on compact (single-line) messages. */
+const COMPACT_PAD = 1;
+
 /**
- * UserMessageRich - Rich formatting for user messages with full-width background highlight
+ * Check whether the text contains system-reminder content injected for the LLM.
+ * These messages are kept visible but rendered without background highlighting.
+ */
+function hasSystemReminder(text: string): boolean {
+  return text.includes("<system-reminder>");
+}
+
+/**
+ * Split text into system-reminder blocks and user content blocks.
+ * System-reminder blocks are identified by <system-reminder>...</system-reminder> tags.
+ * Returns array of { text, isSystemReminder } objects in order.
+ */
+function splitSystemReminderBlocks(
+  text: string,
+): Array<{ text: string; isSystemReminder: boolean }> {
+  const blocks: Array<{ text: string; isSystemReminder: boolean }> = [];
+  const tagOpen = "<system-reminder>";
+  const tagClose = "</system-reminder>";
+
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    const openIdx = remaining.indexOf(tagOpen);
+
+    if (openIdx === -1) {
+      // No more system-reminder tags, rest is user content
+      if (remaining.trim()) {
+        blocks.push({ text: remaining.trim(), isSystemReminder: false });
+      }
+      break;
+    }
+
+    // Content before the tag is user content
+    if (openIdx > 0) {
+      const before = remaining.slice(0, openIdx).trim();
+      if (before) {
+        blocks.push({ text: before, isSystemReminder: false });
+      }
+    }
+
+    // Find the closing tag
+    const closeIdx = remaining.indexOf(tagClose, openIdx);
+    if (closeIdx === -1) {
+      // Malformed - no closing tag, treat rest as system-reminder
+      blocks.push({
+        text: remaining.slice(openIdx).trim(),
+        isSystemReminder: true,
+      });
+      break;
+    }
+
+    // Extract the full system-reminder block (including tags)
+    const sysBlock = remaining.slice(openIdx, closeIdx + tagClose.length);
+    blocks.push({ text: sysBlock, isSystemReminder: true });
+
+    remaining = remaining.slice(closeIdx + tagClose.length);
+  }
+
+  return blocks;
+}
+
+/**
+ * Render a block of text with "> " prefix (first line) and "  " continuation.
+ * If highlighted, applies background color. Otherwise plain text.
+ */
+function renderBlock(
+  text: string,
+  contentWidth: number,
+  columns: number,
+  highlighted: boolean,
+  bgAnsi: string,
+): string[] {
+  const inputLines = text.split("\n");
+  const outputLines: string[] = [];
+
+  for (const inputLine of inputLines) {
+    if (inputLine.trim() === "") {
+      outputLines.push("");
+      continue;
+    }
+    const wrappedLines = wordWrap(inputLine, contentWidth);
+    for (const wl of wrappedLines) {
+      outputLines.push(wl);
+    }
+  }
+
+  if (outputLines.length === 0) return [];
+
+  const isSingleLine = outputLines.length === 1;
+
+  return outputLines.map((ol, i) => {
+    const prefix = i === 0 ? "> " : "  ";
+    const content = prefix + ol;
+
+    if (!highlighted) {
+      return content;
+    }
+
+    const visWidth = stringWidth(content);
+    if (isSingleLine) {
+      return `${bgAnsi}${content}${" ".repeat(COMPACT_PAD)}\x1b[0m`;
+    }
+    const pad = Math.max(0, columns - visWidth);
+    return `${bgAnsi}${content}${" ".repeat(pad)}\x1b[0m`;
+  });
+}
+
+/**
+ * UserMessageRich - Rich formatting for user messages with background highlight
  *
- * Renders user messages as pre-formatted text with ANSI background codes to ensure
- * a perfectly consistent highlighted box:
+ * Renders user messages as pre-formatted text with ANSI background codes:
  * - "> " prompt prefix on first line, "  " continuation on subsequent lines
- * - Full-width background color fills every line to the terminal edge
+ * - Single-line messages: compact highlight (content + small padding)
+ * - Multi-line messages: full-width highlight box extending to terminal edge
  * - Word wrapping respects the 2-char prefix width
+ * - System-reminder parts are shown plain (no highlight), user parts highlighted
  */
 export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(1, columns - 2);
+
   const bg = colors.userMessage.background;
   const bgAnsi = hexToBgAnsi(bg);
 
-  const inputLines = line.text.split("\n");
-  const outputLines: string[] = [];
-  let isFirstLine = true;
+  // Split into system-reminder blocks and user content blocks
+  const blocks = splitSystemReminderBlocks(line.text);
 
-  for (const inputLine of inputLines) {
-    if (inputLine.trim() === "") {
-      // Empty line — render full-width background
-      const prefix = isFirstLine ? "> " : "  ";
-      const pad = Math.max(0, columns - stringWidth(prefix));
-      outputLines.push(`${bgAnsi}${prefix}${" ".repeat(pad)}\x1b[0m`);
-      isFirstLine = false;
-      continue;
+  const allLines: string[] = [];
+
+  for (const block of blocks) {
+    if (!block.text.trim()) continue;
+
+    // Add blank line between blocks (not before first)
+    if (allLines.length > 0) {
+      allLines.push("");
     }
 
-    const wrappedLines = wordWrap(inputLine, contentWidth);
-    for (const wl of wrappedLines) {
-      const prefix = isFirstLine ? "> " : "  ";
-      const content = prefix + wl;
-      const visWidth = stringWidth(content);
-      const pad = Math.max(0, columns - visWidth);
-      outputLines.push(`${bgAnsi}${content}${" ".repeat(pad)}\x1b[0m`);
-      isFirstLine = false;
-    }
+    const blockLines = renderBlock(
+      block.text,
+      contentWidth,
+      columns,
+      !block.isSystemReminder, // highlight user content, not system-reminder
+      bgAnsi,
+    );
+    allLines.push(...blockLines);
   }
 
-  return <Text>{outputLines.join("\n")}</Text>;
+  return <Text>{allLines.join("\n")}</Text>;
 });
 
 UserMessage.displayName = "UserMessage";

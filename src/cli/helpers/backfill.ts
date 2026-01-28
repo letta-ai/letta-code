@@ -5,6 +5,7 @@ import type {
   Message,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import type { Buffers } from "./accumulator";
 
 /**
@@ -37,6 +38,43 @@ const CLIP_CHAR_LIMIT_TEXT = 500;
 function clip(s: string, limit: number): string {
   if (!s) return "";
   return s.length > limit ? `${s.slice(0, limit)}…` : s;
+}
+
+/**
+ * Truncate system-reminder content while preserving opening/closing tags.
+ * Removes the middle content and replaces with [...] to keep the message compact
+ * but with proper tag structure.
+ */
+function truncateSystemReminder(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+
+  const openIdx = text.indexOf(SYSTEM_REMINDER_OPEN);
+  const closeIdx = text.lastIndexOf(SYSTEM_REMINDER_CLOSE);
+
+  if (openIdx === -1 || closeIdx === -1 || closeIdx <= openIdx) {
+    // Malformed, just use regular clip
+    return clip(text, maxLength);
+  }
+
+  const openEnd = openIdx + SYSTEM_REMINDER_OPEN.length;
+  const ellipsis = "\n[...truncated...]\n";
+
+  // Calculate available space for content (split between start and end)
+  const overhead =
+    SYSTEM_REMINDER_OPEN.length +
+    SYSTEM_REMINDER_CLOSE.length +
+    ellipsis.length;
+  const availableContent = maxLength - overhead;
+  if (availableContent <= 0) {
+    // Not enough space, just show tags with ellipsis
+    return `${SYSTEM_REMINDER_OPEN}${ellipsis}${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  const halfContent = Math.floor(availableContent / 2);
+  const contentStart = text.slice(openEnd, openEnd + halfContent);
+  const contentEnd = text.slice(closeIdx - halfContent, closeIdx);
+
+  return `${SYSTEM_REMINDER_OPEN}${contentStart}${ellipsis}${contentEnd}${SYSTEM_REMINDER_CLOSE}`;
 }
 
 /**
@@ -86,18 +124,26 @@ function renderUserContentParts(
   // UserContent can be a string or an array of text OR image parts
   // for text parts, we clip them if they're too big (eg copy-pasted chunks)
   // for image parts, we just show a placeholder
+  // System-reminder parts are truncated (middle) to preserve tags
+  // Parts are joined with newlines so each appears as a separate line
   if (typeof parts === "string") return parts;
 
-  let out = "";
+  const rendered: string[] = [];
   for (const p of parts) {
     if (p.type === "text") {
       const text = p.text || "";
-      out += clip(text, CLIP_CHAR_LIMIT_TEXT);
+      if (text.includes(SYSTEM_REMINDER_OPEN)) {
+        // Truncate middle to preserve opening/closing tags
+        rendered.push(truncateSystemReminder(text, CLIP_CHAR_LIMIT_TEXT));
+      } else {
+        rendered.push(clip(text, CLIP_CHAR_LIMIT_TEXT));
+      }
     } else if (p.type === "image") {
-      out += `[Image]`;
+      rendered.push("[Image]");
     }
   }
-  return out;
+  // Join with double-newline so each part starts a new paragraph (gets "> " prefix)
+  return rendered.join("\n\n");
 }
 
 export function backfillBuffers(buffers: Buffers, history: Message[]): void {
