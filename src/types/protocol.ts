@@ -263,7 +263,27 @@ export interface ControlRequest {
 // SDK → CLI request subtypes
 export type SdkToCliControlRequest =
   | { subtype: "initialize" }
-  | { subtype: "interrupt" };
+  | { subtype: "interrupt" }
+  | RegisterExternalToolsRequest;
+
+/**
+ * Request to register external tools (SDK → CLI)
+ * External tools are executed by the SDK, not the CLI.
+ */
+export interface RegisterExternalToolsRequest {
+  subtype: "register_external_tools";
+  tools: ExternalToolDefinition[];
+}
+
+/**
+ * External tool definition (from SDK)
+ */
+export interface ExternalToolDefinition {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema
+}
 
 // CLI → SDK request subtypes
 export interface CanUseToolControlRequest {
@@ -277,7 +297,19 @@ export interface CanUseToolControlRequest {
   blocked_path: string | null;
 }
 
-export type CliToSdkControlRequest = CanUseToolControlRequest;
+/**
+ * Request to execute an external tool (CLI → SDK)
+ */
+export interface ExecuteExternalToolRequest {
+  subtype: "execute_external_tool";
+  tool_call_id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+}
+
+export type CliToSdkControlRequest = 
+  | CanUseToolControlRequest 
+  | ExecuteExternalToolRequest;
 
 // Combined for parsing
 export type ControlRequestBody =
@@ -296,7 +328,8 @@ export type ControlResponseBody =
       request_id: string;
       response?: CanUseToolResponse | Record<string, unknown>;
     }
-  | { subtype: "error"; request_id: string; error: string };
+  | { subtype: "error"; request_id: string; error: string }
+  | ExternalToolResultResponse;
 
 // --- can_use_tool response payloads ---
 export interface CanUseToolResponseAllow {
@@ -317,6 +350,27 @@ export interface CanUseToolResponseDeny {
 export type CanUseToolResponse =
   | CanUseToolResponseAllow
   | CanUseToolResponseDeny;
+
+/**
+ * External tool result content block (matches SDK AgentToolResultContent)
+ */
+export interface ExternalToolResultContent {
+  type: "text" | "image";
+  text?: string;
+  data?: string;      // base64 for images
+  mimeType?: string;
+}
+
+/**
+ * External tool result response (SDK → CLI)
+ */
+export interface ExternalToolResultResponse {
+  subtype: "external_tool_result";
+  request_id: string;
+  tool_call_id: string;
+  content: ExternalToolResultContent[];
+  is_error: boolean;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // USER INPUT

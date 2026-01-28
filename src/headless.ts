@@ -42,7 +42,12 @@ import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { StreamProcessor } from "./cli/helpers/streamProcessor";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission } from "./tools/manager";
+import { 
+  checkToolPermission,
+  registerExternalTools,
+  setExternalToolExecutor,
+  type ExternalToolDefinition,
+} from "./tools/manager";
 import type {
   AutoApprovalMessage,
   CanUseToolControlRequest,
@@ -1964,6 +1969,65 @@ async function runBidirectionalMode(
           uuid: crypto.randomUUID(),
         };
         console.log(JSON.stringify(interruptResponse));
+      } else if (subtype === "register_external_tools") {
+        // Register external tools from SDK
+        const toolsRequest = message.request as { tools?: ExternalToolDefinition[] };
+        const tools = toolsRequest.tools ?? [];
+        
+        registerExternalTools(tools);
+        
+        // Set up the external tool executor to send requests back to SDK
+        setExternalToolExecutor(async (toolCallId, toolName, input) => {
+          // Send execute_external_tool request to SDK
+          const execRequest: ControlRequest = {
+            type: "control_request",
+            request_id: `ext-${toolCallId}`,
+            request: {
+              subtype: "execute_external_tool",
+              tool_call_id: toolCallId,
+              tool_name: toolName,
+              input,
+            } as unknown as CanUseToolControlRequest, // Type cast for compatibility
+          };
+          console.log(JSON.stringify(execRequest));
+          
+          // Wait for external_tool_result response
+          while (true) {
+            const line = await getNextLine();
+            if (line === null) {
+              return { content: [{ type: "text", text: "stdin closed" }], isError: true };
+            }
+            if (!line.trim()) continue;
+            
+            try {
+              const msg = JSON.parse(line);
+              if (
+                msg.type === "control_response" &&
+                msg.response?.subtype === "external_tool_result" &&
+                msg.response?.tool_call_id === toolCallId
+              ) {
+                return {
+                  content: msg.response.content ?? [{ type: "text", text: "" }],
+                  isError: msg.response.is_error ?? false,
+                };
+              }
+            } catch {
+              // Ignore parse errors, keep waiting
+            }
+          }
+        });
+        
+        const registerResponse: ControlResponse = {
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: requestId ?? "",
+            response: { registered: tools.length },
+          },
+          session_id: sessionId,
+          uuid: crypto.randomUUID(),
+        };
+        console.log(JSON.stringify(registerResponse));
       } else {
         const errorResponse: ControlResponse = {
           type: "control_response",
