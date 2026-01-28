@@ -34,6 +34,7 @@ import WriteDescription from "./descriptions/Write.md";
 import WriteFileGeminiDescription from "./descriptions/WriteFileGemini.md";
 import WriteTodosGeminiDescription from "./descriptions/WriteTodosGemini.md";
 import SgGoldPatchApplyOpsDescription from "./descriptions/SgGoldPatchApplyOps.md";
+import SgPredicateRegistryApplyOpsDescription from "./descriptions/SgPredicateRegistryApplyOps.md";
 import { apply_patch } from "./impl/ApplyPatch";
 import { ask_user_question } from "./impl/AskUserQuestion";
 import { bash } from "./impl/Bash";
@@ -68,6 +69,7 @@ import { update_plan } from "./impl/UpdatePlan";
 import { view_image } from "./impl/ViewImage";
 import { write } from "./impl/Write";
 import { sg_gold_patch_apply_ops } from "./impl/SgGoldPatchApplyOps";
+import { sg_predicate_registry_apply_ops } from "./impl/SgPredicateRegistryApplyOps";
 import { write_file_gemini } from "./impl/WriteFileGemini";
 import { write_todos } from "./impl/WriteTodosGemini";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
@@ -106,6 +108,7 @@ import WriteSchema from "./schemas/Write.json";
 import WriteFileGeminiSchema from "./schemas/WriteFileGemini.json";
 import WriteTodosGeminiSchema from "./schemas/WriteTodosGemini.json";
 import SgGoldPatchApplyOpsSchema from "./schemas/SgGoldPatchApplyOps.json";
+import SgPredicateRegistryApplyOpsSchema from "./schemas/SgPredicateRegistryApplyOps.json";
 
 type ToolImplementation = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -211,6 +214,11 @@ const toolDefinitions = {
     schema: SgGoldPatchApplyOpsSchema,
     description: SgGoldPatchApplyOpsDescription.trim(),
     impl: sg_gold_patch_apply_ops as unknown as ToolImplementation,
+  },
+  SgPredicateRegistryApplyOps: {
+    schema: SgPredicateRegistryApplyOpsSchema,
+    description: SgPredicateRegistryApplyOpsDescription.trim(),
+    impl: sg_predicate_registry_apply_ops as unknown as ToolImplementation,
   },
   shell_command: {
     schema: ShellCommandSchema,
