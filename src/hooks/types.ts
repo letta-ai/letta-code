@@ -69,7 +69,7 @@ export interface SimpleHookMatcher {
  * - disabled: when true, prevents all hooks from firing (checked across all config levels)
  */
 export type HooksConfig = {
-  /** When true, disables all hooks. If any level (user/project/project-local) has this set, hooks are disabled. */
+  /** When true, disables all hooks. User false overrides project settings; otherwise any true disables. */
   disabled?: boolean;
 } & {
   [K in ToolHookEvent]?: HookMatcher[];

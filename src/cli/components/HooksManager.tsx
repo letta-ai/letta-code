@@ -25,6 +25,7 @@ import {
   type SaveLocation,
   setHooksDisabled,
 } from "../../hooks/writer";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -193,9 +194,24 @@ export const HooksManager = memo(function HooksManager({
   // Refresh counts - called when hooks change
   const refreshCounts = useCallback(() => {
     setTotalHooks(countTotalHooks());
+    setHooksDisabledState(areHooksDisabled());
   }, []);
 
-  // Load total hooks count on mount and when returning to events screen
+  // Ensure settings are loaded before counting hooks
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        await settingsManager.loadProjectSettings();
+        await settingsManager.loadLocalProjectSettings();
+      } catch {
+        // Settings may already be loaded or not available
+      }
+      refreshCounts();
+    };
+    loadSettings();
+  }, [refreshCounts]);
+
+  // Refresh counts when returning to events screen
   useEffect(() => {
     if (screen === "events") {
       refreshCounts();

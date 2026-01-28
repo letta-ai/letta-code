@@ -240,24 +240,34 @@ export function hasHooksForEvent(
 }
 
 /**
- * Check if all hooks are disabled via hooks.disabled in any settings level.
- * Returns true if any level (user, project, or project-local) has disabled: true.
+ * Check if all hooks are disabled via hooks.disabled across settings levels.
+ *
+ * Precedence:
+ * 1. If user has disabled: false → ENABLED (explicit user override)
+ * 2. If user has disabled: true → DISABLED
+ * 3. If project OR project-local has disabled: true → DISABLED
+ * 4. Default → ENABLED
  */
 export function areHooksDisabled(
   workingDirectory: string = process.cwd(),
 ): boolean {
   try {
-    // Check user-level settings
-    const userHooks = settingsManager.getSettings().hooks;
-    if (userHooks?.disabled === true) {
+    // Check user-level settings first (highest precedence)
+    const userDisabled = settingsManager.getSettings().hooks?.disabled;
+    if (userDisabled === false) {
+      // User explicitly enabled - overrides project settings
+      return false;
+    }
+    if (userDisabled === true) {
+      // User explicitly disabled
       return true;
     }
 
-    // Check project-level settings
+    // User setting is undefined, check project-level settings
     try {
-      const projectHooks =
-        settingsManager.getProjectSettings(workingDirectory)?.hooks;
-      if (projectHooks?.disabled === true) {
+      const projectDisabled =
+        settingsManager.getProjectSettings(workingDirectory)?.hooks?.disabled;
+      if (projectDisabled === true) {
         return true;
       }
     } catch {
@@ -266,9 +276,10 @@ export function areHooksDisabled(
 
     // Check project-local settings
     try {
-      const localHooks =
-        settingsManager.getLocalProjectSettings(workingDirectory)?.hooks;
-      if (localHooks?.disabled === true) {
+      const localDisabled =
+        settingsManager.getLocalProjectSettings(workingDirectory)?.hooks
+          ?.disabled;
+      if (localDisabled === true) {
         return true;
       }
     } catch {
