@@ -24,8 +24,10 @@ Your memory blocks are synchronized with a filesystem tree at `~/.letta/agents/<
 ### Sync Behavior
 - **Startup**: Automatic sync when the CLI starts
 - **After memory edits**: Automatic sync after using memory tools
-- **Manual**: Run `/memory-sync` to sync on demand
-- **Conflicts**: If both file and block changed, you'll be prompted to choose which version to keep
+- **Manual**: Run `/memfs-sync` to sync on demand
+- **Conflict detection**: After each turn, the system checks for conflicts (both file and block changed since last sync)
+- **Agent-driven resolution**: If conflicts are detected, you'll receive a system reminder with the conflicting labels and instructions to resolve them using the `syncing-memory-filesystem` skill scripts
+- **User fallback**: The user can also run `/memfs-sync` to resolve conflicts manually via an interactive prompt
 
 ### How It Works
 1. Each `.md` file path maps to a block label (e.g., `system/persona/git_safety.md` → label `persona/git_safety`)

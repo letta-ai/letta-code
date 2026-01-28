@@ -25,6 +25,12 @@ export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
 /**
+ * How often (in turns) to check for memfs sync conflicts, even without
+ * filesystem change events. Catches block-only changes (e.g. ADE/API edits).
+ */
+export const MEMFS_CONFLICT_CHECK_INTERVAL = 5;
+
+/**
  * Status bar thresholds - only show indicators when values exceed these
  */
 // Show token count after 100 estimated tokens (shows exact count until 1k, then compact)
