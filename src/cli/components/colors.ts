@@ -5,6 +5,8 @@
  * No colors should be hardcoded in components - all should reference this file.
  */
 
+import { getTerminalTheme } from "../helpers/terminalTheme";
+
 // Brand colors (dark mode)
 export const brandColors = {
   orange: "#FF5533", // dark orange
@@ -168,4 +170,16 @@ export const colors = {
   footer: {
     agentName: brandColors.primaryAccent,
   },
-} as const;
+
+  // User messages (past prompts) - theme-aware background
+  // Uses getter to read theme at render time (after async init)
+  get userMessage() {
+    const theme = getTerminalTheme();
+    return {
+      background:
+        theme === "light"
+          ? "#e0e0e8" // subtle light gray/blue for light terminals
+          : "#1a1a2e", // subtle dark blue/purple for dark terminals
+    };
+  },
+};
