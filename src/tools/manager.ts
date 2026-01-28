@@ -72,6 +72,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "Task",
   "TodoWrite",
   "Write",
+  "SgGoldPatchApplyOps",
 ];
 
 export const OPENAI_DEFAULT_TOOLS: ToolName[] = [
@@ -118,6 +119,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   "GrepFiles",
   "ApplyPatch",
   "UpdatePlan",
+  "SgGoldPatchApplyOps",
 ];
 
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
@@ -137,6 +139,7 @@ export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   "WriteFileGemini",
   "WriteTodos",
   "ReadManyFiles",
+  "SgGoldPatchApplyOps",
 ];
 
 // Tool permissions configuration
@@ -159,6 +162,7 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   Task: { requiresApproval: true },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  SgGoldPatchApplyOps: { requiresApproval: true },
   shell_command: { requiresApproval: true },
   shell: { requiresApproval: true },
   read_file: { requiresApproval: false },
