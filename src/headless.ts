@@ -5,8 +5,12 @@ import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildApprovalRecoveryMessage,
@@ -31,6 +35,7 @@ import {
   createBuffers,
   type Line,
   markIncompleteToolsAsCancelled,
+  onChunk as accumulateChunk,
   toLines,
 } from "./cli/helpers/accumulator";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
@@ -1323,7 +1328,33 @@ export async function handleHeadlessCommand(
         const { executeApprovalBatch } = await import(
           "./agent/approval-execution"
         );
-        const executedResults = await executeApprovalBatch(decisions);
+        const onLocalToolChunk =
+          outputFormat === "stream-json"
+            ? (toolChunk: ToolReturnMessage) => {
+                // Make local tool executions observable in stream-json output.
+                accumulateChunk(
+                  buffers,
+                  toolChunk as unknown as LettaStreamingResponse,
+                );
+
+                const uuid = toolChunk.tool_call_id
+                  ? `tool-return-${toolChunk.tool_call_id}`
+                  : crypto.randomUUID();
+
+                const msg: MessageWire = {
+                  type: "message",
+                  ...toolChunk,
+                  session_id: sessionId,
+                  uuid,
+                };
+                console.log(JSON.stringify(msg));
+              }
+            : undefined;
+
+        const executedResults = await executeApprovalBatch(
+          decisions,
+          onLocalToolChunk,
+        );
 
         // Send all results in one batch
         currentInput = [
@@ -2191,7 +2222,30 @@ async function runBidirectionalMode(
             const { executeApprovalBatch } = await import(
               "./agent/approval-execution"
             );
-            const executedResults = await executeApprovalBatch(decisions);
+            const onLocalToolChunk = (toolChunk: ToolReturnMessage) => {
+              // Emit local tool results in-band so SDK clients can observe them.
+              accumulateChunk(
+                buffers,
+                toolChunk as unknown as LettaStreamingResponse,
+              );
+
+              const uuid = toolChunk.tool_call_id
+                ? `tool-return-${toolChunk.tool_call_id}`
+                : crypto.randomUUID();
+
+              const msg: MessageWire = {
+                type: "message",
+                ...toolChunk,
+                session_id: sessionId,
+                uuid,
+              };
+              console.log(JSON.stringify(msg));
+            };
+
+            const executedResults = await executeApprovalBatch(
+              decisions,
+              onLocalToolChunk,
+            );
 
             // Send approval results back to continue
             currentInput = [
