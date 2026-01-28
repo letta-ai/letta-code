@@ -26,14 +26,7 @@ function getDisplayableToolReturn(
     .join("\n");
 }
 
-// const PASTE_LINE_THRESHOLD = 5;
-// const PASTE_CHAR_THRESHOLD = 500;
 const CLIP_CHAR_LIMIT_TEXT = 500;
-// const CLIP_CHAR_LIMIT_JSON = 1000;
-
-// function countLines(text: string): number {
-//   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
-// }
 
 function clip(s: string, limit: number): string {
   if (!s) return "";

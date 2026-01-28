@@ -1,7 +1,7 @@
 import { Box, Text, Transform } from "ink";
 import type React from "react";
 import stringWidth from "string-width";
-import { colors } from "./colors.js";
+import { colors, hexToBgAnsi } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
 
 interface MarkdownDisplayProps {
@@ -10,17 +10,6 @@ interface MarkdownDisplayProps {
   hangingIndent?: number; // indent for wrapped lines within a paragraph
   backgroundColor?: string; // background color for all text
   contentWidth?: number; // available width — used to pad lines to fill background
-}
-
-/**
- * Convert a hex color (#RRGGBB) to an ANSI 24-bit background escape sequence.
- */
-function hexToBgAnsi(hex: string): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `\x1b[48;2;${r};${g};${b}m`;
 }
 
 // Regex patterns for markdown elements (defined outside component to avoid re-creation)

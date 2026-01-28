@@ -1,26 +1,14 @@
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { colors } from "./colors";
-import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { colors, hexToBgAnsi } from "./colors";
 
 type UserLine = {
   kind: "user";
   id: string;
   text: string;
 };
-
-/**
- * Convert a hex color (#RRGGBB) to an ANSI 24-bit background escape sequence.
- */
-function hexToBgAnsi(hex: string): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `\x1b[48;2;${r};${g};${b}m`;
-}
 
 /**
  * Word-wrap plain text to a given visible width.
@@ -53,14 +41,6 @@ function wordWrap(text: string, width: number): string[] {
 
 /** Right-padding (in characters) added after content on compact (single-line) messages. */
 const COMPACT_PAD = 1;
-
-/**
- * Check whether the text contains system-reminder content injected for the LLM.
- * These messages are kept visible but rendered without background highlighting.
- */
-function hasSystemReminder(text: string): boolean {
-  return text.includes("<system-reminder>");
-}
 
 /**
  * Split text into system-reminder blocks and user content blocks.
