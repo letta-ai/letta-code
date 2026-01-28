@@ -24,7 +24,7 @@ function wordWrap(text: string, width: number): string[] {
     if (current === "") {
       current = word;
     } else {
-      const candidate = current + " " + word;
+      const candidate = `${current} ${word}`;
       if (stringWidth(candidate) <= width) {
         current = candidate;
       } else {

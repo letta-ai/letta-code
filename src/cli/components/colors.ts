@@ -8,13 +8,22 @@
 import { getTerminalTheme } from "../helpers/terminalTheme";
 
 /**
+ * Parse a hex color (#RRGGBB) to RGB components.
+ */
+function parseHex(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace("#", "");
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+/**
  * Convert a hex color (#RRGGBB) to an ANSI 24-bit background escape sequence.
  */
 export function hexToBgAnsi(hex: string): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
+  const { r, g, b } = parseHex(hex);
   return `\x1b[48;2;${r};${g};${b}m`;
 }
 
@@ -22,10 +31,7 @@ export function hexToBgAnsi(hex: string): string {
  * Convert a hex color (#RRGGBB) to an ANSI 24-bit foreground escape sequence.
  */
 export function hexToFgAnsi(hex: string): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
+  const { r, g, b } = parseHex(hex);
   return `\x1b[38;2;${r};${g};${b}m`;
 }
 

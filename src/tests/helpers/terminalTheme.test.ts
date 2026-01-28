@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   calculateLuminance,
   detectTerminalThemeSync,
@@ -65,7 +65,19 @@ describe("calculateLuminance", () => {
 });
 
 describe("detectTerminalThemeSync", () => {
-  const originalEnv = process.env.COLORFGBG;
+  let originalEnv: string | undefined;
+
+  beforeAll(() => {
+    originalEnv = process.env.COLORFGBG;
+  });
+
+  afterAll(() => {
+    if (originalEnv !== undefined) {
+      process.env.COLORFGBG = originalEnv;
+    } else {
+      delete process.env.COLORFGBG;
+    }
+  });
 
   test("returns 'dark' when COLORFGBG is not set", () => {
     delete process.env.COLORFGBG;
@@ -86,11 +98,4 @@ describe("detectTerminalThemeSync", () => {
     process.env.COLORFGBG = "15;0";
     expect(detectTerminalThemeSync()).toBe("dark");
   });
-
-  // Restore
-  if (originalEnv !== undefined) {
-    process.env.COLORFGBG = originalEnv;
-  } else {
-    delete process.env.COLORFGBG;
-  }
 });
