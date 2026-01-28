@@ -127,9 +127,8 @@ export async function sg_gold_patch_apply_ops(
     ? args.proposals_path
     : path.resolve(userCwd, args.proposals_path);
 
-  if (!(await pathExists(proposalsAbs))) {
-    throw new Error(`Proposals file does not exist: ${proposalsAbs}`);
-  }
+  // Allow create-if-missing: the Python applier will bootstrap a minimal
+  // proposals file (segment metadata inferred from segments/plan.json).
 
   // Normalize to repo-relative paths for the Python applier.
   const repoPrefix = repoRoot.endsWith(path.sep) ? repoRoot : repoRoot + path.sep;
