@@ -1,6 +1,10 @@
 import { Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
+import {
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
 
@@ -51,8 +55,8 @@ function splitSystemReminderBlocks(
   text: string,
 ): Array<{ text: string; isSystemReminder: boolean }> {
   const blocks: Array<{ text: string; isSystemReminder: boolean }> = [];
-  const tagOpen = "<system-reminder>";
-  const tagClose = "</system-reminder>";
+  const tagOpen = SYSTEM_REMINDER_OPEN;
+  const tagClose = SYSTEM_REMINDER_CLOSE;
 
   let remaining = text;
 
