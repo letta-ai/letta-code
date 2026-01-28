@@ -98,15 +98,6 @@ export const BYOK_PROVIDERS = [
           { key: "region", label: "AWS Region", placeholder: "us-east-1" },
         ],
       },
-      {
-        id: "default",
-        label: "Bedrock API Key",
-        description: "Use a Bedrock-specific API key",
-        fields: [
-          { key: "region", label: "AWS Region", placeholder: "us-east-1" },
-          { key: "bedrockApiKey", label: "Bedrock API Key", secret: true },
-        ],
-      },
     ] as AuthMethod[],
   },
 ] as const;
@@ -227,14 +218,10 @@ export async function checkProviderApiKey(
   accessKey?: string,
   region?: string,
   profile?: string,
-  bedrockApiKey?: string,
 ): Promise<void> {
-  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
-  // Server determines auth mode based on presence of access_key
-  const effectiveApiKey = bedrockApiKey || apiKey;
   await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
     provider_type: providerType,
-    api_key: effectiveApiKey,
+    api_key: apiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
@@ -251,15 +238,11 @@ export async function createProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
-  bedrockApiKey?: string,
 ): Promise<ProviderResponse> {
-  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
-  // Server determines auth mode based on presence of access_key
-  const effectiveApiKey = bedrockApiKey || apiKey;
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
     provider_type: providerType,
-    api_key: effectiveApiKey,
+    api_key: apiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
@@ -275,16 +258,12 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
-  bedrockApiKey?: string,
 ): Promise<ProviderResponse> {
-  // For Bedrock API key mode: send bedrockApiKey as api_key (no access_key)
-  // Server determines auth mode based on presence of access_key
-  const effectiveApiKey = bedrockApiKey || apiKey;
   return providersRequest<ProviderResponse>(
     "PATCH",
     `/v1/providers/${providerId}`,
     {
-      api_key: effectiveApiKey,
+      api_key: apiKey,
       ...(accessKey && { access_key: accessKey }),
       ...(region && { region }),
       ...(profile && { profile }),
@@ -310,19 +289,11 @@ export async function createOrUpdateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
-  bedrockApiKey?: string,
 ): Promise<ProviderResponse> {
   const existing = await getProviderByName(providerName);
 
   if (existing) {
-    return updateProvider(
-      existing.id,
-      apiKey,
-      accessKey,
-      region,
-      profile,
-      bedrockApiKey,
-    );
+    return updateProvider(existing.id, apiKey, accessKey, region, profile);
   }
 
   return createProvider(
@@ -332,7 +303,6 @@ export async function createOrUpdateProvider(
     accessKey,
     region,
     profile,
-    bedrockApiKey,
   );
 }
 

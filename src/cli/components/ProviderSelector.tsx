@@ -282,7 +282,6 @@ export function ProviderSelector({
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
-    const bedrockApiKey = fieldValues.bedrockApiKey?.trim();
 
     // If already validated, save
     if (validationState === "valid") {
@@ -294,7 +293,6 @@ export function ProviderSelector({
           accessKey,
           region,
           profile,
-          bedrockApiKey,
         );
         // Refresh connected providers
         const providers = await getConnectedProviders();
@@ -326,7 +324,6 @@ export function ProviderSelector({
         accessKey,
         region,
         profile,
-        bedrockApiKey,
       );
       if (mountedRef.current) {
         setValidationState("valid");
