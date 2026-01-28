@@ -375,12 +375,17 @@ async function isRetriableError(
 
       // Check for llm_error at top level or nested (handles error.error nesting)
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
-      if (errorType === "llm_error") return true;
+      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+      // Don't retry 4xx client errors (validation, auth, malformed requests)
+      // These are not transient and won't succeed on retry
+      const is4xxError = /Error code: 4\d{2}/.test(detail);
+
+      if (errorType === "llm_error" && !is4xxError) return true;
 
       // Fallback: detect LLM provider errors from detail even if misclassified
       // This handles edge cases where streaming errors weren't properly converted to LLMError
       // Patterns are derived from handle_llm_error() message formats in the backend
-      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
       const llmProviderPatterns = [
         "Anthropic API error", // anthropic_client.py:759
         "OpenAI API error", // openai_client.py:1034
@@ -390,7 +395,10 @@ async function isRetriableError(
         "Network error", // Transient network failures during streaming
         "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
       ];
-      if (llmProviderPatterns.some((pattern) => detail.includes(pattern))) {
+      if (
+        llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
+        !is4xxError
+      ) {
         return true;
       }
 
