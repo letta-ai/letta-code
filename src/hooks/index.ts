@@ -20,7 +20,7 @@ import type {
   UserPromptSubmitHookInput,
 } from "./types";
 
-export { clearHooksCache } from "./loader";
+export { areHooksDisabled, clearHooksCache } from "./loader";
 // Re-export types for convenience
 export * from "./types";
 

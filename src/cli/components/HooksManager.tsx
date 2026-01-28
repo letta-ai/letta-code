@@ -14,6 +14,7 @@ import {
 import {
   addHookMatcher,
   addSimpleHookMatcher,
+  areHooksDisabled,
   countHooksForEvent,
   countTotalHooks,
   type HookMatcherWithSource,
@@ -22,6 +23,7 @@ import {
   loadSimpleMatchersWithSource,
   removeHook,
   type SaveLocation,
+  setHooksDisabled,
 } from "../../hooks/writer";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
@@ -145,6 +147,9 @@ export const HooksManager = memo(function HooksManager({
   // Dynamic tool names from agent
   const [toolNames, setToolNames] = useState<string[]>(FALLBACK_TOOL_NAMES);
 
+  // Track whether all hooks are disabled
+  const [hooksDisabled, setHooksDisabledState] = useState(areHooksDisabled);
+
   // Fetch agent tools on mount
   useEffect(() => {
     if (!agentId) return;
@@ -267,6 +272,13 @@ export const HooksManager = memo(function HooksManager({
     setSelectedIndex(0);
   }, [deleteHookIndex, selectedEvent, hooks, loadHooks, refreshCounts]);
 
+  // Handle toggling the "disable all hooks" setting
+  const handleToggleDisableAll = useCallback(() => {
+    const newValue = !hooksDisabled;
+    setHooksDisabled(newValue);
+    setHooksDisabledState(newValue);
+  }, [hooksDisabled]);
+
   useInput((input, key) => {
     // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
@@ -276,17 +288,26 @@ export const HooksManager = memo(function HooksManager({
 
     // Handle each screen
     if (screen === "events") {
+      // Total items: 1 (disable toggle) + HOOK_EVENTS.length
+      const totalItems = 1 + HOOK_EVENTS.length;
+
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(HOOK_EVENTS.length - 1, prev + 1));
+        setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
       } else if (key.return) {
-        const selected = HOOK_EVENTS[selectedIndex];
-        if (selected) {
-          setSelectedEvent(selected.event);
-          loadHooks(selected.event);
-          setScreen("hooks-list");
-          setSelectedIndex(0);
+        if (selectedIndex === 0) {
+          // Toggle "disable all hooks"
+          handleToggleDisableAll();
+        } else {
+          // Select a hook event (index is shifted by 1)
+          const selected = HOOK_EVENTS[selectedIndex - 1];
+          if (selected) {
+            setSelectedEvent(selected.event);
+            loadHooks(selected.event);
+            setScreen("hooks-list");
+            setSelectedIndex(0);
+          }
         }
       } else if (key.escape) {
         onClose();
@@ -372,6 +393,12 @@ export const HooksManager = memo(function HooksManager({
 
   // Render Events List
   if (screen === "events") {
+    const disableToggleSelected = selectedIndex === 0;
+    const disableToggleLabel = hooksDisabled
+      ? "Enable all hooks"
+      : "Disable all hooks";
+    const disableToggleStatus = hooksDisabled ? " (disabled)" : "";
+
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
@@ -384,8 +411,22 @@ export const HooksManager = memo(function HooksManager({
         <Text>{boxBottom(boxWidth)}</Text>
         <Text> </Text>
 
+        {/* Disable all hooks toggle - first item */}
+        <Text>
+          <Text
+            color={disableToggleSelected ? colors.input.prompt : undefined}
+          >
+            {disableToggleSelected ? "❯" : " "} 1. {disableToggleLabel}
+          </Text>
+          <Text color={hooksDisabled ? "red" : "green"}>
+            {disableToggleStatus}
+          </Text>
+        </Text>
+        <Text> </Text>
+
+        {/* Hook events */}
         {HOOK_EVENTS.map((item, index) => {
-          const isSelected = index === selectedIndex;
+          const isSelected = index + 1 === selectedIndex;
           const hookCount = countHooksForEvent(item.event);
           const prefix = isSelected ? "❯" : " ";
           const countStr = hookCount > 0 ? ` (${hookCount})` : "";
@@ -393,7 +434,7 @@ export const HooksManager = memo(function HooksManager({
           return (
             <Text key={item.event}>
               <Text color={isSelected ? colors.input.prompt : undefined}>
-                {prefix} {index + 1}. {item.event}
+                {prefix} {index + 2}. {item.event}
               </Text>
               <Text dimColor> - {item.description}</Text>
               <Text color="yellow">{countStr}</Text>

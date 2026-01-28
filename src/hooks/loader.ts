@@ -240,6 +240,17 @@ export function hasHooksForEvent(
 }
 
 /**
+ * Check if all hooks are disabled via global settings
+ */
+export function areHooksDisabled(): boolean {
+  try {
+    return settingsManager.getSettings().disableAllHooks === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Convenience function to load hooks and get matching ones for an event
  */
 export async function getHooksForEvent(
@@ -247,6 +258,11 @@ export async function getHooksForEvent(
   toolName?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookCommand[]> {
+  // Check if all hooks are disabled
+  if (areHooksDisabled()) {
+    return [];
+  }
+
   const config = await loadHooks(workingDirectory);
   return getMatchingHooks(config, event, toolName);
 }

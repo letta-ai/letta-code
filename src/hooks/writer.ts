@@ -361,3 +361,21 @@ export function countHooksForEvent(
 
   return count;
 }
+
+/**
+ * Check if all hooks are disabled
+ */
+export function areHooksDisabled(): boolean {
+  try {
+    return settingsManager.getSettings().disableAllHooks === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set whether all hooks are disabled
+ */
+export function setHooksDisabled(disabled: boolean): void {
+  settingsManager.updateSettings({ disableAllHooks: disabled });
+}
