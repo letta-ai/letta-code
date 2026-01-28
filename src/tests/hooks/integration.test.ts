@@ -506,6 +506,31 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(parsed.message_count).toBe(10);
       expect(parsed.tool_call_count).toBe(7);
     });
+
+    test("receives assistant_message in input", async () => {
+      createHooksConfig({
+        Stop: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runStopHooks(
+        "end_turn",
+        5,
+        2,
+        tempDir,
+        "Here is my response to your question.",
+      );
+
+      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
+      expect(parsed.stop_reason).toBe("end_turn");
+      expect(parsed.assistant_message).toBe(
+        "Here is my response to your question.",
+      );
+    });
   });
 
   // ============================================================================

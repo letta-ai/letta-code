@@ -2635,13 +2635,29 @@ export default function App({
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
 
+            // Extract the last assistant message for Stop hooks
+            const bufferItems = Array.from(buffersRef.current.byId.values());
+            const lastAssistantItem = [...bufferItems]
+              .reverse()
+              .find(
+                (item) =>
+                  item.kind === "assistant" &&
+                  "text" in item &&
+                  typeof item.text === "string" &&
+                  item.text.trim().length > 0,
+              );
+            const assistantMessage =
+              lastAssistantItem && "text" in lastAssistantItem
+                ? (lastAssistantItem.text as string)
+                : undefined;
+
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
               buffersRef.current.order.length,
-              Array.from(buffersRef.current.byId.values()).filter(
-                (item) => item.kind === "tool_call",
-              ).length,
+              bufferItems.filter((item) => item.kind === "tool_call").length,
+              process.cwd(),
+              assistantMessage,
             );
 
             // If hook blocked (exit 2), inject stderr feedback and continue conversation

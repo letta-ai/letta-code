@@ -243,6 +243,8 @@ export interface StopHookInput extends HookInputBase {
   message_count?: number;
   /** Number of tool calls in the turn */
   tool_call_count?: number;
+  /** The assistant's final message text (if any) */
+  assistant_message?: string;
 }
 
 /**
