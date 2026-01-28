@@ -5405,9 +5405,14 @@ export default function App({
             }
 
             const client = await getClient();
-            const result = await client.conversations.messages.compact(
-              conversationIdRef.current,
-            );
+            // Use agent-level compact API for "default" conversation,
+            // otherwise use conversation-level API
+            const result =
+              conversationIdRef.current === "default"
+                ? await client.agents.messages.compact(agentId)
+                : await client.conversations.messages.compact(
+                    conversationIdRef.current,
+                  );
 
             // Format success message with before/after counts and summary
             const outputLines = [
