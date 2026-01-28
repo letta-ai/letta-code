@@ -423,7 +423,11 @@ export const HooksManager = memo(function HooksManager({
     const titleSuffix = hooksDisabled ? " (disabled)" : "";
     const hooksCountText = `${totalHooks} hooks `;
     const titlePadding =
-      boxWidth - titleBase.length - titleSuffix.length - hooksCountText.length - 2;
+      boxWidth -
+      titleBase.length -
+      titleSuffix.length -
+      hooksCountText.length -
+      2;
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -441,9 +445,7 @@ export const HooksManager = memo(function HooksManager({
 
         {/* Disable all hooks toggle - first item */}
         <Text>
-          <Text
-            color={disableToggleSelected ? colors.input.prompt : undefined}
-          >
+          <Text color={disableToggleSelected ? colors.input.prompt : undefined}>
             {disableToggleSelected ? "❯" : " "} 1.
           </Text>
           <Text dimColor> {disableToggleLabel}</Text>
