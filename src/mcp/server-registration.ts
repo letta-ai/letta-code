@@ -21,7 +21,7 @@ export async function registerMcpToolsWithServer(
   serverId: string,
   serverName: string,
   tools: McpToolSchema[],
-  maxTools: number = 7, // Limit to avoid hitting quota (account limit is 10)
+  maxTools: number = 9, // Limit tools registered per MCP server
 ): Promise<{ registered: string[]; errors: Array<{ tool: string; error: string }> }> {
   const client = await getClient();
   const registered: string[] = [];
