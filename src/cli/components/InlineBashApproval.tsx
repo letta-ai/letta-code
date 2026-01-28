@@ -116,7 +116,7 @@ export const InlineBashApproval = memo(
       { isActive: isFocused },
     );
 
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
 
     // Memoize the static command content so it doesn't re-render on keystroke
     // This prevents flicker when typing feedback in the custom input field

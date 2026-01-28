@@ -4,6 +4,7 @@
  */
 
 import { getServerUrl } from "../../agent/client";
+import { getMcpOAuthHeaders } from "../../agent/http-headers";
 import { settingsManager } from "../../settings-manager";
 
 // Match backend's OauthStreamEvent enum
@@ -76,12 +77,7 @@ export async function connectMcpServer(
 
   const response = await fetch(`${baseUrl}/v1/tools/mcp/servers/connect`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      Authorization: `Bearer ${apiKey}`,
-      "X-Letta-Source": "letta-code",
-    },
+    headers: getMcpOAuthHeaders(apiKey),
     body: JSON.stringify(config),
     signal: abortSignal,
   });

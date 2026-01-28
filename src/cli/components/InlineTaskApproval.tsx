@@ -122,7 +122,7 @@ export const InlineTaskApproval = memo(
     );
 
     // Generate horizontal line
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const contentWidth = Math.max(0, columns - 4); // 2 padding on each side
 
     // Memoize the static task content so it doesn't re-render on keystroke

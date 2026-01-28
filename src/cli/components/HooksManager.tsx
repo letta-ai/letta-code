@@ -2,7 +2,6 @@
 // Interactive TUI for managing hooks configuration
 
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
 import { memo, useCallback, useEffect, useState } from "react";
 import {
   type HookEvent,
@@ -26,6 +25,7 @@ import {
 } from "../../hooks/writer";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 // Box drawing characters
 const BOX_TOP_LEFT = "╭";
@@ -310,13 +310,11 @@ export const HooksManager = memo(function HooksManager({
             setNewCommand("");
           }
         } else {
-          // Could add edit functionality here
+          // Delete selected hook
+          setDeleteHookIndex(selectedIndex - 1);
+          setDeleteConfirmIndex(1); // Default to No
+          setScreen("delete-confirm");
         }
-      } else if ((input === "d" || input === "D") && selectedIndex > 0) {
-        // Delete selected hook
-        setDeleteHookIndex(selectedIndex - 1);
-        setDeleteConfirmIndex(1); // Default to No
-        setScreen("delete-confirm");
       } else if (key.escape) {
         setScreen("events");
         setSelectedIndex(0);
@@ -468,7 +466,7 @@ export const HooksManager = memo(function HooksManager({
           // Both types have hooks array
           const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
           const truncatedCommand =
-            command.length > 30 ? `${command.slice(0, 27)}...` : command;
+            command.length > 50 ? `${command.slice(0, 47)}...` : command;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -476,8 +474,10 @@ export const HooksManager = memo(function HooksManager({
                 {prefix} {index + 2}.{" "}
               </Text>
               <Text color="cyan">{sourceLabel}</Text>
-              {matcherPattern !== null && (
+              {matcherPattern !== null ? (
                 <Text> {matcherPattern.padEnd(12)} </Text>
+              ) : (
+                <Text> </Text>
               )}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
@@ -485,7 +485,7 @@ export const HooksManager = memo(function HooksManager({
         })}
 
         <Text> </Text>
-        <Text dimColor>Enter to select · d to delete · esc to go back</Text>
+        <Text dimColor>Enter to select · esc to go back</Text>
       </Box>
     );
   }
@@ -512,16 +512,21 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         <Text>Tool matcher:</Text>
-        <Text>{boxTop(boxWidth - 2)}</Text>
-        <Box>
-          <Text>{BOX_VERTICAL} </Text>
-          <TextInput
-            value={newMatcher}
-            onChange={setNewMatcher}
-            placeholder="* (matches all tools)"
-          />
+        <Box
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+          width={boxWidth - 2}
+          flexDirection="column"
+        >
+          <Box flexWrap="wrap">
+            <PasteAwareTextInput
+              value={newMatcher}
+              onChange={setNewMatcher}
+              placeholder="* (matches all tools)"
+            />
+          </Box>
         </Box>
-        <Text>{boxBottom(boxWidth - 2)}</Text>
         <Text> </Text>
 
         <Text dimColor>Example Matchers:</Text>
@@ -550,16 +555,21 @@ export const HooksManager = memo(function HooksManager({
         {isCurrentToolEvent && <Text> </Text>}
 
         <Text>Command:</Text>
-        <Text>{boxTop(boxWidth - 2)}</Text>
-        <Box>
-          <Text>{BOX_VERTICAL} </Text>
-          <TextInput
-            value={newCommand}
-            onChange={setNewCommand}
-            placeholder="/path/to/script.sh"
-          />
+        <Box
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+          width={boxWidth - 2}
+          flexDirection="column"
+        >
+          <Box flexWrap="wrap">
+            <PasteAwareTextInput
+              value={newCommand}
+              onChange={setNewCommand}
+              placeholder="/path/to/script.sh"
+            />
+          </Box>
         </Box>
-        <Text>{boxBottom(boxWidth - 2)}</Text>
 
         <Text> </Text>
         <Text dimColor>Enter to continue · esc to go back</Text>
