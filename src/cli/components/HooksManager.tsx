@@ -397,16 +397,22 @@ export const HooksManager = memo(function HooksManager({
     const disableToggleLabel = hooksDisabled
       ? "Enable all hooks"
       : "Disable all hooks";
-    const disableToggleStatus = hooksDisabled ? " (disabled)" : "";
+    const titleBase = " Hooks";
+    const titleSuffix = hooksDisabled ? " (disabled)" : "";
+    const hooksCountText = `${totalHooks} hooks `;
+    const titlePadding =
+      boxWidth - titleBase.length - titleSuffix.length - hooksCountText.length - 2;
 
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
         <Text>
-          {boxLine(
-            ` Hooks${" ".repeat(boxWidth - 20)}${totalHooks} hooks `,
-            boxWidth,
-          )}
+          {BOX_VERTICAL}
+          {titleBase}
+          <Text color="red">{titleSuffix}</Text>
+          {" ".repeat(Math.max(0, titlePadding))}
+          {hooksCountText}
+          {BOX_VERTICAL}
         </Text>
         <Text>{boxBottom(boxWidth)}</Text>
         <Text> </Text>
@@ -416,13 +422,10 @@ export const HooksManager = memo(function HooksManager({
           <Text
             color={disableToggleSelected ? colors.input.prompt : undefined}
           >
-            {disableToggleSelected ? "❯" : " "} 1. {disableToggleLabel}
+            {disableToggleSelected ? "❯" : " "} 1.
           </Text>
-          <Text color={hooksDisabled ? "red" : "green"}>
-            {disableToggleStatus}
-          </Text>
+          <Text dimColor> {disableToggleLabel}</Text>
         </Text>
-        <Text> </Text>
 
         {/* Hook events */}
         {HOOK_EVENTS.map((item, index) => {
