@@ -34,6 +34,13 @@ function clip(s: string, limit: number): string {
 }
 
 /**
+ * Normalize line endings: convert \r\n and \r to \n
+ */
+function normalizeLineEndings(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
  * Truncate system-reminder content while preserving opening/closing tags.
  * Removes the middle content and replaces with [...] to keep the message compact
  * but with proper tag structure.
@@ -50,7 +57,7 @@ function truncateSystemReminder(text: string, maxLength: number): string {
   }
 
   const openEnd = openIdx + SYSTEM_REMINDER_OPEN.length;
-  const ellipsis = "\n[...truncated...]\n";
+  const ellipsis = "\n...\n";
 
   // Calculate available space for content (split between start and end)
   const overhead =
@@ -111,13 +118,23 @@ function renderAssistantContentParts(
   return out;
 }
 
+/**
+ * Check if text is purely a system-reminder block (no user content before/after).
+ */
+function isOnlySystemReminder(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith(SYSTEM_REMINDER_OPEN) &&
+    trimmed.endsWith(SYSTEM_REMINDER_CLOSE)
+  );
+}
+
 function renderUserContentParts(
   parts: string | LettaUserMessageContentUnion[],
 ): string {
   // UserContent can be a string or an array of text OR image parts
-  // for text parts, we clip them if they're too big (eg copy-pasted chunks)
-  // for image parts, we just show a placeholder
-  // System-reminder parts are truncated (middle) to preserve tags
+  // Pure system-reminder parts are truncated (middle) to preserve tags
+  // Mixed content or user text uses simple end truncation
   // Parts are joined with newlines so each appears as a separate line
   if (typeof parts === "string") return parts;
 
@@ -125,11 +142,14 @@ function renderUserContentParts(
   for (const p of parts) {
     if (p.type === "text") {
       const text = p.text || "";
-      if (text.includes(SYSTEM_REMINDER_OPEN)) {
-        // Truncate middle to preserve opening/closing tags
-        rendered.push(truncateSystemReminder(text, CLIP_CHAR_LIMIT_TEXT));
+      // Normalize line endings (\r\n and \r -> \n) to prevent terminal garbling
+      const normalized = normalizeLineEndings(text);
+      if (isOnlySystemReminder(normalized)) {
+        // Pure system-reminder: truncate middle to preserve tags
+        rendered.push(truncateSystemReminder(normalized, CLIP_CHAR_LIMIT_TEXT));
       } else {
-        rendered.push(clip(text, CLIP_CHAR_LIMIT_TEXT));
+        // User content or mixed: simple end truncation
+        rendered.push(clip(normalized, CLIP_CHAR_LIMIT_TEXT));
       }
     } else if (p.type === "image") {
       rendered.push("[Image]");

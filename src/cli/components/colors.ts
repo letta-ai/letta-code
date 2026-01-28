@@ -18,6 +18,17 @@ export function hexToBgAnsi(hex: string): string {
   return `\x1b[48;2;${r};${g};${b}m`;
 }
 
+/**
+ * Convert a hex color (#RRGGBB) to an ANSI 24-bit foreground escape sequence.
+ */
+export function hexToFgAnsi(hex: string): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `\x1b[38;2;${r};${g};${b}m`;
+}
+
 // Brand colors (dark mode)
 export const brandColors = {
   orange: "#FF5533", // dark orange
@@ -192,10 +203,8 @@ export const colors = {
   get userMessage() {
     const theme = getTerminalTheme();
     return {
-      background:
-        theme === "light"
-          ? "#e0e0e8" // subtle light gray/blue for light terminals
-          : "#44446a", // visible bluish-gray for dark terminals
+      background: theme === "light" ? "#dcddf2" : "#ffffff", // light purple for light, white for dark
+      text: theme === "light" ? undefined : "#000000", // black text for dark terminals
     };
   },
 };

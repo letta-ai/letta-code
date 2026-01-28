@@ -2,7 +2,7 @@ import { Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { colors, hexToBgAnsi } from "./colors";
+import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
 
 type UserLine = {
   kind: "user";
@@ -98,14 +98,14 @@ function splitSystemReminderBlocks(
 
 /**
  * Render a block of text with "> " prefix (first line) and "  " continuation.
- * If highlighted, applies background color. Otherwise plain text.
+ * If highlighted, applies background and foreground colors. Otherwise plain text.
  */
 function renderBlock(
   text: string,
   contentWidth: number,
   columns: number,
   highlighted: boolean,
-  bgAnsi: string,
+  colorAnsi: string, // combined bg + fg ANSI codes
 ): string[] {
   const inputLines = text.split("\n");
   const outputLines: string[] = [];
@@ -135,10 +135,10 @@ function renderBlock(
 
     const visWidth = stringWidth(content);
     if (isSingleLine) {
-      return `${bgAnsi}${content}${" ".repeat(COMPACT_PAD)}\x1b[0m`;
+      return `${colorAnsi}${content}${" ".repeat(COMPACT_PAD)}\x1b[0m`;
     }
     const pad = Math.max(0, columns - visWidth);
-    return `${bgAnsi}${content}${" ".repeat(pad)}\x1b[0m`;
+    return `${colorAnsi}${content}${" ".repeat(pad)}\x1b[0m`;
   });
 }
 
@@ -156,8 +156,11 @@ export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(1, columns - 2);
 
-  const bg = colors.userMessage.background;
-  const bgAnsi = hexToBgAnsi(bg);
+  // Build combined ANSI code for background + optional foreground
+  const { background, text: textColor } = colors.userMessage;
+  const bgAnsi = hexToBgAnsi(background);
+  const fgAnsi = textColor ? hexToFgAnsi(textColor) : "";
+  const colorAnsi = bgAnsi + fgAnsi;
 
   // Split into system-reminder blocks and user content blocks
   const blocks = splitSystemReminderBlocks(line.text);
@@ -177,7 +180,7 @@ export const UserMessage = memo(({ line }: { line: UserLine }) => {
       contentWidth,
       columns,
       !block.isSystemReminder, // highlight user content, not system-reminder
-      bgAnsi,
+      colorAnsi,
     );
     allLines.push(...blockLines);
   }
