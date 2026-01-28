@@ -240,11 +240,42 @@ export function hasHooksForEvent(
 }
 
 /**
- * Check if all hooks are disabled via global settings
+ * Check if all hooks are disabled via hooks.disabled in any settings level.
+ * Returns true if any level (user, project, or project-local) has disabled: true.
  */
-export function areHooksDisabled(): boolean {
+export function areHooksDisabled(
+  workingDirectory: string = process.cwd(),
+): boolean {
   try {
-    return settingsManager.getSettings().disableAllHooks === true;
+    // Check user-level settings
+    const userHooks = settingsManager.getSettings().hooks;
+    if (userHooks?.disabled === true) {
+      return true;
+    }
+
+    // Check project-level settings
+    try {
+      const projectHooks =
+        settingsManager.getProjectSettings(workingDirectory)?.hooks;
+      if (projectHooks?.disabled === true) {
+        return true;
+      }
+    } catch {
+      // Project settings not loaded, skip
+    }
+
+    // Check project-local settings
+    try {
+      const localHooks =
+        settingsManager.getLocalProjectSettings(workingDirectory)?.hooks;
+      if (localHooks?.disabled === true) {
+        return true;
+      }
+    } catch {
+      // Local project settings not loaded, skip
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -259,7 +290,7 @@ export async function getHooksForEvent(
   workingDirectory: string = process.cwd(),
 ): Promise<HookCommand[]> {
   // Check if all hooks are disabled
-  if (areHooksDisabled()) {
+  if (areHooksDisabled(workingDirectory)) {
     return [];
   }
 
