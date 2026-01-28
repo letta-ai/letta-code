@@ -6532,6 +6532,13 @@ ${recentCommits}
             const initMessage = `${SYSTEM_REMINDER_OPEN}
 The user has requested memory initialization via /init.
 
+## Memory Filesystem Location
+
+Your memory blocks are synchronized with the filesystem at:
+\`~/.letta/agents/${agentId}/memory/\`
+
+Use this path when working with memory files during initialization.
+
 ## 1. Load the initializing-memory skill
 
 First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
