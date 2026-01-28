@@ -1839,7 +1839,11 @@ async function runBidirectionalMode(
     toolCallId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
-  ): Promise<{ decision: "allow" | "deny"; reason?: string; updatedInput?: Record<string, unknown> | null }> {
+  ): Promise<{
+    decision: "allow" | "deny";
+    reason?: string;
+    updatedInput?: Record<string, unknown> | null;
+  }> {
     const requestId = `perm-${toolCallId}`;
 
     // Build can_use_tool control request (Claude SDK format)
