@@ -2,16 +2,38 @@
 
 The user has requested that you initialize or reorganize your memory state. You have access to the `memory` tool which allows you to create, edit, and manage memory blocks.
 
+## Your Goal: Explode Into 15-25 Hierarchical Files
+
+Your goal is to **explode** memory into a **deeply hierarchical structure of 15-25 small, focused files**.
+
+### Target Output
+
+| Metric | Target |
+|--------|--------|
+| **Total files** | 15-25 (aim for ~20) |
+| **Max lines per file** | ~40 lines (split if larger) |
+| **Hierarchy depth** | 2-3 levels using `/` naming (e.g., `project/tooling/bun.md`) |
+| **Nesting requirement** | Every new block MUST be nested under a parent using `/` |
+
+**Anti-patterns to avoid:**
+- ❌ Ending with only 3-5 large files
+- ❌ Flat naming (all blocks at top level)
+- ❌ Mega-blocks with 10+ sections
+- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+
 ## Memory Filesystem Integration
 
-If the memory filesystem feature is enabled (check your `memory_filesystem` block), your memory blocks are synchronized with actual files at `~/.letta/agents/<agent-id>/memory/`. This changes how you should approach initialization:
+If the memory filesystem feature is enabled (check your `memory_filesystem` block), your memory blocks are synchronized with actual files at `~/.letta/agents/<agent-id>/memory/`. The actual path with your agent ID is provided in the system reminder above when you run `/init`.
 
-**With memory filesystem enabled:**
+This changes how you should approach initialization:
+
+**With memory filesystem enabled (MANDATORY approach):**
 - Memory blocks are stored as `.md` files in a directory hierarchy
 - You can use bash commands (`ls`, `mkdir`, `mv`) to organize memory files
 - File paths map to block labels using `/` for hierarchy (e.g., `system/persona/behavior.md` → label `persona/behavior`)
-- Focus on creating a **hierarchical file structure** rather than flat memory blocks
+- You MUST create a **deeply hierarchical file structure** - flat naming is NOT acceptable
 - Think in terms of directories and subdirectories to organize information
+- **Target: 15-25 files total** - if you create fewer than 15 files, you haven't split enough
 
 **Directory structure:**
 ```
@@ -25,31 +47,62 @@ If the memory filesystem feature is enabled (check your `memory_filesystem` bloc
     └── ...
 ```
 
-**Key principles for hierarchical organization:**
-- Use **2-3 levels of nesting** for clarity (e.g., `project/tooling/bun.md`)
+**MANDATORY principles for hierarchical organization:**
+
+| Requirement | Target |
+|-------------|--------|
+| **Total files** | 15-25 files (aim for ~20) |
+| **Max lines per file** | ~40 lines (split if larger) |
+| **Hierarchy depth** | 2-3 levels using `/` naming |
+| **Nesting requirement** | EVERY new file MUST use `/` naming (no flat files) |
+
+**Anti-patterns to avoid:**
+- ❌ Creating only 3-5 large files
+- ❌ Flat naming (all blocks at top level like `project-commands.md`)
+- ❌ Mega-blocks with 10+ sections
+- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+
+**Rules:**
+- Use **2-3 levels of nesting** for ALL files (e.g., `project/tooling/bun.md`)
 - Keep files **focused and small** (~40 lines max per file)
 - Create **index files** that point to children (e.g., `project.md` lists `project/architecture.md`, `project/tooling.md`)
 - Use **descriptive paths** that make sense when you see just the filename
+- Split when a file has **2+ concepts** (be aggressive)
 
-**Example hierarchy:**
+**Example target structure (what success looks like):**
+
+Starting from default memory blocks, you should end with something like this:
+
 ```
 system/
-├── human.md                    # Index: points to children
+├── human.md                      # Index: points to children
 ├── human/
-│   ├── background.md
+│   ├── background.md             # Who they are
+│   ├── prefs.md                  # Index for preferences
 │   ├── prefs/
-│   │   ├── communication.md
-│   │   └── coding_style.md
-├── project.md                  # Index: points to children  
+│   │   ├── communication.md      # How they like to communicate
+│   │   ├── coding_style.md       # Code formatting preferences
+│   │   └── review_style.md       # PR/code review preferences
+│   └── context.md                # Current project context
+├── project.md                    # Index: points to children
 ├── project/
-│   ├── overview.md
-│   ├── commands.md
+│   ├── overview.md               # What the project is
+│   ├── architecture.md           # System design
+│   ├── tooling.md                # Index for tooling
 │   ├── tooling/
-│   │   ├── testing.md
-│   │   └── linting.md
-│   └── gotchas.md
-└── persona.md                  # Index: points to children
+│   │   ├── bun.md                # Bun-specific notes
+│   │   ├── testing.md            # Test framework details
+│   │   └── linting.md            # Linter configuration
+│   ├── conventions.md            # Code conventions
+│   └── gotchas.md                # Footguns and warnings
+├── persona.md                    # Index: points to children
+└── persona/
+    ├── role.md                   # Agent's role definition
+    ├── behavior.md               # How to behave
+    └── constraints.md            # What not to do
 ```
+
+This example has **~20 files** with **3 levels of hierarchy**. Your output should look similar.
 
 This approach makes memory more **scannable**, **maintainable**, and **shareable** with other agents.
 
@@ -299,11 +352,11 @@ You should ask these questions at the start (bundle them together in one AskUser
 
 ## Memory Block Strategy
 
-### Hierarchical Organization (Recommended with Memory Filesystem)
+### Hierarchical Organization (MANDATORY with Memory Filesystem)
 
-**With memory filesystem enabled, organize memory as a file hierarchy using bash commands:**
+**With memory filesystem enabled, you MUST organize memory as a deeply nested file hierarchy using bash commands:**
 
-Instead of creating flat blocks like `project-overview`, `project-commands`, create nested structures:
+**NEVER create flat blocks** like `project-overview.md`, `project-commands.md`. Instead, create deeply nested structures with `/` naming:
 
 ```bash
 # Create the hierarchy
@@ -320,11 +373,15 @@ mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
 # system/human/prefs/communication.md
 ```
 
-**Naming convention:**
+**Naming convention (MANDATORY):**
+- **Every new file MUST use `/` naming** - no flat files allowed
 - Use `/` for hierarchy: `project/tooling/testing` (not `project-tooling-testing`)
 - Block label derives from file path: `system/project/overview.md` → label `project/overview`
 - Keep files small and focused (~40 lines max)
-- Create index files (`project.md`, `human.md`) that list children
+- Create index files (`project.md`, `human.md`) that list children with "Related blocks" section
+
+**Checkpoint before proceeding:**
+Count your proposed files. **If you have fewer than 15 files, go back and split more aggressively.**
 
 **Benefits:**
 - More scannable and maintainable
@@ -332,24 +389,34 @@ mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
 - Natural progressive disclosure (load parent, then drill into children)
 - Works like a file system you're familiar with
 
-### Split Large Blocks
+### Split Aggressively - Target 15-25 Files
 
-**Don't create monolithic blocks.** If a block is getting long (>50-100 lines), split it:
+**Don't create monolithic blocks.** Your goal is **15-25 total files**. Be aggressive about splitting:
 
-**Without memory filesystem** (flat naming):
+**Split when:**
+- A block has **40+ lines** (lower threshold than typical)
+- A block has **2+ distinct concepts** (not 3+, be aggressive)
+- A section could stand alone as its own file
+- You can name the extracted content with a clear `/` path
+
+If a block is getting long (>40 lines), split it:
+
+**Without memory filesystem** (flat naming - acceptable but not ideal):
 - `project-overview`: High-level description, tech stack, repo links
 - `project-commands`: Build, test, lint, dev commands
 - `project-conventions`: Commit style, PR process, code style
 - `project-architecture`: Directory structure, key modules
 - `project-gotchas`: Footguns, things to watch out for
 
-**With memory filesystem** (hierarchical naming):
+**With memory filesystem** (MANDATORY hierarchical naming with `/`):
+- `project.md`: Index file listing all children
 - `project/overview`: High-level description, tech stack, repo links
 - `project/commands`: Build, test, lint, dev commands
 - `project/conventions`: Commit style, PR process, code style
 - `project/architecture`: Directory structure, key modules
 - `project/gotchas`: Footguns, things to watch out for
-- Can further nest: `project/tooling/testing`, `project/tooling/linting`
+- **Must further nest**: `project/tooling/testing`, `project/tooling/linting`, `project/tooling/bun`
+- **Target 15-25 files total** - if commands is long, split into `project/commands/dev`, `project/commands/build`, etc.
 
 This makes memory more scannable and easier to update and share with other agents.
 
@@ -398,13 +465,21 @@ And add memory blocks that you think make sense to add (e.g., `project-architect
 6. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
 
 7. **Create/update memory structure**:
-   - **With memfs enabled**: Create a hierarchical file structure using bash commands
-     - Use `mkdir -p` to create subdirectories
-     - Create `.md` files for memory blocks
-     - Use nested paths like `project/tooling/testing.md`
-     - Create index files (`project.md`, `human.md`) that reference children
-   - **Without memfs**: Use memory tools to create/update blocks
+   - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
+     - Use `mkdir -p` to create subdirectories (2-3 levels deep)
+     - Create `.md` files for memory blocks using `/` naming
+     - **Target 15-25 total files** - be aggressive about splitting
+     - Use nested paths like `project/tooling/testing.md` (never flat like `project-testing.md`)
+     - Create index files (`project.md`, `human.md`) with "Related blocks" sections
+     - **Every new file MUST be nested** under a parent using `/`
+   - **Without memfs**: Use memory tools to create/update blocks with hierarchical naming
    - **Don't wait until the end** - write findings as you go
+   
+   **Checkpoint verification:**
+   - After creating files, count them: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
+   - **If count < 15, you haven't split enough** - go back and split more
+   - Check maximum depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
+   - **Should be 2-3 levels deep** minimum
 
 8. **Organize incrementally**:
    - Start with a basic structure
@@ -420,16 +495,26 @@ And add memory blocks that you think make sense to add (e.g., `project-architect
 
 Before finishing, you MUST do a reflection step. **Your memory blocks are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
 
-1. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+1. **File count check**: 
+   - Count your memory files: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
+   - **Do you have 15-25 files?** If not, you haven't split enough
+   - Too few files means blocks are too large - split more aggressively
 
-2. **Completeness check**: Did you actually update ALL relevant blocks? For example:
+2. **Hierarchy check**:
+   - Are ALL new files using `/` naming? (e.g., `project/tooling/bun.md`)
+   - Do you have 2-3 levels of nesting minimum?
+   - Are there any flat files like `project-commands.md`? **These should be nested**
+
+3. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+
+4. **Completeness check**: Did you actually update ALL relevant blocks? For example:
    - Did you update `human` with the user's identity and preferences?
    - Did you update `persona` with behavioral rules they expressed?
    - Or did you only update project blocks and forget the rest?
 
-3. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
+5. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
 
-4. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
+6. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
 
 **After reflection**, fix any issues you found. Then ask the user:
 > "I've completed the initialization. Here's a brief summary of what I set up: [summary]. Should I continue refining, or is this good to proceed?"
@@ -453,14 +538,27 @@ tree ~/.letta/agents/<agent-id>/memory/system/
 cat ~/.letta/agents/<agent-id>/memory/system/persona.md
 ```
 
-### Creating Hierarchical Structure
+### Creating Hierarchical Structure (MANDATORY)
+
+**Good examples (nested with `/`):**
+✅ `project/overview.md`
+✅ `project/tooling/bun.md`  
+✅ `project/tooling/testing.md`
+✅ `human/prefs/communication.md`
+✅ `persona/behavior/tone.md`
+
+**Bad examples (flat naming - NEVER do this):**
+❌ `project-overview.md` (flat, not nested)
+❌ `bun.md` (orphan file, no parent)
+❌ `project_testing.md` (underscore instead of `/`)
 
 ```bash
-# Create directory structure
-mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/{tooling,architecture}
+# Create deeply nested directory structure (2-3 levels)
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/{tooling,architecture,conventions}
 mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/persona/behavior
 
-# Create memory files using Write tool
+# Create memory files using Write tool - ALL files must be nested
 Write({
   file_path: "~/.letta/agents/<agent-id>/memory/system/project/overview.md",
   content: "## Project Overview\n\n..."
@@ -469,6 +567,11 @@ Write({
 Write({
   file_path: "~/.letta/agents/<agent-id>/memory/system/project/tooling/testing.md",
   content: "## Testing Setup\n\n..."
+})
+
+Write({
+  file_path: "~/.letta/agents/<agent-id>/memory/system/project/tooling/bun.md",
+  content: "## Bun Configuration\n\n..."
 })
 ```
 
@@ -506,13 +609,27 @@ This is the main project memory block. See specialized blocks for details:
 - `project/gotchas` - Important warnings and footguns
 ```
 
+### Final Checklist (Verify Before Submitting)
+
+Before you tell the user you're done, confirm:
+
+- [ ] **File count is 15-25** — Count your files with `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`. If < 15, split more.
+- [ ] **All new files use `/` naming** — No flat files like `my_notes.md` or `project-commands.md`
+- [ ] **Hierarchy is 2-3 levels deep** — e.g., `project/tooling/bun.md`, not just `project.md`
+- [ ] **No file exceeds ~40 lines** — Split larger files
+- [ ] **Each file has one concept** — If 2+ topics, split into 2+ files
+- [ ] **Parent files have "Related blocks" sections** — Index files point to children
+- [ ] **Verify sync**: After creating files, check they appear in your memory blocks
+
+**If you have fewer than 15 files, you haven't split enough. Go back and split more.**
+
 ### Best Practices
 
 1. **Check memfs status first**: Look for `memory_filesystem` block before deciding on organization strategy
 2. **Start with directories**: Create the directory structure before populating files
 3. **Use short paths**: Aim for 2-3 levels (e.g., `project/tooling/testing`, not `project/dev/tools/testing/setup`)
 4. **Keep files focused**: Each file should cover one concept (~40 lines max)
-5. **Create indexes**: Top-level files (`project.md`) should list children
-6. **Verify sync**: After creating files, check they appear in your memory blocks
+5. **Create indexes**: Top-level files (`project.md`) should list children with "Related blocks"
+6. **Be aggressive about splitting**: If in doubt, split. Too many small files is better than too few large ones.
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
