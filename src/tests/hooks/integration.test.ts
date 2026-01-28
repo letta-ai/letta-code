@@ -242,6 +242,37 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       // Allow headroom for CI runners (especially macOS ARM) which can be slow
       expect(duration).toBeLessThan(400); // Parallel should be ~100ms
     });
+
+    test("includes preceding_reasoning and preceding_assistant_message when provided", async () => {
+      createHooksConfig({
+        PostToolUse: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseHooks(
+        "Bash",
+        { command: "ls" },
+        { status: "success", output: "file.txt" },
+        "tool-123",
+        tempDir,
+        "agent-456",
+        "I should list the files to see what's there...",
+        "Let me check what files are in this directory.",
+      );
+
+      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
+      expect(parsed.preceding_reasoning).toBe(
+        "I should list the files to see what's there...",
+      );
+      expect(parsed.preceding_assistant_message).toBe(
+        "Let me check what files are in this directory.",
+      );
+      expect(parsed.agent_id).toBe("agent-456");
+    });
   });
 
   // ============================================================================
@@ -505,6 +536,30 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(parsed.stop_reason).toBe("max_tokens");
       expect(parsed.message_count).toBe(10);
       expect(parsed.tool_call_count).toBe(7);
+    });
+
+    test("includes preceding_reasoning and assistant_message when provided", async () => {
+      createHooksConfig({
+        Stop: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runStopHooks(
+        "end_turn",
+        5,
+        2,
+        tempDir,
+        "Let me think about this...",
+        "Here is my response.",
+      );
+
+      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
+      expect(parsed.preceding_reasoning).toBe("Let me think about this...");
+      expect(parsed.assistant_message).toBe("Here is my response.");
     });
   });
 
