@@ -367,9 +367,11 @@ export function countHooksForEvent(
 }
 
 /**
- * Check if all hooks are disabled (checks user-level hooks.disabled)
+ * Check if user-level hooks.disabled is set to true.
+ * NOTE: This only checks user settings. For full precedence logic
+ * (user → project → project-local), use areHooksDisabled from loader.ts.
  */
-export function areHooksDisabled(): boolean {
+export function isUserHooksDisabled(): boolean {
   try {
     return settingsManager.getSettings().hooks?.disabled === true;
   } catch {

@@ -2,7 +2,7 @@
 // Interactive TUI for managing hooks configuration
 
 import { Box, Text, useInput } from "ink";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   type HookEvent,
   type HookMatcher,
@@ -14,11 +14,11 @@ import {
 import {
   addHookMatcher,
   addSimpleHookMatcher,
-  areHooksDisabled,
   countHooksForEvent,
   countTotalHooks,
   type HookMatcherWithSource,
   type HookWithSource,
+  isUserHooksDisabled,
   loadMatchersWithSource,
   loadSimpleMatchersWithSource,
   removeHook,
@@ -149,7 +149,7 @@ export const HooksManager = memo(function HooksManager({
   const [toolNames, setToolNames] = useState<string[]>(FALLBACK_TOOL_NAMES);
 
   // Track whether all hooks are disabled
-  const [hooksDisabled, setHooksDisabledState] = useState(areHooksDisabled);
+  const [hooksDisabled, setHooksDisabledState] = useState(isUserHooksDisabled);
 
   // Fetch agent tools on mount
   useEffect(() => {
@@ -194,11 +194,17 @@ export const HooksManager = memo(function HooksManager({
   // Refresh counts - called when hooks change
   const refreshCounts = useCallback(() => {
     setTotalHooks(countTotalHooks());
-    setHooksDisabledState(areHooksDisabled());
+    setHooksDisabledState(isUserHooksDisabled());
   }, []);
 
-  // Ensure settings are loaded before counting hooks
+  // Track if initial settings load has been done
+  const initialLoadDone = useRef(false);
+
+  // Ensure settings are loaded before counting hooks (runs once on mount)
   useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
     const loadSettings = async () => {
       try {
         await settingsManager.loadProjectSettings();
