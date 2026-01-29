@@ -29,13 +29,21 @@ function trySpawnWithLauncher(
     throw new Error("Empty launcher");
   }
 
+  // Extract agent_id if present (available on many hook input types)
+  const agentId = "agent_id" in input ? input.agent_id : undefined;
+
+  // Build environment: start with parent env but exclude LETTA_AGENT_ID to prevent inheritance
+  // We only want to pass the agent ID that's explicitly provided in the hook input
+  const { LETTA_AGENT_ID: _, ...parentEnv } = process.env;
+
   return spawn(executable, args, {
     cwd: workingDirectory,
     env: {
-      ...process.env,
+      ...parentEnv,
       // Add hook-specific environment variables
       LETTA_HOOK_EVENT: input.event_type,
       LETTA_WORKING_DIR: workingDirectory,
+      ...(agentId && { LETTA_AGENT_ID: agentId }),
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -274,6 +282,19 @@ export async function executeHooks(
   for (const hook of hooks) {
     const result = await executeHookCommand(hook, input, workingDirectory);
     results.push(result);
+
+    // Collect feedback from stdout when hook succeeds (exit 0)
+    // Only for UserPromptSubmit and SessionStart hooks
+    if (result.exitCode === HookExitCode.ALLOW) {
+      if (
+        result.stdout?.trim() &&
+        (input.event_type === "UserPromptSubmit" ||
+          input.event_type === "SessionStart")
+      ) {
+        feedback.push(result.stdout.trim());
+      }
+      continue;
+    }
 
     // Collect feedback from stderr when hook blocks
     // Format: [command]: {stderr} per spec

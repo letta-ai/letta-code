@@ -955,6 +955,7 @@ export async function executeTool(
     );
 
     // Run PostToolUse hooks (async, non-blocking)
+    // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
     runPostToolUseHooks(
       internalName,
       args as Record<string, unknown>,
@@ -963,6 +964,10 @@ export async function executeTool(
         output: getDisplayableToolReturn(flattenedResponse),
       },
       options?.toolCallId,
+      undefined, // workingDirectory
+      undefined, // agentId
+      undefined, // precedingReasoning - not available in tool manager context
+      undefined, // precedingAssistantMessage - not available in tool manager context
     ).catch(() => {
       // Silently ignore hook errors - don't affect tool execution
     });
@@ -1009,6 +1014,10 @@ export async function executeTool(
       args as Record<string, unknown>,
       { status: "error", output: errorMessage },
       options?.toolCallId,
+      undefined, // workingDirectory
+      undefined, // agentId
+      undefined, // precedingReasoning - not available in tool manager context
+      undefined, // precedingAssistantMessage - not available in tool manager context
     ).catch(() => {
       // Silently ignore hook errors
     });

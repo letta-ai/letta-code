@@ -113,8 +113,8 @@ export const ApprovalPreview = memo(
     toolCallId,
   }: Props) => {
     const columns = useTerminalWidth();
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
-    const dottedLine = DOTTED_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+    const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
     // ExitPlanMode: Use PlanPreview component
     if (toolName === "ExitPlanMode" && planContent) {

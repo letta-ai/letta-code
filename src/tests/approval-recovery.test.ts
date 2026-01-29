@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   isApprovalPendingError,
-  isApprovalStateDesyncError,
+  isConversationBusyError,
   isInvalidToolCallIdsError,
 } from "../agent/approval-recovery";
 import { extractApprovals } from "../agent/check-approval";
@@ -10,55 +10,11 @@ import { extractApprovals } from "../agent/check-approval";
 /**
  * Tests for approval error detection helpers (LET-7101).
  *
- * These functions detect two opposite error conditions:
- * 1. isApprovalStateDesyncError: Sent approval, but server has no pending approval
+ * These functions detect different error conditions related to approvals:
+ * 1. isInvalidToolCallIdsError: Tool call IDs don't match server's pending approvals
  * 2. isApprovalPendingError: Sent user message, but server has pending approval waiting
+ * 3. isConversationBusyError: Another request is being processed (409 CONFLICT)
  */
-
-describe("isApprovalStateDesyncError", () => {
-  test("detects desync error in detail string", () => {
-    const detail = "No tool call is currently awaiting approval";
-    expect(isApprovalStateDesyncError(detail)).toBe(true);
-  });
-
-  test("detects desync error case-insensitively", () => {
-    const detail = "NO TOOL CALL IS CURRENTLY AWAITING APPROVAL";
-    expect(isApprovalStateDesyncError(detail)).toBe(true);
-  });
-
-  test("detects desync error in longer message", () => {
-    const detail =
-      "Error: No tool call is currently awaiting approval. The approval request may have expired.";
-    expect(isApprovalStateDesyncError(detail)).toBe(true);
-  });
-
-  test("detects invalid tool call IDs error", () => {
-    const detail =
-      "Invalid tool call IDs: Expected ['tc_abc123'], got ['tc_xyz789']";
-    expect(isApprovalStateDesyncError(detail)).toBe(true);
-  });
-
-  test("detects invalid tool call IDs error case-insensitively", () => {
-    expect(
-      isApprovalStateDesyncError("INVALID TOOL CALL IDS: Expected X, got Y"),
-    ).toBe(true);
-    expect(isApprovalStateDesyncError("invalid tool call ids: mismatch")).toBe(
-      true,
-    );
-  });
-
-  test("returns false for unrelated errors", () => {
-    expect(isApprovalStateDesyncError("Connection timeout")).toBe(false);
-    expect(isApprovalStateDesyncError("Internal server error")).toBe(false);
-  });
-
-  test("returns false for non-string input", () => {
-    expect(isApprovalStateDesyncError(null)).toBe(false);
-    expect(isApprovalStateDesyncError(undefined)).toBe(false);
-    expect(isApprovalStateDesyncError(123)).toBe(false);
-    expect(isApprovalStateDesyncError({ error: "test" })).toBe(false);
-  });
-});
 
 describe("isInvalidToolCallIdsError", () => {
   test("detects invalid tool call IDs error", () => {
@@ -134,6 +90,51 @@ describe("isApprovalPendingError", () => {
     expect(isApprovalPendingError(undefined)).toBe(false);
     expect(isApprovalPendingError(123)).toBe(false);
     expect(isApprovalPendingError({ detail: REAL_ERROR_DETAIL })).toBe(false);
+  });
+});
+
+describe("isConversationBusyError", () => {
+  const REAL_ERROR_DETAIL =
+    "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
+
+  test("detects conversation busy error in real error format", () => {
+    expect(isConversationBusyError(REAL_ERROR_DETAIL)).toBe(true);
+  });
+
+  test("detects conversation busy error case-insensitively", () => {
+    expect(
+      isConversationBusyError("ANOTHER REQUEST IS CURRENTLY BEING PROCESSED"),
+    ).toBe(true);
+    expect(
+      isConversationBusyError("another request is currently being processed"),
+    ).toBe(true);
+  });
+
+  test("detects partial match in longer message", () => {
+    const detail =
+      "Error: Another request is currently being processed. Please wait.";
+    expect(isConversationBusyError(detail)).toBe(true);
+  });
+
+  test("returns false for approval pending errors (different case)", () => {
+    expect(
+      isConversationBusyError(
+        "Cannot send a new message: The agent is waiting for approval",
+      ),
+    ).toBe(false);
+  });
+
+  test("returns false for unrelated errors", () => {
+    expect(isConversationBusyError("Connection timeout")).toBe(false);
+    expect(isConversationBusyError("Rate limit exceeded")).toBe(false);
+    expect(isConversationBusyError("Invalid API key")).toBe(false);
+  });
+
+  test("returns false for non-string input", () => {
+    expect(isConversationBusyError(null)).toBe(false);
+    expect(isConversationBusyError(undefined)).toBe(false);
+    expect(isConversationBusyError(123)).toBe(false);
+    expect(isConversationBusyError({ detail: REAL_ERROR_DETAIL })).toBe(false);
   });
 });
 

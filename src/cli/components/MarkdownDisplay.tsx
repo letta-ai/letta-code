@@ -1,12 +1,15 @@
 import { Box, Text, Transform } from "ink";
 import type React from "react";
-import { colors } from "./colors.js";
+import stringWidth from "string-width";
+import { colors, hexToBgAnsi } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
 
 interface MarkdownDisplayProps {
   text: string;
   dimColor?: boolean;
   hangingIndent?: number; // indent for wrapped lines within a paragraph
+  backgroundColor?: string; // background color for all text
+  contentWidth?: number; // available width — used to pad lines to fill background
 }
 
 // Regex patterns for markdown elements (defined outside component to avoid re-creation)
@@ -38,8 +41,22 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   text,
   dimColor,
   hangingIndent = 0,
+  backgroundColor,
+  contentWidth,
 }) => {
   if (!text) return null;
+
+  // Build ANSI background code and line-padding helper for full-width backgrounds.
+  // Transform callbacks receive already-rendered text (with ANSI codes from child Text
+  // components), so appended spaces need their own ANSI background coloring.
+  const bgAnsi = backgroundColor ? hexToBgAnsi(backgroundColor) : "";
+  const padLine = (ln: string): string => {
+    if (!contentWidth || !backgroundColor) return ln;
+    const visWidth = stringWidth(ln);
+    const pad = Math.max(0, contentWidth - visWidth);
+    if (pad <= 0) return ln;
+    return `${ln}${bgAnsi}${" ".repeat(pad)}\x1b[0m`;
+  };
 
   const lines = text.split("\n");
   const contentBlocks: React.ReactNode[] = [];
@@ -78,26 +95,35 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       <Box key={`table-${startIndex}`} flexDirection="column" marginY={0}>
         {/* Header row */}
         <Box flexDirection="row">
-          <Text dimColor={dimColor}>│</Text>
+          <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+            │
+          </Text>
           {headerRow.map((cell, idx) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static table content
             <Box key={`h-${idx}`} flexDirection="row">
-              <Text bold dimColor={dimColor}>
+              <Text bold dimColor={dimColor} backgroundColor={backgroundColor}>
                 {" "}
                 {cell.padEnd(colWidths[idx] ?? 3)}
               </Text>
-              <Text dimColor={dimColor}> │</Text>
+              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+                {" "}
+                │
+              </Text>
             </Box>
           ))}
         </Box>
         {/* Separator */}
         <Box flexDirection="row">
-          <Text dimColor={dimColor}>├</Text>
+          <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+            ├
+          </Text>
           {colWidths.map((width, idx) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static table content
             <Box key={`s-${idx}`} flexDirection="row">
-              <Text dimColor={dimColor}>{"─".repeat(width + 2)}</Text>
-              <Text dimColor={dimColor}>
+              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+                {"─".repeat(width + 2)}
+              </Text>
+              <Text dimColor={dimColor} backgroundColor={backgroundColor}>
                 {idx < colWidths.length - 1 ? "┼" : "┤"}
               </Text>
             </Box>
@@ -107,15 +133,20 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         {bodyRows.map((row, rowIdx) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: static table content
           <Box key={`r-${rowIdx}`} flexDirection="row">
-            <Text dimColor={dimColor}>│</Text>
+            <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+              │
+            </Text>
             {row.map((cell, colIdx) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: static table content
               <Box key={`c-${colIdx}`} flexDirection="row">
-                <Text dimColor={dimColor}>
+                <Text dimColor={dimColor} backgroundColor={backgroundColor}>
                   {" "}
                   {(cell || "").padEnd(colWidths[colIdx] || 3)}
                 </Text>
-                <Text dimColor={dimColor}> │</Text>
+                <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+                  {" "}
+                  │
+                </Text>
               </Box>
             ))}
           </Box>
@@ -140,7 +171,10 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         const code = codeBlockContent.join("\n");
         contentBlocks.push(
           <Box key={key} paddingLeft={2}>
-            <Text color={colors.code.inline}>{code}</Text>
+            <Text color={colors.code.inline} backgroundColor={backgroundColor}>
+              {code}
+              {backgroundColor ? "  " : null}
+            </Text>
           </Box>,
         );
         codeBlockContent = [];
@@ -165,8 +199,13 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
       contentBlocks.push(
         <Box key={key}>
-          <Text {...style}>
-            <InlineMarkdown text={content} dimColor={dimColor} />
+          <Text {...style} backgroundColor={backgroundColor}>
+            <InlineMarkdown
+              text={content}
+              dimColor={dimColor}
+              backgroundColor={backgroundColor}
+            />
+            {backgroundColor ? "  " : null}
           </Text>
         </Box>,
       );
@@ -193,11 +232,22 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       contentBlocks.push(
         <Box key={key} paddingLeft={indent} flexDirection="row">
           <Box width={bulletWidth} flexShrink={0}>
-            <Text dimColor={dimColor}>{bullet}</Text>
+            <Text dimColor={dimColor} backgroundColor={backgroundColor}>
+              {bullet}
+            </Text>
           </Box>
           <Box flexGrow={1}>
-            <Text wrap="wrap" dimColor={dimColor}>
-              <InlineMarkdown text={content} dimColor={dimColor} />
+            <Text
+              wrap="wrap"
+              dimColor={dimColor}
+              backgroundColor={backgroundColor}
+            >
+              <InlineMarkdown
+                text={content}
+                dimColor={dimColor}
+                backgroundColor={backgroundColor}
+              />
+              {backgroundColor ? "  " : null}
             </Text>
           </Box>
         </Box>,
@@ -211,9 +261,20 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     if (blockquoteMatch && blockquoteMatch[1] !== undefined) {
       contentBlocks.push(
         <Box key={key} paddingLeft={2}>
-          <Text dimColor>│ </Text>
-          <Text wrap="wrap" dimColor={dimColor}>
-            <InlineMarkdown text={blockquoteMatch[1]} dimColor={dimColor} />
+          <Text dimColor backgroundColor={backgroundColor}>
+            │{" "}
+          </Text>
+          <Text
+            wrap="wrap"
+            dimColor={dimColor}
+            backgroundColor={backgroundColor}
+          >
+            <InlineMarkdown
+              text={blockquoteMatch[1]}
+              dimColor={dimColor}
+              backgroundColor={backgroundColor}
+            />
+            {backgroundColor ? "  " : null}
           </Text>
         </Box>,
       );
@@ -225,7 +286,9 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     if (line.match(hrRegex)) {
       contentBlocks.push(
         <Box key={key}>
-          <Text dimColor>───────────────────────────────</Text>
+          <Text dimColor backgroundColor={backgroundColor}>
+            ───────────────────────────────
+          </Text>
         </Box>,
       );
       index++;
@@ -261,27 +324,58 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 
     // Empty lines
     if (line.trim() === "") {
-      contentBlocks.push(<Box key={key} height={1} />);
+      if (backgroundColor) {
+        // Render a visible space so outer Transform can pad this line
+        contentBlocks.push(
+          <Box key={key}>
+            <Text backgroundColor={backgroundColor}> </Text>
+          </Box>,
+        );
+      } else {
+        contentBlocks.push(<Box key={key} height={1} />);
+      }
       index++;
       continue;
     }
 
-    // Regular paragraph text with optional hanging indent for wrapped lines
+    // Regular paragraph text with optional hanging indent and line padding
+    const needsTransform =
+      hangingIndent > 0 || (contentWidth && backgroundColor);
     contentBlocks.push(
       <Box key={key}>
-        {hangingIndent > 0 ? (
+        {needsTransform ? (
           <Transform
-            transform={(ln, i) =>
-              i === 0 ? ln : " ".repeat(hangingIndent) + ln
-            }
+            transform={(ln, i) => {
+              const indented =
+                hangingIndent > 0 && i > 0
+                  ? " ".repeat(hangingIndent) + ln
+                  : ln;
+              return padLine(indented);
+            }}
           >
-            <Text wrap="wrap" dimColor={dimColor}>
-              <InlineMarkdown text={line} dimColor={dimColor} />
+            <Text
+              wrap="wrap"
+              dimColor={dimColor}
+              backgroundColor={backgroundColor}
+            >
+              <InlineMarkdown
+                text={line}
+                dimColor={dimColor}
+                backgroundColor={backgroundColor}
+              />
             </Text>
           </Transform>
         ) : (
-          <Text wrap="wrap" dimColor={dimColor}>
-            <InlineMarkdown text={line} dimColor={dimColor} />
+          <Text
+            wrap="wrap"
+            dimColor={dimColor}
+            backgroundColor={backgroundColor}
+          >
+            <InlineMarkdown
+              text={line}
+              dimColor={dimColor}
+              backgroundColor={backgroundColor}
+            />
           </Text>
         )}
       </Box>,
@@ -294,7 +388,10 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     const code = codeBlockContent.join("\n");
     contentBlocks.push(
       <Box key="unclosed-code" paddingLeft={2}>
-        <Text color={colors.code.inline}>{code}</Text>
+        <Text color={colors.code.inline} backgroundColor={backgroundColor}>
+          {code}
+          {backgroundColor ? "  " : null}
+        </Text>
       </Box>,
     );
   }

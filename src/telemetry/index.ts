@@ -1,3 +1,4 @@
+import { getLettaCodeHeaders } from "../agent/http-headers";
 import { settingsManager } from "../settings-manager";
 
 export interface TelemetryEvent {
@@ -399,9 +400,7 @@ class TelemetryManager {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-            "X-Letta-Source": "letta-code",
+            ...getLettaCodeHeaders(apiKey),
             "X-Letta-Code-Device-ID": this.deviceId || "",
           },
           body: JSON.stringify({

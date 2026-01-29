@@ -279,8 +279,8 @@ export const InlineFileEditApproval = memo(
     );
 
     // Generate horizontal lines
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
-    const dottedLine = DOTTED_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+    const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
     const headerText = getHeaderText(fileEdit);
     const diffKind = getDiffKind(fileEdit.toolName);
 

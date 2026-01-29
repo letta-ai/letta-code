@@ -89,7 +89,7 @@ export const InlineEnterPlanModeApproval = memo(
     );
 
     // Generate horizontal line
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
 
     return (
       <Box flexDirection="column">

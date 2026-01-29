@@ -5,6 +5,36 @@
  * No colors should be hardcoded in components - all should reference this file.
  */
 
+import { getTerminalTheme } from "../helpers/terminalTheme";
+
+/**
+ * Parse a hex color (#RRGGBB) to RGB components.
+ */
+function parseHex(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace("#", "");
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+/**
+ * Convert a hex color (#RRGGBB) to an ANSI 24-bit background escape sequence.
+ */
+export function hexToBgAnsi(hex: string): string {
+  const { r, g, b } = parseHex(hex);
+  return `\x1b[48;2;${r};${g};${b}m`;
+}
+
+/**
+ * Convert a hex color (#RRGGBB) to an ANSI 24-bit foreground escape sequence.
+ */
+export function hexToFgAnsi(hex: string): string {
+  const { r, g, b } = parseHex(hex);
+  return `\x1b[38;2;${r};${g};${b}m`;
+}
+
 // Brand colors (dark mode)
 export const brandColors = {
   orange: "#FF5533", // dark orange
@@ -38,7 +68,7 @@ export const brandColorsLight = {
 } as const;
 
 // Semantic color system
-export const colors = {
+const _colors = {
   // Welcome screen
   welcome: {
     border: brandColors.primaryAccent,
@@ -169,3 +199,18 @@ export const colors = {
     agentName: brandColors.primaryAccent,
   },
 } as const;
+
+// Combine static colors with theme-aware dynamic properties
+export const colors = {
+  ..._colors,
+
+  // User messages (past prompts) - theme-aware background
+  // Uses getter to read theme at render time (after async init)
+  get userMessage() {
+    const theme = getTerminalTheme();
+    return {
+      background: theme === "light" ? "#dcddf2" : "#2d2d2d", // light purple for light, subtle gray for dark
+      text: undefined, // use default terminal text color
+    };
+  },
+};

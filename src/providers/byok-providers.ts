@@ -3,6 +3,7 @@
  * Unified module for managing custom LLM provider connections
  */
 
+import { getLettaCodeHeaders } from "../agent/http-headers";
 import { LETTA_CLOUD_API_URL } from "../auth/oauth";
 import { settingsManager } from "../settings-manager";
 
@@ -12,6 +13,14 @@ export interface ProviderField {
   label: string;
   placeholder?: string;
   secret?: boolean; // If true, mask input like a password
+}
+
+// Auth method definition for providers with multiple auth options
+export interface AuthMethod {
+  id: string;
+  label: string;
+  description: string;
+  fields: ProviderField[];
 }
 
 // Provider configuration for the /connect UI
@@ -60,16 +69,43 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-gemini",
   },
   {
+    id: "openrouter",
+    displayName: "OpenRouter API",
+    description: "Connect an OpenRouter API key",
+    providerType: "openrouter",
+    providerName: "lc-openrouter",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
     providerType: "bedrock",
     providerName: "lc-bedrock",
-    fields: [
-      { key: "accessKey", label: "AWS Access Key ID", placeholder: "AKIA..." },
-      { key: "apiKey", label: "AWS Secret Access Key", secret: true },
-      { key: "region", label: "AWS Region", placeholder: "us-east-1" },
-    ] as ProviderField[],
+    authMethods: [
+      {
+        id: "iam",
+        label: "AWS Access Keys",
+        description: "Enter access key and secret key manually",
+        fields: [
+          {
+            key: "accessKey",
+            label: "AWS Access Key ID",
+            placeholder: "AKIA...",
+          },
+          { key: "apiKey", label: "AWS Secret Access Key", secret: true },
+          { key: "region", label: "AWS Region", placeholder: "us-east-1" },
+        ],
+      },
+      {
+        id: "profile",
+        label: "AWS Profile",
+        description: "Load credentials from ~/.aws/credentials",
+        fields: [
+          { key: "profile", label: "Profile Name", placeholder: "default" },
+          { key: "region", label: "AWS Region", placeholder: "us-east-1" },
+        ],
+      },
+    ] as AuthMethod[],
   },
 ] as const;
 
@@ -113,11 +149,7 @@ async function providersRequest<T>(
 
   const response = await fetch(url, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "X-Letta-Source": "letta-code",
-    },
+    headers: getLettaCodeHeaders(apiKey),
     ...(body && { body: JSON.stringify(body) }),
   });
 
@@ -192,12 +224,14 @@ export async function checkProviderApiKey(
   apiKey: string,
   accessKey?: string,
   region?: string,
+  profile?: string,
 ): Promise<void> {
   await providersRequest<{ message: string }>("POST", "/v1/providers/check", {
     provider_type: providerType,
     api_key: apiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
+    ...(profile && { profile }),
   });
 }
 
@@ -210,6 +244,7 @@ export async function createProvider(
   apiKey: string,
   accessKey?: string,
   region?: string,
+  profile?: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
@@ -217,6 +252,7 @@ export async function createProvider(
     api_key: apiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
+    ...(profile && { profile }),
   });
 }
 
@@ -228,6 +264,7 @@ export async function updateProvider(
   apiKey: string,
   accessKey?: string,
   region?: string,
+  profile?: string,
 ): Promise<ProviderResponse> {
   return providersRequest<ProviderResponse>(
     "PATCH",
@@ -236,6 +273,7 @@ export async function updateProvider(
       api_key: apiKey,
       ...(accessKey && { access_key: accessKey }),
       ...(region && { region }),
+      ...(profile && { profile }),
     },
   );
 }
@@ -257,14 +295,22 @@ export async function createOrUpdateProvider(
   apiKey: string,
   accessKey?: string,
   region?: string,
+  profile?: string,
 ): Promise<ProviderResponse> {
   const existing = await getProviderByName(providerName);
 
   if (existing) {
-    return updateProvider(existing.id, apiKey, accessKey, region);
+    return updateProvider(existing.id, apiKey, accessKey, region, profile);
   }
 
-  return createProvider(providerType, providerName, apiKey, accessKey, region);
+  return createProvider(
+    providerType,
+    providerName,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+  );
 }
 
 /**

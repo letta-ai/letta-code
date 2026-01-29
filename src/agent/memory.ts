@@ -14,11 +14,7 @@ export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
 /**
  * Block labels that are stored per-project (local to the current directory).
  */
-export const PROJECT_BLOCK_LABELS = [
-  "project",
-  "skills",
-  "loaded_skills",
-] as const;
+export const PROJECT_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
 
 /**
  * All available memory block labels (derived from global + project blocks)
@@ -37,7 +33,11 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
  * Block labels that should be read-only (agent cannot modify via memory tools).
  * These blocks are managed by specific tools (e.g., Skill tool for skills/loaded_skills).
  */
-export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+export const READ_ONLY_BLOCK_LABELS = [
+  "skills",
+  "loaded_skills",
+  "memory_filesystem",
+] as const;
 
 /**
  * Block labels that should be isolated per-conversation.

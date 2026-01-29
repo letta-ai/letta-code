@@ -1,0 +1,1047 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join, relative } from "node:path";
+
+import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
+import { getClient } from "./client";
+import {
+  ISOLATED_BLOCK_LABELS,
+  parseMdxFrontmatter,
+  READ_ONLY_BLOCK_LABELS,
+} from "./memory";
+
+export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
+export const MEMORY_FS_ROOT = ".letta";
+export const MEMORY_FS_AGENTS_DIR = "agents";
+export const MEMORY_FS_MEMORY_DIR = "memory";
+export const MEMORY_SYSTEM_DIR = "system";
+export const MEMORY_USER_DIR = "user";
+export const MEMORY_FS_STATE_FILE = ".sync-state.json";
+
+/**
+ * Block labels that are managed by the system and should be skipped during sync.
+ * These blocks are auto-created/managed by the harness (skills, loaded_skills)
+ * or by the memfs system itself (memory_filesystem).
+ */
+const MANAGED_BLOCK_LABELS = new Set([
+  MEMORY_FILESYSTEM_BLOCK_LABEL,
+  ...ISOLATED_BLOCK_LABELS,
+]);
+
+type SyncState = {
+  systemBlocks: Record<string, string>;
+  systemFiles: Record<string, string>;
+  userBlocks: Record<string, string>;
+  userFiles: Record<string, string>;
+  userBlockIds: Record<string, string>;
+  lastSync: string | null;
+};
+
+export type MemorySyncConflict = {
+  label: string;
+  blockValue: string | null;
+  fileValue: string | null;
+};
+
+export type MemfsSyncStatus = {
+  /** Blocks where both file and block changed since last sync */
+  conflicts: MemorySyncConflict[];
+  /** Labels where only the file changed (would auto-resolve to block) */
+  pendingFromFile: string[];
+  /** Labels where only the block changed (would auto-resolve to file) */
+  pendingFromBlock: string[];
+  /** Labels where a file exists but no block */
+  newFiles: string[];
+  /** Labels where a block exists but no file */
+  newBlocks: string[];
+  /** True when there are no conflicts or pending changes */
+  isClean: boolean;
+};
+
+export type MemorySyncResult = {
+  updatedBlocks: string[];
+  createdBlocks: string[];
+  deletedBlocks: string[];
+  updatedFiles: string[];
+  createdFiles: string[];
+  deletedFiles: string[];
+  conflicts: MemorySyncConflict[];
+};
+
+export type MemorySyncResolution = {
+  label: string;
+  resolution: "file" | "block";
+};
+
+export function getMemoryFilesystemRoot(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(
+    homeDir,
+    MEMORY_FS_ROOT,
+    MEMORY_FS_AGENTS_DIR,
+    agentId,
+    MEMORY_FS_MEMORY_DIR,
+  );
+}
+
+export function getMemorySystemDir(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
+}
+
+export function getMemoryUserDir(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_USER_DIR);
+}
+
+function getMemoryStatePath(
+  agentId: string,
+  homeDir: string = homedir(),
+): string {
+  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_FS_STATE_FILE);
+}
+
+export function ensureMemoryFilesystemDirs(
+  agentId: string,
+  homeDir: string = homedir(),
+): void {
+  const root = getMemoryFilesystemRoot(agentId, homeDir);
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
+
+  if (!existsSync(root)) {
+    mkdirSync(root, { recursive: true });
+  }
+  if (!existsSync(systemDir)) {
+    mkdirSync(systemDir, { recursive: true });
+  }
+  if (!existsSync(userDir)) {
+    mkdirSync(userDir, { recursive: true });
+  }
+}
+
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function loadSyncState(
+  agentId: string,
+  homeDir: string = homedir(),
+): SyncState {
+  const statePath = getMemoryStatePath(agentId, homeDir);
+  if (!existsSync(statePath)) {
+    return {
+      systemBlocks: {},
+      systemFiles: {},
+      userBlocks: {},
+      userFiles: {},
+      userBlockIds: {},
+      lastSync: null,
+    };
+  }
+
+  try {
+    const raw = readFileSync(statePath, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<SyncState> & {
+      blocks?: Record<string, string>;
+      files?: Record<string, string>;
+    };
+    return {
+      systemBlocks: parsed.systemBlocks || parsed.blocks || {},
+      systemFiles: parsed.systemFiles || parsed.files || {},
+      userBlocks: parsed.userBlocks || {},
+      userFiles: parsed.userFiles || {},
+      userBlockIds: parsed.userBlockIds || {},
+      lastSync: parsed.lastSync || null,
+    };
+  } catch {
+    return {
+      systemBlocks: {},
+      systemFiles: {},
+      userBlocks: {},
+      userFiles: {},
+      userBlockIds: {},
+      lastSync: null,
+    };
+  }
+}
+
+async function saveSyncState(
+  state: SyncState,
+  agentId: string,
+  homeDir: string = homedir(),
+) {
+  const statePath = getMemoryStatePath(agentId, homeDir);
+  await writeFile(statePath, JSON.stringify(state, null, 2));
+}
+
+async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...(await scanMdFiles(fullPath, baseDir)));
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      results.push(relative(baseDir, fullPath));
+    }
+  }
+
+  return results;
+}
+
+export function labelFromRelativePath(relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/");
+  return normalized.replace(/\.md$/, "");
+}
+
+/**
+ * Parse file content and extract block creation data.
+ * Handles YAML frontmatter for label, description, limit, and read_only.
+ */
+export function parseBlockFromFileContent(
+  fileContent: string,
+  defaultLabel: string,
+): {
+  label: string;
+  value: string;
+  description: string;
+  limit: number;
+  read_only?: boolean;
+} {
+  const { frontmatter, body } = parseMdxFrontmatter(fileContent);
+
+  // Use frontmatter label if provided, otherwise use default (from file path)
+  const label = frontmatter.label || defaultLabel;
+
+  // Use frontmatter description if provided, otherwise generate from label
+  const description = frontmatter.description || `Memory block: ${label}`;
+
+  // Use frontmatter limit if provided and valid, otherwise default to 20000
+  let limit = 20000;
+  if (frontmatter.limit) {
+    const parsed = Number.parseInt(frontmatter.limit, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      limit = parsed;
+    }
+  }
+
+  // Check if block should be read-only (from frontmatter or known read-only labels)
+  const isReadOnly =
+    frontmatter.read_only === "true" ||
+    (READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label);
+
+  return {
+    label,
+    value: body,
+    description,
+    limit,
+    ...(isReadOnly && { read_only: true }),
+  };
+}
+
+async function readMemoryFiles(
+  dir: string,
+): Promise<Map<string, { content: string; path: string }>> {
+  const files = await scanMdFiles(dir);
+  const entries = new Map<string, { content: string; path: string }>();
+
+  for (const relativePath of files) {
+    const label = labelFromRelativePath(relativePath);
+    const fullPath = join(dir, relativePath);
+    const content = await readFile(fullPath, "utf-8");
+    entries.set(label, { content, path: fullPath });
+  }
+
+  return entries;
+}
+
+async function ensureFilePath(filePath: string) {
+  const parent = dirname(filePath);
+  if (!existsSync(parent)) {
+    mkdirSync(parent, { recursive: true });
+  }
+}
+
+async function writeMemoryFile(dir: string, label: string, content: string) {
+  const filePath = join(dir, `${label}.md`);
+  await ensureFilePath(filePath);
+  await writeFile(filePath, content, "utf-8");
+}
+
+async function deleteMemoryFile(dir: string, label: string) {
+  const filePath = join(dir, `${label}.md`);
+  if (existsSync(filePath)) {
+    await unlink(filePath);
+  }
+}
+
+async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
+  const client = await getClient();
+  // Use high limit - SDK's async iterator has a bug that causes infinite loops
+  const page = await client.agents.blocks.list(agentId, { limit: 1000 });
+
+  // Handle both array response and paginated response
+  if (Array.isArray(page)) {
+    return page;
+  }
+
+  // Extract items from paginated response
+  const items =
+    (page as { items?: Block[] }).items ||
+    (page as { blocks?: Block[] }).blocks ||
+    [];
+  return items;
+}
+
+export function renderMemoryFilesystemTree(
+  systemLabels: string[],
+  userLabels: string[],
+): string {
+  type TreeNode = { children: Map<string, TreeNode>; isFile: boolean };
+
+  const makeNode = (): TreeNode => ({ children: new Map(), isFile: false });
+  const root = makeNode();
+
+  const insertPath = (base: string, label: string) => {
+    const parts = [base, ...label.split("/")];
+    let current = root;
+    for (const [i, partName] of parts.entries()) {
+      const part = i === parts.length - 1 ? `${partName}.md` : partName;
+      if (!current.children.has(part)) {
+        current.children.set(part, makeNode());
+      }
+      current = current.children.get(part) as TreeNode;
+      if (i === parts.length - 1) {
+        current.isFile = true;
+      }
+    }
+  };
+
+  for (const label of systemLabels) {
+    insertPath(MEMORY_SYSTEM_DIR, label);
+  }
+  for (const label of userLabels) {
+    insertPath(MEMORY_USER_DIR, label);
+  }
+
+  if (!root.children.has(MEMORY_SYSTEM_DIR)) {
+    root.children.set(MEMORY_SYSTEM_DIR, makeNode());
+  }
+  if (!root.children.has(MEMORY_USER_DIR)) {
+    root.children.set(MEMORY_USER_DIR, makeNode());
+  }
+
+  const sortedEntries = (node: TreeNode) => {
+    const entries = Array.from(node.children.entries());
+    return entries.sort(([nameA, nodeA], [nameB, nodeB]) => {
+      if (nodeA.isFile !== nodeB.isFile) {
+        return nodeA.isFile ? 1 : -1;
+      }
+      return nameA.localeCompare(nameB);
+    });
+  };
+
+  const lines: string[] = ["/memory/"];
+
+  const render = (node: TreeNode, prefix: string) => {
+    const entries = sortedEntries(node);
+    entries.forEach(([name, child], index) => {
+      const isLast = index === entries.length - 1;
+      const branch = isLast ? "└──" : "├──";
+      lines.push(`${prefix}${branch} ${name}${child.isFile ? "" : "/"}`);
+      if (child.children.size > 0) {
+        const nextPrefix = `${prefix}${isLast ? "    " : "│   "}`;
+        render(child, nextPrefix);
+      }
+    });
+  };
+
+  render(root, "");
+
+  return lines.join("\n");
+}
+
+function buildStateHashes(
+  systemBlocks: Map<string, { value: string }>,
+  systemFiles: Map<string, { content: string }>,
+  userBlocks: Map<string, { value: string }>,
+  userFiles: Map<string, { content: string }>,
+  userBlockIds: Record<string, string>,
+): SyncState {
+  const systemBlockHashes: Record<string, string> = {};
+  const systemFileHashes: Record<string, string> = {};
+  const userBlockHashes: Record<string, string> = {};
+  const userFileHashes: Record<string, string> = {};
+
+  systemBlocks.forEach((block, label) => {
+    systemBlockHashes[label] = hashContent(block.value || "");
+  });
+
+  systemFiles.forEach((file, label) => {
+    systemFileHashes[label] = hashContent(file.content || "");
+  });
+
+  userBlocks.forEach((block, label) => {
+    userBlockHashes[label] = hashContent(block.value || "");
+  });
+
+  userFiles.forEach((file, label) => {
+    userFileHashes[label] = hashContent(file.content || "");
+  });
+
+  return {
+    systemBlocks: systemBlockHashes,
+    systemFiles: systemFileHashes,
+    userBlocks: userBlockHashes,
+    userFiles: userFileHashes,
+    userBlockIds,
+    lastSync: new Date().toISOString(),
+  };
+}
+
+export async function syncMemoryFilesystem(
+  agentId: string,
+  options: { homeDir?: string; resolutions?: MemorySyncResolution[] } = {},
+): Promise<MemorySyncResult> {
+  const homeDir = options.homeDir ?? homedir();
+  ensureMemoryFilesystemDirs(agentId, homeDir);
+
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+  systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const attachedBlocks = await fetchAgentBlocks(agentId);
+  const systemBlockMap = new Map(
+    attachedBlocks
+      .filter((block) => block.label)
+      .map((block) => [block.label as string, block]),
+  );
+  systemBlockMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const lastState = loadSyncState(agentId, homeDir);
+  const conflicts: MemorySyncConflict[] = [];
+
+  const updatedBlocks: string[] = [];
+  const createdBlocks: string[] = [];
+  const deletedBlocks: string[] = [];
+  const updatedFiles: string[] = [];
+  const createdFiles: string[] = [];
+  const deletedFiles: string[] = [];
+
+  const resolutions = new Map(
+    (options.resolutions ?? []).map((resolution) => [
+      resolution.label,
+      resolution,
+    ]),
+  );
+
+  const client = await getClient();
+
+  const userBlockIds = { ...lastState.userBlockIds };
+  const userBlockMap = new Map<string, Block>();
+  for (const [label, blockId] of Object.entries(userBlockIds)) {
+    try {
+      const block = await client.blocks.retrieve(blockId);
+      userBlockMap.set(label, block as Block);
+    } catch {
+      delete userBlockIds[label];
+    }
+  }
+
+  const systemLabels = new Set<string>([
+    ...Array.from(systemFiles.keys()),
+    ...Array.from(systemBlockMap.keys()),
+    ...Object.keys(lastState.systemBlocks),
+    ...Object.keys(lastState.systemFiles),
+  ]);
+
+  for (const label of Array.from(systemLabels).sort()) {
+    if (MANAGED_BLOCK_LABELS.has(label)) {
+      continue;
+    }
+
+    const fileEntry = systemFiles.get(label);
+    const blockEntry = systemBlockMap.get(label);
+
+    const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
+
+    const lastFileHash = lastState.systemFiles[label] || null;
+    const lastBlockHash = lastState.systemBlocks[label] || null;
+
+    const fileChanged = fileHash !== lastFileHash;
+    const blockChanged = blockHash !== lastBlockHash;
+
+    const resolution = resolutions.get(label);
+
+    if (fileEntry && !blockEntry) {
+      if (lastBlockHash && !fileChanged) {
+        // Block was deleted elsewhere; delete file.
+        await deleteMemoryFile(systemDir, label);
+        deletedFiles.push(label);
+        continue;
+      }
+
+      // Create block from file (parsing frontmatter for description/limit)
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
+      if (createdBlock.id) {
+        await client.agents.blocks.attach(createdBlock.id, {
+          agent_id: agentId,
+        });
+      }
+      createdBlocks.push(blockData.label);
+      continue;
+    }
+
+    if (!fileEntry && blockEntry) {
+      if (lastFileHash && !blockChanged) {
+        // File deleted, block unchanged -> delete block
+        if (blockEntry.id) {
+          try {
+            await client.agents.blocks.detach(blockEntry.id, {
+              agent_id: agentId,
+            });
+            // Also delete the block to avoid orphaned blocks on the server
+            await client.blocks.delete(blockEntry.id);
+            deletedBlocks.push(label);
+          } catch (err) {
+            // Block may have been manually deleted already - ignore
+            if (!(err instanceof Error && err.message.includes("Not Found"))) {
+              throw err;
+            }
+          }
+        }
+        continue;
+      }
+
+      // Create file from block
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      createdFiles.push(label);
+      continue;
+    }
+
+    if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
+      continue;
+    }
+
+    if (fileChanged && blockChanged && !resolution) {
+      conflicts.push({
+        label,
+        blockValue: blockEntry.value || "",
+        fileValue: fileEntry.content,
+      });
+      continue;
+    }
+
+    if (resolution?.resolution === "file") {
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+        });
+        updatedBlocks.push(label);
+      }
+      continue;
+    }
+
+    if (resolution?.resolution === "block") {
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+      continue;
+    }
+
+    if (fileChanged && !blockChanged) {
+      if (blockEntry.id) {
+        try {
+          await client.blocks.update(blockEntry.id, {
+            value: fileEntry.content,
+          });
+          updatedBlocks.push(label);
+        } catch (err) {
+          // Block may have been deleted - create a new one
+          if (err instanceof Error && err.message.includes("Not Found")) {
+            const blockData = parseBlockFromFileContent(
+              fileEntry.content,
+              label,
+            );
+            const createdBlock = await client.blocks.create(blockData);
+            if (createdBlock.id) {
+              await client.agents.blocks.attach(createdBlock.id, {
+                agent_id: agentId,
+              });
+            }
+            createdBlocks.push(blockData.label);
+          } else {
+            throw err;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!fileChanged && blockChanged) {
+      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+    }
+  }
+
+  const userLabels = new Set<string>([
+    ...Array.from(userFiles.keys()),
+    ...Array.from(userBlockMap.keys()),
+    ...Object.keys(lastState.userBlocks),
+    ...Object.keys(lastState.userFiles),
+  ]);
+
+  for (const label of Array.from(userLabels).sort()) {
+    const fileEntry = userFiles.get(label);
+    const blockEntry = userBlockMap.get(label);
+
+    const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
+
+    const lastFileHash = lastState.userFiles[label] || null;
+    const lastBlockHash = lastState.userBlocks[label] || null;
+
+    const fileChanged = fileHash !== lastFileHash;
+    const blockChanged = blockHash !== lastBlockHash;
+
+    const resolution = resolutions.get(label);
+
+    if (fileEntry && !blockEntry) {
+      if (lastBlockHash && !fileChanged) {
+        // Block was deleted elsewhere; delete file.
+        await deleteMemoryFile(userDir, label);
+        deletedFiles.push(label);
+        delete userBlockIds[label];
+        continue;
+      }
+
+      const blockData = parseBlockFromFileContent(fileEntry.content, label);
+      const createdBlock = await client.blocks.create(blockData);
+      if (createdBlock.id) {
+        userBlockIds[blockData.label] = createdBlock.id;
+        userBlockMap.set(blockData.label, createdBlock as Block);
+      }
+      createdBlocks.push(blockData.label);
+      continue;
+    }
+
+    if (!fileEntry && blockEntry) {
+      if (lastFileHash && !blockChanged) {
+        // File deleted, block unchanged -> delete block
+        if (blockEntry.id) {
+          await client.blocks.delete(blockEntry.id);
+        }
+        deletedBlocks.push(label);
+        delete userBlockIds[label];
+        continue;
+      }
+
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      createdFiles.push(label);
+      continue;
+    }
+
+    if (!fileEntry || !blockEntry) {
+      continue;
+    }
+
+    // If file and block have the same content, they're in sync - no conflict
+    if (fileHash === blockHash) {
+      continue;
+    }
+
+    if (fileChanged && blockChanged && !resolution) {
+      conflicts.push({
+        label,
+        blockValue: blockEntry.value || "",
+        fileValue: fileEntry.content,
+      });
+      continue;
+    }
+
+    if (resolution?.resolution === "file") {
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+          label,
+        });
+      }
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (resolution?.resolution === "block") {
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+      continue;
+    }
+
+    if (fileChanged && !blockChanged) {
+      if (blockEntry.id) {
+        await client.blocks.update(blockEntry.id, {
+          value: fileEntry.content,
+          label,
+        });
+      }
+      updatedBlocks.push(label);
+      continue;
+    }
+
+    if (!fileChanged && blockChanged) {
+      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+    }
+  }
+
+  if (conflicts.length === 0) {
+    const updatedBlocksList = await fetchAgentBlocks(agentId);
+    const updatedSystemBlockMap = new Map(
+      updatedBlocksList
+        .filter(
+          (block) =>
+            block.label && block.label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
+        )
+        .map((block) => [block.label as string, { value: block.value || "" }]),
+    );
+
+    const updatedSystemFilesMap = await readMemoryFiles(systemDir);
+    updatedSystemFilesMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+    const updatedUserFilesMap = await readMemoryFiles(userDir);
+    const refreshedUserBlocks = new Map<string, { value: string }>();
+
+    for (const [label, blockId] of Object.entries(userBlockIds)) {
+      try {
+        const block = await client.blocks.retrieve(blockId);
+        refreshedUserBlocks.set(label, { value: block.value || "" });
+      } catch {
+        delete userBlockIds[label];
+      }
+    }
+
+    const nextState = buildStateHashes(
+      updatedSystemBlockMap,
+      updatedSystemFilesMap,
+      refreshedUserBlocks,
+      updatedUserFilesMap,
+      userBlockIds,
+    );
+    await saveSyncState(nextState, agentId, homeDir);
+  }
+
+  return {
+    updatedBlocks,
+    createdBlocks,
+    deletedBlocks,
+    updatedFiles,
+    createdFiles,
+    deletedFiles,
+    conflicts,
+  };
+}
+
+export async function updateMemoryFilesystemBlock(
+  agentId: string,
+  homeDir: string = homedir(),
+) {
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
+
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+
+  const tree = renderMemoryFilesystemTree(
+    Array.from(systemFiles.keys()).filter(
+      (label) => label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
+    ),
+    Array.from(userFiles.keys()),
+  );
+
+  const client = await getClient();
+  const blocks = await fetchAgentBlocks(agentId);
+  const memfsBlock = blocks.find(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (memfsBlock?.id) {
+    await client.blocks.update(memfsBlock.id, { value: tree });
+  }
+
+  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, tree);
+}
+
+export async function ensureMemoryFilesystemBlock(agentId: string) {
+  const client = await getClient();
+  const blocks = await fetchAgentBlocks(agentId);
+  const exists = blocks.some(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (exists) {
+    return;
+  }
+
+  const createdBlock = await client.blocks.create({
+    label: MEMORY_FILESYSTEM_BLOCK_LABEL,
+    value: "/memory/",
+    description: "Filesystem view of memory blocks",
+    limit: 20000,
+    read_only: true,
+  });
+
+  if (createdBlock.id) {
+    await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
+  }
+}
+
+export async function refreshMemoryFilesystemTree(
+  agentId: string,
+  homeDir: string = homedir(),
+) {
+  ensureMemoryFilesystemDirs(agentId, homeDir);
+  await updateMemoryFilesystemBlock(agentId, homeDir);
+}
+
+export async function collectMemorySyncConflicts(
+  agentId: string,
+  homeDir: string = homedir(),
+): Promise<MemorySyncConflict[]> {
+  const result = await syncMemoryFilesystem(agentId, { homeDir });
+  return result.conflicts;
+}
+
+export function formatMemorySyncSummary(result: MemorySyncResult): string {
+  const lines: string[] = [];
+  const pushCount = (label: string, count: number) => {
+    if (count > 0) {
+      lines.push(`⎿  ${label}: ${count}`);
+    }
+  };
+
+  pushCount("Blocks updated", result.updatedBlocks.length);
+  pushCount("Blocks created", result.createdBlocks.length);
+  pushCount("Blocks deleted", result.deletedBlocks.length);
+  pushCount("Files updated", result.updatedFiles.length);
+  pushCount("Files created", result.createdFiles.length);
+  pushCount("Files deleted", result.deletedFiles.length);
+
+  if (result.conflicts.length > 0) {
+    lines.push(`⎿  Conflicts: ${result.conflicts.length}`);
+  }
+
+  if (lines.length === 0) {
+    return "Memory filesystem sync complete (no changes needed)";
+  }
+
+  return `Memory filesystem sync complete:\n${lines.join("\n")}`;
+}
+
+/**
+ * Read-only check of the current memFS sync status.
+ * Does NOT modify any blocks, files, or sync state.
+ * Safe to call frequently (e.g., after every turn).
+ */
+export async function checkMemoryFilesystemStatus(
+  agentId: string,
+  options?: { homeDir?: string },
+): Promise<MemfsSyncStatus> {
+  const homeDir = options?.homeDir ?? homedir();
+  ensureMemoryFilesystemDirs(agentId, homeDir);
+
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+  systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const attachedBlocks = await fetchAgentBlocks(agentId);
+  const systemBlockMap = new Map(
+    attachedBlocks
+      .filter((block) => block.label)
+      .map((block) => [block.label as string, block]),
+  );
+  systemBlockMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const lastState = loadSyncState(agentId, homeDir);
+
+  const conflicts: MemorySyncConflict[] = [];
+  const pendingFromFile: string[] = [];
+  const pendingFromBlock: string[] = [];
+  const newFiles: string[] = [];
+  const newBlocks: string[] = [];
+
+  // Fetch user blocks for status check
+  const userBlockIds = { ...lastState.userBlockIds };
+  const userBlockMap = new Map<string, Block>();
+  const client = await getClient();
+  for (const [label, blockId] of Object.entries(userBlockIds)) {
+    try {
+      const block = await client.blocks.retrieve(blockId);
+      userBlockMap.set(label, block as Block);
+    } catch {
+      delete userBlockIds[label];
+    }
+  }
+
+  // Check system labels
+  const systemLabels = new Set<string>([
+    ...Array.from(systemFiles.keys()),
+    ...Array.from(systemBlockMap.keys()),
+    ...Object.keys(lastState.systemBlocks),
+    ...Object.keys(lastState.systemFiles),
+  ]);
+
+  for (const label of Array.from(systemLabels).sort()) {
+    if (MANAGED_BLOCK_LABELS.has(label)) continue;
+    classifyLabel(
+      label,
+      systemFiles.get(label)?.content ?? null,
+      systemBlockMap.get(label)?.value ?? null,
+      lastState.systemFiles[label] ?? null,
+      lastState.systemBlocks[label] ?? null,
+      conflicts,
+      pendingFromFile,
+      pendingFromBlock,
+      newFiles,
+      newBlocks,
+    );
+  }
+
+  // Check user labels
+  const userLabels = new Set<string>([
+    ...Array.from(userFiles.keys()),
+    ...Array.from(userBlockMap.keys()),
+    ...Object.keys(lastState.userBlocks),
+    ...Object.keys(lastState.userFiles),
+  ]);
+
+  for (const label of Array.from(userLabels).sort()) {
+    classifyLabel(
+      label,
+      userFiles.get(label)?.content ?? null,
+      userBlockMap.get(label)?.value ?? null,
+      lastState.userFiles[label] ?? null,
+      lastState.userBlocks[label] ?? null,
+      conflicts,
+      pendingFromFile,
+      pendingFromBlock,
+      newFiles,
+      newBlocks,
+    );
+  }
+
+  const isClean =
+    conflicts.length === 0 &&
+    pendingFromFile.length === 0 &&
+    pendingFromBlock.length === 0 &&
+    newFiles.length === 0 &&
+    newBlocks.length === 0;
+
+  return {
+    conflicts,
+    pendingFromFile,
+    pendingFromBlock,
+    newFiles,
+    newBlocks,
+    isClean,
+  };
+}
+
+/**
+ * Classify a single label's sync status (read-only).
+ * Pushes into the appropriate output array based on file/block state comparison.
+ */
+function classifyLabel(
+  label: string,
+  fileContent: string | null,
+  blockValue: string | null,
+  lastFileHash: string | null,
+  lastBlockHash: string | null,
+  conflicts: MemorySyncConflict[],
+  pendingFromFile: string[],
+  pendingFromBlock: string[],
+  newFiles: string[],
+  newBlocks: string[],
+): void {
+  const fileHash = fileContent !== null ? hashContent(fileContent) : null;
+  const blockHash = blockValue !== null ? hashContent(blockValue) : null;
+
+  const fileChanged = fileHash !== lastFileHash;
+  const blockChanged = blockHash !== lastBlockHash;
+
+  if (fileContent !== null && blockValue === null) {
+    if (lastBlockHash && !fileChanged) {
+      // Block was deleted, file unchanged — would delete file
+      return;
+    }
+    newFiles.push(label);
+    return;
+  }
+
+  if (fileContent === null && blockValue !== null) {
+    if (lastFileHash && !blockChanged) {
+      // File was deleted, block unchanged — would delete block
+      return;
+    }
+    newBlocks.push(label);
+    return;
+  }
+
+  if (fileContent === null || blockValue === null) {
+    return;
+  }
+
+  // Both exist — check for differences
+  if (fileHash === blockHash) {
+    return; // In sync
+  }
+
+  if (fileChanged && blockChanged) {
+    conflicts.push({ label, blockValue, fileValue: fileContent });
+    return;
+  }
+
+  if (fileChanged && !blockChanged) {
+    pendingFromFile.push(label);
+    return;
+  }
+
+  if (!fileChanged && blockChanged) {
+    pendingFromBlock.push(label);
+  }
+}
+
+/**
+ * Detach the memory_filesystem block from an agent.
+ * Used when disabling memfs.
+ */
+export async function detachMemoryFilesystemBlock(
+  agentId: string,
+): Promise<void> {
+  const client = await getClient();
+  const blocks = await fetchAgentBlocks(agentId);
+  const memfsBlock = blocks.find(
+    (block) => block.label === MEMORY_FILESYSTEM_BLOCK_LABEL,
+  );
+
+  if (memfsBlock?.id) {
+    await client.agents.blocks.detach(memfsBlock.id, { agent_id: agentId });
+  }
+}

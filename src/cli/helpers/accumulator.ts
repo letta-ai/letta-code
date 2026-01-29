@@ -5,7 +5,12 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  INTERRUPTED_BY_USER,
+} from "../../constants";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -157,6 +162,17 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
+/**
+ * Tracks server-side tool calls for hook triggering.
+ * Server-side tools (tool_call_message) are executed by the Letta server,
+ * not the client, so we need to trigger hooks when we receive the stream messages.
+ */
+export interface ServerToolCallInfo {
+  toolName: string;
+  toolArgs: string;
+  preToolUseTriggered: boolean;
+}
+
 // Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
@@ -169,6 +185,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -180,9 +198,13 @@ export type Buffers = {
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
+  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Agent ID for passing to hooks (needed for server-side tools like memory)
+  agentId?: string;
 };
 
-export function createBuffers(): Buffers {
+export function createBuffers(agentId?: string): Buffers {
   return {
     tokenCount: 0,
     order: [],
@@ -202,6 +224,8 @@ export function createBuffers(): Buffers {
     },
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
+    serverToolCalls: new Map(),
+    agentId,
   };
 }
 
@@ -225,6 +249,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -476,6 +509,33 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a user message with context header and summary
+        ensure(b, id, () => ({
+          kind: "user",
+          id,
+          text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
+      break;
+    }
+
     case "tool_call_message":
     case "approval_request_message": {
       /* POST-FIX VERSION (what this should look like after backend fix):
@@ -591,6 +651,40 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
       }
+
+      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
+      if (chunk.message_type === "tool_call_message" && toolCallId) {
+        const existing = b.serverToolCalls.get(toolCallId);
+        const toolInfo: ServerToolCallInfo = existing || {
+          toolName: "",
+          toolArgs: "",
+          preToolUseTriggered: false,
+        };
+
+        if (name) toolInfo.toolName = name;
+        if (argsText) toolInfo.toolArgs += argsText;
+        b.serverToolCalls.set(toolCallId, toolInfo);
+
+        if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
+          toolInfo.preToolUseTriggered = true;
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            if (toolInfo.toolArgs) {
+              parsedArgs = JSON.parse(toolInfo.toolArgs);
+            }
+          } catch {
+            // Args may be incomplete JSON
+          }
+          runPreToolUseHooks(
+            toolInfo.toolName,
+            parsedArgs,
+            toolCallId,
+            undefined,
+            b.agentId,
+          ).catch(() => {});
+        }
+      }
+
       break;
     }
 
@@ -651,6 +745,43 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
+        if (toolCallId) {
+          const serverToolInfo = b.serverToolCalls.get(toolCallId);
+          if (serverToolInfo) {
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              if (serverToolInfo.toolArgs) {
+                parsedArgs = JSON.parse(serverToolInfo.toolArgs);
+              }
+            } catch {
+              // Args parsing failed
+            }
+
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
+            runPostToolUseHooks(
+              serverToolInfo.toolName,
+              parsedArgs,
+              {
+                status: status === "success" ? "success" : "error",
+                output: resultText,
+              },
+              toolCallId,
+              undefined,
+              b.agentId,
+              precedingReasoning,
+              precedingAssistantMessage,
+            ).catch(() => {});
+
+            b.serverToolCalls.delete(toolCallId);
+          }
+        }
       }
       break;
     }

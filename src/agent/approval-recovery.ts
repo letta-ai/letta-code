@@ -1,10 +1,4 @@
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getClient } from "./client";
-import { APPROVAL_RECOVERY_PROMPT } from "./promptAssets";
-
-// Error when trying to SEND approval but server has no pending approval
-const APPROVAL_RECOVERY_DETAIL_FRAGMENT =
-  "no tool call is currently awaiting approval";
 
 // Error when approval tool call IDs don't match what server expects
 // Format: "Invalid tool call IDs: Expected [...], got [...]"
@@ -29,15 +23,6 @@ type RunErrorMetadata =
     }
   | undefined
   | null;
-
-export function isApprovalStateDesyncError(detail: unknown): boolean {
-  if (typeof detail !== "string") return false;
-  const lower = detail.toLowerCase();
-  return (
-    lower.includes(APPROVAL_RECOVERY_DETAIL_FRAGMENT) ||
-    lower.includes(INVALID_TOOL_CALL_IDS_FRAGMENT)
-  );
-}
 
 /**
  * Check if error specifically indicates tool call ID mismatch.
@@ -99,12 +84,4 @@ export async function fetchRunErrorDetail(
   } catch {
     return null;
   }
-}
-
-export function buildApprovalRecoveryMessage(): MessageCreate {
-  return {
-    type: "message",
-    role: "user",
-    content: [{ type: "text", text: APPROVAL_RECOVERY_PROMPT }],
-  };
 }
