@@ -135,6 +135,7 @@ export async function runPermissionRequestHooks(
 /**
  * Run UserPromptSubmit hooks before processing a user's prompt
  * Can block the prompt from being processed
+ * Skips execution for slash commands (e.g., /help, /clear)
  */
 export async function runUserPromptSubmitHooks(
   prompt: string,
@@ -143,6 +144,11 @@ export async function runUserPromptSubmitHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
+  // Skip hooks for slash commands - they don't trigger agent execution
+  if (isCommand) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
   const hooks = await getHooksForEvent(
     "UserPromptSubmit",
     undefined,
