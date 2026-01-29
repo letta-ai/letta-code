@@ -5,7 +5,11 @@ import type {
   Message,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import type { Buffers } from "./accumulator";
 
 /**
@@ -81,7 +85,7 @@ function truncateSystemReminder(text: string, maxLength: number): string {
  * Check if a user message is a compaction summary (system_alert with summary content).
  * Returns the summary text if found, null otherwise.
  */
-function extractCompactionSummary(text: string): string | null {
+export function extractCompactionSummary(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
     if (
@@ -183,13 +187,11 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         const compactionSummary = extractCompactionSummary(rawText);
         if (compactionSummary) {
           // Render as a user message with context header and summary
-          const summaryHeader =
-            "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
           const exists = buffers.byId.has(lineId);
           buffers.byId.set(lineId, {
             kind: "user",
             id: lineId,
-            text: `${summaryHeader}\n\n${compactionSummary}`,
+            text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
           });
           if (!exists) buffers.order.push(lineId);
           break;
