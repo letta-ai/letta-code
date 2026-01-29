@@ -9,7 +9,7 @@ description: Decomposes and reorganizes agent memory blocks into focused, single
 >
 > This skill works by directly editing memory files on disk. It requires the memory filesystem feature to be enabled.
 >
-> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure of `/memory/system/` and `/memory/user/`, memfs is enabled.
+> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure starting with `/memory/` including a `system/` directory, memfs is enabled.
 >
 > **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
 
@@ -58,7 +58,8 @@ These files ARE the agent's memory — they sync directly to API memory blocks v
 
 ~/.letta/agents/<agent-id>/memory/
 ├── system/       ← Attached blocks (always loaded in system prompt) — EDIT THESE
-├── user/         ← Detached blocks (on-demand) — can create new files here
+├── notes.md      ← Detached blocks at root level (on-demand) — can create here
+├── archive/      ← Detached blocks can be nested too
 └── .sync-state.json  ← DO NOT EDIT (internal sync tracking)
 
 ## Files to Skip (DO NOT edit)
@@ -74,7 +75,7 @@ These files ARE the agent's memory — they sync directly to API memory blocks v
 - Any other non-system blocks present
 
 ## How Memfs File ↔ Block Mapping Works
-- File path relative to system/ or user/ becomes the block label
+- File path relative to memory root becomes the block label (system/ prefix for attached, root level for detached)
 - Example: system/project/tooling/bun.md → block label "project/tooling/bun"
 - New files you create will become new memory blocks on next sync
 - Files you delete will cause the corresponding blocks to be deleted on next sync
@@ -145,7 +146,7 @@ Provide a detailed report including:
 ```
 
 The subagent will:
-- Read files from `~/.letta/agents/<agent-id>/memory/system/` (and `user/`)
+- Read files from `~/.letta/agents/<agent-id>/memory/system/` (and root level for detached)
 - Edit them to reorganize and decompose large blocks
 - Create new hierarchically-named files (e.g., `project/overview.md`)
 - Add clear structure with markdown formatting
