@@ -39,6 +39,7 @@ await Bun.build({
   define: {
     LETTA_VERSION: JSON.stringify(version),
     BUILD_TIME: JSON.stringify(new Date().toISOString()),
+    __USE_MAGICK__: useMagick ? "true" : "false",
   },
   // Load text files as strings (for markdown, etc.)
   loader: {
