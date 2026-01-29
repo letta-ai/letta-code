@@ -6705,16 +6705,21 @@ ${recentCommits}
             refreshDerived();
 
             // Send trigger message instructing agent to load the initializing-memory skill
-            const initMessage = `${SYSTEM_REMINDER_OPEN}
-The user has requested memory initialization via /init.
-
+            // Only include memfs path if memfs is enabled for this agent
+            const memfsSection = settingsManager.isMemfsEnabled(agentId)
+              ? `
 ## Memory Filesystem Location
 
 Your memory blocks are synchronized with the filesystem at:
 \`~/.letta/agents/${agentId}/memory/\`
 
 Use this path when working with memory files during initialization.
+`
+              : "";
 
+            const initMessage = `${SYSTEM_REMINDER_OPEN}
+The user has requested memory initialization via /init.
+${memfsSection}
 ## 1. Load the initializing-memory skill
 
 First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
