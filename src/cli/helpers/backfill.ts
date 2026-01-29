@@ -182,17 +182,14 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         // Check if this is a compaction summary message (system_alert with summary)
         const compactionSummary = extractCompactionSummary(rawText);
         if (compactionSummary) {
-          // Render as a synthetic tool call showing the compaction
+          // Render as a user message with context header and summary
+          const summaryHeader =
+            "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
           const exists = buffers.byId.has(lineId);
           buffers.byId.set(lineId, {
-            kind: "tool_call",
+            kind: "user",
             id: lineId,
-            toolCallId: `compaction-${lineId}`,
-            name: "Compact",
-            argsText: "messages[...]",
-            resultText: compactionSummary,
-            resultOk: true,
-            phase: "finished",
+            text: `${summaryHeader}\n\n${compactionSummary}`,
           });
           if (!exists) buffers.order.push(lineId);
           break;

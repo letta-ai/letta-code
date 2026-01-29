@@ -364,6 +364,33 @@ function extractTextPart(v: unknown): string {
 }
 
 /**
+ * Check if a user message is a compaction summary (system_alert with summary content).
+ * Returns the summary text if found, null otherwise.
+ */
+function extractCompactionSummary(text: string): string | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed.type === "system_alert" &&
+      typeof parsed.message === "string" &&
+      parsed.message.includes("prior messages have been hidden")
+    ) {
+      // Extract the summary part after the header
+      const summaryMatch = parsed.message.match(
+        /The following is a summary of the previous messages:\s*([\s\S]*)/,
+      );
+      if (summaryMatch?.[1]) {
+        return summaryMatch[1].trim();
+      }
+      return parsed.message;
+    }
+  } catch {
+    // Not JSON, not a compaction summary
+  }
+  return null;
+}
+
+/**
  * Attempts to split content at a paragraph boundary for aggressive static promotion.
  * If split found, creates a committed line for "before" and updates original with "after".
  * Returns true if split occurred, false otherwise.
@@ -491,6 +518,34 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           b.byId.set(id, { ...line, text: newText });
         }
       }
+      break;
+    }
+
+    case "user_message": {
+      // Use otid if available, fall back to id (same as backfill.ts)
+      const id = chunk.otid || (chunk as { id?: string }).id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a user message with context header and summary
+        const summaryHeader =
+          "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
+        ensure(b, id, () => ({
+          kind: "user",
+          id,
+          text: `${summaryHeader}\n\n${compactionSummary}`,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
       break;
     }
 
