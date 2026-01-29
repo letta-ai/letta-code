@@ -184,7 +184,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
     test("LETTA_AGENT_ID is not set when agent_id is not provided", async () => {
       const hook: HookCommand = {
         type: "command",
-        command: "echo \"agent_id:${LETTA_AGENT_ID:-empty}\"",
+        command: 'echo "agent_id:${LETTA_AGENT_ID:-empty}"',
       };
 
       const input: PreToolUseHookInput = {
