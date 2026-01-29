@@ -58,9 +58,9 @@ const MEMORY_FS_STATE_FILE = ".sync-state.json";
 type SyncState = {
   systemBlocks: Record<string, string>;
   systemFiles: Record<string, string>;
-  userBlocks: Record<string, string>;
-  userFiles: Record<string, string>;
-  userBlockIds: Record<string, string>;
+  detachedBlocks: Record<string, string>;
+  detachedFiles: Record<string, string>;
+  detachedBlockIds: Record<string, string>;
   lastSync: string | null;
 };
 
@@ -78,9 +78,9 @@ function loadSyncState(agentId: string): SyncState {
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -94,18 +94,18 @@ function loadSyncState(agentId: string): SyncState {
     return {
       systemBlocks: parsed.systemBlocks || parsed.blocks || {},
       systemFiles: parsed.systemFiles || parsed.files || {},
-      userBlocks: parsed.userBlocks || {},
-      userFiles: parsed.userFiles || {},
-      userBlockIds: parsed.userBlockIds || {},
+      detachedBlocks: parsed.detachedBlocks || {},
+      detachedFiles: parsed.detachedFiles || {},
+      detachedBlockIds: parsed.detachedBlockIds || {},
       lastSync: parsed.lastSync || null,
     };
   } catch {
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -171,15 +171,16 @@ async function resolveConflicts(
 
   const root = getMemoryRoot(agentId);
   const systemDir = join(root, "system");
-  const userDir = join(root, "user");
+  // Detached files go at root level (flat structure)
+  const detachedDir = root;
 
-  for (const dir of [root, systemDir, userDir]) {
+  for (const dir of [root, systemDir]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
   // Read current state
   const systemFiles = await readMemoryFiles(systemDir);
-  const userFiles = await readMemoryFiles(userDir);
+  const detachedFiles = await readMemoryFiles(detachedDir);
   systemFiles.delete("memory_filesystem");
 
   const blocksResponse = await client.agents.blocks.list(agentId, {
@@ -203,11 +204,14 @@ async function resolveConflicts(
   );
 
   const lastState = loadSyncState(agentId);
-  const userBlockMap = new Map<string, { id: string; value: string }>();
-  for (const [label, blockId] of Object.entries(lastState.userBlockIds)) {
+  const detachedBlockMap = new Map<string, { id: string; value: string }>();
+  for (const [label, blockId] of Object.entries(lastState.detachedBlockIds)) {
     try {
       const block = await client.blocks.retrieve(blockId);
-      userBlockMap.set(label, { id: block.id || "", value: block.value || "" });
+      detachedBlockMap.set(label, {
+        id: block.id || "",
+        value: block.value || "",
+      });
     } catch {
       // Block no longer exists
     }
@@ -220,16 +224,16 @@ async function resolveConflicts(
       // Check system blocks/files first, then user blocks/files
       const systemBlock = systemBlockMap.get(label);
       const systemFile = systemFiles.get(label);
-      const userBlock = userBlockMap.get(label);
-      const userFile = userFiles.get(label);
+      const detachedBlock = detachedBlockMap.get(label);
+      const detachedFile = detachedFiles.get(label);
 
-      const block = systemBlock || userBlock;
-      const file = systemFile || userFile;
+      const block = systemBlock || detachedBlock;
+      const file = systemFile || detachedFile;
       const dir =
         systemBlock || systemFile
           ? systemDir
-          : userBlock || userFile
-            ? userDir
+          : detachedBlock || detachedFile
+            ? detachedDir
             : null;
 
       if (!block || !file || !dir) {
@@ -268,7 +272,7 @@ async function resolveConflicts(
   // Update sync state after resolving all conflicts
   // Re-read everything to capture the new state
   const updatedSystemFiles = await readMemoryFiles(systemDir);
-  const updatedUserFiles = await readMemoryFiles(userDir);
+  const updatedDetachedFiles = await readMemoryFiles(detachedDir);
   updatedSystemFiles.delete("memory_filesystem");
 
   const updatedBlocksResponse = await client.agents.blocks.list(agentId, {
@@ -283,8 +287,8 @@ async function resolveConflicts(
 
   const systemBlockHashes: Record<string, string> = {};
   const systemFileHashes: Record<string, string> = {};
-  const userBlockHashes: Record<string, string> = {};
-  const userFileHashes: Record<string, string> = {};
+  const detachedBlockHashes: Record<string, string> = {};
+  const detachedFileHashes: Record<string, string> = {};
 
   for (const block of updatedBlocks.filter(
     (b: { label?: string }) => b.label && b.label !== "memory_filesystem",
@@ -298,26 +302,26 @@ async function resolveConflicts(
     systemFileHashes[label] = hashContent(file.content);
   }
 
-  for (const [label, blockId] of Object.entries(lastState.userBlockIds)) {
+  for (const [label, blockId] of Object.entries(lastState.detachedBlockIds)) {
     try {
       const block = await client.blocks.retrieve(blockId);
-      userBlockHashes[label] = hashContent(block.value || "");
+      detachedBlockHashes[label] = hashContent(block.value || "");
     } catch {
       // Block gone
     }
   }
 
-  for (const [label, file] of updatedUserFiles) {
-    userFileHashes[label] = hashContent(file.content);
+  for (const [label, file] of updatedDetachedFiles) {
+    detachedFileHashes[label] = hashContent(file.content);
   }
 
   saveSyncState(
     {
       systemBlocks: systemBlockHashes,
       systemFiles: systemFileHashes,
-      userBlocks: userBlockHashes,
-      userFiles: userFileHashes,
-      userBlockIds: lastState.userBlockIds,
+      detachedBlocks: detachedBlockHashes,
+      detachedFiles: detachedFileHashes,
+      detachedBlockIds: lastState.detachedBlockIds,
       lastSync: new Date().toISOString(),
     },
     agentId,

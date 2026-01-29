@@ -43,7 +43,8 @@ This changes how you should approach initialization:
 │   ├── human.md         # User information
 │   ├── project/         # Project-specific info
 │   └── ...
-└── user/                # Detached blocks (loaded on demand)
+├── notes.md             # Detached block at root (on-demand)
+└── archive/             # Detached blocks can be nested too
     └── ...
 ```
 
@@ -164,15 +165,15 @@ Consider whether information is:
 
 ## Recommended Memory Structure
 
-**Understanding system/ vs user/ (with memory filesystem):**
+**Understanding system/ vs root level (with memory filesystem):**
 - **system/**: Memory blocks attached to your system prompt - always loaded and influence your behavior
   - Use for: Current work context, active preferences, project conventions you need constantly
   - Examples: `persona`, `human`, `project`, active `ticket` or `context`
-- **user/**: Detached blocks - not in system prompt but available via tools
+- **Root level** (outside system/): Detached blocks - not in system prompt but available via tools
   - Use for: Historical information, archived decisions, reference material, completed investigations
-  - Examples: Past project notes, old ticket context, archived decisions
+  - Examples: `notes.md`, `archive/old-project.md`, `research/findings.md`
 
-**Rule of thumb**: If you need to see it every time you respond → `system/`. If it's reference material you'll look up occasionally → `user/`.
+**Rule of thumb**: If you need to see it every time you respond → `system/`. If it's reference material you'll look up occasionally → root level.
 
 ### Core Blocks (Usually Present in system/)
 
@@ -202,18 +203,18 @@ Consider whether information is:
 - A ticket/task memory block is a **scratchpad** for pinned context that should stay visible
 - Examples: Linear ticket ID and URL, Jira issue key, branch name, PR number, relevant links
 - Information that's useful to keep in context but doesn't fit in a TODO list
-- **Location**: Usually in `system/` if you want it always visible, or `user/` if it's reference material
+- **Location**: Usually in `system/` if you want it always visible, or root level if it's reference material
 
 **`context`**: Debugging or investigation scratchpad
 - Current hypotheses being tested
 - Files already examined
 - Clues and observations
-- **Location**: Usually in `system/` during active investigations, move to `user/` when complete
+- **Location**: Usually in `system/` during active investigations, move to root level when complete
 
 **`decisions`**: Architectural decisions and their rationale
 - Why certain approaches were chosen
 - Trade-offs that were considered
-- **Location**: `system/` for currently relevant decisions, `user/` for historical archive
+- **Location**: `system/` for currently relevant decisions, root level for historical archive
 - **With memfs**: Could organize as `project/decisions/architecture.md`, `project/decisions/tech_stack.md`
 
 ## Writing Good Memory Blocks

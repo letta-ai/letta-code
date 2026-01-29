@@ -56,9 +56,9 @@ const MEMORY_FS_STATE_FILE = ".sync-state.json";
 type SyncState = {
   systemBlocks: Record<string, string>;
   systemFiles: Record<string, string>;
-  userBlocks: Record<string, string>;
-  userFiles: Record<string, string>;
-  userBlockIds: Record<string, string>;
+  detachedBlocks: Record<string, string>;
+  detachedFiles: Record<string, string>;
+  detachedBlockIds: Record<string, string>;
   lastSync: string | null;
 };
 
@@ -76,9 +76,9 @@ function loadSyncState(agentId: string): SyncState {
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -92,18 +92,18 @@ function loadSyncState(agentId: string): SyncState {
     return {
       systemBlocks: parsed.systemBlocks || parsed.blocks || {},
       systemFiles: parsed.systemFiles || parsed.files || {},
-      userBlocks: parsed.userBlocks || {},
-      userFiles: parsed.userFiles || {},
-      userBlockIds: parsed.userBlockIds || {},
+      detachedBlocks: parsed.detachedBlocks || {},
+      detachedFiles: parsed.detachedFiles || {},
+      detachedBlockIds: parsed.detachedBlockIds || {},
       lastSync: parsed.lastSync || null,
     };
   } catch {
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -163,15 +163,16 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
 
   const root = getMemoryRoot(agentId);
   const systemDir = join(root, "system");
-  const userDir = join(root, "user");
+  // Detached files go at root level (flat structure)
+  const detachedDir = root;
 
   // Ensure directories exist
-  for (const dir of [root, systemDir, userDir]) {
+  for (const dir of [root, systemDir]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
   const systemFiles = await readMemoryFiles(systemDir);
-  const userFiles = await readMemoryFiles(userDir);
+  const detachedFiles = await readMemoryFiles(detachedDir);
   systemFiles.delete("memory_filesystem");
 
   // Fetch attached blocks
@@ -204,11 +205,11 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
   const newBlocks: string[] = [];
 
   // Fetch user blocks
-  const userBlockMap = new Map<string, string>();
-  for (const [label, blockId] of Object.entries(lastState.userBlockIds)) {
+  const detachedBlockMap = new Map<string, string>();
+  for (const [label, blockId] of Object.entries(lastState.detachedBlockIds)) {
     try {
       const block = await client.blocks.retrieve(blockId);
-      userBlockMap.set(label, block.value || "");
+      detachedBlockMap.set(label, block.value || "");
     } catch {
       // Block no longer exists
     }
@@ -272,19 +273,19 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
 
   // Check user labels
   const userLabels = new Set([
-    ...userFiles.keys(),
-    ...userBlockMap.keys(),
-    ...Object.keys(lastState.userBlocks),
-    ...Object.keys(lastState.userFiles),
+    ...detachedFiles.keys(),
+    ...detachedBlockMap.keys(),
+    ...Object.keys(lastState.detachedBlocks),
+    ...Object.keys(lastState.detachedFiles),
   ]);
 
   for (const label of [...userLabels].sort()) {
     classify(
       label,
-      userFiles.get(label)?.content ?? null,
-      userBlockMap.get(label) ?? null,
-      lastState.userFiles[label] ?? null,
-      lastState.userBlocks[label] ?? null,
+      detachedFiles.get(label)?.content ?? null,
+      detachedBlockMap.get(label) ?? null,
+      lastState.detachedFiles[label] ?? null,
+      lastState.detachedBlocks[label] ?? null,
     );
   }
 

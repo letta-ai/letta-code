@@ -195,7 +195,7 @@ describe("renderMemoryFilesystemTree", () => {
     const tree = renderMemoryFilesystemTree([], []);
     expect(tree).toContain("/memory/");
     expect(tree).toContain("system/");
-    expect(tree).toContain("user/");
+    // Note: detached blocks go at root level now, not in /user/
   });
 
   test("renders system blocks with nesting", () => {
@@ -209,16 +209,18 @@ describe("renderMemoryFilesystemTree", () => {
     expect(tree).toContain("personal_info.md");
   });
 
-  test("renders both system and user blocks", () => {
+  test("renders both system and detached blocks", () => {
     const tree = renderMemoryFilesystemTree(
       ["persona"],
       ["notes/project-ideas"],
     );
     expect(tree).toContain("system/");
     expect(tree).toContain("persona.md");
-    expect(tree).toContain("user/");
+    // Detached blocks go at root level (flat structure)
     expect(tree).toContain("notes/");
     expect(tree).toContain("project-ideas.md");
+    // Should NOT have user/ directory anymore
+    expect(tree).not.toContain("user/");
   });
 });
 

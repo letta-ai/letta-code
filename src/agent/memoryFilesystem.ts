@@ -17,6 +17,7 @@ export const MEMORY_FS_ROOT = ".letta";
 export const MEMORY_FS_AGENTS_DIR = "agents";
 export const MEMORY_FS_MEMORY_DIR = "memory";
 export const MEMORY_SYSTEM_DIR = "system";
+/** @deprecated Detached blocks now go at root level, not in /user/ */
 export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
@@ -33,9 +34,9 @@ const MANAGED_BLOCK_LABELS = new Set([
 type SyncState = {
   systemBlocks: Record<string, string>;
   systemFiles: Record<string, string>;
-  userBlocks: Record<string, string>;
-  userFiles: Record<string, string>;
-  userBlockIds: Record<string, string>;
+  detachedBlocks: Record<string, string>;
+  detachedFiles: Record<string, string>;
+  detachedBlockIds: Record<string, string>;
   lastSync: string | null;
 };
 
@@ -95,11 +96,16 @@ export function getMemorySystemDir(
   return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
 }
 
-export function getMemoryUserDir(
+/**
+ * Get the directory for detached (non-attached) blocks.
+ * In the flat structure, detached blocks go directly in the memory root.
+ */
+export function getMemoryDetachedDir(
   agentId: string,
   homeDir: string = homedir(),
 ): string {
-  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_USER_DIR);
+  // Detached blocks go at root level (flat structure)
+  return getMemoryFilesystemRoot(agentId, homeDir);
 }
 
 function getMemoryStatePath(
@@ -115,7 +121,6 @@ export function ensureMemoryFilesystemDirs(
 ): void {
   const root = getMemoryFilesystemRoot(agentId, homeDir);
   const systemDir = getMemorySystemDir(agentId, homeDir);
-  const userDir = getMemoryUserDir(agentId, homeDir);
 
   if (!existsSync(root)) {
     mkdirSync(root, { recursive: true });
@@ -123,9 +128,7 @@ export function ensureMemoryFilesystemDirs(
   if (!existsSync(systemDir)) {
     mkdirSync(systemDir, { recursive: true });
   }
-  if (!existsSync(userDir)) {
-    mkdirSync(userDir, { recursive: true });
-  }
+  // Note: detached blocks go directly in root, no separate directory needed
 }
 
 function hashContent(content: string): string {
@@ -141,9 +144,9 @@ function loadSyncState(
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -157,18 +160,18 @@ function loadSyncState(
     return {
       systemBlocks: parsed.systemBlocks || parsed.blocks || {},
       systemFiles: parsed.systemFiles || parsed.files || {},
-      userBlocks: parsed.userBlocks || {},
-      userFiles: parsed.userFiles || {},
-      userBlockIds: parsed.userBlockIds || {},
+      detachedBlocks: parsed.detachedBlocks || {},
+      detachedFiles: parsed.detachedFiles || {},
+      detachedBlockIds: parsed.detachedBlockIds || {},
       lastSync: parsed.lastSync || null,
     };
   } catch {
     return {
       systemBlocks: {},
       systemFiles: {},
-      userBlocks: {},
-      userFiles: {},
-      userBlockIds: {},
+      detachedBlocks: {},
+      detachedFiles: {},
+      detachedBlockIds: {},
       lastSync: null,
     };
   }
@@ -305,15 +308,16 @@ async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
 
 export function renderMemoryFilesystemTree(
   systemLabels: string[],
-  userLabels: string[],
+  detachedLabels: string[],
 ): string {
   type TreeNode = { children: Map<string, TreeNode>; isFile: boolean };
 
   const makeNode = (): TreeNode => ({ children: new Map(), isFile: false });
   const root = makeNode();
 
-  const insertPath = (base: string, label: string) => {
-    const parts = [base, ...label.split("/")];
+  const insertPath = (base: string | null, label: string) => {
+    // If base is null, insert at root level
+    const parts = base ? [base, ...label.split("/")] : label.split("/");
     let current = root;
     for (const [i, partName] of parts.entries()) {
       const part = i === parts.length - 1 ? `${partName}.md` : partName;
@@ -327,18 +331,18 @@ export function renderMemoryFilesystemTree(
     }
   };
 
+  // System blocks go in /system/
   for (const label of systemLabels) {
     insertPath(MEMORY_SYSTEM_DIR, label);
   }
-  for (const label of userLabels) {
-    insertPath(MEMORY_USER_DIR, label);
+  // Detached blocks go at root level (flat structure)
+  for (const label of detachedLabels) {
+    insertPath(null, label);
   }
 
+  // Always show system/ directory even if empty
   if (!root.children.has(MEMORY_SYSTEM_DIR)) {
     root.children.set(MEMORY_SYSTEM_DIR, makeNode());
-  }
-  if (!root.children.has(MEMORY_USER_DIR)) {
-    root.children.set(MEMORY_USER_DIR, makeNode());
   }
 
   const sortedEntries = (node: TreeNode) => {
@@ -374,9 +378,9 @@ export function renderMemoryFilesystemTree(
 function buildStateHashes(
   systemBlocks: Map<string, { value: string }>,
   systemFiles: Map<string, { content: string }>,
-  userBlocks: Map<string, { value: string }>,
-  userFiles: Map<string, { content: string }>,
-  userBlockIds: Record<string, string>,
+  detachedBlocks: Map<string, { value: string }>,
+  detachedFiles: Map<string, { content: string }>,
+  detachedBlockIds: Record<string, string>,
 ): SyncState {
   const systemBlockHashes: Record<string, string> = {};
   const systemFileHashes: Record<string, string> = {};
@@ -391,20 +395,20 @@ function buildStateHashes(
     systemFileHashes[label] = hashContent(file.content || "");
   });
 
-  userBlocks.forEach((block, label) => {
+  detachedBlocks.forEach((block, label) => {
     userBlockHashes[label] = hashContent(block.value || "");
   });
 
-  userFiles.forEach((file, label) => {
+  detachedFiles.forEach((file, label) => {
     userFileHashes[label] = hashContent(file.content || "");
   });
 
   return {
     systemBlocks: systemBlockHashes,
     systemFiles: systemFileHashes,
-    userBlocks: userBlockHashes,
-    userFiles: userFileHashes,
-    userBlockIds,
+    detachedBlocks: userBlockHashes,
+    detachedFiles: userFileHashes,
+    detachedBlockIds,
     lastSync: new Date().toISOString(),
   };
 }
@@ -417,9 +421,9 @@ export async function syncMemoryFilesystem(
   ensureMemoryFilesystemDirs(agentId, homeDir);
 
   const systemDir = getMemorySystemDir(agentId, homeDir);
-  const userDir = getMemoryUserDir(agentId, homeDir);
+  const detachedDir = getMemoryDetachedDir(agentId, homeDir);
   const systemFiles = await readMemoryFiles(systemDir);
-  const userFiles = await readMemoryFiles(userDir);
+  const detachedFiles = await readMemoryFiles(detachedDir);
   systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
 
   const attachedBlocks = await fetchAgentBlocks(agentId);
@@ -449,14 +453,14 @@ export async function syncMemoryFilesystem(
 
   const client = await getClient();
 
-  const userBlockIds = { ...lastState.userBlockIds };
-  const userBlockMap = new Map<string, Block>();
-  for (const [label, blockId] of Object.entries(userBlockIds)) {
+  const detachedBlockIds = { ...lastState.detachedBlockIds };
+  const detachedBlockMap = new Map<string, Block>();
+  for (const [label, blockId] of Object.entries(detachedBlockIds)) {
     try {
       const block = await client.blocks.retrieve(blockId);
-      userBlockMap.set(label, block as Block);
+      detachedBlockMap.set(label, block as Block);
     } catch {
-      delete userBlockIds[label];
+      delete detachedBlockIds[label];
     }
   }
 
@@ -602,22 +606,22 @@ export async function syncMemoryFilesystem(
     }
   }
 
-  const userLabels = new Set<string>([
-    ...Array.from(userFiles.keys()),
-    ...Array.from(userBlockMap.keys()),
-    ...Object.keys(lastState.userBlocks),
-    ...Object.keys(lastState.userFiles),
+  const detachedLabels = new Set<string>([
+    ...Array.from(detachedFiles.keys()),
+    ...Array.from(detachedBlockMap.keys()),
+    ...Object.keys(lastState.detachedBlocks),
+    ...Object.keys(lastState.detachedFiles),
   ]);
 
-  for (const label of Array.from(userLabels).sort()) {
-    const fileEntry = userFiles.get(label);
-    const blockEntry = userBlockMap.get(label);
+  for (const label of Array.from(detachedLabels).sort()) {
+    const fileEntry = detachedFiles.get(label);
+    const blockEntry = detachedBlockMap.get(label);
 
     const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
     const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
 
-    const lastFileHash = lastState.userFiles[label] || null;
-    const lastBlockHash = lastState.userBlocks[label] || null;
+    const lastFileHash = lastState.detachedFiles[label] || null;
+    const lastBlockHash = lastState.detachedBlocks[label] || null;
 
     const fileChanged = fileHash !== lastFileHash;
     const blockChanged = blockHash !== lastBlockHash;
@@ -627,17 +631,17 @@ export async function syncMemoryFilesystem(
     if (fileEntry && !blockEntry) {
       if (lastBlockHash && !fileChanged) {
         // Block was deleted elsewhere; delete file.
-        await deleteMemoryFile(userDir, label);
+        await deleteMemoryFile(detachedDir, label);
         deletedFiles.push(label);
-        delete userBlockIds[label];
+        delete detachedBlockIds[label];
         continue;
       }
 
       const blockData = parseBlockFromFileContent(fileEntry.content, label);
       const createdBlock = await client.blocks.create(blockData);
       if (createdBlock.id) {
-        userBlockIds[blockData.label] = createdBlock.id;
-        userBlockMap.set(blockData.label, createdBlock as Block);
+        detachedBlockIds[blockData.label] = createdBlock.id;
+        detachedBlockMap.set(blockData.label, createdBlock as Block);
       }
       createdBlocks.push(blockData.label);
       continue;
@@ -650,11 +654,11 @@ export async function syncMemoryFilesystem(
           await client.blocks.delete(blockEntry.id);
         }
         deletedBlocks.push(label);
-        delete userBlockIds[label];
+        delete detachedBlockIds[label];
         continue;
       }
 
-      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
       createdFiles.push(label);
       continue;
     }
@@ -689,7 +693,7 @@ export async function syncMemoryFilesystem(
     }
 
     if (resolution?.resolution === "block") {
-      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
       updatedFiles.push(label);
       continue;
     }
@@ -706,7 +710,7 @@ export async function syncMemoryFilesystem(
     }
 
     if (!fileChanged && blockChanged) {
-      await writeMemoryFile(userDir, label, blockEntry.value || "");
+      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
       updatedFiles.push(label);
     }
   }
@@ -724,15 +728,15 @@ export async function syncMemoryFilesystem(
 
     const updatedSystemFilesMap = await readMemoryFiles(systemDir);
     updatedSystemFilesMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
-    const updatedUserFilesMap = await readMemoryFiles(userDir);
+    const updatedUserFilesMap = await readMemoryFiles(detachedDir);
     const refreshedUserBlocks = new Map<string, { value: string }>();
 
-    for (const [label, blockId] of Object.entries(userBlockIds)) {
+    for (const [label, blockId] of Object.entries(detachedBlockIds)) {
       try {
         const block = await client.blocks.retrieve(blockId);
         refreshedUserBlocks.set(label, { value: block.value || "" });
       } catch {
-        delete userBlockIds[label];
+        delete detachedBlockIds[label];
       }
     }
 
@@ -741,7 +745,7 @@ export async function syncMemoryFilesystem(
       updatedSystemFilesMap,
       refreshedUserBlocks,
       updatedUserFilesMap,
-      userBlockIds,
+      detachedBlockIds,
     );
     await saveSyncState(nextState, agentId, homeDir);
   }
@@ -762,16 +766,16 @@ export async function updateMemoryFilesystemBlock(
   homeDir: string = homedir(),
 ) {
   const systemDir = getMemorySystemDir(agentId, homeDir);
-  const userDir = getMemoryUserDir(agentId, homeDir);
+  const detachedDir = getMemoryDetachedDir(agentId, homeDir);
 
   const systemFiles = await readMemoryFiles(systemDir);
-  const userFiles = await readMemoryFiles(userDir);
+  const detachedFiles = await readMemoryFiles(detachedDir);
 
   const tree = renderMemoryFilesystemTree(
     Array.from(systemFiles.keys()).filter(
       (label) => label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
     ),
-    Array.from(userFiles.keys()),
+    Array.from(detachedFiles.keys()),
   );
 
   const client = await getClient();
@@ -866,9 +870,9 @@ export async function checkMemoryFilesystemStatus(
   ensureMemoryFilesystemDirs(agentId, homeDir);
 
   const systemDir = getMemorySystemDir(agentId, homeDir);
-  const userDir = getMemoryUserDir(agentId, homeDir);
+  const detachedDir = getMemoryDetachedDir(agentId, homeDir);
   const systemFiles = await readMemoryFiles(systemDir);
-  const userFiles = await readMemoryFiles(userDir);
+  const detachedFiles = await readMemoryFiles(detachedDir);
   systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
 
   const attachedBlocks = await fetchAgentBlocks(agentId);
@@ -888,15 +892,15 @@ export async function checkMemoryFilesystemStatus(
   const newBlocks: string[] = [];
 
   // Fetch user blocks for status check
-  const userBlockIds = { ...lastState.userBlockIds };
-  const userBlockMap = new Map<string, Block>();
+  const detachedBlockIds = { ...lastState.detachedBlockIds };
+  const detachedBlockMap = new Map<string, Block>();
   const client = await getClient();
-  for (const [label, blockId] of Object.entries(userBlockIds)) {
+  for (const [label, blockId] of Object.entries(detachedBlockIds)) {
     try {
       const block = await client.blocks.retrieve(blockId);
-      userBlockMap.set(label, block as Block);
+      detachedBlockMap.set(label, block as Block);
     } catch {
-      delete userBlockIds[label];
+      delete detachedBlockIds[label];
     }
   }
 
@@ -925,20 +929,20 @@ export async function checkMemoryFilesystemStatus(
   }
 
   // Check user labels
-  const userLabels = new Set<string>([
-    ...Array.from(userFiles.keys()),
-    ...Array.from(userBlockMap.keys()),
-    ...Object.keys(lastState.userBlocks),
-    ...Object.keys(lastState.userFiles),
+  const detachedLabels = new Set<string>([
+    ...Array.from(detachedFiles.keys()),
+    ...Array.from(detachedBlockMap.keys()),
+    ...Object.keys(lastState.detachedBlocks),
+    ...Object.keys(lastState.detachedFiles),
   ]);
 
-  for (const label of Array.from(userLabels).sort()) {
+  for (const label of Array.from(detachedLabels).sort()) {
     classifyLabel(
       label,
-      userFiles.get(label)?.content ?? null,
-      userBlockMap.get(label)?.value ?? null,
-      lastState.userFiles[label] ?? null,
-      lastState.userBlocks[label] ?? null,
+      detachedFiles.get(label)?.content ?? null,
+      detachedBlockMap.get(label)?.value ?? null,
+      lastState.detachedFiles[label] ?? null,
+      lastState.detachedBlocks[label] ?? null,
       conflicts,
       pendingFromFile,
       pendingFromBlock,
