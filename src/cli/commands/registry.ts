@@ -60,8 +60,8 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
-  "/memory-sync": {
-    desc: "Sync memory blocks with filesystem (requires memfs enabled)",
+  "/memfs-sync": {
+    desc: "Sync memory blocks with filesystem (requires memFS enabled)",
     order: 15.5,
     handler: () => {
       // Handled specially in App.tsx to run filesystem sync

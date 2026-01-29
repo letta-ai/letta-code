@@ -45,6 +45,21 @@ export type MemorySyncConflict = {
   fileValue: string | null;
 };
 
+export type MemfsSyncStatus = {
+  /** Blocks where both file and block changed since last sync */
+  conflicts: MemorySyncConflict[];
+  /** Labels where only the file changed (would auto-resolve to block) */
+  pendingFromFile: string[];
+  /** Labels where only the block changed (would auto-resolve to file) */
+  pendingFromBlock: string[];
+  /** Labels where a file exists but no block */
+  newFiles: string[];
+  /** Labels where a block exists but no file */
+  newBlocks: string[];
+  /** True when there are no conflicts or pending changes */
+  isClean: boolean;
+};
+
 export type MemorySyncResult = {
   updatedBlocks: string[];
   createdBlocks: string[];
@@ -836,6 +851,181 @@ export function formatMemorySyncSummary(result: MemorySyncResult): string {
   }
 
   return `Memory filesystem sync complete:\n${lines.join("\n")}`;
+}
+
+/**
+ * Read-only check of the current memFS sync status.
+ * Does NOT modify any blocks, files, or sync state.
+ * Safe to call frequently (e.g., after every turn).
+ */
+export async function checkMemoryFilesystemStatus(
+  agentId: string,
+  options?: { homeDir?: string },
+): Promise<MemfsSyncStatus> {
+  const homeDir = options?.homeDir ?? homedir();
+  ensureMemoryFilesystemDirs(agentId, homeDir);
+
+  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const userDir = getMemoryUserDir(agentId, homeDir);
+  const systemFiles = await readMemoryFiles(systemDir);
+  const userFiles = await readMemoryFiles(userDir);
+  systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const attachedBlocks = await fetchAgentBlocks(agentId);
+  const systemBlockMap = new Map(
+    attachedBlocks
+      .filter((block) => block.label)
+      .map((block) => [block.label as string, block]),
+  );
+  systemBlockMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
+
+  const lastState = loadSyncState(agentId, homeDir);
+
+  const conflicts: MemorySyncConflict[] = [];
+  const pendingFromFile: string[] = [];
+  const pendingFromBlock: string[] = [];
+  const newFiles: string[] = [];
+  const newBlocks: string[] = [];
+
+  // Fetch user blocks for status check
+  const userBlockIds = { ...lastState.userBlockIds };
+  const userBlockMap = new Map<string, Block>();
+  const client = await getClient();
+  for (const [label, blockId] of Object.entries(userBlockIds)) {
+    try {
+      const block = await client.blocks.retrieve(blockId);
+      userBlockMap.set(label, block as Block);
+    } catch {
+      delete userBlockIds[label];
+    }
+  }
+
+  // Check system labels
+  const systemLabels = new Set<string>([
+    ...Array.from(systemFiles.keys()),
+    ...Array.from(systemBlockMap.keys()),
+    ...Object.keys(lastState.systemBlocks),
+    ...Object.keys(lastState.systemFiles),
+  ]);
+
+  for (const label of Array.from(systemLabels).sort()) {
+    if (MANAGED_BLOCK_LABELS.has(label)) continue;
+    classifyLabel(
+      label,
+      systemFiles.get(label)?.content ?? null,
+      systemBlockMap.get(label)?.value ?? null,
+      lastState.systemFiles[label] ?? null,
+      lastState.systemBlocks[label] ?? null,
+      conflicts,
+      pendingFromFile,
+      pendingFromBlock,
+      newFiles,
+      newBlocks,
+    );
+  }
+
+  // Check user labels
+  const userLabels = new Set<string>([
+    ...Array.from(userFiles.keys()),
+    ...Array.from(userBlockMap.keys()),
+    ...Object.keys(lastState.userBlocks),
+    ...Object.keys(lastState.userFiles),
+  ]);
+
+  for (const label of Array.from(userLabels).sort()) {
+    classifyLabel(
+      label,
+      userFiles.get(label)?.content ?? null,
+      userBlockMap.get(label)?.value ?? null,
+      lastState.userFiles[label] ?? null,
+      lastState.userBlocks[label] ?? null,
+      conflicts,
+      pendingFromFile,
+      pendingFromBlock,
+      newFiles,
+      newBlocks,
+    );
+  }
+
+  const isClean =
+    conflicts.length === 0 &&
+    pendingFromFile.length === 0 &&
+    pendingFromBlock.length === 0 &&
+    newFiles.length === 0 &&
+    newBlocks.length === 0;
+
+  return {
+    conflicts,
+    pendingFromFile,
+    pendingFromBlock,
+    newFiles,
+    newBlocks,
+    isClean,
+  };
+}
+
+/**
+ * Classify a single label's sync status (read-only).
+ * Pushes into the appropriate output array based on file/block state comparison.
+ */
+function classifyLabel(
+  label: string,
+  fileContent: string | null,
+  blockValue: string | null,
+  lastFileHash: string | null,
+  lastBlockHash: string | null,
+  conflicts: MemorySyncConflict[],
+  pendingFromFile: string[],
+  pendingFromBlock: string[],
+  newFiles: string[],
+  newBlocks: string[],
+): void {
+  const fileHash = fileContent !== null ? hashContent(fileContent) : null;
+  const blockHash = blockValue !== null ? hashContent(blockValue) : null;
+
+  const fileChanged = fileHash !== lastFileHash;
+  const blockChanged = blockHash !== lastBlockHash;
+
+  if (fileContent !== null && blockValue === null) {
+    if (lastBlockHash && !fileChanged) {
+      // Block was deleted, file unchanged — would delete file
+      return;
+    }
+    newFiles.push(label);
+    return;
+  }
+
+  if (fileContent === null && blockValue !== null) {
+    if (lastFileHash && !blockChanged) {
+      // File was deleted, block unchanged — would delete block
+      return;
+    }
+    newBlocks.push(label);
+    return;
+  }
+
+  if (fileContent === null || blockValue === null) {
+    return;
+  }
+
+  // Both exist — check for differences
+  if (fileHash === blockHash) {
+    return; // In sync
+  }
+
+  if (fileChanged && blockChanged) {
+    conflicts.push({ label, blockValue, fileValue: fileContent });
+    return;
+  }
+
+  if (fileChanged && !blockChanged) {
+    pendingFromFile.push(label);
+    return;
+  }
+
+  if (!fileChanged && blockChanged) {
+    pendingFromBlock.push(label);
+  }
 }
 
 /**

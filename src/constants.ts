@@ -25,6 +25,12 @@ export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
 /**
+ * How often (in turns) to check for memfs sync conflicts, even without
+ * filesystem change events. Catches block-only changes (e.g. ADE/API edits).
+ */
+export const MEMFS_CONFLICT_CHECK_INTERVAL = 5;
+
+/**
  * Header displayed before compaction summary when conversation context is truncated
  */
 export const COMPACTION_SUMMARY_HEADER =
