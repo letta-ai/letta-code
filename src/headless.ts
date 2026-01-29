@@ -1822,7 +1822,11 @@ async function runBidirectionalMode(
     toolCallId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
-  ): Promise<{ decision: "allow" | "deny"; reason?: string }> {
+  ): Promise<{
+    decision: "allow" | "deny";
+    reason?: string;
+    updatedInput?: Record<string, unknown> | null;
+  }> {
     const requestId = `perm-${toolCallId}`;
 
     // Build can_use_tool control request (Claude SDK format)
@@ -1866,7 +1870,7 @@ async function runBidirectionalMode(
           }
 
           if (response.behavior === "allow") {
-            return { decision: "allow" };
+            return { decision: "allow", updatedInput: response.updatedInput };
           } else {
             return {
               decision: "deny",
@@ -2135,9 +2139,18 @@ async function runBidirectionalMode(
                 );
 
                 if (permResponse.decision === "allow") {
+                  // If provided updatedInput (e.g., for AskUserQuestion with answers),
+                  // update the approval's toolArgs to use it
+                  const finalApproval = permResponse.updatedInput
+                    ? {
+                        ...approval,
+                        toolArgs: JSON.stringify(permResponse.updatedInput),
+                      }
+                    : approval;
+
                   decisions.push({
                     type: "approve",
-                    approval,
+                    approval: finalApproval,
                     matchedRule: "SDK callback approved",
                   });
 
@@ -2145,9 +2158,9 @@ async function runBidirectionalMode(
                   const autoApprovalMsg: AutoApprovalMessage = {
                     type: "auto_approval",
                     tool_call: {
-                      name: approval.toolName,
-                      tool_call_id: approval.toolCallId,
-                      arguments: approval.toolArgs,
+                      name: finalApproval.toolName,
+                      tool_call_id: finalApproval.toolCallId,
+                      arguments: finalApproval.toolArgs,
                     },
                     reason: permResponse.reason || "SDK callback approved",
                     matched_rule: "canUseTool callback",

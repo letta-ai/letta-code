@@ -301,7 +301,7 @@ export type ControlResponseBody =
 // --- can_use_tool response payloads ---
 export interface CanUseToolResponseAllow {
   behavior: "allow";
-  /** TODO: Not supported - Letta stores tool calls server-side */
+  /** Modified tool input */
   updatedInput?: Record<string, unknown> | null;
   /** TODO: Not implemented - dynamic permission rule updates */
   updatedPermissions?: unknown[];

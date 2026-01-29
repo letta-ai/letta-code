@@ -63,13 +63,15 @@ describe("SearchFileContent tool", () => {
   });
 
   test("validates pattern parameter", async () => {
-    // Test that pattern is required
+    testDir = new TestDirectory();
+    testDir.createFile("test.txt", "Hello World");
+
+    // Empty pattern matches all lines (valid ripgrep behavior)
     const result = await search_file_content({
       pattern: "",
-      dir_path: ".",
+      dir_path: testDir.path,
     } as Parameters<typeof search_file_content>[0]);
 
-    // Empty pattern just returns no results
-    expect(result.message).toBeTruthy();
+    expect(result.message).toContain("Hello World");
   });
 });
