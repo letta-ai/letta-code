@@ -1,9 +1,17 @@
 ---
 name: defragmenting-memory
-description: Decomposes and reorganizes agent memory blocks into focused, single-purpose components. Use when memory has large multi-topic blocks, redundancy, or poor organization. Works directly on memfs files — memory sync handles propagation to the API.
+description: Decomposes and reorganizes agent memory blocks into focused, single-purpose components. Use when memory has large multi-topic blocks, redundancy, or poor organization.
 ---
 
 # Memory Defragmentation Skill
+
+> **Requires Memory Filesystem (memfs)**
+>
+> This skill works by directly editing memory files on disk. It requires the memory filesystem feature to be enabled.
+>
+> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure of `/memory/system/` and `/memory/user/`, memfs is enabled.
+>
+> **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
 
 This skill helps you maintain clean, well-organized memory blocks by:
 1. Creating a safety backup of the memfs directory
