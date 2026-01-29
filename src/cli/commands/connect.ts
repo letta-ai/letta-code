@@ -19,18 +19,18 @@ import {
   removeMinimaxProvider,
 } from "../../providers/minimax-provider";
 import {
-  createOrUpdateOpenrouterProvider,
-  getOpenrouterProvider,
-  OPENROUTER_PROVIDER_NAME,
-  removeOpenrouterProvider,
-} from "../../providers/openrouter-provider";
-import {
   checkOpenAICodexEligibility,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
 } from "../../providers/openai-codex-provider";
+import {
+  createOrUpdateOpenrouterProvider,
+  getOpenrouterProvider,
+  OPENROUTER_PROVIDER_NAME,
+  removeOpenrouterProvider,
+} from "../../providers/openrouter-provider";
 import {
   createOrUpdateZaiProvider,
   getZaiProvider,

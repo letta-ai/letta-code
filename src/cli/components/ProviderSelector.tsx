@@ -638,7 +638,12 @@ export function ProviderSelector({
         <Box flexDirection="row">
           <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
           <Text>{apiKeyInput ? maskApiKey(apiKeyInput) : "(enter key)"}</Text>
-          <Text color={statusColor} dimColor={validationState === "validating" || validationState === "saving"}>
+          <Text
+            color={statusColor}
+            dimColor={
+              validationState === "validating" || validationState === "saving"
+            }
+          >
             {statusText}
           </Text>
         </Box>
@@ -893,7 +898,9 @@ export function ProviderSelector({
           <Box marginTop={1}>
             <Text
               color={statusColor}
-              dimColor={validationState === "validating" || validationState === "saving"}
+              dimColor={
+                validationState === "validating" || validationState === "saving"
+              }
             >
               {"  "}
               {statusText}
