@@ -305,10 +305,6 @@ function ProfileSelectionUI({
           <Text bold color={colors.selector.title}>
             Select a model
           </Text>
-          <Text dimColor>
-            The default model ({defaultModelHandle || "unknown"}) is not
-            available on this server.
-          </Text>
 
           {showModelSearch && (
             <Box>

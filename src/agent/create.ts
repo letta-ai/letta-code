@@ -12,6 +12,7 @@ import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
+  getDefaultModel,
   getModelUpdateArgs,
   resolveModel,
 } from "./model";
@@ -120,8 +121,8 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use default model
-    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+    // Use default model from models.json
+    modelHandle = getDefaultModel();
   }
 
   const client = await getClient();
