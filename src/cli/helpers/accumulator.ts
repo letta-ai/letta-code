@@ -5,7 +5,10 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { COMPACTION_SUMMARY_HEADER, INTERRUPTED_BY_USER } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  INTERRUPTED_BY_USER,
+} from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
