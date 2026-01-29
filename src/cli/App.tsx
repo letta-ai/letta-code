@@ -2669,6 +2669,17 @@ export default function App({
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
 
+            // Get last assistant message and reasoning for Stop hook
+            const lastAssistant = Array.from(
+              buffersRef.current.byId.values(),
+            ).findLast((item) => item.kind === "assistant" && "text" in item);
+            const assistantMessage =
+              lastAssistant && "text" in lastAssistant
+                ? lastAssistant.text
+                : undefined;
+            const precedingReasoning = buffersRef.current.lastReasoning;
+            buffersRef.current.lastReasoning = undefined; // Clear after use
+
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
@@ -2676,6 +2687,9 @@ export default function App({
               Array.from(buffersRef.current.byId.values()).filter(
                 (item) => item.kind === "tool_call",
               ).length,
+              undefined, // workingDirectory (uses default)
+              precedingReasoning,
+              assistantMessage,
             );
 
             // If hook blocked (exit 2), inject stderr feedback and continue conversation
