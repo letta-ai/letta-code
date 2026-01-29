@@ -181,6 +181,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -243,6 +245,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -772,6 +783,12 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               // Args parsing failed
             }
 
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
             runPostToolUseHooks(
               serverToolInfo.toolName,
               parsedArgs,
@@ -782,6 +799,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               toolCallId,
               undefined,
               b.agentId,
+              precedingReasoning,
+              precedingAssistantMessage,
             ).catch(() => {});
 
             b.serverToolCalls.delete(toolCallId);

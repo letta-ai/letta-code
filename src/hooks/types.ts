@@ -186,6 +186,10 @@ export interface PostToolUseHookInput extends HookInputBase {
   };
   /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
+  /** Reasoning/thinking content that preceded this tool call */
+  preceding_reasoning?: string;
+  /** Assistant message content that preceded this tool call */
+  preceding_assistant_message?: string;
 }
 
 /**
@@ -247,6 +251,10 @@ export interface StopHookInput extends HookInputBase {
   message_count?: number;
   /** Number of tool calls in the turn */
   tool_call_count?: number;
+  /** Reasoning/thinking content that preceded the final response */
+  preceding_reasoning?: string;
+  /** The assistant's final message content */
+  assistant_message?: string;
 }
 
 /**
