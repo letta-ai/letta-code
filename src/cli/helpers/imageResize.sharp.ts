@@ -11,8 +11,7 @@ export const MAX_IMAGE_HEIGHT = 2000;
 // We enforce this in the client to avoid API errors
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB = 5,242,880 bytes
 
-
-console.log("USING SHARP VARIANT")
+console.log("USING SHARP VARIANT");
 
 export interface ResizeResult {
   data: string; // base64 encoded

@@ -1,11 +1,11 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-console.log("USING MAGICK VARIANT")
+console.log("USING MAGICK VARIANT");
 
 // Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests
 // We use 2000 to stay safe when conversation history accumulates multiple images
@@ -30,13 +30,19 @@ export interface ResizeResult {
 async function getImageDimensions(
   buffer: Buffer,
 ): Promise<{ width: number; height: number; format: string }> {
-  const tempInput = join(tmpdir(), `image-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  const tempInput = join(
+    tmpdir(),
+    `image-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
+  );
   writeFileSync(tempInput, buffer);
 
   try {
-    const output = execSync(`magick identify -format "%w %h %m" "${tempInput}"`, {
-      encoding: 'utf-8',
-    });
+    const output = execSync(
+      `magick identify -format "%w %h %m" "${tempInput}"`,
+      {
+        encoding: "utf-8",
+      },
+    );
     const [width, height, format] = output.trim().split(" ");
     if (!width || !height || !format) {
       throw new Error("Failed to get image dimensions");
@@ -66,17 +72,23 @@ async function compressToFitByteLimit(
     return null; // No compression needed
   }
 
-  const tempInput = join(tmpdir(), `compress-input-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  const tempInput = join(
+    tmpdir(),
+    `compress-input-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
+  );
   writeFileSync(tempInput, buffer);
 
   try {
     // Try progressive JPEG quality reduction
     const qualities = [85, 70, 55, 40];
     for (const quality of qualities) {
-      const tempOutput = join(tmpdir(), `compress-output-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+      const tempOutput = join(
+        tmpdir(),
+        `compress-output-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`,
+      );
       try {
         execSync(`magick "${tempInput}" -quality ${quality} "${tempOutput}"`, {
-          stdio: 'ignore',
+          stdio: "ignore",
         });
         const compressed = readFileSync(tempOutput);
         if (compressed.length <= MAX_IMAGE_BYTES) {
@@ -101,11 +113,17 @@ async function compressToFitByteLimit(
     for (const scale of scales) {
       const scaledWidth = Math.floor(currentWidth * scale);
       const scaledHeight = Math.floor(currentHeight * scale);
-      const tempOutput = join(tmpdir(), `compress-output-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+      const tempOutput = join(
+        tmpdir(),
+        `compress-output-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`,
+      );
       try {
-        execSync(`magick "${tempInput}" -resize ${scaledWidth}x${scaledHeight} -quality 70 "${tempOutput}"`, {
-          stdio: 'ignore',
-        });
+        execSync(
+          `magick "${tempInput}" -resize ${scaledWidth}x${scaledHeight} -quality 70 "${tempOutput}"`,
+          {
+            stdio: "ignore",
+          },
+        );
         const reduced = readFileSync(tempOutput);
         if (reduced.length <= MAX_IMAGE_BYTES) {
           const { width, height } = await getImageDimensions(reduced);
@@ -147,7 +165,8 @@ export async function resizeImageIfNeeded(
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
 
   // Determine if we can pass through the original format
-  const isPassthroughFormat = format === "png" || format === "jpeg" || format === "jpg";
+  const isPassthroughFormat =
+    format === "png" || format === "jpeg" || format === "jpg";
 
   if (!needsResize && isPassthroughFormat) {
     // No resize needed and format is supported - but check byte limit
@@ -164,7 +183,10 @@ export async function resizeImageIfNeeded(
     };
   }
 
-  const tempInput = join(tmpdir(), `resize-input-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  const tempInput = join(
+    tmpdir(),
+    `resize-input-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
+  );
   writeFileSync(tempInput, buffer);
 
   try {
@@ -172,30 +194,40 @@ export async function resizeImageIfNeeded(
       // Resize preserving aspect ratio
       // ImageMagick's -resize with geometry like "2000x2000>" preserves aspect ratio
       // and only shrinks (doesn't enlarge) - equivalent to 'inside' fit
-      const tempOutput = join(tmpdir(), `resize-output-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const tempOutput = join(
+        tmpdir(),
+        `resize-output-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
 
       let outputBuffer: Buffer;
       let outputMediaType: string;
 
       if (format === "jpeg" || format === "jpg") {
         // Preserve JPEG format with good quality (Codex uses 85)
-        execSync(`magick "${tempInput}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 85 "${tempOutput}.jpg"`, {
-          stdio: 'ignore',
-        });
+        execSync(
+          `magick "${tempInput}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 85 "${tempOutput}.jpg"`,
+          {
+            stdio: "ignore",
+          },
+        );
         outputBuffer = readFileSync(`${tempOutput}.jpg`);
         outputMediaType = "image/jpeg";
         unlinkSync(`${tempOutput}.jpg`);
       } else {
         // Default to PNG for everything else
-        execSync(`magick "${tempInput}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> "${tempOutput}.png"`, {
-          stdio: 'ignore',
-        });
+        execSync(
+          `magick "${tempInput}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> "${tempOutput}.png"`,
+          {
+            stdio: "ignore",
+          },
+        );
         outputBuffer = readFileSync(`${tempOutput}.png`);
         outputMediaType = "image/png";
         unlinkSync(`${tempOutput}.png`);
       }
 
-      const { width: resizedWidth, height: resizedHeight } = await getImageDimensions(outputBuffer);
+      const { width: resizedWidth, height: resizedHeight } =
+        await getImageDimensions(outputBuffer);
 
       // Check byte limit after dimension resize
       const compressed = await compressToFitByteLimit(
@@ -217,15 +249,22 @@ export async function resizeImageIfNeeded(
     }
 
     // No resize needed but format needs conversion (e.g., HEIC, TIFF, etc.)
-    const tempOutput = join(tmpdir(), `convert-output-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+    const tempOutput = join(
+      tmpdir(),
+      `convert-output-${Date.now()}-${Math.random().toString(36).slice(2)}.png`,
+    );
     execSync(`magick "${tempInput}" "${tempOutput}"`, {
-      stdio: 'ignore',
+      stdio: "ignore",
     });
     const outputBuffer = readFileSync(tempOutput);
     unlinkSync(tempOutput);
 
     // Check byte limit after format conversion
-    const compressed = await compressToFitByteLimit(outputBuffer, width, height);
+    const compressed = await compressToFitByteLimit(
+      outputBuffer,
+      width,
+      height,
+    );
     if (compressed) {
       return compressed;
     }
