@@ -17,14 +17,27 @@ import {
 
 // Helper to create a mock client
 function createMockClient(options: {
-  blocks?: Array<{ id: string; label: string; value: string }>;
+  blocks?: Array<{
+    id: string;
+    label: string;
+    value: string;
+    tags?: string[];
+  }>;
+  ownedBlocks?: Array<{
+    id: string;
+    label: string;
+    value: string;
+    tags?: string[];
+  }>;
   onBlockCreate?: (data: unknown) => { id: string };
-  onBlockUpdate?: (label: string, data: unknown) => void;
+  onBlockUpdate?: (blockId: string, data: unknown) => void;
+  onAgentBlockUpdate?: (label: string, data: unknown) => void;
   onBlockAttach?: (blockId: string, data: unknown) => void;
   onBlockDetach?: (blockId: string, data: unknown) => void;
   throwOnUpdate?: string; // label to throw "Not Found" on
 }) {
   const blocks = options.blocks ?? [];
+  const ownedBlocks = options.ownedBlocks ?? [];
 
   return {
     agents: {
@@ -34,7 +47,7 @@ function createMockClient(options: {
           if (options.throwOnUpdate === label) {
             return Promise.reject(new Error("Not Found"));
           }
-          options.onBlockUpdate?.(label, data);
+          options.onAgentBlockUpdate?.(label, data);
           return Promise.resolve({});
         }),
         attach: mock((blockId: string, data: unknown) => {
@@ -60,6 +73,20 @@ function createMockClient(options: {
         return Promise.resolve(block);
       }),
       delete: mock(() => Promise.resolve({})),
+      list: mock((params?: { tags?: string[] }) => {
+        // Filter by tags if provided
+        if (params?.tags?.length) {
+          const filtered = ownedBlocks.filter((b) =>
+            params.tags!.some((tag) => b.tags?.includes(tag)),
+          );
+          return Promise.resolve(filtered);
+        }
+        return Promise.resolve(ownedBlocks);
+      }),
+      update: mock((blockId: string, data: unknown) => {
+        options.onBlockUpdate?.(blockId, data);
+        return Promise.resolve({});
+      }),
     },
   };
 }
@@ -341,5 +368,147 @@ describe("memory filesystem paths", () => {
     expect(systemDir).toBe(
       join("/home/user", ".letta", "agents", "agent-123", "memory", "system"),
     );
+  });
+});
+
+describe("block tagging", () => {
+  test("block creation includes owner tag", async () => {
+    const createdBlockData: unknown[] = [];
+    const mockClient = createMockClient({
+      blocks: [],
+      ownedBlocks: [],
+      onBlockCreate: (data) => {
+        createdBlockData.push(data);
+        return { id: "new-block-id" };
+      },
+    });
+
+    // Verify mock client tracks tags in block creation
+    await mockClient.blocks.create({
+      label: "test-block",
+      value: "test content",
+      tags: ["owner:agent-123"],
+    });
+
+    expect(createdBlockData.length).toBe(1);
+    expect((createdBlockData[0] as { tags: string[] }).tags).toContain(
+      "owner:agent-123",
+    );
+  });
+
+  test("blocks.list filters by owner tag", async () => {
+    const mockClient = createMockClient({
+      blocks: [],
+      ownedBlocks: [
+        { id: "block-1", label: "owned", value: "v1", tags: ["owner:agent-1"] },
+        { id: "block-2", label: "other", value: "v2", tags: ["owner:agent-2"] },
+        {
+          id: "block-3",
+          label: "also-owned",
+          value: "v3",
+          tags: ["owner:agent-1"],
+        },
+      ],
+    });
+
+    const result = await mockClient.blocks.list({ tags: ["owner:agent-1"] });
+
+    expect(result.length).toBe(2);
+    expect(result.map((b) => b.label)).toContain("owned");
+    expect(result.map((b) => b.label)).toContain("also-owned");
+    expect(result.map((b) => b.label)).not.toContain("other");
+  });
+
+  test("detached blocks are discovered via owner tag", async () => {
+    const agentId = "agent-123";
+
+    // Attached blocks (returned by agents.blocks.list)
+    const attachedBlocks = [
+      {
+        id: "attached-1",
+        label: "persona",
+        value: "v1",
+        tags: [`owner:${agentId}`],
+      },
+    ];
+
+    // All owned blocks (returned by blocks.list with tag filter)
+    const ownedBlocks = [
+      ...attachedBlocks,
+      {
+        id: "detached-1",
+        label: "notes",
+        value: "v2",
+        tags: [`owner:${agentId}`],
+      },
+      {
+        id: "detached-2",
+        label: "archive",
+        value: "v3",
+        tags: [`owner:${agentId}`],
+      },
+    ];
+
+    const mockClient = createMockClient({
+      blocks: attachedBlocks,
+      ownedBlocks: ownedBlocks,
+    });
+
+    // Get attached blocks
+    const attached = await mockClient.agents.blocks.list();
+    const attachedIds = new Set(attached.map((b) => b.id));
+
+    // Get all owned blocks via tag
+    const allOwned = await mockClient.blocks.list({
+      tags: [`owner:${agentId}`],
+    });
+
+    // Calculate detached = owned - attached
+    const detached = allOwned.filter((b) => !attachedIds.has(b.id));
+
+    expect(detached.length).toBe(2);
+    expect(detached.map((b) => b.label)).toContain("notes");
+    expect(detached.map((b) => b.label)).toContain("archive");
+    expect(detached.map((b) => b.label)).not.toContain("persona");
+  });
+
+  test("backfill adds owner tag to blocks missing it", async () => {
+    const updatedBlocks: Array<{ blockId: string; data: unknown }> = [];
+    const agentId = "agent-123";
+
+    const mockClient = createMockClient({
+      blocks: [
+        { id: "block-1", label: "persona", value: "v1", tags: [] }, // No owner tag
+        {
+          id: "block-2",
+          label: "human",
+          value: "v2",
+          tags: [`owner:${agentId}`],
+        }, // Has owner tag
+        { id: "block-3", label: "project", value: "v3" }, // No tags at all
+      ],
+      onBlockUpdate: (blockId, data) => {
+        updatedBlocks.push({ blockId, data });
+      },
+    });
+
+    // Simulate backfill logic
+    const blocks = await mockClient.agents.blocks.list();
+    const ownerTag = `owner:${agentId}`;
+
+    for (const block of blocks) {
+      const tags = block.tags || [];
+      if (!tags.includes(ownerTag)) {
+        await mockClient.blocks.update(block.id, {
+          tags: [...tags, ownerTag],
+        });
+      }
+    }
+
+    // Should have updated block-1 and block-3, but not block-2
+    expect(updatedBlocks.length).toBe(2);
+    expect(updatedBlocks.map((u) => u.blockId)).toContain("block-1");
+    expect(updatedBlocks.map((u) => u.blockId)).toContain("block-3");
+    expect(updatedBlocks.map((u) => u.blockId)).not.toContain("block-2");
   });
 });

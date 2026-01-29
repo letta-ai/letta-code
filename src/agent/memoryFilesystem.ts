@@ -306,6 +306,49 @@ async function fetchAgentBlocks(agentId: string): Promise<Block[]> {
   return items;
 }
 
+/**
+ * Fetch all blocks owned by this agent (via owner tag).
+ * This includes both attached and detached blocks.
+ */
+async function fetchOwnedBlocks(agentId: string): Promise<Block[]> {
+  const client = await getClient();
+  const ownerTag = `owner:${agentId}`;
+  const page = await client.blocks.list({ tags: [ownerTag], limit: 1000 });
+
+  // Handle both array response and paginated response
+  if (Array.isArray(page)) {
+    return page;
+  }
+
+  const items =
+    (page as { items?: Block[] }).items ||
+    (page as { blocks?: Block[] }).blocks ||
+    [];
+  return items;
+}
+
+/**
+ * Backfill owner tags on blocks that don't have them.
+ * This ensures backwards compatibility with blocks created before tagging.
+ */
+async function backfillOwnerTags(
+  agentId: string,
+  blocks: Block[],
+): Promise<void> {
+  const client = await getClient();
+  const ownerTag = `owner:${agentId}`;
+
+  for (const block of blocks) {
+    if (!block.id) continue;
+    const tags = block.tags || [];
+    if (!tags.includes(ownerTag)) {
+      await client.blocks.update(block.id, {
+        tags: [...tags, ownerTag],
+      });
+    }
+  }
+}
+
 export function renderMemoryFilesystemTree(
   systemLabels: string[],
   detachedLabels: string[],
@@ -453,14 +496,25 @@ export async function syncMemoryFilesystem(
 
   const client = await getClient();
 
-  const detachedBlockIds = { ...lastState.detachedBlockIds };
+  // Backfill owner tags on attached blocks (for backwards compat)
+  await backfillOwnerTags(agentId, attachedBlocks);
+
+  // Discover detached blocks via owner tag (replaces detachedBlockIds tracking)
+  const allOwnedBlocks = await fetchOwnedBlocks(agentId);
+  const attachedIds = new Set(attachedBlocks.map((b) => b.id));
+  const detachedBlocks = allOwnedBlocks.filter((b) => !attachedIds.has(b.id));
+
+  // Build detached block map and IDs (for sync state compatibility)
+  const detachedBlockIds: Record<string, string> = {};
   const detachedBlockMap = new Map<string, Block>();
-  for (const [label, blockId] of Object.entries(detachedBlockIds)) {
-    try {
-      const block = await client.blocks.retrieve(blockId);
-      detachedBlockMap.set(label, block as Block);
-    } catch {
-      delete detachedBlockIds[label];
+  for (const block of detachedBlocks) {
+    if (block.label && block.id) {
+      // Skip managed blocks (skills, loaded_skills, memory_filesystem)
+      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+        continue;
+      }
+      detachedBlockIds[block.label] = block.id;
+      detachedBlockMap.set(block.label, block);
     }
   }
 
@@ -500,7 +554,10 @@ export async function syncMemoryFilesystem(
 
       // Create block from file (parsing frontmatter for description/limit)
       const blockData = parseBlockFromFileContent(fileEntry.content, label);
-      const createdBlock = await client.blocks.create(blockData);
+      const createdBlock = await client.blocks.create({
+        ...blockData,
+        tags: [`owner:${agentId}`],
+      });
       if (createdBlock.id) {
         await client.agents.blocks.attach(createdBlock.id, {
           agent_id: agentId,
@@ -512,14 +569,13 @@ export async function syncMemoryFilesystem(
 
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged -> delete block
+        // File deleted, block unchanged -> detach only (block stays with owner tag)
         if (blockEntry.id) {
           try {
             await client.agents.blocks.detach(blockEntry.id, {
               agent_id: agentId,
             });
-            // Also delete the block to avoid orphaned blocks on the server
-            await client.blocks.delete(blockEntry.id);
+            // Note: Don't delete the block - it keeps its owner tag for potential recovery
             deletedBlocks.push(label);
           } catch (err) {
             // Block may have been manually deleted already - ignore
@@ -585,7 +641,10 @@ export async function syncMemoryFilesystem(
               fileEntry.content,
               label,
             );
-            const createdBlock = await client.blocks.create(blockData);
+            const createdBlock = await client.blocks.create({
+              ...blockData,
+              tags: [`owner:${agentId}`],
+            });
             if (createdBlock.id) {
               await client.agents.blocks.attach(createdBlock.id, {
                 agent_id: agentId,
@@ -638,7 +697,10 @@ export async function syncMemoryFilesystem(
       }
 
       const blockData = parseBlockFromFileContent(fileEntry.content, label);
-      const createdBlock = await client.blocks.create(blockData);
+      const createdBlock = await client.blocks.create({
+        ...blockData,
+        tags: [`owner:${agentId}`],
+      });
       if (createdBlock.id) {
         detachedBlockIds[blockData.label] = createdBlock.id;
         detachedBlockMap.set(blockData.label, createdBlock as Block);
@@ -649,10 +711,8 @@ export async function syncMemoryFilesystem(
 
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged -> delete block
-        if (blockEntry.id) {
-          await client.blocks.delete(blockEntry.id);
-        }
+        // File deleted, block unchanged -> just remove from tracking (block keeps owner tag)
+        // Note: Don't delete the block - it stays discoverable via owner tag
         deletedBlocks.push(label);
         delete detachedBlockIds[label];
         continue;
@@ -808,6 +868,7 @@ export async function ensureMemoryFilesystemBlock(agentId: string) {
     description: "Filesystem view of memory blocks",
     limit: 20000,
     read_only: true,
+    tags: [`owner:${agentId}`],
   });
 
   if (createdBlock.id) {
@@ -891,16 +952,19 @@ export async function checkMemoryFilesystemStatus(
   const newFiles: string[] = [];
   const newBlocks: string[] = [];
 
-  // Fetch user blocks for status check
-  const detachedBlockIds = { ...lastState.detachedBlockIds };
+  // Discover detached blocks via owner tag
+  const allOwnedBlocks = await fetchOwnedBlocks(agentId);
+  const attachedIds = new Set(attachedBlocks.map((b) => b.id));
+  const detachedBlocks = allOwnedBlocks.filter((b) => !attachedIds.has(b.id));
+
   const detachedBlockMap = new Map<string, Block>();
-  const client = await getClient();
-  for (const [label, blockId] of Object.entries(detachedBlockIds)) {
-    try {
-      const block = await client.blocks.retrieve(blockId);
-      detachedBlockMap.set(label, block as Block);
-    } catch {
-      delete detachedBlockIds[label];
+  for (const block of detachedBlocks) {
+    if (block.label) {
+      // Skip managed blocks
+      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+        continue;
+      }
+      detachedBlockMap.set(block.label, block);
     }
   }
 

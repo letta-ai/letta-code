@@ -200,7 +200,10 @@ export async function ensureSkillsBlocks(agentId: string): Promise<string[]> {
     }
 
     // Create the block and attach to agent
-    const createdBlock = await client.blocks.create(blockData);
+    const createdBlock = await client.blocks.create({
+      ...blockData,
+      tags: [`owner:${agentId}`],
+    });
     await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
     createdLabels.push(label);
   }
