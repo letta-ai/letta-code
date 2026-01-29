@@ -209,8 +209,8 @@ export const colors = {
   get userMessage() {
     const theme = getTerminalTheme();
     return {
-      background: theme === "light" ? "#dcddf2" : "#ffffff", // light purple for light, white for dark
-      text: theme === "light" ? undefined : "#000000", // black text for dark terminals
+      background: theme === "light" ? "#dcddf2" : "#2d2d2d", // light purple for light, subtle gray for dark
+      text: undefined, // use default terminal text color
     };
   },
 };
