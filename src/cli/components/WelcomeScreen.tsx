@@ -8,7 +8,7 @@ import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
-import { asciiLogo } from "./AsciiArt";
+import { AnimatedLogo } from "./AnimatedLogo";
 import { colors } from "./colors";
 
 /**
@@ -23,7 +23,17 @@ function toTildePath(absolutePath: string): string {
 }
 
 /**
- * Determine the auth method used
+ * Synchronously determine auth method from env vars (for initial render).
+ * Returns null if we need to check keychain/settings asynchronously.
+ */
+function getInitialAuthMethod(): "url" | "api-key" | null {
+  if (process.env.LETTA_BASE_URL) return "url";
+  if (process.env.LETTA_API_KEY) return "api-key";
+  return null; // Need async check for keychain/settings
+}
+
+/**
+ * Determine the auth method used (async for keychain access)
  */
 async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
   // Check if custom URL is being used
@@ -70,7 +80,6 @@ export function WelcomeScreen({
   const cwd = process.cwd();
   const version = getVersion();
 
-  const logoLines = asciiLogo.trim().split("\n");
   const tildePath = toTildePath(cwd);
 
   // Get model display name (pretty name if available, otherwise last part of handle)
@@ -84,14 +93,18 @@ export function WelcomeScreen({
     ? (getModelDisplayName(fullModel) ?? fullModel.split("/").pop())
     : undefined;
 
-  // Get auth method
+  // Get auth method - use sync check for env vars, async only for keychain
+  const initialAuth = getInitialAuthMethod();
   const [authMethod, setAuthMethod] = useState<"url" | "api-key" | "oauth">(
-    "oauth",
+    initialAuth ?? "oauth",
   );
 
   useEffect(() => {
-    getAuthMethod().then(setAuthMethod);
-  }, []);
+    // Only run async check if env vars didn't determine auth method
+    if (!initialAuth) {
+      getAuthMethod().then(setAuthMethod);
+    }
+  }, [initialAuth]);
   const authDisplay =
     authMethod === "url"
       ? process.env.LETTA_BASE_URL || "Custom URL"
@@ -103,12 +116,7 @@ export function WelcomeScreen({
     <Box flexDirection="row" marginTop={1}>
       {/* Left column: Logo */}
       <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
-        {logoLines.map((line, idx) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: Logo lines are static and never reorder
-          <Text key={idx} bold color={colors.welcome.accent}>
-            {idx === 0 ? `  ${line}` : line}
-          </Text>
-        ))}
+        <AnimatedLogo color={colors.welcome.accent} />
       </Box>
 
       {/* Right column: Text info */}

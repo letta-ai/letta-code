@@ -21,7 +21,7 @@ export interface ProfileCommandContext {
   agentId: string;
   agentName: string;
   setCommandRunning: (running: boolean) => void;
-  setAgentName: (name: string) => void;
+  updateAgentName: (name: string) => void;
 }
 
 // Helper to add a command result to buffers
@@ -163,7 +163,7 @@ export async function handleProfileSave(
     const client = await getClient();
     // Update agent name via API
     await client.agents.update(ctx.agentId, { name: profileName });
-    ctx.setAgentName(profileName);
+    ctx.updateAgentName(profileName);
 
     // Save profile to BOTH local and global settings
     settingsManager.saveProfile(profileName, ctx.agentId);
@@ -332,7 +332,7 @@ export async function handlePin(
       const { getClient } = await import("../../agent/client");
       const client = await getClient();
       await client.agents.update(ctx.agentId, { name });
-      ctx.setAgentName(name);
+      ctx.updateAgentName(name);
     } catch (error) {
       addCommandResult(
         ctx.buffersRef,

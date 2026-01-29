@@ -1,16 +1,94 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import type {
+  ImageContent,
+  TextContent,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import { LETTA_CLOUD_API_URL } from "../../auth/oauth.js";
+import { resizeImageIfNeeded } from "../../cli/helpers/imageResize.js";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { settingsManager } from "../../settings-manager.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+
+/**
+ * Check if the server supports images in tool responses.
+ * Currently only api.letta.com supports this feature.
+ */
+function serverSupportsImageToolReturns(): boolean {
+  const settings = settingsManager.getSettings();
+  const baseURL =
+    process.env.LETTA_BASE_URL ||
+    settings.env?.LETTA_BASE_URL ||
+    LETTA_CLOUD_API_URL;
+  return baseURL === LETTA_CLOUD_API_URL;
+}
 
 interface ReadArgs {
   file_path: string;
   offset?: number;
   limit?: number;
 }
+
+// Tool return content types - either a string or array of content parts
+export type ToolReturnContent = string | Array<TextContent | ImageContent>;
+
 interface ReadResult {
-  content: string;
+  content: ToolReturnContent;
+}
+
+// Supported image extensions
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+]);
+
+function isImageFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+function getMediaType(ext: string): string {
+  const types: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/png", // Convert BMP to PNG
+  };
+  return types[ext] || "image/png";
+}
+
+async function readImageFile(
+  filePath: string,
+): Promise<Array<TextContent | ImageContent>> {
+  const buffer = await fs.readFile(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+  const mediaType = getMediaType(ext);
+
+  // Use shared image resize utility
+  const result = await resizeImageIfNeeded(buffer, mediaType);
+
+  return [
+    {
+      type: "text",
+      text: `[Image: ${path.basename(filePath)}${result.resized ? " (resized to fit API limits)" : ""}]`,
+    },
+    {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: result.mediaType,
+        data: result.data,
+      },
+    },
+  ];
 }
 
 async function isBinaryFile(filePath: string): Promise<boolean> {
@@ -140,6 +218,28 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
     const stats = await fs.stat(resolvedPath);
     if (stats.isDirectory())
       throw new Error(`Path is a directory, not a file: ${resolvedPath}`);
+
+    // Check if this is an image file
+    if (isImageFile(resolvedPath)) {
+      // Check if server supports images in tool responses
+      if (!serverSupportsImageToolReturns()) {
+        throw new Error(
+          `This server does not support images in tool responses.`,
+        );
+      }
+
+      // Images have a higher size limit (20MB raw, will be resized if needed)
+      const maxImageSize = 20 * 1024 * 1024;
+      if (stats.size > maxImageSize) {
+        throw new Error(
+          `Image file too large: ${stats.size} bytes (max ${maxImageSize} bytes)`,
+        );
+      }
+      const imageContent = await readImageFile(resolvedPath);
+      return { content: imageContent };
+    }
+
+    // Regular text file handling
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (stats.size > maxSize)
       throw new Error(
@@ -150,7 +250,7 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
     const content = await fs.readFile(resolvedPath, "utf-8");
     if (content.trim() === "") {
       return {
-        content: `<system-reminder>\nThe file ${resolvedPath} exists but has empty contents.\n</system-reminder>`,
+        content: `${SYSTEM_REMINDER_OPEN}\nThe file ${resolvedPath} exists but has empty contents.\n${SYSTEM_REMINDER_CLOSE}`,
       };
     }
     const formattedContent = formatWithLineNumbers(

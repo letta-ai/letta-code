@@ -5,7 +5,14 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  INTERRUPTED_BY_USER,
+} from "../../constants";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { extractCompactionSummary } from "./backfill";
+import { findLastSafeSplitPoint } from "./markdownSplit";
+import { isShellTool } from "./toolNameMapping";
 
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
@@ -103,12 +110,14 @@ export type Line =
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no header)
     }
   | {
       kind: "assistant";
       id: string;
       text: string;
       phase: "streaming" | "finished";
+      isContinuation?: boolean; // true for split continuation lines (no bullet)
     }
   | {
       kind: "tool_call";
@@ -153,6 +162,17 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
+/**
+ * Tracks server-side tool calls for hook triggering.
+ * Server-side tools (tool_call_message) are executed by the Letta server,
+ * not the client, so we need to trigger hooks when we receive the stream messages.
+ */
+export interface ServerToolCallInfo {
+  toolName: string;
+  toolArgs: string;
+  preToolUseTriggered: boolean;
+}
+
 // Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
@@ -165,6 +185,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -173,9 +195,16 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
+  // Aggressive static promotion: split streaming content at paragraph boundaries
+  tokenStreamingEnabled?: boolean;
+  splitCounters: Map<string, number>; // tracks split count per original otid
+  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Agent ID for passing to hooks (needed for server-side tools like memory)
+  agentId?: string;
 };
 
-export function createBuffers(): Buffers {
+export function createBuffers(agentId?: string): Buffers {
   return {
     tokenCount: 0,
     order: [],
@@ -193,6 +222,10 @@ export function createBuffers(): Buffers {
       reasoningTokens: 0,
       stepCount: 0,
     },
+    tokenStreamingEnabled: false,
+    splitCounters: new Map(),
+    serverToolCalls: new Map(),
+    agentId,
   };
 }
 
@@ -216,6 +249,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -271,9 +313,23 @@ export function markCurrentLineAsFinished(b: Buffers) {
  *   with concurrent processConversation calls reading the flag.
  * @returns true if any tool calls were marked as cancelled
  */
+export type CancelReason =
+  | "user_interrupt"
+  | "stream_error"
+  | "internal_cancel"
+  | "approval_cancel";
+
+const CANCEL_REASON_TEXT: Record<CancelReason, string> = {
+  user_interrupt: INTERRUPTED_BY_USER,
+  stream_error: "Stream error",
+  internal_cancel: "Cancelled",
+  approval_cancel: "Approval cancelled",
+};
+
 export function markIncompleteToolsAsCancelled(
   b: Buffers,
   setInterruptedFlag = true,
+  reason: CancelReason = "internal_cancel",
 ): boolean {
   // Mark buffer as interrupted to skip stale throttled refreshes
   // (only when actually interrupting, not when clearing stale state at startup)
@@ -288,7 +344,7 @@ export function markIncompleteToolsAsCancelled(
         ...line,
         phase: "finished" as const,
         resultOk: false,
-        resultText: INTERRUPTED_BY_USER,
+        resultText: CANCEL_REASON_TEXT[reason],
       };
       b.byId.set(id, updatedLine);
       anyToolsCancelled = true;
@@ -320,6 +376,63 @@ function extractTextPart(v: unknown): string {
     return getStringProp(v, "text") ?? getStringProp(v, "delta") ?? "";
   }
   return "";
+}
+
+/**
+ * Attempts to split content at a paragraph boundary for aggressive static promotion.
+ * If split found, creates a committed line for "before" and updates original with "after".
+ * Returns true if split occurred, false otherwise.
+ */
+function trySplitContent(
+  b: Buffers,
+  id: string,
+  kind: "assistant" | "reasoning",
+  newText: string,
+): boolean {
+  if (!b.tokenStreamingEnabled) return false;
+
+  const splitPoint = findLastSafeSplitPoint(newText);
+  if (splitPoint >= newText.length) return false; // No safe split point
+
+  const beforeText = newText.substring(0, splitPoint);
+  const afterText = newText.substring(splitPoint);
+
+  // Get or initialize split counter for this original ID
+  const counter = b.splitCounters.get(id) ?? 0;
+  b.splitCounters.set(id, counter + 1);
+
+  // Create committed line for "before" content
+  // Only the first split (counter=0) shows the bullet/header; subsequent splits are continuations
+  const commitId = `${id}-split-${counter}`;
+  const committedLine = {
+    kind,
+    id: commitId,
+    text: beforeText,
+    phase: "finished" as const,
+    isContinuation: counter > 0, // First split shows bullet, subsequent don't
+  };
+  b.byId.set(commitId, committedLine);
+
+  // Insert committed line BEFORE the original in order array
+  const originalIndex = b.order.indexOf(id);
+  if (originalIndex !== -1) {
+    b.order.splice(originalIndex, 0, commitId);
+  } else {
+    // Should not happen, but handle gracefully
+    b.order.push(commitId);
+  }
+
+  // Update original line with just the "after" content (keep streaming)
+  // Mark it as a continuation so it doesn't show bullet/header
+  const originalLine = b.byId.get(id);
+  if (
+    originalLine &&
+    (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
+  ) {
+    b.byId.set(id, { ...originalLine, text: afterText, isContinuation: true });
+  }
+
+  return true;
 }
 
 // Feed one SDK chunk; mutate buffers in place.
@@ -356,11 +469,15 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         phase: "streaming",
       }));
       if (delta) {
-        // Immutable update: create new object with updated text
-        const updatedLine = { ...line, text: line.text + delta };
-        b.byId.set(id, updatedLine);
+        const newText = line.text + delta;
         b.tokenCount += delta.length;
-        // console.log(`[REASONING] Updated ${id}, phase=${updatedLine.phase}, textLen=${updatedLine.text.length}`);
+
+        // Try to split at paragraph boundary (only if streaming enabled)
+        if (!trySplitContent(b, id, "reasoning", newText)) {
+          // No split - normal accumulation
+          b.byId.set(id, { ...line, text: newText });
+        }
+        // console.log(`[REASONING] Updated ${id}, textLen=${newText.length}`);
       }
       break;
     }
@@ -380,11 +497,42 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         phase: "streaming",
       }));
       if (delta) {
-        // Immutable update: create new object with updated text
-        const updatedLine = { ...line, text: line.text + delta };
-        b.byId.set(id, updatedLine);
+        const newText = line.text + delta;
         b.tokenCount += delta.length;
+
+        // Try to split at paragraph boundary (only if streaming enabled)
+        if (!trySplitContent(b, id, "assistant", newText)) {
+          // No split - normal accumulation
+          b.byId.set(id, { ...line, text: newText });
+        }
       }
+      break;
+    }
+
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a user message with context header and summary
+        ensure(b, id, () => ({
+          kind: "user",
+          id,
+          text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
       break;
     }
 
@@ -503,6 +651,40 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
       }
+
+      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
+      if (chunk.message_type === "tool_call_message" && toolCallId) {
+        const existing = b.serverToolCalls.get(toolCallId);
+        const toolInfo: ServerToolCallInfo = existing || {
+          toolName: "",
+          toolArgs: "",
+          preToolUseTriggered: false,
+        };
+
+        if (name) toolInfo.toolName = name;
+        if (argsText) toolInfo.toolArgs += argsText;
+        b.serverToolCalls.set(toolCallId, toolInfo);
+
+        if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
+          toolInfo.preToolUseTriggered = true;
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            if (toolInfo.toolArgs) {
+              parsedArgs = JSON.parse(toolInfo.toolArgs);
+            }
+          } catch {
+            // Args may be incomplete JSON
+          }
+          runPreToolUseHooks(
+            toolInfo.toolName,
+            parsedArgs,
+            toolCallId,
+            undefined,
+            b.agentId,
+          ).catch(() => {});
+        }
+      }
+
       break;
     }
 
@@ -563,6 +745,43 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
+        if (toolCallId) {
+          const serverToolInfo = b.serverToolCalls.get(toolCallId);
+          if (serverToolInfo) {
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              if (serverToolInfo.toolArgs) {
+                parsedArgs = JSON.parse(serverToolInfo.toolArgs);
+              }
+            } catch {
+              // Args parsing failed
+            }
+
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
+            runPostToolUseHooks(
+              serverToolInfo.toolName,
+              parsedArgs,
+              {
+                status: status === "success" ? "success" : "error",
+                output: resultText,
+              },
+              toolCallId,
+              undefined,
+              b.agentId,
+              precedingReasoning,
+              precedingAssistantMessage,
+            ).catch(() => {});
+
+            b.serverToolCalls.delete(toolCallId);
+          }
+        }
       }
       break;
     }
@@ -610,7 +829,23 @@ export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
     if (lineId) {
       const line = b.byId.get(lineId);
       if (line && line.kind === "tool_call") {
-        b.byId.set(lineId, { ...line, phase: "running" });
+        const shouldSeedStreaming =
+          line.name && isShellTool(line.name) && !line.streaming;
+        b.byId.set(lineId, {
+          ...line,
+          phase: "running",
+          ...(shouldSeedStreaming
+            ? {
+                streaming: {
+                  tailLines: [],
+                  partialLine: "",
+                  partialIsStderr: false,
+                  totalLineCount: 0,
+                  startTime: Date.now(),
+                },
+              }
+            : {}),
+        });
       }
     }
   }

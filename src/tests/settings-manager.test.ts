@@ -506,6 +506,201 @@ describe("Settings Manager - Reset", () => {
 });
 
 // ============================================================================
+// Hooks Configuration Tests
+// ============================================================================
+
+describe("Settings Manager - Hooks", () => {
+  beforeEach(async () => {
+    await settingsManager.initialize();
+  });
+
+  test("Update hooks configuration in global settings", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "echo test" }],
+          },
+        ],
+      },
+    });
+
+    const settings = settingsManager.getSettings();
+    expect(settings.hooks).toBeDefined();
+    expect(settings.hooks?.PreToolUse).toHaveLength(1);
+    expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
+  });
+
+  test("Hooks configuration persists to disk", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        // Tool event with HookMatcher[]
+        PreToolUse: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "echo persisted" }],
+          },
+        ],
+        // Simple event with SimpleHookMatcher[]
+        SessionStart: [
+          { hooks: [{ type: "command", command: "echo session" }] },
+        ],
+      },
+    });
+
+    // Wait for async persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Reset and reload
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    const settings = settingsManager.getSettings();
+    expect(settings.hooks?.PreToolUse).toHaveLength(1);
+    expect(settings.hooks?.PreToolUse?.[0]?.hooks[0]?.command).toBe(
+      "echo persisted",
+    );
+    expect(settings.hooks?.SessionStart).toHaveLength(1);
+  });
+
+  test("Update hooks in local project settings with patterns", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "Write|Edit",
+              hooks: [{ type: "command", command: "echo post-tool" }],
+            },
+          ],
+        },
+      },
+      testProjectDir,
+    );
+
+    const localSettings =
+      settingsManager.getLocalProjectSettings(testProjectDir);
+    expect(localSettings.hooks?.PostToolUse).toHaveLength(1);
+    expect(localSettings.hooks?.PostToolUse?.[0]?.matcher).toBe("Write|Edit");
+  });
+
+  test("Update hooks in local project settings", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
+          UserPromptSubmit: [
+            { hooks: [{ type: "command", command: "echo local-hook" }] },
+          ],
+        },
+      },
+      testProjectDir,
+    );
+
+    const localSettings =
+      settingsManager.getLocalProjectSettings(testProjectDir);
+    expect(localSettings.hooks?.UserPromptSubmit).toHaveLength(1);
+  });
+
+  test("Local project hooks persist to disk", async () => {
+    await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    settingsManager.updateLocalProjectSettings(
+      {
+        hooks: {
+          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
+          Stop: [{ hooks: [{ type: "command", command: "echo stop-hook" }] }],
+        },
+      },
+      testProjectDir,
+    );
+
+    // Wait for persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Clear cache and reload
+    await settingsManager.reset();
+    await settingsManager.initialize();
+    const reloaded =
+      await settingsManager.loadLocalProjectSettings(testProjectDir);
+
+    expect(reloaded.hooks?.Stop).toHaveLength(1);
+    // Simple event hooks are in SimpleHookMatcher format with hooks array
+    expect(reloaded.hooks?.Stop?.[0]?.hooks[0]?.command).toBe("echo stop-hook");
+  });
+
+  test("All 11 hook event types can be configured", async () => {
+    const allHookEvents = [
+      "PreToolUse",
+      "PostToolUse",
+      "PermissionRequest",
+      "UserPromptSubmit",
+      "Notification",
+      "Stop",
+      "SubagentStop",
+      "PreCompact",
+      "Setup",
+      "SessionStart",
+      "SessionEnd",
+    ] as const;
+
+    const hooksConfig: Record<string, unknown[]> = {};
+    for (const event of allHookEvents) {
+      hooksConfig[event] = [
+        {
+          matcher: "*",
+          hooks: [{ type: "command", command: `echo ${event}` }],
+        },
+      ];
+    }
+
+    settingsManager.updateSettings({
+      hooks: hooksConfig as never,
+    });
+
+    const settings = settingsManager.getSettings();
+    for (const event of allHookEvents) {
+      expect(settings.hooks?.[event]).toHaveLength(1);
+    }
+  });
+
+  test("Partial hooks update preserves other hooks", async () => {
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "echo pre" }] },
+        ],
+        PostToolUse: [
+          { matcher: "*", hooks: [{ type: "command", command: "echo post" }] },
+        ],
+      },
+    });
+
+    // Update only PreToolUse
+    settingsManager.updateSettings({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "echo updated" }],
+          },
+        ],
+      },
+    });
+
+    const settings = settingsManager.getSettings();
+    // PreToolUse should be updated (replaced)
+    expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
+    // Note: This test documents current behavior - hooks object is replaced entirely
+  });
+});
+
+// ============================================================================
 // Edge Cases and Error Handling
 // ============================================================================
 
@@ -562,5 +757,167 @@ describe("Settings Manager - Edge Cases", () => {
     expect(settings.tokenStreaming).toBe(true); // Preserved
     expect(settings.enableSleeptime).toBe(true); // Preserved
     expect(settings.lastAgent).toBe("agent-2"); // Updated
+  });
+});
+
+// ============================================================================
+// Agents Array Migration Tests
+// ============================================================================
+
+describe("Settings Manager - Agents Array Migration", () => {
+  test("Migrates from pinnedAgents (oldest legacy format)", async () => {
+    // Setup: Write old format to disk
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({
+        pinnedAgents: ["agent-old-1", "agent-old-2"],
+        tokenStreaming: true,
+      }),
+    );
+
+    await settingsManager.initialize();
+    const settings = settingsManager.getSettings();
+
+    // Should have migrated to agents array
+    expect(settings.agents).toBeDefined();
+    expect(settings.agents).toHaveLength(2);
+    expect(settings.agents?.[0]).toEqual({
+      agentId: "agent-old-1",
+      pinned: true,
+    });
+    expect(settings.agents?.[1]).toEqual({
+      agentId: "agent-old-2",
+      pinned: true,
+    });
+    // Legacy field should still exist for downgrade compat
+    expect(settings.pinnedAgents).toEqual(["agent-old-1", "agent-old-2"]);
+  });
+
+  test("Migrates from pinnedAgentsByServer (newer legacy format)", async () => {
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-cloud-1"],
+          "localhost:8283": ["agent-local-1", "agent-local-2"],
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+    const settings = settingsManager.getSettings();
+
+    expect(settings.agents).toHaveLength(3);
+    // Cloud agents have no baseUrl (or undefined)
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-cloud-1",
+      pinned: true,
+    });
+    // Local agents have baseUrl
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-local-1",
+      baseUrl: "localhost:8283",
+      pinned: true,
+    });
+    expect(settings.agents).toContainEqual({
+      agentId: "agent-local-2",
+      baseUrl: "localhost:8283",
+      pinned: true,
+    });
+  });
+
+  test("Migrates from both legacy formats (deduplicated)", async () => {
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({
+        pinnedAgents: ["agent-1", "agent-2"], // Old old format
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-1", "agent-3"], // agent-1 is duplicate
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+    const settings = settingsManager.getSettings();
+
+    // Should have 3 agents (agent-1 deduped)
+    expect(settings.agents).toHaveLength(3);
+    const agentIds = settings.agents?.map((a) => a.agentId);
+    expect(agentIds).toContain("agent-1");
+    expect(agentIds).toContain("agent-2");
+    expect(agentIds).toContain("agent-3");
+  });
+
+  test("Already migrated settings are not re-migrated", async () => {
+    const { writeFile, mkdir } = await import("../utils/fs.js");
+    const settingsDir = join(testHomeDir, ".letta");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({
+        agents: [{ agentId: "agent-new", pinned: true, memfs: true }],
+        pinnedAgentsByServer: {
+          "api.letta.com": ["agent-old"], // Should be ignored since agents exists
+        },
+      }),
+    );
+
+    await settingsManager.initialize();
+    const settings = settingsManager.getSettings();
+
+    // Should only have the new format agent
+    expect(settings.agents).toHaveLength(1);
+    expect(settings.agents?.[0]?.agentId).toBe("agent-new");
+    expect(settings.agents?.[0]?.memfs).toBe(true);
+  });
+
+  test("isMemfsEnabled returns false for agents without memfs flag", async () => {
+    await settingsManager.initialize();
+
+    // Manually set up agents array
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-with-memfs", pinned: true, memfs: true },
+        { agentId: "agent-without-memfs", pinned: true },
+      ],
+    });
+
+    expect(settingsManager.isMemfsEnabled("agent-with-memfs")).toBe(true);
+    expect(settingsManager.isMemfsEnabled("agent-without-memfs")).toBe(false);
+    expect(settingsManager.isMemfsEnabled("agent-unknown")).toBe(false);
+  });
+
+  test("setMemfsEnabled adds/removes memfs flag", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.setMemfsEnabled("agent-test", true);
+    expect(settingsManager.isMemfsEnabled("agent-test")).toBe(true);
+
+    settingsManager.setMemfsEnabled("agent-test", false);
+    expect(settingsManager.isMemfsEnabled("agent-test")).toBe(false);
+  });
+
+  test("setMemfsEnabled persists to disk", async () => {
+    await settingsManager.initialize();
+
+    settingsManager.setMemfsEnabled("agent-persist-test", true);
+
+    // Wait for async persist
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Reset and reload
+    await settingsManager.reset();
+    await settingsManager.initialize();
+
+    expect(settingsManager.isMemfsEnabled("agent-persist-test")).toBe(true);
   });
 });

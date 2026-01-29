@@ -24,11 +24,10 @@ describe("RunShellCommand tool (Gemini)", () => {
   });
 
   test("throws error when command is missing", async () => {
-    // Bash tool doesn't validate empty command, so skip this test
-    // or test that empty command still executes
-    const result = await run_shell_command({
-      command: "",
-    } as Parameters<typeof run_shell_command>[0]);
-    expect(result.message).toBeTruthy();
+    await expect(
+      run_shell_command({
+        command: "",
+      } as Parameters<typeof run_shell_command>[0]),
+    ).rejects.toThrow(/non-empty string/);
   });
 });

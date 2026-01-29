@@ -7,6 +7,7 @@ interface AgentContext {
   agentId: string | null;
   skillsDirectory: string | null;
   hasLoadedSkills: boolean;
+  conversationId: string | null;
 }
 
 // Use globalThis to ensure singleton across bundle
@@ -24,6 +25,7 @@ function getContext(): AgentContext {
       agentId: null,
       skillsDirectory: null,
       hasLoadedSkills: false,
+      conversationId: null,
     };
   }
   return global[CONTEXT_KEY];
@@ -84,6 +86,22 @@ export function hasLoadedSkills(): boolean {
  */
 export function setHasLoadedSkills(loaded: boolean): void {
   context.hasLoadedSkills = loaded;
+}
+
+/**
+ * Set the current conversation ID
+ * @param conversationId - The conversation ID, or null to clear
+ */
+export function setConversationId(conversationId: string | null): void {
+  context.conversationId = conversationId;
+}
+
+/**
+ * Get the current conversation ID
+ * @returns The conversation ID or null if not set
+ */
+export function getConversationId(): string | null {
+  return context.conversationId;
 }
 
 /**

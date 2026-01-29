@@ -20,12 +20,15 @@ interface ProfileOption {
 }
 
 interface ProfileSelectionResult {
-  type: "select" | "new" | "exit";
+  type: "select" | "new" | "new_with_model" | "exit";
   agentId?: string;
   profileName?: string | null;
+  model?: string;
 }
 
 const MAX_DISPLAY = 3;
+const MAX_VISIBLE_MODELS = 8;
+const MODEL_SEARCH_THRESHOLD = 10; // Show search input when more than this many models
 
 function formatRelativeTime(dateStr: string | null | undefined): string {
   if (!dateStr) return "Never";
@@ -65,11 +68,19 @@ function ProfileSelectionUI({
   lruAgentId,
   externalLoading,
   externalFreshRepoMode,
+  failedAgentMessage,
+  serverModelsForNewAgent,
+  defaultModelHandle,
+  serverBaseUrl,
   onComplete,
 }: {
   lruAgentId: string | null;
   externalLoading?: boolean;
   externalFreshRepoMode?: boolean;
+  failedAgentMessage?: string;
+  serverModelsForNewAgent?: string[];
+  defaultModelHandle?: string;
+  serverBaseUrl?: string;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
   const [options, setOptions] = useState<ProfileOption[]>([]);
@@ -77,6 +88,13 @@ function ProfileSelectionUI({
   const loading = externalLoading || internalLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  // Model selection mode for self-hosted servers
+  // Start in model selection mode if serverModelsForNewAgent is provided and no agents to show
+  const [selectingModel, setSelectingModel] = useState(
+    !!(serverModelsForNewAgent && serverModelsForNewAgent.length > 0),
+  );
+  const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
 
   const loadOptions = useCallback(async () => {
     setInternalLoading(true);
@@ -120,7 +138,9 @@ function ProfileSelectionUI({
       const fetchedOptions = await Promise.all(
         optionsToFetch.map(async (opt) => {
           try {
-            const agent = await client.agents.retrieve(opt.agentId);
+            const agent = await client.agents.retrieve(opt.agentId, {
+              include: ["agent.blocks"],
+            });
             return { ...opt, agent };
           } catch {
             return { ...opt, agent: null };
@@ -144,9 +164,78 @@ function ProfileSelectionUI({
   const hasMore = options.length > MAX_DISPLAY;
   const totalItems = displayOptions.length + 1 + (hasMore && !showAll ? 1 : 0);
 
+  // Model selection - filter out legacy models and apply search
+  const allServerModels =
+    serverModelsForNewAgent?.filter((h) => h !== "letta/letta-free") ?? [];
+  const showModelSearch = allServerModels.length > MODEL_SEARCH_THRESHOLD;
+  const filteredModels = modelSearchQuery
+    ? allServerModels.filter((h) =>
+        h.toLowerCase().includes(modelSearchQuery.toLowerCase()),
+      )
+    : allServerModels;
+  const modelCount = filteredModels.length;
+
+  // Model selection scrolling
+  const modelStartIndex = Math.max(
+    0,
+    Math.min(
+      modelSelectedIndex - MAX_VISIBLE_MODELS + 1,
+      modelCount - MAX_VISIBLE_MODELS,
+    ),
+  );
+  const visibleModels = filteredModels.slice(
+    modelStartIndex,
+    modelStartIndex + MAX_VISIBLE_MODELS,
+  );
+  const showModelScrollDown = modelStartIndex + MAX_VISIBLE_MODELS < modelCount;
+  const modelsBelow = modelCount - modelStartIndex - MAX_VISIBLE_MODELS;
+
   useInput((_input, key) => {
     if (loading) return;
 
+    // Model selection mode
+    if (selectingModel && serverModelsForNewAgent) {
+      if (key.upArrow) {
+        setModelSelectedIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setModelSelectedIndex((prev) =>
+          Math.min(filteredModels.length - 1, prev + 1),
+        );
+      } else if (key.return) {
+        const selected = filteredModels[modelSelectedIndex];
+        if (selected) {
+          onComplete({ type: "new_with_model", model: selected });
+        }
+      } else if (key.escape || (key.ctrl && _input === "c")) {
+        // Go back to agent selection or exit
+        if (options.length > 0) {
+          setSelectingModel(false);
+          setModelSearchQuery("");
+          setModelSelectedIndex(0);
+        } else {
+          onComplete({ type: "exit" });
+        }
+      } else if (key.backspace || key.delete) {
+        // Handle backspace for search
+        if (showModelSearch && modelSearchQuery.length > 0) {
+          setModelSearchQuery((prev) => prev.slice(0, -1));
+          setModelSelectedIndex(0);
+        }
+      } else if (
+        showModelSearch &&
+        _input &&
+        _input.length === 1 &&
+        !key.ctrl &&
+        !key.meta
+      ) {
+        // Handle typing for search
+        setModelSearchQuery((prev) => prev + _input);
+        setModelSelectedIndex(0);
+      }
+      return;
+    }
+
+    // Agent selection mode
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
@@ -169,9 +258,16 @@ function ProfileSelectionUI({
         setShowAll(true);
         setSelectedIndex(0);
       } else {
-        onComplete({ type: "new" });
+        // "Create new agent" selected
+        if (serverModelsForNewAgent && serverModelsForNewAgent.length > 0) {
+          // Need to pick a model first
+          setSelectingModel(true);
+          setModelSelectedIndex(0);
+        } else {
+          onComplete({ type: "new" });
+        }
       }
-    } else if (key.escape) {
+    } else if (key.escape || (key.ctrl && _input === "c")) {
       onComplete({ type: "exit" });
     }
   });
@@ -194,12 +290,82 @@ function ProfileSelectionUI({
       />
       <Box height={1} />
 
+      {failedAgentMessage && (
+        <>
+          <Text color="yellow">{failedAgentMessage}</Text>
+          <Box height={1} />
+        </>
+      )}
+
       {loading ? (
         <Text dimColor>Loading pinned agents...</Text>
+      ) : selectingModel && serverModelsForNewAgent ? (
+        // Model selection mode
+        <Box flexDirection="column" gap={1}>
+          <Text bold color={colors.selector.title}>
+            Select a model
+          </Text>
+
+          {showModelSearch && (
+            <Box>
+              <Text dimColor>Search: </Text>
+              <Text>{modelSearchQuery || ""}</Text>
+              <Text dimColor>█</Text>
+            </Box>
+          )}
+
+          {allServerModels.length === 0 ? (
+            <Box flexDirection="column">
+              <Text color="yellow">No models found on server.</Text>
+              <Text dimColor>Server: {serverBaseUrl || "unknown"}</Text>
+              <Text dimColor>
+                Did you remember to start the server with your LLM API keys?
+              </Text>
+            </Box>
+          ) : filteredModels.length === 0 ? (
+            <Text dimColor>No models matching "{modelSearchQuery}"</Text>
+          ) : (
+            <Box flexDirection="column">
+              {visibleModels.map((handle, index) => {
+                const actualIndex = modelStartIndex + index;
+                const isSelected = actualIndex === modelSelectedIndex;
+                return (
+                  <Box key={handle}>
+                    <Text
+                      color={
+                        isSelected ? colors.selector.itemHighlighted : undefined
+                      }
+                    >
+                      {isSelected ? "> " : "  "}
+                      {handle}
+                    </Text>
+                  </Box>
+                );
+              })}
+              {/* Phantom space or scroll indicator - always reserve the line */}
+              {showModelScrollDown ? (
+                <Text dimColor> ↓ {modelsBelow} more</Text>
+              ) : modelCount > MAX_VISIBLE_MODELS ? (
+                <Text> </Text>
+              ) : null}
+            </Box>
+          )}
+
+          <Box>
+            <Text dimColor>
+              ↑↓ navigate · Enter select
+              {showModelSearch ? " · Type to search" : ""} · Esc{" "}
+              {options.length > 0 ? "back" : "exit"}
+            </Text>
+          </Box>
+        </Box>
       ) : (
+        // Agent selection mode
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
-          <Text bold>Which agent would you like to use?</Text>
+          {options.length > 0 && (
+            <Text bold>Which agent would you like to use?</Text>
+          )}
 
           <Box flexDirection="column" gap={1}>
             {displayOptions.map((option, index) => {
@@ -216,7 +382,7 @@ function ProfileSelectionUI({
                         isSelected ? colors.selector.itemHighlighted : undefined
                       }
                     >
-                      {isSelected ? "→ " : "  "}
+                      {isSelected ? "> " : "  "}
                     </Text>
                     <Text
                       bold={isSelected}
@@ -258,7 +424,7 @@ function ProfileSelectionUI({
                       : undefined
                   }
                 >
-                  {selectedIndex === displayOptions.length ? "→ " : "  "}
+                  {selectedIndex === displayOptions.length ? "> " : "  "}
                   View all {options.length} profiles
                 </Text>
               </Box>
@@ -272,14 +438,14 @@ function ProfileSelectionUI({
                     : undefined
                 }
               >
-                {selectedIndex === totalItems - 1 ? "→ " : "  "}
+                {selectedIndex === totalItems - 1 ? "> " : "  "}
                 Create a new agent
               </Text>
               <Text dimColor> (--new)</Text>
             </Box>
           </Box>
 
-          <Box marginTop={1}>
+          <Box>
             <Text dimColor>↑↓ navigate · Enter select · Esc exit</Text>
           </Box>
         </Box>
@@ -295,15 +461,29 @@ export function ProfileSelectionInline({
   lruAgentId,
   loading: externalLoading,
   freshRepoMode,
+  failedAgentMessage,
+  serverModelsForNewAgent,
+  defaultModelHandle,
+  serverBaseUrl,
   onSelect,
   onCreateNew,
+  onCreateNewWithModel,
   onExit,
 }: {
   lruAgentId: string | null;
   loading?: boolean;
   freshRepoMode?: boolean;
+  failedAgentMessage?: string;
+  /** If provided, show model selector when user clicks "Create new" */
+  serverModelsForNewAgent?: string[];
+  /** The default model handle that wasn't available */
+  defaultModelHandle?: string;
+  /** The server base URL for error messages */
+  serverBaseUrl?: string;
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
+  /** Called when user selects a model from serverModelsForNewAgent */
+  onCreateNewWithModel?: (model: string) => void;
   onExit: () => void;
 }) {
   const handleComplete = (result: ProfileSelectionResult) => {
@@ -311,6 +491,8 @@ export function ProfileSelectionInline({
       onExit();
     } else if (result.type === "select" && result.agentId) {
       onSelect(result.agentId);
+    } else if (result.type === "new_with_model" && result.model) {
+      onCreateNewWithModel?.(result.model);
     } else {
       onCreateNew();
     }
@@ -320,6 +502,10 @@ export function ProfileSelectionInline({
     lruAgentId,
     externalLoading,
     externalFreshRepoMode: freshRepoMode,
+    failedAgentMessage,
+    serverModelsForNewAgent,
+    defaultModelHandle,
+    serverBaseUrl,
     onComplete: handleComplete,
   });
 }

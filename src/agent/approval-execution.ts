@@ -3,12 +3,32 @@
 import * as path from "node:path";
 import type {
   ApprovalReturn,
+  TextContent,
   ToolReturn,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalRequest } from "../cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "../constants";
-import { executeTool, type ToolExecutionResult } from "../tools/manager";
+import {
+  executeTool,
+  type ToolExecutionResult,
+  type ToolReturnContent,
+} from "../tools/manager";
+
+/**
+ * Extract displayable text from tool return content (for UI display).
+ * Multimodal content returns the text parts concatenated.
+ */
+export function getDisplayableToolReturn(content: ToolReturnContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  // Extract text from multimodal content
+  return content
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
 
 /**
  * Tools that are safe to execute in parallel (read-only or independent).
@@ -20,6 +40,7 @@ import { executeTool, type ToolExecutionResult } from "../tools/manager";
 const PARALLEL_SAFE_TOOLS = new Set([
   // === Anthropic toolset (default) ===
   "Read",
+  "view_image",
   "Grep",
   "Glob",
 
@@ -235,13 +256,14 @@ async function executeSingleDecision(
       );
 
       // Update UI if callback provided (interactive mode)
+      // Note: UI display uses text-only version, backend gets full multimodal content
       if (onChunk) {
         onChunk({
           message_type: "tool_return_message",
           id: "dummy",
           date: new Date().toISOString(),
           tool_call_id: decision.approval.toolCallId,
-          tool_return: toolResult.toolReturn,
+          tool_return: getDisplayableToolReturn(toolResult.toolReturn),
           status: toolResult.status,
           stdout: toolResult.stdout,
           stderr: toolResult.stderr,
@@ -251,7 +273,7 @@ async function executeSingleDecision(
       return {
         type: "tool",
         tool_call_id: decision.approval.toolCallId,
-        tool_return: toolResult.toolReturn,
+        tool_return: toolResult.toolReturn, // Full multimodal content for backend
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,

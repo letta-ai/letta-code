@@ -8,7 +8,7 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { ANTHROPIC_PROVIDER_NAME } from "../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -25,15 +25,19 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  const isOpenAI = modelHandle.startsWith("openai/");
-  // Include our custom Anthropic OAuth provider (claude-pro-max)
+  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
+  const isOpenAI =
+    modelHandle.startsWith("openai/") ||
+    modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
+  // Include legacy custom Anthropic OAuth provider (claude-pro-max)
   const isAnthropic =
     modelHandle.startsWith("anthropic/") ||
-    modelHandle.startsWith(`${ANTHROPIC_PROVIDER_NAME}/`);
+    modelHandle.startsWith("claude-pro-max/");
   const isZai = modelHandle.startsWith("zai/");
   const isGoogleAI = modelHandle.startsWith("google_ai/");
   const isGoogleVertex = modelHandle.startsWith("google_vertex/");
   const isOpenRouter = modelHandle.startsWith("openrouter/");
+  const isBedrock = modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -108,6 +112,25 @@ function buildModelSettings(
         updateArgs.temperature as number;
     }
     settings = googleVertexSettings;
+  } else if (isBedrock) {
+    // AWS Bedrock - supports Anthropic Claude models with thinking config
+    const bedrockSettings: Record<string, unknown> = {
+      provider_type: "bedrock",
+      parallel_tool_calls: true,
+    };
+    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
+    if (
+      updateArgs?.enable_reasoner !== undefined ||
+      typeof updateArgs?.max_reasoning_tokens === "number"
+    ) {
+      bedrockSettings.thinking = {
+        type: updateArgs?.enable_reasoner === false ? "disabled" : "enabled",
+        ...(typeof updateArgs?.max_reasoning_tokens === "number" && {
+          budget_tokens: updateArgs.max_reasoning_tokens,
+        }),
+      };
+    }
+    settings = bedrockSettings;
   } else {
     // For BYOK/unknown providers, return generic settings with parallel_tool_calls
     settings = {};
@@ -240,6 +263,52 @@ export async function updateAgentSystemPrompt(
       success: false,
       message: `Failed to apply system prompt: ${error instanceof Error ? error.message : String(error)}`,
       agent: null,
+    };
+  }
+}
+
+/**
+ * Updates an agent's system prompt to include or exclude the memfs addon section.
+ *
+ * @param agentId - The agent ID to update
+ * @param enableMemfs - Whether to enable (add) or disable (remove) the memfs addon
+ * @returns Result with success status and message
+ */
+export async function updateAgentSystemPromptMemfs(
+  agentId: string,
+  enableMemfs: boolean,
+): Promise<SystemPromptUpdateResult> {
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    let currentSystemPrompt = agent.system || "";
+
+    const { SYSTEM_PROMPT_MEMFS_ADDON } = await import("./promptAssets");
+
+    // Remove any existing memfs addon section (to avoid duplicates)
+    // Look for the "## Memory Filesystem" header
+    const memfsHeaderRegex = /\n## Memory Filesystem[\s\S]*?(?=\n# |$)/;
+    currentSystemPrompt = currentSystemPrompt.replace(memfsHeaderRegex, "");
+
+    // If enabling, append the memfs addon
+    if (enableMemfs) {
+      currentSystemPrompt = `${currentSystemPrompt}${SYSTEM_PROMPT_MEMFS_ADDON}`;
+    }
+
+    await client.agents.update(agentId, {
+      system: currentSystemPrompt,
+    });
+
+    return {
+      success: true,
+      message: enableMemfs
+        ? "System prompt updated to include Memory Filesystem section"
+        : "System prompt updated to remove Memory Filesystem section",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to update system prompt memfs: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }

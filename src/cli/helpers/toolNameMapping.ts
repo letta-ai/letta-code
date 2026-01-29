@@ -15,6 +15,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
   if (rawName === "read") return "Read";
+  if (rawName === "view_image" || rawName === "ViewImage") return "View Image";
   if (rawName === "bash") return "Bash";
   if (rawName === "grep" || rawName === "Grep") return "Search";
   if (rawName === "glob" || rawName === "Glob") return "Glob";
@@ -180,6 +181,8 @@ export function isFileReadTool(name: string): boolean {
   return (
     name === "read" ||
     name === "Read" ||
+    name === "view_image" ||
+    name === "ViewImage" ||
     name === "ReadFile" ||
     name === "read_file" ||
     name === "read_file_gemini" ||
@@ -208,5 +211,31 @@ export function isShellTool(name: string): boolean {
     n === "shellcommand" ||
     n === "run_shell_command" ||
     n === "runshellcommand"
+  );
+}
+
+/**
+ * Checks if a tool is a search/grep tool
+ */
+export function isSearchTool(name: string): boolean {
+  return (
+    name === "grep" ||
+    name === "Grep" ||
+    name === "grep_files" ||
+    name === "GrepFiles" ||
+    name === "search_file_content" ||
+    name === "SearchFileContent"
+  );
+}
+
+/**
+ * Checks if a tool is a glob tool
+ */
+export function isGlobTool(name: string): boolean {
+  return (
+    name === "glob" ||
+    name === "Glob" ||
+    name === "glob_gemini" ||
+    name === "GlobGemini"
   );
 }

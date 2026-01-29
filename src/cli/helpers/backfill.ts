@@ -1,18 +1,36 @@
 import type {
+  ImageContent,
   LettaAssistantMessageContentUnion,
   LettaUserMessageContentUnion,
   Message,
+  TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import type { Buffers } from "./accumulator";
 
-// const PASTE_LINE_THRESHOLD = 5;
-// const PASTE_CHAR_THRESHOLD = 500;
-const CLIP_CHAR_LIMIT_TEXT = 500;
-// const CLIP_CHAR_LIMIT_JSON = 1000;
+/**
+ * Extract displayable text from tool return content.
+ * Multimodal content returns the text parts concatenated.
+ */
+function getDisplayableToolReturn(
+  content: string | Array<TextContent | ImageContent> | undefined,
+): string {
+  if (!content) return "";
+  if (typeof content === "string") {
+    return content;
+  }
+  // Extract text from multimodal content
+  return content
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
 
-// function countLines(text: string): number {
-//   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
-// }
+const CLIP_CHAR_LIMIT_TEXT = 500;
 
 function clip(s: string, limit: number): string {
   if (!s) return "";
@@ -20,10 +38,54 @@ function clip(s: string, limit: number): string {
 }
 
 /**
+ * Normalize line endings: convert \r\n and \r to \n
+ */
+function normalizeLineEndings(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
+ * Truncate system-reminder content while preserving opening/closing tags.
+ * Removes the middle content and replaces with [...] to keep the message compact
+ * but with proper tag structure.
+ */
+function truncateSystemReminder(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+
+  const openIdx = text.indexOf(SYSTEM_REMINDER_OPEN);
+  const closeIdx = text.lastIndexOf(SYSTEM_REMINDER_CLOSE);
+
+  if (openIdx === -1 || closeIdx === -1 || closeIdx <= openIdx) {
+    // Malformed, just use regular clip
+    return clip(text, maxLength);
+  }
+
+  const openEnd = openIdx + SYSTEM_REMINDER_OPEN.length;
+  const ellipsis = "\n...\n";
+
+  // Calculate available space for content (split between start and end)
+  const overhead =
+    SYSTEM_REMINDER_OPEN.length +
+    SYSTEM_REMINDER_CLOSE.length +
+    ellipsis.length;
+  const availableContent = maxLength - overhead;
+  if (availableContent <= 0) {
+    // Not enough space, just show tags with ellipsis
+    return `${SYSTEM_REMINDER_OPEN}${ellipsis}${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  const halfContent = Math.floor(availableContent / 2);
+  const contentStart = text.slice(openEnd, openEnd + halfContent);
+  const contentEnd = text.slice(closeIdx - halfContent, closeIdx);
+
+  return `${SYSTEM_REMINDER_OPEN}${contentStart}${ellipsis}${contentEnd}${SYSTEM_REMINDER_CLOSE}`;
+}
+
+/**
  * Check if a user message is a compaction summary (system_alert with summary content).
  * Returns the summary text if found, null otherwise.
  */
-function extractCompactionSummary(text: string): string | null {
+export function extractCompactionSummary(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
     if (
@@ -60,24 +122,45 @@ function renderAssistantContentParts(
   return out;
 }
 
+/**
+ * Check if text is purely a system-reminder block (no user content before/after).
+ */
+function isOnlySystemReminder(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith(SYSTEM_REMINDER_OPEN) &&
+    trimmed.endsWith(SYSTEM_REMINDER_CLOSE)
+  );
+}
+
 function renderUserContentParts(
   parts: string | LettaUserMessageContentUnion[],
 ): string {
   // UserContent can be a string or an array of text OR image parts
-  // for text parts, we clip them if they're too big (eg copy-pasted chunks)
-  // for image parts, we just show a placeholder
+  // Pure system-reminder parts are truncated (middle) to preserve tags
+  // Mixed content or user text uses simple end truncation
+  // Parts are joined with newlines so each appears as a separate line
   if (typeof parts === "string") return parts;
 
-  let out = "";
+  const rendered: string[] = [];
   for (const p of parts) {
     if (p.type === "text") {
       const text = p.text || "";
-      out += clip(text, CLIP_CHAR_LIMIT_TEXT);
+      // Normalize line endings (\r\n and \r -> \n) to prevent terminal garbling
+      const normalized = normalizeLineEndings(text);
+      if (isOnlySystemReminder(normalized)) {
+        // Pure system-reminder: truncate middle to preserve tags
+        rendered.push(truncateSystemReminder(normalized, CLIP_CHAR_LIMIT_TEXT));
+      } else {
+        // User content or mixed: simple end truncation
+        rendered.push(clip(normalized, CLIP_CHAR_LIMIT_TEXT));
+      }
     } else if (p.type === "image") {
-      out += `[Image]`;
+      rendered.push("[Image]");
     }
   }
-  return out;
+  // Join with double-newline so each part starts a new paragraph (gets "> " prefix)
+  return rendered.join("\n\n");
 }
 
 export function backfillBuffers(buffers: Buffers, history: Message[]): void {
@@ -103,17 +186,12 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         // Check if this is a compaction summary message (system_alert with summary)
         const compactionSummary = extractCompactionSummary(rawText);
         if (compactionSummary) {
-          // Render as a synthetic tool call showing the compaction
+          // Render as a user message with context header and summary
           const exists = buffers.byId.has(lineId);
           buffers.byId.set(lineId, {
-            kind: "tool_call",
+            kind: "user",
             id: lineId,
-            toolCallId: `compaction-${lineId}`,
-            name: "Compact",
-            argsText: "messages[...]",
-            resultText: compactionSummary,
-            resultOk: true,
-            phase: "finished",
+            text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
           });
           if (!exists) buffers.order.push(lineId);
           break;
@@ -239,7 +317,8 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
           // Update the existing line with the result
           // Handle both func_response (streaming) and tool_return (SDK) properties
-          const resultText =
+          // tool_return can be multimodal (string or array of content parts)
+          const rawResult =
             ("func_response" in toolReturn
               ? toolReturn.func_response
               : undefined) ||
@@ -247,6 +326,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
               ? toolReturn.tool_return
               : undefined) ||
             "";
+          const resultText = getDisplayableToolReturn(rawResult);
           buffers.byId.set(toolCallLineId, {
             ...existingLine,
             resultText,

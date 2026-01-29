@@ -20,7 +20,7 @@ import {
 } from "../../constants";
 import type { PermissionMode } from "../../permissions/mode";
 import { permissionMode } from "../../permissions/mode";
-import { ANTHROPIC_PROVIDER_NAME } from "../../providers/anthropic-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
@@ -38,6 +38,67 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const ESC_CLEAR_WINDOW_MS = 2500;
 
 /**
+ * Represents a visual line segment in the text.
+ * A visual line ends at either a newline character or when it reaches lineWidth.
+ */
+interface VisualLine {
+  start: number; // Start index in text
+  end: number; // End index (exclusive, not including \n)
+}
+
+/**
+ * Computes visual lines from text, accounting for both hard breaks (\n)
+ * and soft wrapping at lineWidth.
+ */
+function getVisualLines(text: string, lineWidth: number): VisualLine[] {
+  const lines: VisualLine[] = [];
+  let lineStart = 0;
+
+  for (let i = 0; i <= text.length; i++) {
+    const char = text[i];
+    const lineLength = i - lineStart;
+
+    if (char === "\n" || i === text.length) {
+      // Hard break or end of text
+      lines.push({ start: lineStart, end: i });
+      lineStart = i + 1;
+    } else if (lineLength >= lineWidth && lineWidth > 0) {
+      // Soft wrap - line is full
+      lines.push({ start: lineStart, end: i });
+      lineStart = i;
+    }
+  }
+
+  // Ensure at least one line for empty text
+  if (lines.length === 0) {
+    lines.push({ start: 0, end: 0 });
+  }
+
+  return lines;
+}
+
+/**
+ * Finds which visual line the cursor is on and the column within that line.
+ */
+function findCursorLine(
+  cursorPos: number,
+  visualLines: VisualLine[],
+): { lineIndex: number; column: number } {
+  for (let i = 0; i < visualLines.length; i++) {
+    const line = visualLines[i];
+    if (line && cursorPos >= line.start && cursorPos <= line.end) {
+      return { lineIndex: i, column: cursorPos - line.start };
+    }
+  }
+  // Fallback to last line
+  const lastLine = visualLines[visualLines.length - 1];
+  return {
+    lineIndex: visualLines.length - 1,
+    column: Math.max(0, cursorPos - (lastLine?.start ?? 0)),
+  };
+}
+
+/**
  * Memoized footer component to prevent re-renders during high-frequency
  * shimmer/timer updates. Only updates when its specific props change.
  */
@@ -50,7 +111,9 @@ const InputFooter = memo(function InputFooter({
   showExitHint,
   agentName,
   currentModel,
-  isAnthropicProvider,
+  isOpenAICodexProvider,
+  isByokProvider,
+  isAutocompleteActive,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -60,8 +123,15 @@ const InputFooter = memo(function InputFooter({
   showExitHint: boolean;
   agentName: string | null | undefined;
   currentModel: string | null | undefined;
-  isAnthropicProvider: boolean;
+  isOpenAICodexProvider: boolean;
+  isByokProvider: boolean;
+  isAutocompleteActive: boolean;
 }) {
+  // Hide footer when autocomplete is showing
+  if (isAutocompleteActive) {
+    return null;
+  }
+
   return (
     <Box justifyContent="space-between" marginBottom={1}>
       {ctrlCPressed ? (
@@ -89,11 +159,12 @@ const InputFooter = memo(function InputFooter({
       )}
       <Text>
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
-        <Text
-          dimColor={!isAnthropicProvider}
-          color={isAnthropicProvider ? "#FFC787" : undefined}
-        >
-          {` [${currentModel ?? "unknown"}]`}
+        <Text dimColor>
+          {` [${currentModel ?? "unknown"}`}
+          {isByokProvider && (
+            <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}> ▲</Text>
+          )}
+          {"]"}
         </Text>
       </Text>
     </Box>
@@ -115,6 +186,8 @@ export function Input({
   thinkingMessage,
   onSubmit,
   onBashSubmit,
+  bashRunning = false,
+  onBashInterrupt,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -131,6 +204,10 @@ export function Input({
   ralphPending = false,
   ralphPendingYolo = false,
   onRalphExit,
+  conversationId,
+  onPasteError,
+  restoredInput,
+  onRestoredInputConsumed,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -138,6 +215,8 @@ export function Input({
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
+  bashRunning?: boolean;
+  onBashInterrupt?: () => void;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -154,6 +233,10 @@ export function Input({
   ralphPending?: boolean;
   ralphPendingYolo?: boolean;
   onRalphExit?: () => void;
+  conversationId?: string;
+  onPasteError?: (message: string) => void;
+  restoredInput?: string | null;
+  onRestoredInputConsumed?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -177,8 +260,22 @@ export function Input({
   const [atStartBoundary, setAtStartBoundary] = useState(false);
   const [atEndBoundary, setAtEndBoundary] = useState(false);
 
+  // Track preferred column for vertical navigation (sticky column behavior)
+  const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
+
   // Bash mode state
   const [isBashMode, setIsBashMode] = useState(false);
+
+  // Restore input from error (only if current value is empty)
+  useEffect(() => {
+    if (restoredInput && value === "") {
+      setValue(restoredInput);
+      onRestoredInputConsumed?.();
+    } else if (restoredInput && value !== "") {
+      // Input has content, don't clobber - just consume the restored value
+      onRestoredInputConsumed?.();
+    }
+  }, [restoredInput, value, onRestoredInputConsumed]);
 
   const handleBangAtEmpty = () => {
     if (isBashMode) return false;
@@ -200,7 +297,7 @@ export function Input({
     }
   }, [cursorPos]);
 
-  // Reset boundary flags when cursor moves (via left/right arrows)
+  // Reset boundary flags and preferred column when cursor moves or value changes
   useEffect(() => {
     if (currentCursorPosition !== 0) {
       setAtStartBoundary(false);
@@ -208,6 +305,8 @@ export function Input({
     if (currentCursorPosition !== value.length) {
       setAtEndBoundary(false);
     }
+    // Reset preferred column - it will be set again when vertical navigation starts
+    setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
   // Sync with external mode changes (from plan approval dialog)
@@ -263,7 +362,13 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When streaming, use Esc to interrupt
+      // When bash command running, use Esc to interrupt (LET-7199)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
+      // When agent streaming, use Esc to interrupt
       if (streaming && onInterrupt && !interruptRequested) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
@@ -296,6 +401,12 @@ export function Input({
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
+      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
+      if (bashRunning && onBashInterrupt) {
+        onBashInterrupt();
+        return;
+      }
+
       if (ctrlCPressed) {
         // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
@@ -357,45 +468,46 @@ export function Input({
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!visible) return;
-    // Don't interfere with autocomplete navigation
-    if (isAutocompleteActive) {
+    // Don't interfere with autocomplete navigation, BUT allow history navigation
+    // when we're already browsing history (historyIndex !== -1)
+    if (isAutocompleteActive && historyIndex === -1) {
       return;
     }
 
     if (key.upArrow || key.downArrow) {
-      // Calculate which wrapped line the cursor is on
-      const lineWidth = contentWidth; // Available width for text
+      // Calculate visual lines accounting for both soft wrapping and hard newlines
+      const visualLines = getVisualLines(value, contentWidth);
+      const { lineIndex, column } = findCursorLine(
+        currentCursorPosition,
+        visualLines,
+      );
 
-      // Calculate current wrapped line number and position within that line
-      const currentWrappedLine = Math.floor(currentCursorPosition / lineWidth);
-      const columnInCurrentLine = currentCursorPosition % lineWidth;
-
-      // Calculate total number of wrapped lines
-      const totalWrappedLines = Math.ceil(value.length / lineWidth) || 1;
+      // Use preferred column if set (for sticky column behavior), otherwise current column
+      const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
-        if (currentWrappedLine > 0) {
-          // Not on first wrapped line - move cursor up one wrapped line
-          // Try to maintain the same column position
-          const targetLine = currentWrappedLine - 1;
-          const targetLineStart = targetLine * lineWidth;
-          const targetLineEnd = Math.min(
-            targetLineStart + lineWidth,
-            value.length,
-          );
-          const targetLineLength = targetLineEnd - targetLineStart;
-
-          // Move to same column in previous line, or end of line if shorter
-          const newPosition =
-            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
-          setCursorPos(newPosition);
+        const targetLine = visualLines[lineIndex - 1];
+        if (lineIndex > 0 && targetLine) {
+          // Not on first visual line - move cursor up one visual line
+          // Set preferred column if not already set
+          if (preferredColumn === null) {
+            setPreferredColumn(column);
+          }
+          const targetLineLength = targetLine.end - targetLine.start;
+          const newColumn = Math.min(targetColumn, targetLineLength);
+          setCursorPos(targetLine.start + newColumn);
           setAtStartBoundary(false); // Reset boundary flag
           return; // Don't trigger history
         }
 
         // On first wrapped line
         // First press: move to start, second press: queue edit or history
-        if (currentCursorPosition > 0 && !atStartBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition > 0 &&
+          !atStartBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to start
           setCursorPos(0);
           setAtStartBoundary(true);
@@ -430,35 +542,39 @@ export function Input({
           setTemporaryInput(value);
           // Go to most recent command
           setHistoryIndex(history.length - 1);
-          setValue(history[history.length - 1] ?? "");
+          const historyEntry = history[history.length - 1] ?? "";
+          setValue(historyEntry);
+          setCursorPos(historyEntry.length); // Cursor at end (traditional terminal behavior)
         } else if (historyIndex > 0) {
           // Go to older command
           setHistoryIndex(historyIndex - 1);
-          setValue(history[historyIndex - 1] ?? "");
+          const olderEntry = history[historyIndex - 1] ?? "";
+          setValue(olderEntry);
+          setCursorPos(olderEntry.length); // Cursor at end (traditional terminal behavior)
         }
       } else if (key.downArrow) {
-        if (currentWrappedLine < totalWrappedLines - 1) {
-          // Not on last wrapped line - move cursor down one wrapped line
-          // Try to maintain the same column position
-          const targetLine = currentWrappedLine + 1;
-          const targetLineStart = targetLine * lineWidth;
-          const targetLineEnd = Math.min(
-            targetLineStart + lineWidth,
-            value.length,
-          );
-          const targetLineLength = targetLineEnd - targetLineStart;
-
-          // Move to same column in next line, or end of line if shorter
-          const newPosition =
-            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
-          setCursorPos(newPosition);
+        const targetLine = visualLines[lineIndex + 1];
+        if (lineIndex < visualLines.length - 1 && targetLine) {
+          // Not on last visual line - move cursor down one visual line
+          // Set preferred column if not already set
+          if (preferredColumn === null) {
+            setPreferredColumn(column);
+          }
+          const targetLineLength = targetLine.end - targetLine.start;
+          const newColumn = Math.min(targetColumn, targetLineLength);
+          setCursorPos(targetLine.start + newColumn);
           setAtEndBoundary(false); // Reset boundary flag
           return; // Don't trigger history
         }
 
         // On last wrapped line
         // First press: move to end, second press: navigate history
-        if (currentCursorPosition < value.length && !atEndBoundary) {
+        // Skip the two-step behavior if already browsing history - go straight to navigation
+        if (
+          currentCursorPosition < value.length &&
+          !atEndBoundary &&
+          historyIndex === -1
+        ) {
           // First press - move cursor to end
           setCursorPos(value.length);
           setAtEndBoundary(true);
@@ -473,11 +589,14 @@ export function Input({
         if (historyIndex < history.length - 1) {
           // Go to newer command
           setHistoryIndex(historyIndex + 1);
-          setValue(history[historyIndex + 1] ?? "");
+          const newerEntry = history[historyIndex + 1] ?? "";
+          setValue(newerEntry);
+          setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
         } else {
           // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
+          setCursorPos(temporaryInput.length); // Cursor at end for user's draft
         }
       }
     }
@@ -565,6 +684,9 @@ export function Input({
     if (isBashMode) {
       if (!previousValue.trim()) return;
 
+      // Input locking - don't accept new commands while one is running (LET-7199)
+      if (bashRunning) return;
+
       // Add to history if not empty and not a duplicate of the last entry
       if (previousValue.trim() !== history[history.length - 1]) {
         setHistory([...history, previousValue]);
@@ -575,7 +697,7 @@ export function Input({
       setTemporaryInput("");
 
       setValue(""); // Clear immediately for responsiveness
-      setIsBashMode(false); // Exit bash mode after submitting
+      // Stay in bash mode - user exits with backspace on empty input
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
@@ -801,6 +923,7 @@ export function Input({
               focus={!onEscapeCancel}
               onBangAtEmpty={handleBangAtEmpty}
               onBackspaceAtEmpty={handleBackspaceAtEmpty}
+              onPasteError={onPasteError}
             />
           </Box>
         </Box>
@@ -824,6 +947,7 @@ export function Input({
           agentName={agentName}
           serverUrl={serverUrl}
           workingDirectory={process.cwd()}
+          conversationId={conversationId}
         />
 
         <InputFooter
@@ -835,7 +959,14 @@ export function Input({
           showExitHint={ralphActive || ralphPending}
           agentName={agentName}
           currentModel={currentModel}
-          isAnthropicProvider={currentModelProvider === ANTHROPIC_PROVIDER_NAME}
+          isOpenAICodexProvider={
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isByokProvider={
+            currentModelProvider?.startsWith("lc-") ||
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+          }
+          isAutocompleteActive={isAutocompleteActive}
         />
       </Box>
     </Box>

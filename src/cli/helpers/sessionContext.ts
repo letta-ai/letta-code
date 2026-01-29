@@ -4,6 +4,7 @@
 import { execSync } from "node:child_process";
 import { platform } from "node:os";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 
@@ -22,7 +23,7 @@ interface SessionContextOptions {
 /**
  * Get the current local time in a human-readable format
  */
-function getLocalTime(): string {
+export function getLocalTime(): string {
   const now = new Date();
   return now.toLocaleString(undefined, {
     weekday: "long",
@@ -38,7 +39,7 @@ function getLocalTime(): string {
 /**
  * Get device type based on platform
  */
-function getDeviceType(): string {
+export function getDeviceType(): string {
   const p = platform();
   switch (p) {
     case "darwin":
@@ -194,7 +195,7 @@ export function buildSessionContext(options: SessionContextOptions): string {
     }
 
     // Build the context
-    let context = `<system-reminder>
+    let context = `${SYSTEM_REMINDER_OPEN}
 This is an automated message providing context about the user's environment.
 The user has just initiated a new connection via the [Letta Code CLI client](https://docs.letta.com/letta-code/index.md).
 
@@ -242,7 +243,7 @@ ${gitInfo.status}
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}
 - **Server location**: ${actualServerUrl}
-</system-reminder>`;
+${SYSTEM_REMINDER_CLOSE}`;
 
     return context;
   } catch {

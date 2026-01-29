@@ -1,0 +1,1 @@
+<system-alert>The user interrupted the active stream.</system-alert>

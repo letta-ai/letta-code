@@ -2,7 +2,6 @@ import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import packageJson from "../../package.json";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "../auth/oauth";
-import { ensureAnthropicProviderToken } from "../providers/anthropic-provider";
 import { settingsManager } from "../settings-manager";
 import { createTimingFetch, isTimingsEnabled } from "../utils/timing";
 
@@ -76,9 +75,8 @@ export async function getClient() {
     process.exit(1);
   }
 
-  // Ensure Anthropic OAuth token is valid and provider is updated
-  // This checks if token is expired, refreshes it, and updates the provider
-  await ensureAnthropicProviderToken();
+  // Note: ChatGPT OAuth token refresh is handled by the Letta backend
+  // when using the chatgpt_oauth provider type
 
   return new Letta({
     apiKey,

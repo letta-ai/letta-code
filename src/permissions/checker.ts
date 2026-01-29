@@ -2,6 +2,7 @@
 // Main permission checking logic
 
 import { resolve } from "node:path";
+import { runPermissionRequestHooks } from "../hooks";
 import { cliPermissions } from "./cli";
 import {
   matchesBashPattern,
@@ -472,4 +473,65 @@ function getDefaultDecision(
 
   // Everything else defaults to ask
   return "ask";
+}
+
+/**
+ * Check permission for a tool execution with hook support.
+ * When the decision would be "ask" (show permission dialog), runs PermissionRequest hooks
+ * which can auto-allow (exit 0) or auto-deny (exit 2) without showing UI.
+ *
+ * @param toolName - Name of the tool
+ * @param toolArgs - Tool arguments
+ * @param permissions - Loaded permission rules
+ * @param workingDirectory - Current working directory
+ */
+export async function checkPermissionWithHooks(
+  toolName: string,
+  toolArgs: ToolArgs,
+  permissions: PermissionRules,
+  workingDirectory: string = process.cwd(),
+): Promise<PermissionCheckResult> {
+  // First, check permission using normal rules
+  const result = checkPermission(
+    toolName,
+    toolArgs,
+    permissions,
+    workingDirectory,
+  );
+
+  // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
+  if (result.decision === "ask") {
+    const hookResult = await runPermissionRequestHooks(
+      toolName,
+      toolArgs,
+      "ask",
+      undefined,
+      workingDirectory,
+    );
+
+    // If hook blocked (exit code 2), deny the permission
+    if (hookResult.blocked) {
+      const feedback = hookResult.feedback.join("\n") || "Denied by hook";
+      return {
+        decision: "deny",
+        matchedRule: "PermissionRequest hook",
+        reason: feedback,
+      };
+    }
+
+    // If hook succeeded (exit code 0 from any hook), allow the permission
+    // Check if any hook ran and returned success
+    const anyHookAllowed = hookResult.results.some(
+      (r) => r.exitCode === 0 && !r.timedOut && !r.error,
+    );
+    if (anyHookAllowed) {
+      return {
+        decision: "allow",
+        matchedRule: "PermissionRequest hook",
+        reason: "Allowed by hook",
+      };
+    }
+  }
+
+  return result;
 }

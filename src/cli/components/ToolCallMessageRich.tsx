@@ -15,9 +15,11 @@ import {
   isFileEditTool,
   isFileReadTool,
   isFileWriteTool,
+  isGlobTool,
   isMemoryTool,
   isPatchTool,
   isPlanTool,
+  isSearchTool,
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
@@ -592,12 +594,30 @@ export const ToolCallMessage = memo(
         }
       }
 
-      // Check if this is a file read tool - show line count summary
+      // Check if this is a file read tool - show line count or image summary
       if (
         isFileReadTool(rawName) &&
         line.resultOk !== false &&
         line.resultText
       ) {
+        // Check if this is an image result (starts with "[Image: filename]")
+        const isImageResult = line.resultText.startsWith("[Image: ");
+
+        if (isImageResult) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Read <Text bold>1</Text> image
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+
         // Count lines in the result (the content returned by Read tool)
         const lineCount = line.resultText.split("\n").length;
         return (
@@ -607,11 +627,103 @@ export const ToolCallMessage = memo(
             </Box>
             <Box flexGrow={1} width={contentWidth}>
               <Text>
-                Read <Text bold>{lineCount}</Text> lines
+                Read <Text bold>{lineCount}</Text> line
+                {lineCount !== 1 ? "s" : ""}
               </Text>
             </Box>
           </Box>
         );
+      }
+
+      // Check if this is a search/grep tool - show line/file count summary
+      if (isSearchTool(rawName) && line.resultOk !== false && line.resultText) {
+        const text = line.resultText;
+        // Match "Found N file(s)" at start of output (files_with_matches mode)
+        const filesMatch = text.match(/^Found (\d+) files?/);
+        const noFilesMatch = text === "No files found";
+        const noMatchesMatch = text === "No matches found";
+
+        if (filesMatch?.[1]) {
+          const count = parseInt(filesMatch[1], 10);
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else if (noFilesMatch || noMatchesMatch) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>0</Text> {noFilesMatch ? "files" : "matches"}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else {
+          // Content mode - count lines in the output
+          const lineCount = text.split("\n").length;
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{lineCount}</Text> line
+                  {lineCount !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+      }
+
+      // Check if this is a glob tool - show file count summary
+      if (isGlobTool(rawName) && line.resultOk !== false && line.resultText) {
+        const text = line.resultText;
+        const filesMatch = text.match(/^Found (\d+) files?/);
+        const noFilesMatch = text === "No files found";
+
+        if (filesMatch?.[1]) {
+          const count = parseInt(filesMatch[1], 10);
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>{count}</Text> file{count !== 1 ? "s" : ""}
+                </Text>
+              </Box>
+            </Box>
+          );
+        } else if (noFilesMatch) {
+          return (
+            <Box flexDirection="row">
+              <Box width={prefixWidth} flexShrink={0}>
+                <Text>{prefix}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text>
+                  Found <Text bold>0</Text> files
+                </Text>
+              </Box>
+            </Box>
+          );
+        }
+        // Fall through to default if no match pattern found
       }
 
       // Regular result handling

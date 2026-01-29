@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { HooksConfig } from "./hooks/types";
 import type { PermissionRules } from "./permissions/types";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
@@ -14,47 +15,77 @@ import {
   setSecureTokens,
 } from "./utils/secrets.js";
 
+/**
+ * Reference to a session (agent + conversation pair).
+ * Always tracked together since a conversation belongs to exactly one agent.
+ */
+export interface SessionRef {
+  agentId: string;
+  conversationId: string;
+}
+
+/**
+ * Per-agent settings stored in a flat array.
+ * baseUrl is omitted/undefined for Letta API (api.letta.com).
+ */
+export interface AgentSettings {
+  agentId: string;
+  baseUrl?: string; // undefined = Letta API (api.letta.com)
+  pinned?: boolean; // true if agent is pinned
+  memfs?: boolean; // true if memory filesystem is enabled
+}
+
 export interface Settings {
-  lastAgent: string | null;
+  lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
+  lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   tokenStreaming: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
-  pinnedAgents?: string[]; // Array of agent IDs pinned globally
+  pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
+  createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   env?: Record<string, string>;
+  // Server-indexed settings (agent IDs are server-specific)
+  sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
+  pinnedAgentsByServer?: Record<string, string[]>; // DEPRECATED: use agents array
+  // Unified agent settings array (replaces pinnedAgentsByServer)
+  agents?: AgentSettings[];
   // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
-  // Anthropic OAuth
-  anthropicOAuth?: {
-    access_token: string;
-    refresh_token?: string;
-    expires_at: number; // Unix timestamp in milliseconds
-    scope?: string;
-  };
+  // Release notes tracking
+  lastSeenReleaseNotesVersion?: string; // Base version of last seen release notes (e.g., "0.13.0")
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
     codeVerifier: string;
-    provider: "anthropic";
+    redirectUri: string;
+    provider: "openai";
     timestamp: number;
   };
 }
 
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>;
+  hooks?: HooksConfig; // Project-specific hook commands (checked in)
 }
 
 export interface LocalProjectSettings {
-  lastAgent: string | null;
+  lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
+  lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   permissions?: PermissionRules;
+  hooks?: HooksConfig; // Project-specific hook commands
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
-  pinnedAgents?: string[]; // Array of agent IDs pinned locally
+  pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null; // null = disabled, number = overrides global
+  // Server-indexed settings (agent IDs are server-specific)
+  sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
+  pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -73,6 +104,36 @@ const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
 const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
   lastAgent: null,
 };
+
+const DEFAULT_LETTA_API_URL = "https://api.letta.com";
+
+/**
+ * Normalize a base URL for use as a settings key.
+ * Strips protocol (https://, http://) and returns host:port.
+ * @param baseUrl - The base URL (e.g., "https://api.letta.com", "http://localhost:8283")
+ * @returns Normalized key (e.g., "api.letta.com", "localhost:8283")
+ */
+function normalizeBaseUrl(baseUrl: string): string {
+  // Strip protocol
+  let normalized = baseUrl.replace(/^https?:\/\//, "");
+  // Remove trailing slash
+  normalized = normalized.replace(/\/$/, "");
+  return normalized;
+}
+
+/**
+ * Get the current server key for indexing settings.
+ * Uses LETTA_BASE_URL env var or settings.env.LETTA_BASE_URL, defaults to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ */
+function getCurrentServerKey(settings?: Settings | null): string {
+  const baseUrl =
+    process.env.LETTA_BASE_URL ||
+    settings?.env?.LETTA_BASE_URL ||
+    DEFAULT_LETTA_API_URL;
+  return normalizeBaseUrl(baseUrl);
+}
 
 class SettingsManager {
   private settings: Settings | null = null;
@@ -112,6 +173,9 @@ class SettingsManager {
 
       // Migrate tokens to secrets if they exist in settings
       await this.migrateTokensToSecrets();
+
+      // Migrate pinnedAgents/pinnedAgentsByServer to agents array
+      this.migrateToAgentsArray();
     } catch (error) {
       console.error("Error loading settings, using defaults:", error);
       this.settings = { ...DEFAULT_SETTINGS };
@@ -120,6 +184,7 @@ class SettingsManager {
       // Still check secrets support and try to migrate in case of partial failure
       await this.checkSecretsSupport();
       await this.migrateTokensToSecrets();
+      this.migrateToAgentsArray();
     }
   }
 
@@ -189,7 +254,8 @@ class SettingsManager {
             console.warn("Tokens will remain in settings file for persistence");
           }
         } else {
-          console.warn(
+          debugWarn(
+            "settings",
             "Secrets not available - tokens will remain in settings file for persistence",
           );
         }
@@ -197,6 +263,58 @@ class SettingsManager {
     } catch (error) {
       console.warn("Failed to migrate tokens to secrets:", error);
       // Don't throw - app should still work with tokens in settings file
+    }
+  }
+
+  /**
+   * Migrate from legacy pinnedAgents/pinnedAgentsByServer to unified agents array.
+   * Runs on initialize if agents array doesn't exist yet.
+   */
+  private migrateToAgentsArray(): void {
+    if (!this.settings) return;
+    if (this.settings.agents) return; // Already migrated
+
+    const agents: AgentSettings[] = [];
+    const seen = new Set<string>(); // agentId+baseUrl dedup key
+
+    // Migrate from pinnedAgentsByServer (newest legacy format)
+    if (this.settings.pinnedAgentsByServer) {
+      for (const [serverKey, agentIds] of Object.entries(
+        this.settings.pinnedAgentsByServer,
+      )) {
+        for (const agentId of agentIds) {
+          // Normalize baseUrl: api.letta.com -> undefined
+          const baseUrl = serverKey === "api.letta.com" ? undefined : serverKey;
+          const key = `${agentId}@${baseUrl ?? "cloud"}`;
+          if (!seen.has(key)) {
+            agents.push({
+              agentId,
+              baseUrl,
+              pinned: true,
+            });
+            seen.add(key);
+          }
+        }
+      }
+    }
+
+    // Migrate from pinnedAgents (oldest legacy format - assumes Letta API)
+    if (this.settings.pinnedAgents) {
+      for (const agentId of this.settings.pinnedAgents) {
+        const key = `${agentId}@cloud`;
+        if (!seen.has(key)) {
+          agents.push({ agentId, pinned: true });
+          seen.add(key);
+        }
+      }
+    }
+
+    if (agents.length > 0) {
+      this.settings = { ...this.settings, agents };
+      // Persist the migration (async, fire-and-forget)
+      this.persistSettings().catch((error) => {
+        console.warn("Failed to persist agents array migration:", error);
+      });
     }
   }
 
@@ -344,7 +462,8 @@ class SettingsManager {
 
     if (Object.keys(secureTokens).length > 0) {
       // Fallback: store tokens in settings file
-      console.warn(
+      debugWarn(
+        "settings",
         "Secrets not available, storing tokens in settings file for persistence",
       );
 
@@ -397,6 +516,7 @@ class SettingsManager {
       const projectSettings: ProjectSettings = {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
+        hooks: rawSettings.hooks as HooksConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);
@@ -466,7 +586,26 @@ class SettingsManager {
       if (!exists(dirPath)) {
         await mkdir(dirPath, { recursive: true });
       }
-      await writeFile(settingsPath, JSON.stringify(this.settings, null, 2));
+
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      // Our settings take precedence for fields we manage
+      const merged = {
+        ...existingSettings,
+        ...this.settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving settings:", error);
       throw error;
@@ -623,7 +762,24 @@ class SettingsManager {
         await mkdir(dirPath, { recursive: true });
       }
 
-      await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+      // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
+      let existingSettings: Record<string, unknown> = {};
+      if (exists(settingsPath)) {
+        try {
+          const content = await readFile(settingsPath);
+          existingSettings = JSON.parse(content) as Record<string, unknown>;
+        } catch {
+          // If read/parse fails, use empty object
+        }
+      }
+
+      // Merge: existing fields + our managed settings
+      const merged = {
+        ...existingSettings,
+        ...settings,
+      };
+
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
     } catch (error) {
       console.error("Error saving local project settings:", error);
       throw error;
@@ -631,31 +787,225 @@ class SettingsManager {
   }
 
   // =====================================================================
+  // Session Management Helpers
+  // =====================================================================
+
+  /**
+   * Get the last session from global settings for the current server.
+   * Looks up by server key first, falls back to legacy lastSession for migration.
+   * Returns null if no session is available.
+   */
+  getGlobalLastSession(): SessionRef | null {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+
+    // Try server-indexed lookup first
+    if (settings.sessionsByServer?.[serverKey]) {
+      return settings.sessionsByServer[serverKey];
+    }
+
+    // Fall back to legacy lastSession for migration
+    if (settings.lastSession) {
+      return settings.lastSession;
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the last agent ID from global settings for the current server.
+   * Returns the agentId from server-indexed session if available,
+   * otherwise falls back to legacy lastSession/lastAgent.
+   */
+  getGlobalLastAgentId(): string | null {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+
+    // Try server-indexed lookup first
+    if (settings.sessionsByServer?.[serverKey]) {
+      return settings.sessionsByServer[serverKey].agentId;
+    }
+
+    // Fall back to legacy for migration
+    if (settings.lastSession) {
+      return settings.lastSession.agentId;
+    }
+    return settings.lastAgent;
+  }
+
+  /**
+   * Set the last session in global settings for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
+   */
+  setGlobalLastSession(session: SessionRef): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+
+    // Update server-indexed storage
+    const sessionsByServer = {
+      ...settings.sessionsByServer,
+      [serverKey]: session,
+    };
+
+    // Also update legacy fields for backwards compat with older CLI versions
+    this.updateSettings({
+      sessionsByServer,
+      lastSession: session,
+      lastAgent: session.agentId,
+    });
+  }
+
+  /**
+   * Get the last session from local project settings for the current server.
+   * Looks up by server key first, falls back to legacy lastSession for migration.
+   * Returns null if no session is available.
+   */
+  getLocalLastSession(
+    workingDirectory: string = process.cwd(),
+  ): SessionRef | null {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+
+    // Try server-indexed lookup first
+    if (localSettings.sessionsByServer?.[serverKey]) {
+      return localSettings.sessionsByServer[serverKey];
+    }
+
+    // Fall back to legacy lastSession for migration
+    if (localSettings.lastSession) {
+      return localSettings.lastSession;
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the last agent ID from local project settings for the current server.
+   * Returns the agentId from server-indexed session if available,
+   * otherwise falls back to legacy lastSession/lastAgent.
+   */
+  getLocalLastAgentId(workingDirectory: string = process.cwd()): string | null {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+
+    // Try server-indexed lookup first
+    if (localSettings.sessionsByServer?.[serverKey]) {
+      return localSettings.sessionsByServer[serverKey].agentId;
+    }
+
+    // Fall back to legacy for migration
+    if (localSettings.lastSession) {
+      return localSettings.lastSession.agentId;
+    }
+    return localSettings.lastAgent;
+  }
+
+  /**
+   * Set the last session in local project settings for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
+   */
+  setLocalLastSession(
+    session: SessionRef,
+    workingDirectory: string = process.cwd(),
+  ): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
+
+    // Update server-indexed storage
+    const sessionsByServer = {
+      ...localSettings.sessionsByServer,
+      [serverKey]: session,
+    };
+
+    // Also update legacy fields for backwards compat with older CLI versions
+    this.updateLocalProjectSettings(
+      {
+        sessionsByServer,
+        lastSession: session,
+        lastAgent: session.agentId,
+      },
+      workingDirectory,
+    );
+  }
+
+  /**
+   * Get the effective last session (local overrides global).
+   * Returns null if no session is available anywhere.
+   */
+  getEffectiveLastSession(
+    workingDirectory: string = process.cwd(),
+  ): SessionRef | null {
+    // Check local first
+    const localSession = this.getLocalLastSession(workingDirectory);
+    if (localSession) {
+      return localSession;
+    }
+    // Fall back to global
+    return this.getGlobalLastSession();
+  }
+
+  /**
+   * Get the effective last agent ID (local overrides global).
+   * Useful for migration when we need an agent but don't have a conversation yet.
+   */
+  getEffectiveLastAgentId(
+    workingDirectory: string = process.cwd(),
+  ): string | null {
+    // Check local first
+    const localAgentId = this.getLocalLastAgentId(workingDirectory);
+    if (localAgentId) {
+      return localAgentId;
+    }
+    // Fall back to global
+    return this.getGlobalLastAgentId();
+  }
+
+  // =====================================================================
   // Profile Management Helpers
   // =====================================================================
 
   /**
-   * Get globally pinned agent IDs from ~/.letta/settings.json
-   * Migrates from old profiles format if needed.
+   * Get globally pinned agent IDs from ~/.letta/settings.json for the current server.
+   * Looks up by server key first, falls back to legacy pinnedAgents for migration.
    */
   getGlobalPinnedAgents(): string[] {
     const settings = this.getSettings();
-    // Migrate from old format if needed
+    const serverKey = getCurrentServerKey(settings);
+
+    // Try server-indexed lookup first
+    if (settings.pinnedAgentsByServer?.[serverKey]) {
+      return settings.pinnedAgentsByServer[serverKey];
+    }
+
+    // Migrate from old profiles format if needed
     if (settings.profiles && !settings.pinnedAgents) {
       const agentIds = Object.values(settings.profiles);
       this.updateSettings({ pinnedAgents: agentIds, profiles: undefined });
       return agentIds;
     }
+
+    // Fall back to legacy pinnedAgents
     return settings.pinnedAgents || [];
   }
 
   /**
-   * Get locally pinned agent IDs from .letta/settings.local.json
-   * Migrates from old profiles format if needed.
+   * Get locally pinned agent IDs from .letta/settings.local.json for the current server.
+   * Looks up by server key first, falls back to legacy pinnedAgents for migration.
    */
   getLocalPinnedAgents(workingDirectory: string = process.cwd()): string[] {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
     const localSettings = this.getLocalProjectSettings(workingDirectory);
-    // Migrate from old format if needed
+
+    // Try server-indexed lookup first
+    if (localSettings.pinnedAgentsByServer?.[serverKey]) {
+      return localSettings.pinnedAgentsByServer[serverKey];
+    }
+
+    // Migrate from old profiles format if needed
     if (localSettings.profiles && !localSettings.pinnedAgents) {
       const agentIds = Object.values(localSettings.profiles);
       this.updateLocalProjectSettings(
@@ -664,6 +1014,8 @@ class SettingsManager {
       );
       return agentIds;
     }
+
+    // Fall back to legacy pinnedAgents
     return localSettings.pinnedAgents || [];
   }
 
@@ -723,23 +1075,12 @@ class SettingsManager {
   }
 
   /**
-   * Pin an agent to both local AND global settings
+   * Pin an agent to both local AND global settings for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
    */
   pinBoth(agentId: string, workingDirectory: string = process.cwd()): void {
-    // Update global
-    const globalAgents = this.getGlobalPinnedAgents();
-    if (!globalAgents.includes(agentId)) {
-      this.updateSettings({ pinnedAgents: [...globalAgents, agentId] });
-    }
-
-    // Update local
-    const localAgents = this.getLocalPinnedAgents(workingDirectory);
-    if (!localAgents.includes(agentId)) {
-      this.updateLocalProjectSettings(
-        { pinnedAgents: [...localAgents, agentId] },
-        workingDirectory,
-      );
-    }
+    this.pinGlobal(agentId);
+    this.pinLocal(agentId, workingDirectory);
   }
 
   // DEPRECATED: Keep for backwards compatibility
@@ -752,46 +1093,107 @@ class SettingsManager {
   }
 
   /**
-   * Pin an agent locally (to this project)
+   * Pin an agent locally (to this project) for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
    */
   pinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
     const localAgents = this.getLocalPinnedAgents(workingDirectory);
+
     if (!localAgents.includes(agentId)) {
+      const newAgents = [...localAgents, agentId];
+      const pinnedAgentsByServer = {
+        ...localSettings.pinnedAgentsByServer,
+        [serverKey]: newAgents,
+      };
+
       this.updateLocalProjectSettings(
-        { pinnedAgents: [...localAgents, agentId] },
+        {
+          pinnedAgentsByServer,
+          pinnedAgents: newAgents, // Legacy field for backwards compat
+        },
         workingDirectory,
       );
     }
   }
 
   /**
-   * Unpin an agent locally (from this project only)
+   * Unpin an agent locally (from this project only) for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
    */
   unpinLocal(agentId: string, workingDirectory: string = process.cwd()): void {
+    const globalSettings = this.getSettings();
+    const serverKey = getCurrentServerKey(globalSettings);
+    const localSettings = this.getLocalProjectSettings(workingDirectory);
     const localAgents = this.getLocalPinnedAgents(workingDirectory);
+
+    const newAgents = localAgents.filter((id) => id !== agentId);
+    const pinnedAgentsByServer = {
+      ...localSettings.pinnedAgentsByServer,
+      [serverKey]: newAgents,
+    };
+
     this.updateLocalProjectSettings(
-      { pinnedAgents: localAgents.filter((id) => id !== agentId) },
+      {
+        pinnedAgentsByServer,
+        pinnedAgents: newAgents, // Legacy field for backwards compat
+      },
       workingDirectory,
     );
   }
 
   /**
-   * Pin an agent globally
+   * Check if default agents (Memo/Incognito) should be created on startup.
+   * Defaults to true if not explicitly set to false.
+   */
+  shouldCreateDefaultAgents(): boolean {
+    const settings = this.getSettings();
+    return settings.createDefaultAgents !== false;
+  }
+
+  /**
+   * Pin an agent globally for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
    */
   pinGlobal(agentId: string): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
     const globalAgents = this.getGlobalPinnedAgents();
+
     if (!globalAgents.includes(agentId)) {
-      this.updateSettings({ pinnedAgents: [...globalAgents, agentId] });
+      const newAgents = [...globalAgents, agentId];
+      const pinnedAgentsByServer = {
+        ...settings.pinnedAgentsByServer,
+        [serverKey]: newAgents,
+      };
+
+      this.updateSettings({
+        pinnedAgentsByServer,
+        pinnedAgents: newAgents, // Legacy field for backwards compat
+      });
     }
   }
 
   /**
-   * Unpin an agent globally
+   * Unpin an agent globally for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
    */
   unpinGlobal(agentId: string): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
     const globalAgents = this.getGlobalPinnedAgents();
+
+    const newAgents = globalAgents.filter((id) => id !== agentId);
+    const pinnedAgentsByServer = {
+      ...settings.pinnedAgentsByServer,
+      [serverKey]: newAgents,
+    };
+
     this.updateSettings({
-      pinnedAgents: globalAgents.filter((id) => id !== agentId),
+      pinnedAgentsByServer,
+      pinnedAgents: newAgents, // Legacy field for backwards compat
     });
   }
 
@@ -828,6 +1230,91 @@ class SettingsManager {
     console.warn("unpinProfile is deprecated, use unpinLocal(agentId) instead");
   }
 
+  // =====================================================================
+  // Agent Settings (unified agents array) Helpers
+  // =====================================================================
+
+  /**
+   * Get settings for a specific agent on the current server.
+   * Returns undefined if agent not found in settings.
+   */
+  private getAgentSettings(agentId: string): AgentSettings | undefined {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const normalizedBaseUrl =
+      serverKey === "api.letta.com" ? undefined : serverKey;
+
+    return settings.agents?.find(
+      (a) =>
+        a.agentId === agentId && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+    );
+  }
+
+  /**
+   * Create or update settings for a specific agent on the current server.
+   */
+  private upsertAgentSettings(
+    agentId: string,
+    updates: Partial<Omit<AgentSettings, "agentId" | "baseUrl">>,
+  ): void {
+    const settings = this.getSettings();
+    const serverKey = getCurrentServerKey(settings);
+    const normalizedBaseUrl =
+      serverKey === "api.letta.com" ? undefined : serverKey;
+
+    const agents = [...(settings.agents || [])];
+    const idx = agents.findIndex(
+      (a) =>
+        a.agentId === agentId && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+    );
+
+    if (idx >= 0) {
+      // Update existing (idx >= 0 guarantees this exists)
+      const existing = agents[idx] as AgentSettings;
+      const updated: AgentSettings = {
+        agentId: existing.agentId,
+        baseUrl: existing.baseUrl,
+        // Use nullish coalescing for pinned (undefined = keep existing)
+        pinned: updates.pinned !== undefined ? updates.pinned : existing.pinned,
+        // Use nullish coalescing for memfs (undefined = keep existing)
+        memfs: updates.memfs !== undefined ? updates.memfs : existing.memfs,
+      };
+      // Clean up undefined/false values
+      if (!updated.pinned) delete updated.pinned;
+      if (!updated.memfs) delete updated.memfs;
+      if (!updated.baseUrl) delete updated.baseUrl;
+      agents[idx] = updated;
+    } else {
+      // Create new
+      const newAgent: AgentSettings = {
+        agentId,
+        baseUrl: normalizedBaseUrl,
+        ...updates,
+      };
+      // Clean up undefined/false values
+      if (!newAgent.pinned) delete newAgent.pinned;
+      if (!newAgent.memfs) delete newAgent.memfs;
+      if (!newAgent.baseUrl) delete newAgent.baseUrl;
+      agents.push(newAgent);
+    }
+
+    this.updateSettings({ agents });
+  }
+
+  /**
+   * Check if memory filesystem is enabled for an agent on the current server.
+   */
+  isMemfsEnabled(agentId: string): boolean {
+    return this.getAgentSettings(agentId)?.memfs === true;
+  }
+
+  /**
+   * Enable or disable memory filesystem for an agent on the current server.
+   */
+  setMemfsEnabled(agentId: string, enabled: boolean): void {
+    this.upsertAgentSettings(agentId, { memfs: enabled });
+  }
+
   /**
    * Check if local .letta directory exists (indicates existing project)
    */
@@ -836,84 +1323,20 @@ class SettingsManager {
     return exists(dirPath);
   }
 
-  // =====================================================================
-  // Anthropic OAuth Management
-  // =====================================================================
-
-  /**
-   * Store Anthropic OAuth tokens
-   */
-  storeAnthropicTokens(tokens: {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-    scope?: string;
-  }): void {
-    this.updateSettings({
-      anthropicOAuth: {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: Date.now() + tokens.expires_in * 1000,
-        scope: tokens.scope,
-      },
-    });
-  }
-
-  /**
-   * Get Anthropic OAuth tokens (returns null if not set or expired)
-   */
-  getAnthropicTokens(): Settings["anthropicOAuth"] | null {
-    const settings = this.getSettings();
-    if (!settings.anthropicOAuth) return null;
-    return settings.anthropicOAuth;
-  }
-
-  /**
-   * Check if Anthropic OAuth tokens are expired or about to expire
-   * Returns true if token expires within the next 5 minutes
-   */
-  isAnthropicTokenExpired(): boolean {
-    const tokens = this.getAnthropicTokens();
-    if (!tokens) return true;
-
-    const fiveMinutesFromNow = Date.now() + 5 * 60 * 1000;
-    return tokens.expires_at < fiveMinutesFromNow;
-  }
-
-  /**
-   * Check if Anthropic OAuth is configured
-   */
-  hasAnthropicOAuth(): boolean {
-    return !!this.getAnthropicTokens();
-  }
-
-  /**
-   * Clear Anthropic OAuth tokens and state
-   */
-  clearAnthropicOAuth(): void {
-    const settings = this.getSettings();
-    const { anthropicOAuth: _, oauthState: __, ...rest } = settings;
-    this.settings = { ...DEFAULT_SETTINGS, ...rest };
-    this.persistSettings().catch((error) => {
-      console.error(
-        "Failed to persist settings after clearing Anthropic OAuth:",
-        error,
-      );
-    });
-  }
-
   /**
    * Store OAuth state for pending authorization
    */
   storeOAuthState(
     state: string,
     codeVerifier: string,
-    provider: "anthropic",
+    redirectUri: string,
+    provider: "openai",
   ): void {
     this.updateSettings({
       oauthState: {
         state,
         codeVerifier,
+        redirectUri,
         provider,
         timestamp: Date.now(),
       },
@@ -976,7 +1399,8 @@ class SettingsManager {
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
     const available = await this.isKeychainAvailable();
     if (!available) {
-      console.warn(
+      debugWarn(
+        "settings",
         "Secrets not available, tokens will use fallback storage (not persistent across restarts)",
       );
       return;

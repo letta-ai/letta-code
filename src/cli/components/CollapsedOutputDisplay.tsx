@@ -3,11 +3,12 @@ import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 
-const COLLAPSED_LINES = 3;
+const DEFAULT_COLLAPSED_LINES = 3;
 const PREFIX_WIDTH = 5; // "  ⎿  " or "     "
 
 interface CollapsedOutputDisplayProps {
   output: string; // Full output from completion
+  maxLines?: number; // Max lines to show before collapsing (Infinity = show all)
 }
 
 /**
@@ -17,7 +18,10 @@ interface CollapsedOutputDisplayProps {
  * Note: expand/collapse (ctrl+o) is deferred to a future PR.
  */
 export const CollapsedOutputDisplay = memo(
-  ({ output }: CollapsedOutputDisplayProps) => {
+  ({
+    output,
+    maxLines = DEFAULT_COLLAPSED_LINES,
+  }: CollapsedOutputDisplayProps) => {
     const columns = useTerminalWidth();
     const contentWidth = Math.max(0, columns - PREFIX_WIDTH);
 
@@ -32,8 +36,9 @@ export const CollapsedOutputDisplay = memo(
       return null;
     }
 
-    const visibleLines = lines.slice(0, COLLAPSED_LINES);
-    const hiddenCount = Math.max(0, lines.length - COLLAPSED_LINES);
+    const showAll = maxLines === Infinity || maxLines >= lines.length;
+    const visibleLines = showAll ? lines : lines.slice(0, maxLines);
+    const hiddenCount = showAll ? 0 : Math.max(0, lines.length - maxLines);
 
     return (
       <Box flexDirection="column">

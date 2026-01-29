@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import type { StreamingState } from "../helpers/accumulator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
@@ -60,13 +61,26 @@ export const BashCommandMessage = memo(
 
         {/* Streaming output during execution */}
         {line.phase === "running" && line.streaming && (
-          <StreamingOutputDisplay streaming={line.streaming} />
+          <StreamingOutputDisplay
+            streaming={line.streaming}
+            showInterruptHint
+          />
         )}
 
-        {/* Collapsed output after completion */}
-        {line.phase === "finished" && line.output && (
-          <CollapsedOutputDisplay output={line.output} />
-        )}
+        {/* Full output after completion (no collapse for bash mode) */}
+        {line.phase === "finished" &&
+          line.output &&
+          (line.output === INTERRUPTED_BY_USER ? (
+            // Red styling for interrupted commands (LET-7199)
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text>{"  ⎿  "}</Text>
+              </Box>
+              <Text color={colors.status.interrupt}>{INTERRUPTED_BY_USER}</Text>
+            </Box>
+          ) : (
+            <CollapsedOutputDisplay output={line.output} maxLines={Infinity} />
+          ))}
 
         {/* Fallback: show output when phase is undefined (legacy bash commands before streaming) */}
         {!line.phase && line.output && (

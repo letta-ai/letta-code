@@ -12,6 +12,7 @@ import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
+  getDefaultModel,
   getModelUpdateArgs,
   resolveModel,
 } from "./model";
@@ -46,6 +47,8 @@ export interface CreateAgentResult {
 
 export interface CreateAgentOptions {
   name?: string;
+  /** Agent description shown in /agents selector */
+  description?: string;
   model?: string;
   embeddingModel?: string;
   updateArgs?: Record<string, unknown>;
@@ -73,7 +76,7 @@ export interface CreateAgentOptions {
 export async function createAgent(
   nameOrOptions: string | CreateAgentOptions = DEFAULT_AGENT_NAME,
   model?: string,
-  embeddingModel = "openai/text-embedding-3-small",
+  embeddingModel?: string,
   updateArgs?: Record<string, unknown>,
   skillsDirectory?: string,
   parallelToolCalls = true,
@@ -102,8 +105,7 @@ export async function createAgent(
   }
 
   const name = options.name ?? DEFAULT_AGENT_NAME;
-  const embeddingModelVal =
-    options.embeddingModel ?? "openai/text-embedding-3-small";
+  const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
   const enableSleeptimeVal = options.enableSleeptime ?? false;
 
@@ -119,8 +121,8 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use default model
-    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+    // Use default model from models.json
+    modelHandle = getDefaultModel();
   }
 
   const client = await getClient();
@@ -135,7 +137,6 @@ export async function createAgent(
   const defaultBaseTools = options.baseTools ?? [
     baseMemoryTool,
     "web_search",
-    "conversation_search",
     "fetch_webpage",
   ];
 
@@ -269,32 +270,22 @@ export async function createAgent(
   // Track provenance: which blocks were created
   // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
-  const blockIds: string[] = [];
 
-  // Create all blocks fresh for the new agent
+  // Mark new blocks for provenance tracking (actual creation happens in agents.create)
   for (const block of filteredMemoryBlocks) {
-    try {
-      const createdBlock = await client.blocks.create(block);
-      if (!createdBlock.id) {
-        throw new Error(`Created block ${block.label} has no ID`);
-      }
-      blockIds.push(createdBlock.id);
-      blockProvenance.push({ label: block.label, source: "new" });
-    } catch (error) {
-      console.error(`Failed to create block ${block.label}:`, error);
-      throw error;
-    }
+    blockProvenance.push({ label: block.label, source: "new" });
   }
 
-  // Add any referenced block IDs (existing blocks to attach)
+  // Mark referenced blocks for provenance tracking
   for (const blockId of referencedBlockIds) {
-    blockIds.push(blockId);
     blockProvenance.push({ label: blockId, source: "shared" });
   }
 
-  // Get the model's context window from its configuration
+  // Get the model's context window from its configuration (if known)
+  // For unknown models (e.g., from self-hosted servers), don't set a context window
+  // and let the server use its default
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
-  const contextWindow = (modelUpdateArgs?.context_window as number) || 200_000;
+  const contextWindow = modelUpdateArgs?.context_window as number | undefined;
 
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
@@ -312,23 +303,34 @@ export async function createAgent(
     systemPromptContent = `${systemPromptContent}\n\n${options.systemPromptAppend}`;
   }
 
-  // Create agent with all block IDs (existing + newly created)
+  // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
+  // - memory_blocks: new blocks to create inline
+  // - block_ids: references to existing blocks (for shared memory)
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const tags = ["origin:letta-code"];
-  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+  if (isSubagent) {
     tags.push("role:subagent");
   }
+
+  const agentDescription =
+    options.description ?? `Letta Code agent created in ${process.cwd()}`;
 
   const agent = await client.agents.create({
     agent_type: "letta_v1_agent" as AgentType,
     system: systemPromptContent,
     name,
-    description: `Letta Code agent created in ${process.cwd()}`,
-    embedding: embeddingModelVal,
+    description: agentDescription,
+    embedding: embeddingModelVal || undefined,
     model: modelHandle,
-    context_window_limit: contextWindow,
+    ...(contextWindow && { context_window_limit: contextWindow }),
     tools: toolNames,
-    block_ids: blockIds,
+    // New blocks created inline with agent (saves ~2s of sequential API calls)
+    memory_blocks:
+      filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,
+    // Referenced block IDs (existing blocks to attach)
+    block_ids: referencedBlockIds.length > 0 ? referencedBlockIds : undefined,
     tags,
+    ...(isSubagent && { hidden: true }),
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,

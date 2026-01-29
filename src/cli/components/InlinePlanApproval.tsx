@@ -107,8 +107,8 @@ export const InlinePlanApproval = memo(
     );
 
     // Generate horizontal lines
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
-    const dottedLine = DOTTED_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+    const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
     // Memoize the static plan content so it doesn't re-render on keystroke
     // This prevents flicker when typing feedback in the custom input field
@@ -127,13 +127,16 @@ export const InlinePlanApproval = memo(
           <Text dimColor>{dottedLine}</Text>
 
           {/* Plan content - no indentation, just like Claude Code */}
-          <MarkdownDisplay text={plan} />
+          {/* Box with explicit width enables proper word-level wrapping */}
+          <Box width={columns}>
+            <MarkdownDisplay text={plan} />
+          </Box>
 
           {/* Dotted separator after plan content */}
           <Text dimColor>{dottedLine}</Text>
         </>
       ),
-      [plan, solidLine, dottedLine],
+      [plan, solidLine, dottedLine, columns],
     );
 
     // Hint text based on state

@@ -5,7 +5,7 @@
 import { hostname } from "node:os";
 import { Box, Text, useApp, useInput } from "ink";
 import { useState } from "react";
-import { asciiLogo } from "../cli/components/AsciiArt.ts";
+import { AnimatedLogo } from "../cli/components/AnimatedLogo";
 import { colors } from "../cli/components/colors";
 import { settingsManager } from "../settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
@@ -139,8 +139,9 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   if (mode === "device-code") {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color={colors.welcome.accent}>{asciiLogo}</Text>
-        <Text bold>Login to the Letta Developer Platform</Text>
+        <AnimatedLogo color={colors.welcome.accent} />
+        <Text> </Text>
+        <Text bold>Login to Letta Platform</Text>
         <Text> </Text>
         <Text dimColor>Opening browser for authorization...</Text>
         <Text> </Text>
@@ -160,20 +161,28 @@ export function SetupUI({ onComplete }: SetupUIProps) {
   // Main menu
   return (
     <Box flexDirection="column" padding={1}>
-      <Text color={colors.welcome.accent}>{asciiLogo}</Text>
+      <AnimatedLogo color={colors.welcome.accent} />
+      <Text> </Text>
       <Text bold>Welcome to Letta Code!</Text>
       <Text> </Text>
       <Text>Let's get you authenticated:</Text>
       <Text> </Text>
       <Box>
-        <Text color={selectedOption === 0 ? "cyan" : undefined}>
-          {selectedOption === 0 ? "→" : " "} Login to the Letta Developer
-          Platform
+        <Text
+          color={
+            selectedOption === 0 ? colors.selector.itemHighlighted : undefined
+          }
+        >
+          {selectedOption === 0 ? "> " : "  "}Login to Letta Platform
         </Text>
       </Box>
       <Box>
-        <Text color={selectedOption === 1 ? "cyan" : undefined}>
-          {selectedOption === 1 ? "→" : " "} Exit
+        <Text
+          color={
+            selectedOption === 1 ? colors.selector.itemHighlighted : undefined
+          }
+        >
+          {selectedOption === 1 ? "> " : "  "}Exit
         </Text>
       </Box>
       <Text> </Text>

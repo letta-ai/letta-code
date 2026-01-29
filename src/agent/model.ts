@@ -17,6 +17,12 @@ export function resolveModel(modelIdentifier: string): string | null {
   const byHandle = models.find((m) => m.handle === modelIdentifier);
   if (byHandle) return byHandle.handle;
 
+  // For self-hosted servers: if it looks like a handle (contains /), pass it through
+  // This allows using models not in models.json (e.g., from server's /v1/models)
+  if (modelIdentifier.includes("/")) {
+    return modelIdentifier;
+  }
+
   return null;
 }
 
@@ -32,6 +38,22 @@ export function getDefaultModel(): string {
     throw new Error("No models available in models.json");
   }
   return firstModel.handle;
+}
+
+/**
+ * Get the default model handle based on billing tier.
+ * Free tier users get glm-4.7, everyone else gets the standard default.
+ * @param billingTier - The user's billing tier (e.g., "free", "pro", "enterprise")
+ * @returns The model handle to use as default
+ */
+export function getDefaultModelForTier(billingTier?: string | null): string {
+  // Free tier gets glm-4.7 (a free model)
+  if (billingTier?.toLowerCase() === "free") {
+    const freeDefault = models.find((m) => m.id === "glm-4.7");
+    if (freeDefault) return freeDefault.handle;
+  }
+  // Everyone else (pro, enterprise, unknown) gets the standard default
+  return getDefaultModel();
 }
 
 /**
@@ -70,13 +92,59 @@ export function getModelUpdateArgs(
 }
 
 /**
+ * Find a model entry by handle with fuzzy matching support
+ * @param handle - The full model handle
+ * @returns The model entry if found, null otherwise
+ */
+function findModelByHandle(handle: string): (typeof models)[number] | null {
+  // Try exact match first
+  const exactMatch = models.find((m) => m.handle === handle);
+  if (exactMatch) return exactMatch;
+
+  // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
+  // vendor prefix or version suffix, but models.json has
+  // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
+  const [provider, ...rest] = handle.split("/");
+  if (provider && rest.length > 0) {
+    const modelPortion = rest.join("/");
+    // Find models with the same provider where the model portion is contained
+    // in the models.json handle (handles vendor prefixes and version suffixes)
+    const partialMatch = models.find((m) => {
+      if (!m.handle.startsWith(`${provider}/`)) return false;
+      const mModelPortion = m.handle.slice(provider.length + 1);
+      // Check if either contains the other (handles both directions)
+      return (
+        mModelPortion.includes(modelPortion) ||
+        modelPortion.includes(mModelPortion)
+      );
+    });
+    if (partialMatch) return partialMatch;
+  }
+
+  return null;
+}
+
+/**
  * Get a display-friendly name for a model by its handle
  * @param handle - The full model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @returns The display name (e.g., "Sonnet 4.5") if found, null otherwise
  */
 export function getModelDisplayName(handle: string): string | null {
-  const model = models.find((m) => m.handle === handle);
+  const model = findModelByHandle(handle);
   return model?.label ?? null;
+}
+
+/**
+ * Get a short display name for a model (for status bar)
+ * Falls back to full label if no shortLabel is defined
+ * @param handle - The full model handle
+ * @returns The short name (e.g., "Opus 4.5 BR") if found, null otherwise
+ */
+export function getModelShortName(handle: string): string | null {
+  const model = findModelByHandle(handle);
+  if (!model) return null;
+  // Use shortLabel if available, otherwise fall back to label
+  return (model as { shortLabel?: string }).shortLabel ?? model.label;
 }
 
 /**
