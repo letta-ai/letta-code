@@ -405,12 +405,12 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(result.blocked).toBe(true);
     });
 
-    test("receives prompt and command flag in input", async () => {
+    test("skips hooks for slash commands", async () => {
       createHooksConfig({
         UserPromptSubmit: [
           {
             matcher: "*",
-            hooks: [{ type: "command", command: "cat" }],
+            hooks: [{ type: "command", command: "echo 'should not run'" }],
           },
         ],
       });
@@ -423,9 +423,9 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
-      expect(parsed.prompt).toBe("/clear");
-      expect(parsed.is_command).toBe(true);
+      // Hooks should not run for slash commands
+      expect(result.blocked).toBe(false);
+      expect(result.results).toHaveLength(0);
     });
   });
 
