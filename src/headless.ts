@@ -91,6 +91,7 @@ export async function handleHeadlessCommand(
       conversation: { type: "string" },
       default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
+      "create-only": { type: "boolean" }, // Create agent and exit (for SDK)
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
@@ -801,6 +802,11 @@ export async function handleHeadlessCommand(
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
+
+    // --create-only: exit after outputting init (for SDK createAgent)
+    if (values["create-only"]) {
+      process.exit(0);
+    }
   }
 
   // Helper to resolve any pending approvals before sending user input
