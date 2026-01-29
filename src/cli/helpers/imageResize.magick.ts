@@ -5,8 +5,6 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-console.log("USING MAGICK VARIANT");
-
 // Anthropic limits: 8000x8000 for single images, but 2000x2000 for many-image requests
 // We use 2000 to stay safe when conversation history accumulates multiple images
 export const MAX_IMAGE_WIDTH = 2000;
