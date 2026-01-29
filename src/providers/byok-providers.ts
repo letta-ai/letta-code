@@ -69,6 +69,13 @@ export const BYOK_PROVIDERS = [
     providerName: "lc-gemini",
   },
   {
+    id: "openrouter",
+    displayName: "OpenRouter API",
+    description: "Connect an OpenRouter API key",
+    providerType: "openrouter",
+    providerName: "lc-openrouter",
+  },
+  {
     id: "bedrock",
     displayName: "AWS Bedrock",
     description: "Connect to Claude on Amazon Bedrock",
