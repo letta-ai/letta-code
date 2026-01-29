@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@letta-ai/letta-client": "^1.7.6",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "open": "^10.2.0",

@@ -16,6 +16,74 @@ import {
 } from "../tools/manager";
 
 /**
+ * Try to execute a tool via MCP if it's registered as a server-aware MCP tool.
+ * This follows the design document's approval-based execution flow.
+ * Returns null if not an MCP tool.
+ */
+async function tryExecuteMcpToolViaApproval(
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<ToolExecutionResult | null> {
+  try {
+    const { tryGetCurrentAgentId } = await import("../agent/context");
+    const { getMcpToolInfo } = await import(
+      "../mcp/server-registration"
+    );
+    const { stdioClientManager } = await import("../mcp/stdio-client");
+
+    const agentId = tryGetCurrentAgentId();
+    if (!agentId) return null;
+
+    // Check if this tool is registered as an MCP tool and get the original name
+    const mcpInfo = await getMcpToolInfo(agentId, toolName);
+    if (!mcpInfo) return null;
+
+    const { serverId, originalName } = mcpInfo;
+
+    // Execute via stdio subprocess using the ORIGINAL MCP tool name
+    // (Python names like "get_env" need to be converted back to "get-env")
+    console.error(
+      `[mcp] Executing MCP tool via approval flow: ${toolName} → ${originalName} (server: ${serverId})`,
+    );
+
+    const mcpResult = await stdioClientManager.executeTool(
+      serverId,
+      originalName, // Use original name with hyphens, not Python-safe name
+      args,
+    );
+
+    // Convert MCP result to Letta format
+    let textContent = "";
+    const contentArray = Array.isArray(mcpResult.content)
+      ? mcpResult.content
+      : [mcpResult.content];
+
+    for (const item of contentArray) {
+      if (item.type === "text") {
+        textContent += item.text;
+      } else if (item.type === "image") {
+        textContent += `[Image: ${item.data.substring(0, 50)}...]`;
+      } else if (item.type === "resource") {
+        textContent += `[Resource: ${item.resource.uri}]`;
+      }
+    }
+
+    return {
+      toolReturn: textContent || "(empty response)",
+      status: mcpResult.isError ? "error" : "success",
+      stdout: undefined,
+      stderr: mcpResult.isError ? [textContent] : undefined,
+    };
+  } catch (error) {
+    console.error(
+      `[mcp] MCP tool execution failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // Return null to fall back to normal execution
+    return null;
+  }
+}
+
+/**
  * Extract displayable text from tool return content (for UI display).
  * Multimodal content returns the text parts concatenated.
  */
@@ -238,22 +306,39 @@ async function executeSingleDecision(
         parsedArgs = decision.approval.toolArgs || {};
       }
 
-      const toolResult = await executeTool(
+      // Check if this is a server-registered MCP tool (design document approach)
+      // This follows the approval-based execution flow
+      const mcpResult = await tryExecuteMcpToolViaApproval(
         decision.approval.toolName,
         parsedArgs,
-        {
-          signal: options?.abortSignal,
-          toolCallId: decision.approval.toolCallId,
-          onOutput: options?.onStreamingOutput
-            ? (chunk, stream) =>
-                options.onStreamingOutput?.(
-                  decision.approval.toolCallId,
-                  chunk,
-                  stream === "stderr",
-                )
-            : undefined,
-        },
       );
+
+      let toolResult;
+      if (mcpResult !== null) {
+        // Tool was executed via MCP stdio subprocess
+        console.error(
+          `[mcp] Executed server-registered MCP tool via approval: ${decision.approval.toolName}`,
+        );
+        toolResult = mcpResult;
+      } else {
+        // Normal tool execution
+        toolResult = await executeTool(
+          decision.approval.toolName,
+          parsedArgs,
+          {
+            signal: options?.abortSignal,
+            toolCallId: decision.approval.toolCallId,
+            onOutput: options?.onStreamingOutput
+              ? (chunk, stream) =>
+                  options.onStreamingOutput?.(
+                    decision.approval.toolCallId,
+                    chunk,
+                    stream === "stderr",
+                  )
+              : undefined,
+          },
+        );
+      }
 
       // Update UI if callback provided (interactive mode)
       // Note: UI display uses text-only version, backend gets full multimodal content

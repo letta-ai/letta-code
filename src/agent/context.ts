@@ -65,6 +65,14 @@ export function getCurrentAgentId(): string {
 }
 
 /**
+ * Try to get the current agent ID without throwing
+ * @returns The agent ID or null if not set
+ */
+export function tryGetCurrentAgentId(): string | null {
+  return context.agentId;
+}
+
+/**
  * Get the skills directory path
  * @returns The skills directory path or null if not set
  */

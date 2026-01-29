@@ -1,5 +1,10 @@
 // src/cli/commands/mcp.ts
 // MCP server command handlers
+//
+// Supports three transport types:
+// - HTTP/Streamable HTTP: Server runs remotely, tools execute server-side
+// - SSE: Server runs remotely, tools execute server-side  
+// - Stdio: Server runs locally as subprocess, tools execute client-side (NEW)
 
 import type {
   CreateSseMcpServer,
@@ -220,9 +225,15 @@ export async function handleMcpAdd(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --header "Authorization: Bearer token"',
+      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport sse my-sse-server https://example.com/sse\n  /mcp add --transport stdio filesystem npx @modelcontextprotocol/server-filesystem /path/to/dir\n  /mcp add --transport http secure-api https://api.example.com/mcp --header "Authorization: Bearer token"\n\nNote: stdio servers run locally and are managed client-side.',
       false,
     );
+    return;
+  }
+
+  // Handle stdio separately - add to local config only
+  if (args.transport === "stdio") {
+    await handleStdioAdd(ctx, msg, args);
     return;
   }
 
@@ -268,15 +279,8 @@ export async function handleMcpAdd(
           Object.keys(args.headers).length > 0 ? args.headers : null,
       };
     } else {
-      // stdio
-      if (!args.command) {
-        throw new Error("Command is required for stdio transport");
-      }
-      config = {
-        mcp_server_type: "stdio",
-        command: args.command,
-        args: args.args,
-      };
+      // This path shouldn't be reached anymore - stdio is handled separately
+      throw new Error("Invalid transport type");
     }
 
     const server = await client.mcpServers.create({
@@ -349,6 +353,188 @@ export async function handleMcpAdd(
   }
 }
 
+// Handle stdio-specific add (server-aware approach from design document)
+async function handleStdioAdd(
+  ctx: McpCommandContext,
+  msg: string,
+  args: McpAddArgs,
+): Promise<void> {
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    `Adding stdio MCP server "${args.name}"...`,
+    false,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    const { localMcpConfig } = await import("../../mcp/local-config");
+    const { stdioClientManager } = await import("../../mcp/stdio-client");
+    const { registerMcpToolsWithServer } = await import(
+      "../../mcp/server-registration"
+    );
+    const { tryGetCurrentAgentId } = await import("../../agent/context");
+
+    if (!args.command) {
+      throw new Error("Command is required for stdio transport");
+    }
+
+    // Generate unique ID
+    const serverId = `stdio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Step 1: Add to local config
+    localMcpConfig.addStdioServer({
+      id: serverId,
+      name: args.name,
+      command: args.command,
+      args: args.args,
+    });
+
+    // Step 2: Spawn subprocess and connect
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `Spawning stdio subprocess and connecting...\n` +
+        `Command: ${args.command} ${args.args.join(" ")}`,
+      false,
+      "running",
+    );
+
+    await stdioClientManager.connect({
+      serverId,
+      serverName: args.name,
+      command: args.command,
+      args: args.args,
+    });
+
+    // Step 3: Fetch tool definitions
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `Connected to stdio server.\nFetching tool definitions...`,
+      false,
+      "running",
+    );
+
+    const tools = await stdioClientManager.listTools(serverId);
+
+    // Step 4: Register tools with Letta Cloud (server-aware approach)
+    const agentId = tryGetCurrentAgentId();
+    if (!agentId) {
+      // No agent context yet - just store locally
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `✓ Added local stdio server "${args.name}"\n\n` +
+          `Server Details:\n` +
+          `  ID: ${serverId}\n` +
+          `  Command: ${args.command} ${args.args.join(" ")}\n` +
+          `  Tools: ${tools.length}\n` +
+          `  Status: Running client-side (local only)\n\n` +
+          `Note: No active agent. Tools stored locally.\n` +
+          `They will be registered when you select an agent.`,
+        true,
+      );
+      return;
+    }
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `Found ${tools.length} tools.\nRegistering with Letta Cloud as CLIENT_MCP tools...`,
+      false,
+      "running",
+    );
+
+    const { registered, errors } = await registerMcpToolsWithServer(
+      agentId,
+      serverId,
+      args.name,
+      tools,
+    );
+
+    // Build success/error message
+    let resultMessage = `✓ Added stdio MCP server "${args.name}"\n\n`;
+    resultMessage += `Server Details:\n`;
+    resultMessage += `  ID: ${serverId}\n`;
+    resultMessage += `  Command: ${args.command} ${args.args.join(" ")}\n`;
+    resultMessage += `  Status: Running client-side\n\n`;
+    resultMessage += `Tool Registration:\n`;
+    resultMessage += `  Registered: ${registered.length}/${tools.length} tools\n`;
+
+    if (registered.length > 0) {
+      resultMessage += `  Tools: ${registered.slice(0, 5).join(", ")}`;
+      if (registered.length > 5) {
+        resultMessage += `, +${registered.length - 5} more`;
+      }
+      resultMessage += `\n`;
+    }
+
+    if (errors.length > 0) {
+      resultMessage += `\n⚠ Registration Errors:\n`;
+      for (const err of errors.slice(0, 3)) {
+        resultMessage += `  - ${err.tool}: ${err.error}\n`;
+      }
+      if (errors.length > 3) {
+        resultMessage += `  - ...and ${errors.length - 3} more\n`;
+      }
+    }
+
+    resultMessage += `\nExecution Model:\n`;
+    resultMessage += `  - Agent calls tool via Letta Cloud\n`;
+    resultMessage += `  - Server sends approval request to client\n`;
+    resultMessage += `  - Client executes via stdio subprocess\n`;
+    resultMessage += `  - Client returns result to server\n\n`;
+    resultMessage += `Use /mcp to view and manage servers.`;
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      resultMessage,
+      errors.length === 0, // Success only if no errors
+    );
+  } catch (error) {
+    // Cleanup on error
+    try {
+      const { localMcpConfig } = await import("../../mcp/local-config");
+      localMcpConfig.removeStdioServer(args.name);
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    const errorDetails =
+      error instanceof Error ? error.message : String(error);
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `Failed to add stdio server: ${errorDetails}\n\n` +
+        `Make sure:\n` +
+        `  1. The command is valid: ${args.command} ${args.args.join(" ")}\n` +
+        `  2. You have an active agent selected\n` +
+        `  3. The Letta server is accessible\n\n` +
+        `Try running the command manually first to verify it works.`,
+      false,
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
 // Show usage help
 export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
   addCommandResult(
@@ -359,8 +545,13 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
       "  /mcp                  - Open MCP server manager\n" +
       "  /mcp add ...          - Add a new server (without OAuth)\n" +
       "  /mcp connect          - Interactive wizard with OAuth support\n\n" +
+      "Transport types:\n" +
+      "  http/sse              - Remote servers (tools run server-side)\n" +
+      "  stdio                 - Local subprocesses (tools run client-side)\n\n" +
       "Examples:\n" +
-      "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+      "  /mcp add --transport http notion https://mcp.notion.com/mcp\n" +
+      "  /mcp add --transport stdio filesystem npx @modelcontextprotocol/server-filesystem /path\n\n" +
+      "Note: Stdio servers are managed locally and never sent to the Letta server.",
     false,
   );
 }
