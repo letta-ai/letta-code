@@ -22,12 +22,6 @@ import {
 } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import {
-  ensureMemoryFilesystemBlock,
-  formatMemorySyncSummary,
-  syncMemoryFilesystem,
-  updateMemoryFilesystemBlock,
-} from "./agent/memoryFilesystem";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -585,36 +579,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
-  if (settingsManager.isMemfsEnabled(agent.id)) {
-    try {
-      await ensureMemoryFilesystemBlock(agent.id);
-      const syncResult = await syncMemoryFilesystem(agent.id);
-      if (syncResult.conflicts.length > 0) {
-        console.error(
-          `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
-        );
-        process.exit(1);
-      }
-      await updateMemoryFilesystemBlock(agent.id);
-      if (
-        syncResult.updatedBlocks.length > 0 ||
-        syncResult.createdBlocks.length > 0 ||
-        syncResult.deletedBlocks.length > 0 ||
-        syncResult.updatedFiles.length > 0 ||
-        syncResult.createdFiles.length > 0 ||
-        syncResult.deletedFiles.length > 0
-      ) {
-        console.log(formatMemorySyncSummary(syncResult));
-      }
-    } catch (error) {
-      console.error(
-        `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-
   // Determine which blocks to isolate for the conversation
   let isolatedBlockLabels: string[] = [];
   if (!noSkillsFlag) {
@@ -714,6 +678,19 @@ export async function handleHeadlessCommand(
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
 
+  // Sync MCP tools for stdio server support (fire-and-forget)
+  // This enables client-side execution of stdio MCP tools
+  (async () => {
+    try {
+      const { mcpToolTracker } = await import("./mcp/tracker");
+      await mcpToolTracker.sync(agent.id);
+    } catch (error) {
+      console.error(
+        `[mcp] Failed to sync MCP tools: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  })();
+
   // Skills-related fire-and-forget operations (skip for subagents/--no-skills)
   if (!noSkillsFlag && !isSubagent) {
     // Fire-and-forget: Initialize loaded skills flag (LET-7101)
@@ -775,8 +752,8 @@ export async function handleHeadlessCommand(
     return;
   }
 
-  // Create buffers to accumulate stream (pass agent.id for server-side tool hooks)
-  const buffers = createBuffers(agent.id);
+  // Create buffers to accumulate stream
+  const buffers = createBuffers();
 
   // Initialize session stats
   const sessionStats = new SessionStats();
@@ -951,11 +928,7 @@ export async function handleHeadlessCommand(
           // no-op
         }
       } else {
-        await drainStreamWithResume(
-          approvalStream,
-          createBuffers(agent.id),
-          () => {},
-        );
+        await drainStreamWithResume(approvalStream, createBuffers(), () => {});
       }
     }
   };
@@ -1757,6 +1730,10 @@ export async function handleHeadlessCommand(
   // Report all milestones at the end for latency audit
   markMilestone("HEADLESS_COMPLETE");
   reportAllMilestones();
+
+  // Cleanup stdio MCP connections
+  const { cleanupStdioConnections } = await import("./mcp/executor");
+  await cleanupStdioConnections();
 }
 
 /**
@@ -1994,7 +1971,7 @@ async function runBidirectionalMode(
       currentAbortController = new AbortController();
 
       try {
-        const buffers = createBuffers(agent.id);
+        const buffers = createBuffers();
         const startTime = performance.now();
         let numTurns = 0;
 
@@ -2293,5 +2270,8 @@ async function runBidirectionalMode(
   }
 
   // Stdin closed, exit gracefully
+  // Cleanup stdio MCP connections
+  const { cleanupStdioConnections } = await import("./mcp/executor");
+  await cleanupStdioConnections();
   process.exit(0);
 }
