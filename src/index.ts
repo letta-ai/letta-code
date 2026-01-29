@@ -1094,6 +1094,9 @@ async function main(): Promise<void> {
           LETTA_CLOUD_API_URL;
         const isSelfHosted = !baseURL.includes("api.letta.com");
 
+        // Track whether we need model picker (for skipping ensureDefaultAgents)
+        let needsModelPicker = false;
+
         if (isSelfHosted) {
           setSelfHostedBaseUrl(baseURL);
           try {
@@ -1108,6 +1111,7 @@ async function main(): Promise<void> {
             // Only set if default model isn't available
             if (!handles.includes(defaultModel)) {
               setAvailableServerModels(handles);
+              needsModelPicker = true;
             }
           } catch {
             // Ignore errors - will fail naturally during agent creation if needed
@@ -1268,10 +1272,15 @@ async function main(): Promise<void> {
         const wouldShowSelector =
           !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
 
-        if (wouldShowSelector && globalPinned.length === 0) {
+        if (
+          wouldShowSelector &&
+          globalPinned.length === 0 &&
+          !needsModelPicker
+        ) {
           // New user with no pinned agents - create a fresh Memo agent
           // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
           // picking up agents created by other users on shared orgs.
+          // Skip if needsModelPicker is true - let user select a model first.
           const { ensureDefaultAgents } = await import("./agent/defaults");
           try {
             const memoAgent = await ensureDefaultAgents(client);
@@ -1289,7 +1298,7 @@ async function main(): Promise<void> {
           }
         }
 
-        // If there's a local LRU, use it directly
+        // If there's a local LRU, use it directly (takes priority over model picker)
         if (localSettings.lastAgent) {
           try {
             await client.agents.retrieve(localSettings.lastAgent);
@@ -1301,6 +1310,12 @@ async function main(): Promise<void> {
               `Unable to locate recently used agent ${localSettings.lastAgent}`,
             );
           }
+        }
+
+        // On self-hosted with unavailable default model, show selector to pick a model
+        if (needsModelPicker) {
+          setLoadingState("selecting_global");
+          return;
         }
 
         // Show selector if there are pinned agents to choose from
