@@ -47,7 +47,7 @@ export interface Settings {
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
-  hooks?: HooksConfig; // Hook commands that run at various lifecycle points
+  hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
   env?: Record<string, string>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")

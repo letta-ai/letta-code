@@ -313,6 +313,10 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
+  // Initialize terminal theme detection (OSC 11 query with fallback)
+  const { initTerminalTheme } = await import("./cli/helpers/terminalTheme");
+  await initTerminalTheme();
+
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();

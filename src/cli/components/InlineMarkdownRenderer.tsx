@@ -5,6 +5,7 @@ import { colors } from "./colors.js";
 interface InlineMarkdownProps {
   text: string;
   dimColor?: boolean;
+  backgroundColor?: string;
 }
 
 /**
@@ -15,6 +16,7 @@ interface InlineMarkdownProps {
 export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
   text,
   dimColor,
+  backgroundColor,
 }) => {
   // Early return for plain text without markdown (treat underscores as plain text)
   if (!/[*~`[]/.test(text)) {
@@ -47,7 +49,12 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     ) {
       // Bold
       nodes.push(
-        <Text key={key} bold dimColor={dimColor}>
+        <Text
+          key={key}
+          bold
+          dimColor={dimColor}
+          backgroundColor={backgroundColor}
+        >
           {fullMatch.slice(2, -2)}
         </Text>,
       );
@@ -58,7 +65,12 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     ) {
       // Italic
       nodes.push(
-        <Text key={key} italic dimColor={dimColor}>
+        <Text
+          key={key}
+          italic
+          dimColor={dimColor}
+          backgroundColor={backgroundColor}
+        >
           {fullMatch.slice(1, -1)}
         </Text>,
       );
@@ -69,14 +81,23 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     ) {
       // Strikethrough
       nodes.push(
-        <Text key={key} strikethrough dimColor={dimColor}>
+        <Text
+          key={key}
+          strikethrough
+          dimColor={dimColor}
+          backgroundColor={backgroundColor}
+        >
           {fullMatch.slice(2, -2)}
         </Text>,
       );
     } else if (fullMatch.startsWith("`") && fullMatch.endsWith("`")) {
       // Inline code
       nodes.push(
-        <Text key={key} color={colors.link.text}>
+        <Text
+          key={key}
+          color={colors.link.text}
+          backgroundColor={backgroundColor}
+        >
           {fullMatch.slice(1, -1)}
         </Text>,
       );
@@ -91,9 +112,12 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
         const linkText = linkMatch[1];
         const url = linkMatch[2];
         nodes.push(
-          <Text key={key}>
+          <Text key={key} backgroundColor={backgroundColor}>
             {linkText}
-            <Text color={colors.link.url}> ({url})</Text>
+            <Text color={colors.link.url} backgroundColor={backgroundColor}>
+              {" "}
+              ({url})
+            </Text>
           </Text>,
         );
       } else {

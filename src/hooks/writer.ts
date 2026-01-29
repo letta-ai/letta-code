@@ -309,7 +309,11 @@ export function countTotalHooks(
 
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
-    for (const event of Object.keys(hooks) as HookEvent[]) {
+    for (const key of Object.keys(hooks)) {
+      // Skip non-event keys like 'disabled'
+      if (key === "disabled") continue;
+
+      const event = key as HookEvent;
       if (isToolEvent(event)) {
         // Tool events have HookMatcher[] with nested hooks
         const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
@@ -360,4 +364,30 @@ export function countHooksForEvent(
   }
 
   return count;
+}
+
+/**
+ * Check if user-level hooks.disabled is set to true.
+ * NOTE: This only checks user settings. For full precedence logic
+ * (user → project → project-local), use areHooksDisabled from loader.ts.
+ */
+export function isUserHooksDisabled(): boolean {
+  try {
+    return settingsManager.getSettings().hooks?.disabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set whether all hooks are disabled (writes to user-level hooks.disabled)
+ */
+export function setHooksDisabled(disabled: boolean): void {
+  const currentHooks = settingsManager.getSettings().hooks || {};
+  settingsManager.updateSettings({
+    hooks: {
+      ...currentHooks,
+      disabled,
+    },
+  });
 }

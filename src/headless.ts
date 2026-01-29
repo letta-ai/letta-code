@@ -1507,6 +1507,11 @@ export async function handleHeadlessCommand(
           // Fallback: detect LLM provider errors from detail even if misclassified
           // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+          // Don't retry 4xx client errors (validation, auth, malformed requests)
+          // These are not transient and won't succeed on retry
+          const is4xxError = /Error code: 4\d{2}/.test(detail);
+
           const llmProviderPatterns = [
             "Anthropic API error", // anthropic_client.py:759
             "OpenAI API error", // openai_client.py:1034
@@ -1520,7 +1525,10 @@ export async function handleHeadlessCommand(
             detail.includes(pattern),
           );
 
-          if (errorType === "llm_error" || isLlmErrorFromDetail) {
+          if (
+            (errorType === "llm_error" || isLlmErrorFromDetail) &&
+            !is4xxError
+          ) {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);

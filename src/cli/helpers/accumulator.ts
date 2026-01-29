@@ -5,8 +5,12 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  INTERRUPTED_BY_USER,
+} from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -181,6 +185,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -243,6 +249,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -494,6 +509,33 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a user message with context header and summary
+        ensure(b, id, () => ({
+          kind: "user",
+          id,
+          text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
+      break;
+    }
+
     case "tool_call_message":
     case "approval_request_message": {
       /* POST-FIX VERSION (what this should look like after backend fix):
@@ -717,6 +759,12 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               // Args parsing failed
             }
 
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
             runPostToolUseHooks(
               serverToolInfo.toolName,
               parsedArgs,
@@ -727,6 +775,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               toolCallId,
               undefined,
               b.agentId,
+              precedingReasoning,
+              precedingAssistantMessage,
             ).catch(() => {});
 
             b.serverToolCalls.delete(toolCallId);

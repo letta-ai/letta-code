@@ -160,6 +160,46 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
       expect(result.stdout).toBe("PreToolUse");
     });
+
+    test("receives LETTA_AGENT_ID environment variable when agent_id is provided", async () => {
+      const hook: HookCommand = {
+        type: "command",
+        command: "echo $LETTA_AGENT_ID",
+      };
+
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: {},
+        agent_id: "agent-test-12345",
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      expect(result.stdout).toBe("agent-test-12345");
+    });
+
+    test("LETTA_AGENT_ID is not set when agent_id is not provided", async () => {
+      const hook: HookCommand = {
+        type: "command",
+        command: 'echo "agent_id:${LETTA_AGENT_ID:-empty}"',
+      };
+
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: {},
+        // Note: agent_id is not provided
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      expect(result.stdout).toBe("agent_id:empty");
+    });
   });
 
   describe("executeHooks", () => {

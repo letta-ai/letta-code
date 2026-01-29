@@ -20,7 +20,7 @@ import type {
   UserPromptSubmitHookInput,
 } from "./types";
 
-export { clearHooksCache } from "./loader";
+export { areHooksDisabled, clearHooksCache } from "./loader";
 // Re-export types for convenience
 export * from "./types";
 
@@ -72,6 +72,8 @@ export async function runPostToolUseHooks(
   toolCallId?: string,
   workingDirectory: string = process.cwd(),
   agentId?: string,
+  precedingReasoning?: string,
+  precedingAssistantMessage?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "PostToolUse",
@@ -90,6 +92,8 @@ export async function runPostToolUseHooks(
     tool_call_id: toolCallId,
     tool_result: toolResult,
     agent_id: agentId,
+    preceding_reasoning: precedingReasoning,
+    preceding_assistant_message: precedingAssistantMessage,
   };
 
   // Run in parallel since PostToolUse cannot block
@@ -135,6 +139,7 @@ export async function runPermissionRequestHooks(
 /**
  * Run UserPromptSubmit hooks before processing a user's prompt
  * Can block the prompt from being processed
+ * Skips execution for slash commands (e.g., /help, /clear)
  */
 export async function runUserPromptSubmitHooks(
   prompt: string,
@@ -143,6 +148,11 @@ export async function runUserPromptSubmitHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
+  // Skip hooks for slash commands - they don't trigger agent execution
+  if (isCommand) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
   const hooks = await getHooksForEvent(
     "UserPromptSubmit",
     undefined,
@@ -202,6 +212,8 @@ export async function runStopHooks(
   messageCount?: number,
   toolCallCount?: number,
   workingDirectory: string = process.cwd(),
+  precedingReasoning?: string,
+  assistantMessage?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent("Stop", undefined, workingDirectory);
   if (hooks.length === 0) {
@@ -214,6 +226,8 @@ export async function runStopHooks(
     stop_reason: stopReason,
     message_count: messageCount,
     tool_call_count: toolCallCount,
+    preceding_reasoning: precedingReasoning,
+    assistant_message: assistantMessage,
   };
 
   // Run sequentially - Stop can block

@@ -240,6 +240,59 @@ export function hasHooksForEvent(
 }
 
 /**
+ * Check if all hooks are disabled via hooks.disabled across settings levels.
+ *
+ * Precedence:
+ * 1. If user has disabled: false → ENABLED (explicit user override)
+ * 2. If user has disabled: true → DISABLED
+ * 3. If project OR project-local has disabled: true → DISABLED
+ * 4. Default → ENABLED
+ */
+export function areHooksDisabled(
+  workingDirectory: string = process.cwd(),
+): boolean {
+  try {
+    // Check user-level settings first (highest precedence)
+    const userDisabled = settingsManager.getSettings().hooks?.disabled;
+    if (userDisabled === false) {
+      // User explicitly enabled - overrides project settings
+      return false;
+    }
+    if (userDisabled === true) {
+      // User explicitly disabled
+      return true;
+    }
+
+    // User setting is undefined, check project-level settings
+    try {
+      const projectDisabled =
+        settingsManager.getProjectSettings(workingDirectory)?.hooks?.disabled;
+      if (projectDisabled === true) {
+        return true;
+      }
+    } catch {
+      // Project settings not loaded, skip
+    }
+
+    // Check project-local settings
+    try {
+      const localDisabled =
+        settingsManager.getLocalProjectSettings(workingDirectory)?.hooks
+          ?.disabled;
+      if (localDisabled === true) {
+        return true;
+      }
+    } catch {
+      // Local project settings not loaded, skip
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Convenience function to load hooks and get matching ones for an event
  */
 export async function getHooksForEvent(
@@ -247,6 +300,11 @@ export async function getHooksForEvent(
   toolName?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookCommand[]> {
+  // Check if all hooks are disabled
+  if (areHooksDisabled(workingDirectory)) {
+    return [];
+  }
+
   const config = await loadHooks(workingDirectory);
   return getMatchingHooks(config, event, toolName);
 }

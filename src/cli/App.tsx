@@ -234,6 +234,32 @@ const INTERRUPT_MESSAGE =
 const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
 
+// Hint shown when Anthropic Opus 4.5 hits llm_api_error and Bedrock is available
+const OPUS_BEDROCK_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to Bedrock Opus 4.5";
+
+// Generic hint for llm_api_error when specific model suggestion not applicable
+const PROVIDER_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to another provider";
+
+// Helper to get appropriate error hint based on stop reason and current model
+function getErrorHintForStopReason(
+  stopReason: StopReasonType | null,
+  currentModelId: string | null,
+): string {
+  if (
+    currentModelId === "opus" &&
+    stopReason === "llm_api_error" &&
+    getModelInfo("bedrock-opus")
+  ) {
+    return OPUS_BEDROCK_FALLBACK_HINT;
+  }
+  if (stopReason === "llm_api_error") {
+    return PROVIDER_FALLBACK_HINT;
+  }
+  return ERROR_FEEDBACK_HINT;
+}
+
 // Interactive slash commands that open overlays immediately (bypass queueing)
 // These commands let users browse/view while the agent is working
 // Any changes made in the overlay will be queued until end_turn
@@ -351,12 +377,17 @@ async function isRetriableError(
 
       // Check for llm_error at top level or nested (handles error.error nesting)
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
-      if (errorType === "llm_error") return true;
+      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+      // Don't retry 4xx client errors (validation, auth, malformed requests)
+      // These are not transient and won't succeed on retry
+      const is4xxError = /Error code: 4\d{2}/.test(detail);
+
+      if (errorType === "llm_error" && !is4xxError) return true;
 
       // Fallback: detect LLM provider errors from detail even if misclassified
       // This handles edge cases where streaming errors weren't properly converted to LLMError
       // Patterns are derived from handle_llm_error() message formats in the backend
-      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
       const llmProviderPatterns = [
         "Anthropic API error", // anthropic_client.py:759
         "OpenAI API error", // openai_client.py:1034
@@ -366,7 +397,10 @@ async function isRetriableError(
         "Network error", // Transient network failures during streaming
         "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
       ];
-      if (llmProviderPatterns.some((pattern) => detail.includes(pattern))) {
+      if (
+        llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
+        !is4xxError
+      ) {
         return true;
       }
 
@@ -2738,6 +2772,17 @@ export default function App({
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
 
+            // Get last assistant message and reasoning for Stop hook
+            const lastAssistant = Array.from(
+              buffersRef.current.byId.values(),
+            ).findLast((item) => item.kind === "assistant" && "text" in item);
+            const assistantMessage =
+              lastAssistant && "text" in lastAssistant
+                ? lastAssistant.text
+                : undefined;
+            const precedingReasoning = buffersRef.current.lastReasoning;
+            buffersRef.current.lastReasoning = undefined; // Clear after use
+
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
@@ -2745,6 +2790,9 @@ export default function App({
               Array.from(buffersRef.current.byId.values()).filter(
                 (item) => item.kind === "tool_call",
               ).length,
+              undefined, // workingDirectory (uses default)
+              precedingReasoning,
+              assistantMessage,
             );
 
             // If hook blocked (exit 2), inject stderr feedback and continue conversation
@@ -3653,14 +3701,24 @@ export default function App({
                   agentIdRef.current,
                 );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   true, // Skip telemetry - already tracked above
                 );
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -3668,7 +3726,12 @@ export default function App({
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 true, // Skip telemetry - already tracked above
               );
-              appendError(ERROR_FEEDBACK_HINT, true);
+
+              // Show appropriate error hint based on stop reason
+              appendError(
+                getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                true,
+              );
 
               // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
@@ -3689,7 +3752,12 @@ export default function App({
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               true, // Skip telemetry - already tracked above
             );
-            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Show appropriate error hint based on stop reason
+            appendError(
+              getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+              true,
+            );
           }
 
           // Restore dequeued message to input on error

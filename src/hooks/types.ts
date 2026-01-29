@@ -66,8 +66,12 @@ export interface SimpleHookMatcher {
  * Full hooks configuration stored in settings
  * - Tool events (PreToolUse, PostToolUse, PermissionRequest) use HookMatcher[] with matcher patterns
  * - Simple events use SimpleHookMatcher[] (same structure, just no matcher field)
+ * - disabled: when true, prevents all hooks from firing (checked across all config levels)
  */
 export type HooksConfig = {
+  /** When true, disables all hooks. User false overrides project settings; otherwise any true disables. */
+  disabled?: boolean;
+} & {
   [K in ToolHookEvent]?: HookMatcher[];
 } & {
   [K in SimpleHookEvent]?: SimpleHookMatcher[];
@@ -182,6 +186,10 @@ export interface PostToolUseHookInput extends HookInputBase {
   };
   /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
+  /** Reasoning/thinking content that preceded this tool call */
+  preceding_reasoning?: string;
+  /** Assistant message content that preceded this tool call */
+  preceding_assistant_message?: string;
 }
 
 /**
@@ -243,6 +251,10 @@ export interface StopHookInput extends HookInputBase {
   message_count?: number;
   /** Number of tool calls in the turn */
   tool_call_count?: number;
+  /** Reasoning/thinking content that preceded the final response */
+  preceding_reasoning?: string;
+  /** The assistant's final message content */
+  assistant_message?: string;
 }
 
 /**
