@@ -25,6 +25,12 @@ export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
 
 /**
+ * Header displayed before compaction summary when conversation context is truncated
+ */
+export const COMPACTION_SUMMARY_HEADER =
+  "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
+
+/**
  * Status bar thresholds - only show indicators when values exceed these
  */
 // Show token count after 100 estimated tokens (shows exact count until 1k, then compact)

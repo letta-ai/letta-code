@@ -5,8 +5,12 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { INTERRUPTED_BY_USER } from "../../constants";
+import {
+  COMPACTION_SUMMARY_HEADER,
+  INTERRUPTED_BY_USER,
+} from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -502,6 +506,33 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           b.byId.set(id, { ...line, text: newText });
         }
       }
+      break;
+    }
+
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a user message with context header and summary
+        ensure(b, id, () => ({
+          kind: "user",
+          id,
+          text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
       break;
     }
 
