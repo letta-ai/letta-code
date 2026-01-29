@@ -532,7 +532,7 @@
     "id": "kimi-k2",
     "handle": "openrouter/moonshotai/kimi-k2-0905",
     "label": "Kimi K2",
-    "description": "Kimi's latest model",
+    "description": "Kimi's K2 model",
     "updateArgs": {
       "context_window": 262144
     }
@@ -546,6 +546,16 @@
       "context_window": 256000,
       "max_output_tokens": 16000,
       "temperature": 1.0
+    }
+  },
+  {
+    "id": "kimi-k2.5",
+    "handle": "openrouter/moonshotai/kimi-k2.5",
+    "label": "Kimi K2.5",
+    "description": "Kimi's latest coding model",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 262144
     }
   },
   {
