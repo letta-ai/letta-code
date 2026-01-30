@@ -36,7 +36,6 @@ import {
   ensureMemoryFilesystemDirs,
   getMemoryDetachedDir,
   getMemorySystemDir,
-  MEMORY_FS_STATE_FILE,
   syncMemoryFilesystem,
 } from "../../agent/memoryFilesystem";
 import { settingsManager } from "../../settings-manager";
