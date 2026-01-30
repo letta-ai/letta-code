@@ -1,0 +1,66 @@
+#!/bin/bash
+#
+# slack-setup - Create a Slack app with the correct permissions
+#
+# Usage:
+#   slack-setup              # Opens browser to create Slack app
+#   slack-setup --manifest   # Print the manifest YAML
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANIFEST_PATH="$SCRIPT_DIR/../manifest.yaml"
+
+case "${1:-}" in
+  --manifest|-m)
+    cat "$MANIFEST_PATH"
+    ;;
+  --help|-h)
+    cat <<EOF
+slack-setup - Create a Slack app with pre-configured permissions
+
+Usage:
+  slack-setup              Opens browser to create Slack app with manifest
+  slack-setup --manifest   Print the manifest YAML
+
+After creating the app:
+  1. Click "Install to Workspace" and authorize
+  2. Copy the "Bot User OAuth Token" (starts with xoxb-)
+  3. Set it in your shell:
+     export SLACK_BOT_TOKEN="xoxb-..."
+  4. Test with: slack channels
+EOF
+    ;;
+  *)
+    if [[ ! -f "$MANIFEST_PATH" ]]; then
+      echo "Error: manifest.yaml not found at $MANIFEST_PATH" >&2
+      exit 1
+    fi
+
+    # URL-encode the manifest
+    manifest_encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote(open('$MANIFEST_PATH').read()))")
+    
+    url="https://api.slack.com/apps?new_app=1&manifest_yaml=$manifest_encoded"
+    
+    echo "Opening Slack app creation page..."
+    echo ""
+    echo "Next steps:"
+    echo "  1. Review the app configuration and click 'Create'"
+    echo "  2. Go to 'OAuth & Permissions' in the left sidebar"
+    echo "  3. Click 'Install to Workspace' and authorize"
+    echo "  4. Copy the 'Bot User OAuth Token' (xoxb-...)"
+    echo "  5. Run: export SLACK_BOT_TOKEN=\"xoxb-...\""
+    echo ""
+    
+    # Open browser (macOS)
+    if command -v open &> /dev/null; then
+      open "$url"
+    # Linux
+    elif command -v xdg-open &> /dev/null; then
+      xdg-open "$url"
+    else
+      echo "Open this URL in your browser:"
+      echo "$url"
+    fi
+    ;;
+esac

@@ -1,0 +1,289 @@
+#!/bin/bash
+#
+# slack - A simple wrapper for common Slack API operations
+#
+# Prerequisites:
+#   export SLACK_BOT_TOKEN="xoxb-..."  # Bot token with appropriate scopes
+#
+# Usage:
+#   slack search "query"                    # Search messages
+#   slack send "#channel" "message"         # Send message to channel
+#   slack send "@user" "message"            # DM a user
+#   slack channels                          # List channels
+#   slack history "#channel" [limit]        # Get channel history
+#   slack thread "channel" "thread_ts"      # Get thread replies
+#   slack users                             # List users
+#   slack user "user_id"                    # Get user info
+
+set -euo pipefail
+
+# Show help before checking for token
+if [[ "${1:-}" == "help" || "${1:-}" == "--help" || "${1:-}" == "-h" || -z "${1:-}" ]]; then
+  cat <<EOF
+slack - Slack API wrapper
+
+Usage:
+  slack search "query"                 Search messages workspace-wide
+  slack send "#channel" "message"      Send message to channel
+  slack send "@user" "message"         Send DM to user
+  slack join "#channel"                Join a public channel
+  slack channels                       List public channels
+  slack history "#channel" [limit]     Get channel message history
+  slack thread "channel_id" "ts"       Get thread replies
+  slack users                          List workspace users
+  slack user "user_id"                 Get user details
+
+Environment:
+  SLACK_BOT_TOKEN    Bot token (xoxb-...) with required scopes
+
+Required Bot Token Scopes:
+  search:read        For searching messages
+  chat:write         For sending messages
+  channels:read      For listing channels
+  channels:history   For reading channel history
+  users:read         For listing/viewing users
+EOF
+  exit 0
+fi
+
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_TOKEN:-}}"
+
+if [[ -z "$SLACK_TOKEN" ]]; then
+  echo "Error: SLACK_BOT_TOKEN or SLACK_TOKEN environment variable not set" >&2
+  exit 1
+fi
+
+API_BASE="https://slack.com/api"
+
+slack_api() {
+  local method="$1"
+  shift
+  curl -s -X POST "$API_BASE/$method" \
+    -H "Authorization: Bearer $SLACK_TOKEN" \
+    -H "Content-Type: application/json" \
+    "$@"
+}
+
+slack_api_get() {
+  local method="$1"
+  shift
+  curl -s -G "$API_BASE/$method" \
+    -H "Authorization: Bearer $SLACK_TOKEN" \
+    "$@"
+}
+
+case "${1:-help}" in
+  search)
+    # Search messages across the workspace
+    # Requires: search:read scope
+    query="${2:-}"
+    if [[ -z "$query" ]]; then
+      echo "Usage: slack search \"query\"" >&2
+      exit 1
+    fi
+    slack_api_get "search.messages" \
+      --data-urlencode "query=$query" \
+      --data-urlencode "sort=timestamp" \
+      --data-urlencode "sort_dir=desc" \
+      --data-urlencode "count=20" | jq -r '
+      if .ok then
+        .messages.matches[] | 
+        "[\(.channel.name // "DM")] \(.username // .user): \(.text | gsub("\n"; " ") | .[0:200])"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  send)
+    # Send a message to a channel or user
+    # Requires: chat:write scope
+    target="${2:-}"
+    message="${3:-}"
+    if [[ -z "$target" || -z "$message" ]]; then
+      echo "Usage: slack send \"#channel\" \"message\"" >&2
+      echo "       slack send \"@user\" \"message\"" >&2
+      exit 1
+    fi
+    # Convert #channel to channel name, @user to user lookup
+    if [[ "$target" == "#"* ]]; then
+      channel="${target#\#}"
+    elif [[ "$target" == "@"* ]]; then
+      channel="${target#@}"
+    else
+      channel="$target"
+    fi
+    slack_api "chat.postMessage" \
+      -d "{\"channel\": \"$channel\", \"text\": \"$message\"}" | jq -r '
+      if .ok then
+        "Message sent to \(.channel)"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  join)
+    # Join a public channel
+    # Requires: channels:join scope
+    channel="${2:-}"
+    if [[ -z "$channel" ]]; then
+      echo "Usage: slack join \"#channel\"" >&2
+      exit 1
+    fi
+    channel="${channel#\#}"
+    # Get channel ID first
+    channel_id=$(slack_api_get "conversations.list" \
+      --data-urlencode "types=public_channel" | \
+      jq -r ".channels[] | select(.name==\"$channel\") | .id")
+    if [[ -z "$channel_id" ]]; then
+      echo "Error: Channel #$channel not found" >&2
+      exit 1
+    fi
+    slack_api "conversations.join" \
+      -d "{\"channel\": \"$channel_id\"}" | jq -r '
+      if .ok then
+        "Joined #\(.channel.name)"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  channels|list-channels)
+    # List public channels
+    # Requires: channels:read scope
+    slack_api_get "conversations.list" \
+      --data-urlencode "types=public_channel" \
+      --data-urlencode "limit=100" | jq -r '
+      if .ok then
+        .channels[] | "#\(.name) (\(.num_members) members) - \(.purpose.value // "No description" | .[0:60])"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  history)
+    # Get channel history
+    # Requires: channels:history scope
+    channel="${2:-}"
+    limit="${3:-20}"
+    if [[ -z "$channel" ]]; then
+      echo "Usage: slack history \"#channel\" [limit]" >&2
+      exit 1
+    fi
+    channel="${channel#\#}"
+    # First get channel ID
+    channel_id=$(slack_api_get "conversations.list" \
+      --data-urlencode "types=public_channel,private_channel" | \
+      jq -r ".channels[] | select(.name==\"$channel\") | .id")
+    if [[ -z "$channel_id" ]]; then
+      echo "Error: Channel #$channel not found" >&2
+      exit 1
+    fi
+    slack_api_get "conversations.history" \
+      --data-urlencode "channel=$channel_id" \
+      --data-urlencode "limit=$limit" | jq -r '
+      if .ok then
+        .messages[] | 
+        "[\(.ts | tonumber | strftime("%Y-%m-%d %H:%M"))] \(.user // "bot"): \(.text | gsub("\n"; " ") | .[0:200])"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  thread)
+    # Get thread replies
+    # Requires: channels:history scope
+    # Usage: slack thread <channel> <ts> [--json]
+    json_output=false
+    channel=""
+    thread_ts=""
+    for arg in "${@:2}"; do
+      case "$arg" in
+        --json) json_output=true ;;
+        *) [[ -z "$channel" ]] && channel="$arg" || thread_ts="$arg" ;;
+      esac
+    done
+    if [[ -z "$channel" || -z "$thread_ts" ]]; then
+      echo "Usage: slack thread \"channel_id\" \"thread_ts\" [--json]" >&2
+      exit 1
+    fi
+    if $json_output; then
+      slack_api_get "conversations.replies" \
+        --data-urlencode "channel=$channel" \
+        --data-urlencode "ts=$thread_ts"
+    else
+      slack_api_get "conversations.replies" \
+        --data-urlencode "channel=$channel" \
+        --data-urlencode "ts=$thread_ts" | jq -r '
+        if .ok then
+          "Thread: \(.messages | length) messages\n" + "="*60 + "\n" +
+          (.messages | to_entries | map(
+            "\n[\(.value.ts | tonumber | strftime("%Y-%m-%d %H:%M"))] @\(.value.user // "bot"):\n\(.value.text)\n" + "-"*60
+          ) | join("\n"))
+        else
+          "Error: \(.error)"
+        end'
+    fi
+    ;;
+
+  users)
+    # List workspace users
+    # Requires: users:read scope
+    slack_api_get "users.list" \
+      --data-urlencode "limit=100" | jq -r '
+      if .ok then
+        .members[] | select(.deleted == false and .is_bot == false) |
+        "@\(.name) - \(.real_name // "No name") (\(.profile.title // "No title"))"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  user)
+    # Get user info
+    # Requires: users:read scope
+    user_id="${2:-}"
+    if [[ -z "$user_id" ]]; then
+      echo "Usage: slack user \"user_id\"" >&2
+      exit 1
+    fi
+    slack_api_get "users.info" \
+      --data-urlencode "user=$user_id" | jq -r '
+      if .ok then
+        .user | "Name: \(.real_name)\nUsername: @\(.name)\nTitle: \(.profile.title // "N/A")\nEmail: \(.profile.email // "N/A")"
+      else
+        "Error: \(.error)"
+      end'
+    ;;
+
+  help|--help|-h|"")
+    cat <<EOF
+slack - Slack API wrapper
+
+Usage:
+  slack search "query"                 Search messages workspace-wide
+  slack send "#channel" "message"      Send message to channel
+  slack send "@user" "message"         Send DM to user
+  slack channels                       List public channels
+  slack history "#channel" [limit]     Get channel message history
+  slack thread "channel_id" "ts"       Get thread replies
+  slack users                          List workspace users
+  slack user "user_id"                 Get user details
+
+Environment:
+  SLACK_BOT_TOKEN    Bot token (xoxb-...) with required scopes
+
+Required Bot Token Scopes:
+  search:read        For searching messages
+  chat:write         For sending messages
+  channels:read      For listing channels
+  channels:history   For reading channel history
+  users:read         For listing/viewing users
+EOF
+    ;;
+
+  *)
+    echo "Unknown command: $1" >&2
+    echo "Run 'slack help' for usage" >&2
+    exit 1
+    ;;
+esac

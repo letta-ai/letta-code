@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+# slack-api - Make authenticated Slack API calls without exposing token
+#
+# Usage:
+#   slack-api POST chat.postMessage '{"channel": "#general", "text": "Hello"}'
+#   slack-api GET conversations.list
+#
+# The token is read from SLACK_BOT_TOKEN env var (never appears in command)
+
+set -euo pipefail
+
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_TOKEN:-}}"
+
+if [[ -z "$SLACK_TOKEN" ]]; then
+  echo "Error: SLACK_BOT_TOKEN not set" >&2
+  exit 1
+fi
+
+method="${1:-GET}"
+endpoint="${2:-}"
+body="${3:-}"
+
+if [[ -z "$endpoint" ]]; then
+  echo "Usage: slack-api <GET|POST> <endpoint> [json-body]" >&2
+  echo "Example: slack-api POST chat.postMessage '{\"channel\": \"#general\", \"text\": \"Hi\"}'" >&2
+  exit 1
+fi
+
+if [[ "$method" == "POST" && -n "$body" ]]; then
+  curl -s -X POST "https://slack.com/api/$endpoint" \
+    -H "Authorization: Bearer $SLACK_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+elif [[ "$method" == "GET" ]]; then
+  curl -s "https://slack.com/api/$endpoint" \
+    -H "Authorization: Bearer $SLACK_TOKEN"
+else
+  curl -s -X "$method" "https://slack.com/api/$endpoint" \
+    -H "Authorization: Bearer $SLACK_TOKEN"
+fi
