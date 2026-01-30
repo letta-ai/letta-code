@@ -709,6 +709,14 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
+      // Read-only labels are API-authoritative. If file exists but block doesn't, delete the file.
+      if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
+        await deleteMemoryFile(fileDir, label);
+        deletedFiles.push(label);
+        allFilesMap.delete(label);
+        continue;
+      }
+
       // Create block from file
       const blockData = parseBlockFromFileContent(fileEntry.content, label);
       const createdBlock = await client.blocks.create({
@@ -733,6 +741,16 @@ export async function syncMemoryFilesystem(
 
     // Case 2: Block exists, no file
     if (!fileEntry && blockEntry) {
+      // Read-only blocks: never delete/un-tag. Always recreate file instead.
+      if (blockEntry.read_only) {
+        const targetDir = isAttached ? systemDir : detachedDir;
+        const fileContent = renderBlockToFileContent(blockEntry);
+        await writeMemoryFile(targetDir, label, fileContent);
+        createdFiles.push(label);
+        allFilesMap.set(label, { content: fileContent });
+        continue;
+      }
+
       if (lastFileHash && !blockChanged) {
         // File deleted, block unchanged → remove owner tag so file doesn't resurrect
         if (blockEntry.id) {
@@ -1232,6 +1250,10 @@ function classifyLabel(
   if (fileContent !== null && blockValue === null) {
     if (lastBlockHash && !fileChanged) {
       // Block was deleted, file unchanged — would delete file
+      return;
+    }
+    // Ignore file-only read_only labels (API is authoritative, file will be deleted on sync)
+    if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
       return;
     }
     newFiles.push(label);
