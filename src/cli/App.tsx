@@ -116,6 +116,7 @@ import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { EventMessage } from "./components/EventMessage";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
@@ -1467,7 +1468,13 @@ export default function App({
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
       if (!ln) continue;
-      if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
+      if (
+        ln.kind === "user" ||
+        ln.kind === "error" ||
+        ln.kind === "status" ||
+        ln.kind === "summary" ||
+        ln.kind === "event"
+      ) {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         continue;
@@ -9485,7 +9492,7 @@ Plan file path: ${planFilePath}`;
           <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
             {item.kind === "welcome" ? (
               <WelcomeScreen loadingState="ready" {...item.snapshot} />
-            ) : item.kind === "user" ? (
+            ) : item.kind === "user" || item.kind === "summary" ? (
               <UserMessage line={item} />
             ) : item.kind === "reasoning" ? (
               <ReasoningMessage line={item} />
@@ -9503,6 +9510,8 @@ Plan file path: ${planFilePath}`;
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
+            ) : item.kind === "event" ? (
+              <EventMessage line={item} />
             ) : item.kind === "separator" ? (
               <Box marginTop={1}>
                 <Text dimColor>{"─".repeat(columns)}</Text>
@@ -9606,7 +9615,7 @@ Plan file path: ${planFilePath}`;
                               currentApprovalContext?.allowPersistence ?? true
                             }
                           />
-                        ) : ln.kind === "user" ? (
+                        ) : ln.kind === "user" || ln.kind === "summary" ? (
                           <UserMessage line={ln} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
@@ -9648,6 +9657,8 @@ Plan file path: ${planFilePath}`;
                           <ErrorMessage line={ln} />
                         ) : ln.kind === "status" ? (
                           <StatusMessage line={ln} />
+                        ) : ln.kind === "event" ? (
+                          <EventMessage line={ln} />
                         ) : ln.kind === "command" ? (
                           <CommandMessage line={ln} />
                         ) : ln.kind === "bash_command" ? (

@@ -336,8 +336,71 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
-      default:
-        break; // ignore other message types
+      default: {
+        // Handle new compaction message types (when include_compaction_messages=true)
+        // These are not yet in the SDK types, so we handle them via string comparison
+        const msgType = msg.message_type as string | undefined;
+
+        if (msgType === "summary_message") {
+          // SummaryMessage has: summary (str), compaction_stats (optional)
+          const summaryMsg = msg as Message & {
+            summary?: string;
+            compaction_stats?: {
+              trigger?: string;
+              context_tokens_before?: number;
+              context_tokens_after?: number;
+              context_window?: number;
+              messages_count_before?: number;
+              messages_count_after?: number;
+            };
+          };
+
+          const summaryText = summaryMsg.summary || "";
+          const stats = summaryMsg.compaction_stats;
+
+          const exists = buffers.byId.has(lineId);
+          buffers.byId.set(lineId, {
+            kind: "summary",
+            id: lineId,
+            text: `${COMPACTION_SUMMARY_HEADER}\n\n${summaryText}`,
+            ...(stats
+              ? {
+                  stats: {
+                    trigger: stats.trigger,
+                    contextTokensBefore: stats.context_tokens_before,
+                    contextTokensAfter: stats.context_tokens_after,
+                    contextWindow: stats.context_window,
+                    messagesCountBefore: stats.messages_count_before,
+                    messagesCountAfter: stats.messages_count_after,
+                  },
+                }
+              : {}),
+          });
+          if (!exists) buffers.order.push(lineId);
+          break;
+        }
+
+        if (msgType === "event_message") {
+          // EventMessage has: event_type (str), event_data (dict)
+          const eventMsg = msg as Message & {
+            event_type?: string;
+            event_data?: Record<string, unknown>;
+          };
+
+          const exists = buffers.byId.has(lineId);
+          buffers.byId.set(lineId, {
+            kind: "event",
+            id: lineId,
+            eventType: eventMsg.event_type || "unknown",
+            eventData: eventMsg.event_data || {},
+          });
+          if (!exists) buffers.order.push(lineId);
+          break;
+        }
+
+        // ignore other message types
+        break;
+      }
     }
   }
 

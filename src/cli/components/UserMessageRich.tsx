@@ -6,7 +6,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
 
 type UserLine = {
-  kind: "user";
+  kind: "user" | "summary";
   id: string;
   text: string;
 };

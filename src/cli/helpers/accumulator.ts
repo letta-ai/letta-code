@@ -137,6 +137,25 @@ export type Line =
     }
   | { kind: "error"; id: string; text: string }
   | {
+      kind: "summary";
+      id: string;
+      text: string; // The summary content
+      stats?: {
+        trigger?: string;
+        contextTokensBefore?: number;
+        contextTokensAfter?: number;
+        contextWindow?: number;
+        messagesCountBefore?: number;
+        messagesCountAfter?: number;
+      };
+    }
+  | {
+      kind: "event";
+      id: string;
+      eventType: string;
+      eventData: Record<string, unknown>;
+    }
+  | {
       kind: "command";
       id: string;
       input: string;
@@ -804,8 +823,81 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
-    default:
-      break; // ignore ping/etc
+    default: {
+      // Handle new compaction message types (when include_compaction_messages=true)
+      // These are not yet in the SDK types, so we handle them via string comparison
+      const msgType = chunk.message_type as string | undefined;
+
+      if (msgType === "summary_message") {
+        // Use otid if available, fall back to id
+        const summaryChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          summary?: string;
+          compaction_stats?: {
+            trigger?: string;
+            context_tokens_before?: number;
+            context_tokens_after?: number;
+            context_window?: number;
+            messages_count_before?: number;
+            messages_count_after?: number;
+          };
+        };
+        const id = summaryChunk.otid || summaryChunk.id;
+        if (!id) break;
+
+        // Handle otid transition (mark previous line as finished)
+        handleOtidTransition(b, id);
+
+        const summaryText = summaryChunk.summary || "";
+        const stats = summaryChunk.compaction_stats;
+
+        ensure(b, id, () => ({
+          kind: "summary",
+          id,
+          text: `${COMPACTION_SUMMARY_HEADER}\n\n${summaryText}`,
+          ...(stats
+            ? {
+                stats: {
+                  trigger: stats.trigger,
+                  contextTokensBefore: stats.context_tokens_before,
+                  contextTokensAfter: stats.context_tokens_after,
+                  contextWindow: stats.context_window,
+                  messagesCountBefore: stats.messages_count_before,
+                  messagesCountAfter: stats.messages_count_after,
+                },
+              }
+            : {}),
+        }));
+        break;
+      }
+
+      if (msgType === "event_message") {
+        // Use otid if available, fall back to id
+        const eventChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          event_type?: string;
+          event_data?: Record<string, unknown>;
+        };
+        const id = eventChunk.otid || eventChunk.id;
+        if (!id) break;
+
+        // Handle otid transition (mark previous line as finished)
+        handleOtidTransition(b, id);
+
+        ensure(b, id, () => ({
+          kind: "event",
+          id,
+          eventType: eventChunk.event_type || "unknown",
+          eventData: eventChunk.event_data || {},
+        }));
+        break;
+      }
+
+      // ignore ping/etc
+      break;
+    }
   }
 }
 
