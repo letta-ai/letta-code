@@ -31,13 +31,25 @@ const MANAGED_BLOCK_LABELS = new Set([
   ...ISOLATED_BLOCK_LABELS,
 ]);
 
+// Unified sync state - no system/detached split
+// The attached/detached distinction is derived at runtime from API and FS
 type SyncState = {
-  systemBlocks: Record<string, string>;
-  systemFiles: Record<string, string>;
-  detachedBlocks: Record<string, string>;
-  detachedFiles: Record<string, string>;
-  detachedBlockIds: Record<string, string>;
+  blockHashes: Record<string, string>; // label → content hash
+  fileHashes: Record<string, string>; // label → content hash
+  blockIds: Record<string, string>; // label → block ID
   lastSync: string | null;
+};
+
+// Legacy format for migration
+type LegacySyncState = {
+  systemBlocks?: Record<string, string>;
+  systemFiles?: Record<string, string>;
+  detachedBlocks?: Record<string, string>;
+  detachedFiles?: Record<string, string>;
+  detachedBlockIds?: Record<string, string>;
+  blocks?: Record<string, string>;
+  files?: Record<string, string>;
+  lastSync?: string | null;
 };
 
 export type MemorySyncConflict = {
@@ -140,40 +152,52 @@ function loadSyncState(
   homeDir: string = homedir(),
 ): SyncState {
   const statePath = getMemoryStatePath(agentId, homeDir);
+  const emptyState: SyncState = {
+    blockHashes: {},
+    fileHashes: {},
+    blockIds: {},
+    lastSync: null,
+  };
+
   if (!existsSync(statePath)) {
-    return {
-      systemBlocks: {},
-      systemFiles: {},
-      detachedBlocks: {},
-      detachedFiles: {},
-      detachedBlockIds: {},
-      lastSync: null,
-    };
+    return emptyState;
   }
 
   try {
     const raw = readFileSync(statePath, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<SyncState> & {
-      blocks?: Record<string, string>;
-      files?: Record<string, string>;
+    const parsed = JSON.parse(raw) as LegacySyncState & Partial<SyncState>;
+
+    // New format - return directly
+    if (parsed.blockHashes !== undefined) {
+      return {
+        blockHashes: parsed.blockHashes || {},
+        fileHashes: parsed.fileHashes || {},
+        blockIds: parsed.blockIds || {},
+        lastSync: parsed.lastSync || null,
+      };
+    }
+
+    // Migrate from legacy format: merge system + detached into unified maps
+    const blockHashes: Record<string, string> = {
+      ...(parsed.systemBlocks || parsed.blocks || {}),
+      ...(parsed.detachedBlocks || {}),
     };
+    const fileHashes: Record<string, string> = {
+      ...(parsed.systemFiles || parsed.files || {}),
+      ...(parsed.detachedFiles || {}),
+    };
+    const blockIds: Record<string, string> = {
+      ...(parsed.detachedBlockIds || {}),
+    };
+
     return {
-      systemBlocks: parsed.systemBlocks || parsed.blocks || {},
-      systemFiles: parsed.systemFiles || parsed.files || {},
-      detachedBlocks: parsed.detachedBlocks || {},
-      detachedFiles: parsed.detachedFiles || {},
-      detachedBlockIds: parsed.detachedBlockIds || {},
+      blockHashes,
+      fileHashes,
+      blockIds,
       lastSync: parsed.lastSync || null,
     };
   } catch {
-    return {
-      systemBlocks: {},
-      systemFiles: {},
-      detachedBlocks: {},
-      detachedFiles: {},
-      detachedBlockIds: {},
-      lastSync: null,
-    };
+    return emptyState;
   }
 }
 
@@ -428,39 +452,28 @@ export function renderMemoryFilesystemTree(
 }
 
 function buildStateHashes(
-  systemBlocks: Map<string, { value: string }>,
-  systemFiles: Map<string, { content: string }>,
-  detachedBlocks: Map<string, { value: string }>,
-  detachedFiles: Map<string, { content: string }>,
-  detachedBlockIds: Record<string, string>,
+  allBlocks: Map<string, { value?: string | null; id?: string }>,
+  allFiles: Map<string, { content: string }>,
 ): SyncState {
-  const systemBlockHashes: Record<string, string> = {};
-  const systemFileHashes: Record<string, string> = {};
-  const userBlockHashes: Record<string, string> = {};
-  const userFileHashes: Record<string, string> = {};
+  const blockHashes: Record<string, string> = {};
+  const fileHashes: Record<string, string> = {};
+  const blockIds: Record<string, string> = {};
 
-  systemBlocks.forEach((block, label) => {
-    systemBlockHashes[label] = hashContent(block.value || "");
+  allBlocks.forEach((block, label) => {
+    blockHashes[label] = hashContent(block.value || "");
+    if (block.id) {
+      blockIds[label] = block.id;
+    }
   });
 
-  systemFiles.forEach((file, label) => {
-    systemFileHashes[label] = hashContent(file.content || "");
-  });
-
-  detachedBlocks.forEach((block, label) => {
-    userBlockHashes[label] = hashContent(block.value || "");
-  });
-
-  detachedFiles.forEach((file, label) => {
-    userFileHashes[label] = hashContent(file.content || "");
+  allFiles.forEach((file, label) => {
+    fileHashes[label] = hashContent(file.content || "");
   });
 
   return {
-    systemBlocks: systemBlockHashes,
-    systemFiles: systemFileHashes,
-    detachedBlocks: userBlockHashes,
-    detachedFiles: userFileHashes,
-    detachedBlockIds,
+    blockHashes,
+    fileHashes,
+    blockIds,
     lastSync: new Date().toISOString(),
   };
 }
@@ -532,82 +545,132 @@ export async function syncMemoryFilesystem(
     }
   }
 
-  const systemLabels = new Set<string>([
+  // Unified sync loop - collect all labels and process once
+  // The attached/detached distinction is determined at runtime
+  const allLabels = new Set<string>([
     ...Array.from(systemFiles.keys()),
+    ...Array.from(detachedFiles.keys()),
     ...Array.from(systemBlockMap.keys()),
-    ...Object.keys(lastState.systemBlocks),
-    ...Object.keys(lastState.systemFiles),
+    ...Array.from(detachedBlockMap.keys()),
+    ...Object.keys(lastState.blockHashes),
+    ...Object.keys(lastState.fileHashes),
   ]);
 
-  for (const label of Array.from(systemLabels).sort()) {
+  // Track all blocks for state saving
+  const allBlocksMap = new Map<
+    string,
+    { value?: string | null; id?: string }
+  >();
+  const allFilesMap = new Map<string, { content: string }>();
+
+  for (const label of Array.from(allLabels).sort()) {
     if (MANAGED_BLOCK_LABELS.has(label)) {
       continue;
     }
 
-    const fileEntry = systemFiles.get(label);
-    const blockEntry = systemBlockMap.get(label);
+    // Determine current state at runtime
+    const systemFile = systemFiles.get(label);
+    const detachedFile = detachedFiles.get(label);
+    const attachedBlock = systemBlockMap.get(label);
+    const detachedBlock = detachedBlockMap.get(label);
+
+    // Derive file and block entries
+    const fileEntry = systemFile || detachedFile;
+    const fileInSystem = !!systemFile;
+    const blockEntry = attachedBlock || detachedBlock;
+    const isAttached = !!attachedBlock;
+
+    // Get directory for file operations
+    const fileDir = fileInSystem ? systemDir : detachedDir;
 
     const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
     const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
 
-    const lastFileHash = lastState.systemFiles[label] || null;
-    const lastBlockHash = lastState.systemBlocks[label] || null;
+    // Use unified hash lookup
+    const lastFileHash = lastState.fileHashes[label] || null;
+    const lastBlockHash = lastState.blockHashes[label] || null;
 
     const fileChanged = fileHash !== lastFileHash;
     const blockChanged = blockHash !== lastBlockHash;
 
     const resolution = resolutions.get(label);
 
+    // Track for state saving
+    if (blockEntry) {
+      allBlocksMap.set(label, { value: blockEntry.value, id: blockEntry.id });
+    }
+    if (fileEntry) {
+      allFilesMap.set(label, { content: fileEntry.content });
+    }
+
+    // Case 1: File exists, no block
     if (fileEntry && !blockEntry) {
       if (lastBlockHash && !fileChanged) {
-        // Block was deleted elsewhere; delete file.
-        await deleteMemoryFile(systemDir, label);
+        // Block was deleted elsewhere; delete file
+        await deleteMemoryFile(fileDir, label);
         deletedFiles.push(label);
+        allFilesMap.delete(label);
         continue;
       }
 
-      // Create block from file (parsing frontmatter for description/limit)
+      // Create block from file
       const blockData = parseBlockFromFileContent(fileEntry.content, label);
       const createdBlock = await client.blocks.create({
         ...blockData,
         tags: [`owner:${agentId}`],
       });
       if (createdBlock.id) {
-        await client.agents.blocks.attach(createdBlock.id, {
-          agent_id: agentId,
+        // Policy: attach if file is in system/, don't attach if at root
+        if (fileInSystem) {
+          await client.agents.blocks.attach(createdBlock.id, {
+            agent_id: agentId,
+          });
+        }
+        allBlocksMap.set(label, {
+          value: createdBlock.value,
+          id: createdBlock.id,
         });
       }
       createdBlocks.push(blockData.label);
       continue;
     }
 
+    // Case 2: Block exists, no file
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted from system/, block unchanged
-        // Check if file was moved to root (vs deleted entirely)
-        const movedToRoot = detachedFiles.has(label);
-
+        // File deleted, block unchanged
         if (blockEntry.id) {
           try {
-            await client.agents.blocks.detach(blockEntry.id, {
-              agent_id: agentId,
-            });
+            if (isAttached) {
+              // Check if file was moved to root (vs deleted entirely)
+              const movedToRoot = detachedFiles.has(label);
+              await client.agents.blocks.detach(blockEntry.id, {
+                agent_id: agentId,
+              });
 
-            if (movedToRoot) {
-              // File was moved to root - add to detachedBlockMap so detached loop can sync
-              detachedBlockMap.set(label, blockEntry);
-              detachedBlockIds[label] = blockEntry.id;
+              if (movedToRoot) {
+                // File was moved - block stays with owner tag, will sync in this loop iteration
+                // (detachedFiles.has(label) means we already processed or will process the detached file)
+              } else {
+                // File was deleted entirely - remove owner tag
+                const currentTags = blockEntry.tags || [];
+                const newTags = currentTags.filter(
+                  (tag) => !tag.startsWith(`owner:${agentId}`),
+                );
+                await client.blocks.update(blockEntry.id, { tags: newTags });
+                allBlocksMap.delete(label);
+              }
             } else {
-              // File was deleted entirely - remove owner tag so it doesn't resurrect
+              // Detached block: remove owner tag so file doesn't resurrect
               const currentTags = blockEntry.tags || [];
               const newTags = currentTags.filter(
                 (tag) => !tag.startsWith(`owner:${agentId}`),
               );
               await client.blocks.update(blockEntry.id, { tags: newTags });
+              allBlocksMap.delete(label);
             }
             deletedBlocks.push(label);
           } catch (err) {
-            // Block may have been manually deleted already - ignore
             if (!(err instanceof Error && err.message.includes("Not Found"))) {
               throw err;
             }
@@ -616,17 +679,20 @@ export async function syncMemoryFilesystem(
         continue;
       }
 
-      // Create file from block
-      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      // Create file from block - use block's attached status to determine location
+      const targetDir = isAttached ? systemDir : detachedDir;
+      await writeMemoryFile(targetDir, label, blockEntry.value || "");
       createdFiles.push(label);
+      allFilesMap.set(label, { content: blockEntry.value || "" });
       continue;
     }
 
+    // Case 3: Neither exists (was in lastState but now gone)
     if (!fileEntry || !blockEntry) {
       continue;
     }
 
-    // If file and block have the same content, they're in sync - no conflict
+    // Case 4: Both exist - check for sync/conflict
     if (fileHash === blockHash) {
       continue;
     }
@@ -642,34 +708,41 @@ export async function syncMemoryFilesystem(
 
     if (resolution?.resolution === "file") {
       if (blockEntry.id) {
-        // Parse frontmatter to extract just the body for the block value
         const blockData = parseBlockFromFileContent(fileEntry.content, label);
-        await client.blocks.update(blockEntry.id, {
-          value: blockData.value,
-        });
+        // Policy: update label only for detached blocks
+        const updatePayload = isAttached
+          ? { value: blockData.value }
+          : { value: blockData.value, label };
+        await client.blocks.update(blockEntry.id, updatePayload);
         updatedBlocks.push(label);
+        allBlocksMap.set(label, { value: blockData.value, id: blockEntry.id });
       }
       continue;
     }
 
     if (resolution?.resolution === "block") {
-      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
+      allFilesMap.set(label, { content: blockEntry.value || "" });
       continue;
     }
 
     if (fileChanged && !blockChanged) {
       if (blockEntry.id) {
         try {
-          // Parse frontmatter to extract just the body for the block value
           const blockData = parseBlockFromFileContent(fileEntry.content, label);
-          await client.blocks.update(blockEntry.id, {
-            value: blockData.value,
-          });
+          const updatePayload = isAttached
+            ? { value: blockData.value }
+            : { value: blockData.value, label };
+          await client.blocks.update(blockEntry.id, updatePayload);
           updatedBlocks.push(label);
+          allBlocksMap.set(label, {
+            value: blockData.value,
+            id: blockEntry.id,
+          });
         } catch (err) {
-          // Block may have been deleted - create a new one
           if (err instanceof Error && err.message.includes("Not Found")) {
+            // Block was deleted - create a new one
             const blockData = parseBlockFromFileContent(
               fileEntry.content,
               label,
@@ -679,8 +752,14 @@ export async function syncMemoryFilesystem(
               tags: [`owner:${agentId}`],
             });
             if (createdBlock.id) {
-              await client.agents.blocks.attach(createdBlock.id, {
-                agent_id: agentId,
+              if (fileInSystem) {
+                await client.agents.blocks.attach(createdBlock.id, {
+                  agent_id: agentId,
+                });
+              }
+              allBlocksMap.set(label, {
+                value: createdBlock.value,
+                id: createdBlock.id,
               });
             }
             createdBlocks.push(blockData.label);
@@ -693,174 +772,15 @@ export async function syncMemoryFilesystem(
     }
 
     if (!fileChanged && blockChanged) {
-      await writeMemoryFile(systemDir, label, blockEntry.value || "");
+      await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
+      allFilesMap.set(label, { content: blockEntry.value || "" });
     }
   }
 
-  const detachedLabels = new Set<string>([
-    ...Array.from(detachedFiles.keys()),
-    ...Array.from(detachedBlockMap.keys()),
-    ...Object.keys(lastState.detachedBlocks),
-    ...Object.keys(lastState.detachedFiles),
-  ]);
-
-  for (const label of Array.from(detachedLabels).sort()) {
-    const fileEntry = detachedFiles.get(label);
-    const blockEntry = detachedBlockMap.get(label);
-
-    const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
-    const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
-
-    const lastFileHash = lastState.detachedFiles[label] || null;
-    const lastBlockHash = lastState.detachedBlocks[label] || null;
-
-    const fileChanged = fileHash !== lastFileHash;
-    const blockChanged = blockHash !== lastBlockHash;
-
-    const resolution = resolutions.get(label);
-
-    if (fileEntry && !blockEntry) {
-      if (lastBlockHash && !fileChanged) {
-        // Block was deleted elsewhere; delete file.
-        await deleteMemoryFile(detachedDir, label);
-        deletedFiles.push(label);
-        delete detachedBlockIds[label];
-        continue;
-      }
-
-      const blockData = parseBlockFromFileContent(fileEntry.content, label);
-      const createdBlock = await client.blocks.create({
-        ...blockData,
-        tags: [`owner:${agentId}`],
-      });
-      if (createdBlock.id) {
-        detachedBlockIds[blockData.label] = createdBlock.id;
-        detachedBlockMap.set(blockData.label, createdBlock as Block);
-      }
-      createdBlocks.push(blockData.label);
-      continue;
-    }
-
-    if (!fileEntry && blockEntry) {
-      if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged -> remove owner tag so file doesn't resurrect
-        // This matches the FS→API mapping: rm file = remove owner tag
-        if (blockEntry.id) {
-          try {
-            // Remove the owner tag by updating the block's tags
-            const currentTags = blockEntry.tags || [];
-            const newTags = currentTags.filter(
-              (tag) => !tag.startsWith(`owner:${agentId}`),
-            );
-            await client.blocks.update(blockEntry.id, { tags: newTags });
-          } catch (err) {
-            // Block may have been manually deleted already - ignore
-            if (!(err instanceof Error && err.message.includes("Not Found"))) {
-              throw err;
-            }
-          }
-        }
-        deletedBlocks.push(label);
-        delete detachedBlockIds[label];
-        continue;
-      }
-
-      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
-      createdFiles.push(label);
-      continue;
-    }
-
-    if (!fileEntry || !blockEntry) {
-      continue;
-    }
-
-    // If file and block have the same content, they're in sync - no conflict
-    if (fileHash === blockHash) {
-      continue;
-    }
-
-    if (fileChanged && blockChanged && !resolution) {
-      conflicts.push({
-        label,
-        blockValue: blockEntry.value || "",
-        fileValue: fileEntry.content,
-      });
-      continue;
-    }
-
-    if (resolution?.resolution === "file") {
-      if (blockEntry.id) {
-        // Parse frontmatter to extract just the body for the block value
-        const blockData = parseBlockFromFileContent(fileEntry.content, label);
-        await client.blocks.update(blockEntry.id, {
-          value: blockData.value,
-          label,
-        });
-      }
-      updatedBlocks.push(label);
-      continue;
-    }
-
-    if (resolution?.resolution === "block") {
-      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
-      updatedFiles.push(label);
-      continue;
-    }
-
-    if (fileChanged && !blockChanged) {
-      if (blockEntry.id) {
-        // Parse frontmatter to extract just the body for the block value
-        const blockData = parseBlockFromFileContent(fileEntry.content, label);
-        await client.blocks.update(blockEntry.id, {
-          value: blockData.value,
-          label,
-        });
-      }
-      updatedBlocks.push(label);
-      continue;
-    }
-
-    if (!fileChanged && blockChanged) {
-      await writeMemoryFile(detachedDir, label, blockEntry.value || "");
-      updatedFiles.push(label);
-    }
-  }
-
+  // Save state if no conflicts
   if (conflicts.length === 0) {
-    const updatedBlocksList = await fetchAgentBlocks(agentId);
-    const updatedSystemBlockMap = new Map(
-      updatedBlocksList
-        .filter(
-          (block) =>
-            block.label && block.label !== MEMORY_FILESYSTEM_BLOCK_LABEL,
-        )
-        .map((block) => [block.label as string, { value: block.value || "" }]),
-    );
-
-    const updatedSystemFilesMap = await readMemoryFiles(systemDir);
-    updatedSystemFilesMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
-    const updatedUserFilesMap = await readMemoryFiles(detachedDir, [
-      MEMORY_SYSTEM_DIR,
-    ]);
-    const refreshedUserBlocks = new Map<string, { value: string }>();
-
-    for (const [label, blockId] of Object.entries(detachedBlockIds)) {
-      try {
-        const block = await client.blocks.retrieve(blockId);
-        refreshedUserBlocks.set(label, { value: block.value || "" });
-      } catch {
-        delete detachedBlockIds[label];
-      }
-    }
-
-    const nextState = buildStateHashes(
-      updatedSystemBlockMap,
-      updatedSystemFilesMap,
-      refreshedUserBlocks,
-      updatedUserFilesMap,
-      detachedBlockIds,
-    );
+    const nextState = buildStateHashes(allBlocksMap, allFilesMap);
     await saveSyncState(nextState, agentId, homeDir);
   }
 
@@ -1030,45 +950,35 @@ export async function checkMemoryFilesystemStatus(
     }
   }
 
-  // Check system labels
-  const systemLabels = new Set<string>([
+  // Unified label check - collect all labels and classify once
+  const allLabels = new Set<string>([
     ...Array.from(systemFiles.keys()),
-    ...Array.from(systemBlockMap.keys()),
-    ...Object.keys(lastState.systemBlocks),
-    ...Object.keys(lastState.systemFiles),
-  ]);
-
-  for (const label of Array.from(systemLabels).sort()) {
-    if (MANAGED_BLOCK_LABELS.has(label)) continue;
-    classifyLabel(
-      label,
-      systemFiles.get(label)?.content ?? null,
-      systemBlockMap.get(label)?.value ?? null,
-      lastState.systemFiles[label] ?? null,
-      lastState.systemBlocks[label] ?? null,
-      conflicts,
-      pendingFromFile,
-      pendingFromBlock,
-      newFiles,
-      newBlocks,
-    );
-  }
-
-  // Check user labels
-  const detachedLabels = new Set<string>([
     ...Array.from(detachedFiles.keys()),
+    ...Array.from(systemBlockMap.keys()),
     ...Array.from(detachedBlockMap.keys()),
-    ...Object.keys(lastState.detachedBlocks),
-    ...Object.keys(lastState.detachedFiles),
+    ...Object.keys(lastState.blockHashes),
+    ...Object.keys(lastState.fileHashes),
   ]);
 
-  for (const label of Array.from(detachedLabels).sort()) {
+  for (const label of Array.from(allLabels).sort()) {
+    if (MANAGED_BLOCK_LABELS.has(label)) continue;
+
+    // Determine current state at runtime
+    const fileContent =
+      systemFiles.get(label)?.content ??
+      detachedFiles.get(label)?.content ??
+      null;
+    const blockValue =
+      systemBlockMap.get(label)?.value ??
+      detachedBlockMap.get(label)?.value ??
+      null;
+
     classifyLabel(
       label,
-      detachedFiles.get(label)?.content ?? null,
-      detachedBlockMap.get(label)?.value ?? null,
-      lastState.detachedFiles[label] ?? null,
-      lastState.detachedBlocks[label] ?? null,
+      fileContent,
+      blockValue,
+      lastState.fileHashes[label] ?? null,
+      lastState.blockHashes[label] ?? null,
       conflicts,
       pendingFromFile,
       pendingFromBlock,
