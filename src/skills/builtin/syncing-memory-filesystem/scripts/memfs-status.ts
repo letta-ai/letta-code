@@ -175,6 +175,12 @@ async function readMemoryFiles(
 
 // Only memory_filesystem is managed by memfs itself
 const MEMFS_MANAGED_LABELS = new Set(["memory_filesystem"]);
+// Read-only labels are API-authoritative (file-only copies should be ignored)
+const READ_ONLY_LABELS = new Set([
+  "skills",
+  "loaded_skills",
+  "memory_filesystem",
+]);
 
 interface StatusResult {
   conflicts: Array<{ label: string }>;
@@ -318,6 +324,7 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
 
     // Classify
     if (fileEntry && !blockEntry) {
+      if (READ_ONLY_LABELS.has(label)) continue; // API authoritative, file-only will be deleted on sync
       if (lastBlockHash && !fileChanged) continue; // Block deleted, file unchanged
       newFiles.push(label);
       continue;
@@ -331,8 +338,20 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
 
     if (!fileEntry || !blockEntry) continue;
 
+    // Both exist - read_only blocks are API-authoritative
+    if (blockEntry.read_only) {
+      if (blockChanged) pendingFromBlock.push(label);
+      continue;
+    }
+
     // Both exist - check if content matches (body vs block value)
-    if (fileBodyHash === blockHash) continue; // In sync
+    if (fileBodyHash === blockHash) {
+      if (fileChanged) {
+        // Frontmatter-only change; content matches
+        pendingFromFile.push(label);
+      }
+      continue;
+    }
 
     // "FS wins all" policy: if file changed, treat as pendingFromFile
     if (fileChanged) {

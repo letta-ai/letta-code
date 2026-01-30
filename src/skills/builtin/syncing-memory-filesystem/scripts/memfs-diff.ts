@@ -182,6 +182,12 @@ interface Conflict {
   blockContent: string;
 }
 
+interface MetadataChange {
+  label: string;
+  fileContent: string;
+  blockContent: string;
+}
+
 /**
  * Get the overflow directory following the same pattern as tool output overflow.
  * Pattern: ~/.letta/projects/<project-path>/agent-tools/
@@ -197,7 +203,10 @@ function getOverflowDirectory(): string {
   return join(homedir(), ".letta", "projects", sanitizedPath, "agent-tools");
 }
 
-async function findConflicts(agentId: string): Promise<Conflict[]> {
+async function findConflicts(agentId: string): Promise<{
+  conflicts: Conflict[];
+  metadataOnly: MetadataChange[];
+}> {
   const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
   const client = new Letta({ apiKey: getApiKey(), baseUrl });
 
@@ -273,6 +282,7 @@ async function findConflicts(agentId: string): Promise<Conflict[]> {
 
   const lastState = loadSyncState(agentId);
   const conflicts: Conflict[] = [];
+  const metadataOnly: MetadataChange[] = [];
 
   // Collect all labels
   const allLabels = new Set<string>([
@@ -308,12 +318,20 @@ async function findConflicts(agentId: string): Promise<Conflict[]> {
 
     const lastFileHash = lastState.fileHashes[label] ?? null;
     const lastBlockHash = lastState.blockHashes[label] ?? null;
-
-    // Content matches - no conflict
-    if (fileBodyHash === blockHash) continue;
-
     const fileChanged = fileHash !== lastFileHash;
     const blockChanged = blockHash !== lastBlockHash;
+
+    // Content matches - check for frontmatter-only changes
+    if (fileBodyHash === blockHash) {
+      if (fileChanged) {
+        metadataOnly.push({
+          label,
+          fileContent: fileEntry.content,
+          blockContent: blockEntry.value,
+        });
+      }
+      continue;
+    }
 
     // Conflict only if both changed
     if (fileChanged && blockChanged) {
@@ -325,16 +343,21 @@ async function findConflicts(agentId: string): Promise<Conflict[]> {
     }
   }
 
-  return conflicts;
+  return { conflicts, metadataOnly };
 }
 
-function formatDiffFile(conflicts: Conflict[], agentId: string): string {
+function formatDiffFile(
+  conflicts: Conflict[],
+  metadataOnly: MetadataChange[],
+  agentId: string,
+): string {
   const lines: string[] = [
     `# Memory Filesystem Diff`,
     ``,
     `Agent: ${agentId}`,
     `Generated: ${new Date().toISOString()}`,
     `Conflicts: ${conflicts.length}`,
+    `Metadata-only changes: ${metadataOnly.length}`,
     ``,
     `---`,
     ``,
@@ -355,6 +378,32 @@ function formatDiffFile(conflicts: Conflict[], agentId: string): string {
     lines.push(``);
     lines.push(`---`);
     lines.push(``);
+  }
+
+  if (metadataOnly.length > 0) {
+    lines.push(`## Metadata-only Changes`);
+    lines.push(``);
+    lines.push(
+      `Frontmatter changed while body content stayed the same (file wins).`,
+    );
+    lines.push(``);
+
+    for (const change of metadataOnly) {
+      lines.push(`### ${change.label}`);
+      lines.push(``);
+      lines.push(`#### File Version (with frontmatter)`);
+      lines.push(`\`\`\``);
+      lines.push(change.fileContent);
+      lines.push(`\`\`\``);
+      lines.push(``);
+      lines.push(`#### Block Version (body only)`);
+      lines.push(`\`\`\``);
+      lines.push(change.blockContent);
+      lines.push(`\`\`\``);
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    }
   }
 
   return lines.join("\n");
@@ -388,13 +437,13 @@ Output: Path to the diff file, or a message if no conflicts exist.
   }
 
   findConflicts(agentId)
-    .then((conflicts) => {
-      if (conflicts.length === 0) {
+    .then(({ conflicts, metadataOnly }) => {
+      if (conflicts.length === 0 && metadataOnly.length === 0) {
         console.log("No conflicts found. Memory filesystem is clean.");
         return;
       }
 
-      const diffContent = formatDiffFile(conflicts, agentId);
+      const diffContent = formatDiffFile(conflicts, metadataOnly, agentId);
 
       // Write to overflow directory (same pattern as tool output overflow)
       const overflowDir = getOverflowDirectory();
@@ -407,7 +456,7 @@ Output: Path to the diff file, or a message if no conflicts exist.
       writeFileSync(diffPath, diffContent, "utf-8");
 
       console.log(
-        `Diff (${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}) written to: ${diffPath}`,
+        `Diff (${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}, ${metadataOnly.length} metadata-only change${metadataOnly.length === 1 ? "" : "s"}) written to: ${diffPath}`,
       );
     })
     .catch((error) => {
