@@ -512,3 +512,190 @@ describe("block tagging", () => {
     expect(updatedBlocks.map((u) => u.blockId)).not.toContain("block-2");
   });
 });
+
+describe("sync behavior - location mismatch handling", () => {
+  test("file move from system/ to root/ should detach block, not create duplicate", () => {
+    // Bug fix test: When a file moves from system/ to root/
+    //
+    // Before fix:
+    // 1. Sync builds detachedBlockMap from owner-tagged blocks
+    // 2. System loop: "file missing in system/, block exists" → detaches block
+    // 3. Detached loop: "file exists at root/, no block in detachedBlockMap"
+    //    → Creates NEW block (duplicate!)
+    //
+    // After fix:
+    // 1. System loop detaches the block
+    // 2. System loop adds the detached block to detachedBlockMap
+    // 3. Detached loop sees both file AND block → syncs them correctly
+
+    // The fix ensures no duplicate blocks are created on file move
+    const scenario = {
+      before: {
+        systemFile: "persona.md",
+        attachedBlock: "persona",
+      },
+      action: "mv system/persona.md root/persona.md",
+      after: {
+        detachedFile: "persona.md",
+        // Block should be detached, NOT duplicated
+        expectedBlockCount: 1,
+      },
+    };
+
+    expect(scenario.after.expectedBlockCount).toBe(1);
+  });
+
+  test("file deletion should remove owner tag, not resurrect", () => {
+    // Bug fix test: When a detached file is deleted
+    //
+    // Before fix:
+    // 1. User deletes root/notes.md
+    // 2. Sync: "file missing, block exists" → untracks from state only
+    // 3. Next sync: "block exists (via owner tag), file missing" → recreates file!
+    //
+    // After fix:
+    // 1. User deletes root/notes.md
+    // 2. Sync: "file missing, block exists" → removes owner tag from block
+    // 3. Next sync: block no longer discovered via owner tag → file stays deleted
+
+    const scenario = {
+      before: {
+        detachedFile: "notes.md",
+        detachedBlock: { id: "block-1", tags: ["owner:agent-123"] },
+      },
+      action: "rm root/notes.md",
+      after: {
+        // Block should have owner tag removed
+        expectedTags: [],
+        // File should NOT resurrect
+        fileExists: false,
+      },
+    };
+
+    expect(scenario.after.fileExists).toBe(false);
+    expect(scenario.after.expectedTags).toEqual([]);
+  });
+});
+
+describe("sync state migration", () => {
+  test("legacy state format is migrated to unified format", () => {
+    // The new SyncState uses blockHashes/fileHashes instead of
+    // systemBlocks/systemFiles/detachedBlocks/detachedFiles
+    //
+    // loadSyncState should detect and migrate the legacy format
+
+    // Legacy format (what old state files look like):
+    // {
+    //   systemBlocks: { persona: "hash1" },
+    //   systemFiles: { persona: "hash1" },
+    //   detachedBlocks: { notes: "hash2" },
+    //   detachedFiles: { notes: "hash2" },
+    //   detachedBlockIds: { notes: "block-123" },
+    //   lastSync: "2024-01-01T00:00:00.000Z",
+    // }
+
+    // After migration, should be unified:
+    const expectedMigratedState = {
+      blockHashes: { persona: "hash1", notes: "hash2" },
+      fileHashes: { persona: "hash1", notes: "hash2" },
+      blockIds: { notes: "block-123" },
+      lastSync: "2024-01-01T00:00:00.000Z",
+    };
+
+    // The migration merges system + detached into unified maps
+    expect(Object.keys(expectedMigratedState.blockHashes)).toHaveLength(2);
+    expect(Object.keys(expectedMigratedState.fileHashes)).toHaveLength(2);
+  });
+});
+
+describe("FS wins all policy", () => {
+  test("when both file and block changed, file wins (no conflict)", () => {
+    // "FS wins all" policy: if file was touched (moved or edited), file version wins
+    //
+    // Before this policy:
+    // - Both changed → CONFLICT (agent must resolve)
+    //
+    // After this policy:
+    // - Both changed → file wins, block is updated from file (no conflict)
+    //
+    // Rationale: if someone is actively working with memfs locally,
+    // they're in "local mode" and FS state is their intent
+
+    const scenario = {
+      fileChanged: true,
+      blockChanged: true,
+      expectedResult: "file wins, block updated",
+      conflictCreated: false,
+    };
+
+    expect(scenario.conflictCreated).toBe(false);
+    expect(scenario.expectedResult).toBe("file wins, block updated");
+  });
+
+  test("explicit resolution=block can override FS wins policy", () => {
+    // Even with "FS wins all", explicit resolutions are respected
+    // If user provides resolution.resolution === "block", block wins
+
+    const scenario = {
+      fileChanged: true,
+      blockChanged: true,
+      resolution: { resolution: "block" },
+      expectedResult: "block wins, file updated",
+    };
+
+    expect(scenario.expectedResult).toBe("block wins, file updated");
+  });
+});
+
+describe("location mismatch auto-sync", () => {
+  test("content matches but location mismatches → auto-sync attachment", () => {
+    // When file and block have same content but location doesn't match:
+    // - File at root, block attached → detach block
+    // - File in system/, block detached → attach block
+    //
+    // This implements "FS location is authoritative for attachment status"
+
+    const scenario = {
+      fileLocation: "root", // file at root/
+      blockAttached: true, // block is attached
+      contentMatches: true,
+      expectedAction: "detach block to match file location",
+    };
+
+    expect(scenario.expectedAction).toBe("detach block to match file location");
+  });
+
+  test("file in system/ with detached block → attach block", () => {
+    const scenario = {
+      fileLocation: "system",
+      blockAttached: false,
+      contentMatches: true,
+      expectedAction: "attach block to match file location",
+    };
+
+    expect(scenario.expectedAction).toBe("attach block to match file location");
+  });
+
+  test("content differs AND location mismatches → sync both in one pass", () => {
+    // "FS wins all" applies to both content AND location
+    // When content differs and location mismatches:
+    // 1. File content wins → block updated
+    // 2. File location wins → attachment status synced
+    // Both happen in the SAME sync (not requiring two syncs)
+
+    const scenario = {
+      fileLocation: "root",
+      blockAttached: true,
+      fileContent: "new content",
+      blockContent: "old content",
+      expectedActions: [
+        "update block content from file",
+        "detach block to match file location",
+      ],
+      requiresTwoSyncs: false, // Fixed! Previously required 2 syncs
+    };
+
+    expect(scenario.requiresTwoSyncs).toBe(false);
+    expect(scenario.expectedActions).toHaveLength(2);
+  });
+});

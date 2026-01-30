@@ -2076,12 +2076,13 @@ export default function App({
             pendingMemfsConflictsRef.current = status.conflicts;
           } else if (
             status.newFiles.length > 0 ||
-            status.pendingFromFile.length > 0
+            status.pendingFromFile.length > 0 ||
+            status.locationMismatches.length > 0
           ) {
-            // New files or file changes detected - auto-sync
+            // New files, file changes, or location mismatches detected - auto-sync
             debugLog(
               "memfs",
-              `Auto-syncing: ${status.newFiles.length} new, ${status.pendingFromFile.length} changed`,
+              `Auto-syncing: ${status.newFiles.length} new, ${status.pendingFromFile.length} changed, ${status.locationMismatches.length} location mismatches`,
             );
             pendingMemfsConflictsRef.current = null;
             await runMemoryFilesystemSync("auto");
