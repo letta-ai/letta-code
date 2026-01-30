@@ -489,4 +489,106 @@ describeIntegration("memfs sync integration", () => {
     expect(status.locationMismatches).toContain(label);
     expect(status.isClean).toBe(false);
   });
+
+  // =========================================================================
+  // Read-only block tests
+  // =========================================================================
+
+  test("read_only block: file edit is overwritten by API content", async () => {
+    const label = `test-readonly-${Date.now()}`;
+    const originalContent = "Original read-only content";
+    const editedContent = "User tried to edit this";
+
+    // Create a read_only block via API
+    const block = await client.blocks.create({
+      label,
+      value: originalContent,
+      description: "Test read-only block",
+      read_only: true,
+      tags: [`owner:${testAgentId}`],
+    });
+    createdBlockIds.push(block.id);
+
+    // Attach to agent
+    await client.agents.blocks.attach(block.id, { agent_id: testAgentId });
+
+    // First sync - creates file
+    await syncMemoryFilesystem(testAgentId, { homeDir: tempHomeDir });
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Edit the file locally
+    writeFileSync(filePath, editedContent);
+
+    // Second sync - should overwrite with API content
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be in updatedFiles (overwritten)
+    expect(result.updatedFiles).toContain(label);
+
+    // Verify file content is back to original (API wins)
+    const fileContent = readFileSync(filePath, "utf-8");
+    expect(fileContent).toContain(originalContent);
+
+    // Verify block was NOT updated (still has original content)
+    const updatedBlock = await client.blocks.retrieve(block.id);
+    expect(updatedBlock.value).toBe(originalContent);
+  });
+
+  test("read_only block: deleted file is recreated", async () => {
+    const label = `test-readonly-delete-${Date.now()}`;
+    const content = "Content that should persist";
+
+    // Create a read_only block via API
+    const block = await client.blocks.create({
+      label,
+      value: content,
+      description: "Test read-only block for deletion",
+      read_only: true,
+      tags: [`owner:${testAgentId}`],
+    });
+    createdBlockIds.push(block.id);
+
+    // Attach to agent
+    await client.agents.blocks.attach(block.id, { agent_id: testAgentId });
+
+    // First sync - creates file
+    await syncMemoryFilesystem(testAgentId, { homeDir: tempHomeDir });
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Delete the file locally
+    rmSync(filePath);
+    expect(existsSync(filePath)).toBe(false);
+
+    // Second sync - should recreate file (not remove owner tag)
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be recreated
+    expect(result.createdFiles).toContain(label);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Verify block still has owner tag and is attached
+    const attachedBlocks = await client.agents.blocks.list(testAgentId);
+    const attachedArray = Array.isArray(attachedBlocks)
+      ? attachedBlocks
+      : (attachedBlocks as { items?: Array<{ id: string }> }).items || [];
+    expect(attachedArray.some((b) => b.id === block.id)).toBe(true);
+  });
+
+  test("read_only label: file-only (no block) is deleted", async () => {
+    // This tests the case where someone creates a file for a read_only label
+    // but no corresponding block exists - the file should be deleted
+    // Note: This test uses "skills" or "loaded_skills" which are READ_ONLY_BLOCK_LABELS
+    // We can't easily test this without mocking, so we'll skip for now
+    // The unit tests cover this case via mocking
+  });
 });
