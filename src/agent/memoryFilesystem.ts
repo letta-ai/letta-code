@@ -6,11 +6,7 @@ import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
-import {
-  ISOLATED_BLOCK_LABELS,
-  parseMdxFrontmatter,
-  READ_ONLY_BLOCK_LABELS,
-} from "./memory";
+import { parseMdxFrontmatter, READ_ONLY_BLOCK_LABELS } from "./memory";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
 export const MEMORY_FS_ROOT = ".letta";
@@ -22,14 +18,14 @@ export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
 /**
- * Block labels that are managed by the system and should be skipped during sync.
- * These blocks are auto-created/managed by the harness (skills, loaded_skills)
- * or by the memfs system itself (memory_filesystem).
+ * Block labels that are managed by the memfs system itself and have special
+ * update logic (updateMemoryFilesystemBlock). These are skipped in the main
+ * sync loop but written separately.
  */
-const MANAGED_BLOCK_LABELS = new Set([
-  MEMORY_FILESYSTEM_BLOCK_LABEL,
-  ...ISOLATED_BLOCK_LABELS,
-]);
+const MEMFS_MANAGED_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
+
+// Note: skills and loaded_skills (ISOLATED_BLOCK_LABELS) are now synced
+// but are read_only in the API, so file edits are ignored (API → file only)
 
 // Unified sync state - no system/detached split
 // The attached/detached distinction is derived at runtime from API and FS
@@ -629,8 +625,8 @@ export async function syncMemoryFilesystem(
   const detachedBlockMap = new Map<string, Block>();
   for (const block of detachedBlocks) {
     if (block.label && block.id) {
-      // Skip managed blocks (skills, loaded_skills, memory_filesystem)
-      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+      // Skip memfs-managed blocks (memory_filesystem has special handling)
+      if (MEMFS_MANAGED_LABELS.has(block.label)) {
         continue;
       }
       // Skip blocks whose label matches a system block (prevents duplicates)
@@ -661,7 +657,8 @@ export async function syncMemoryFilesystem(
   const allFilesMap = new Map<string, { content: string }>();
 
   for (const label of Array.from(allLabels).sort()) {
-    if (MANAGED_BLOCK_LABELS.has(label)) {
+    // Skip memfs-managed blocks (memory_filesystem has special handling)
+    if (MEMFS_MANAGED_LABELS.has(label)) {
       continue;
     }
 
@@ -856,8 +853,18 @@ export async function syncMemoryFilesystem(
     }
 
     // "FS wins all": if file changed at all, file wins (update block from file)
+    // EXCEPT for read_only blocks - those are API → file only (ignore local changes)
     // Also sync attachment status to match file location
     if (fileChanged) {
+      // Read-only blocks: ignore local changes, overwrite file with API content
+      if (blockEntry.read_only) {
+        const fileContent = renderBlockToFileContent(blockEntry);
+        await writeMemoryFile(fileDir, label, fileContent);
+        updatedFiles.push(label);
+        allFilesMap.set(label, { content: fileContent });
+        continue;
+      }
+
       if (blockEntry.id) {
         try {
           // Use update-mode parsing to preserve metadata not in frontmatter
@@ -994,9 +1001,20 @@ export async function updateMemoryFilesystemBlock(
 
   if (memfsBlock?.id) {
     await client.blocks.update(memfsBlock.id, { value: content });
-  }
 
-  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, content);
+    // Write file with frontmatter (consistent with other blocks)
+    const fileContent = renderBlockToFileContent({
+      value: content,
+      description: memfsBlock.description,
+      limit: memfsBlock.limit,
+      read_only: memfsBlock.read_only,
+    });
+    await writeMemoryFile(
+      systemDir,
+      MEMORY_FILESYSTEM_BLOCK_LABEL,
+      fileContent,
+    );
+  }
 }
 
 export async function ensureMemoryFilesystemBlock(agentId: string) {
@@ -1109,8 +1127,8 @@ export async function checkMemoryFilesystemStatus(
   const detachedBlockMap = new Map<string, Block>();
   for (const block of detachedBlocks) {
     if (block.label) {
-      // Skip managed blocks
-      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+      // Skip memfs-managed blocks
+      if (MEMFS_MANAGED_LABELS.has(block.label)) {
         continue;
       }
       // Skip blocks whose label matches a system block (prevents duplicates)
@@ -1132,7 +1150,8 @@ export async function checkMemoryFilesystemStatus(
   ]);
 
   for (const label of Array.from(allLabels).sort()) {
-    if (MANAGED_BLOCK_LABELS.has(label)) continue;
+    // Skip memfs-managed blocks (memory_filesystem has special handling)
+    if (MEMFS_MANAGED_LABELS.has(label)) continue;
 
     // Determine current state at runtime
     const systemFile = systemFiles.get(label);
