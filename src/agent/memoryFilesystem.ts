@@ -622,8 +622,10 @@ export async function syncMemoryFilesystem(
 
     if (resolution?.resolution === "file") {
       if (blockEntry.id) {
+        // Parse frontmatter to extract just the body for the block value
+        const blockData = parseBlockFromFileContent(fileEntry.content, label);
         await client.blocks.update(blockEntry.id, {
-          value: fileEntry.content,
+          value: blockData.value,
         });
         updatedBlocks.push(label);
       }
@@ -639,8 +641,10 @@ export async function syncMemoryFilesystem(
     if (fileChanged && !blockChanged) {
       if (blockEntry.id) {
         try {
+          // Parse frontmatter to extract just the body for the block value
+          const blockData = parseBlockFromFileContent(fileEntry.content, label);
           await client.blocks.update(blockEntry.id, {
-            value: fileEntry.content,
+            value: blockData.value,
           });
           updatedBlocks.push(label);
         } catch (err) {
@@ -752,8 +756,10 @@ export async function syncMemoryFilesystem(
 
     if (resolution?.resolution === "file") {
       if (blockEntry.id) {
+        // Parse frontmatter to extract just the body for the block value
+        const blockData = parseBlockFromFileContent(fileEntry.content, label);
         await client.blocks.update(blockEntry.id, {
-          value: fileEntry.content,
+          value: blockData.value,
           label,
         });
       }
@@ -769,8 +775,10 @@ export async function syncMemoryFilesystem(
 
     if (fileChanged && !blockChanged) {
       if (blockEntry.id) {
+        // Parse frontmatter to extract just the body for the block value
+        const blockData = parseBlockFromFileContent(fileEntry.content, label);
         await client.blocks.update(blockEntry.id, {
-          value: fileEntry.content,
+          value: blockData.value,
           label,
         });
       }
