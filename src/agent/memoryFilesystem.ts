@@ -316,6 +316,94 @@ async function writeMemoryFile(dir: string, label: string, content: string) {
   await writeFile(filePath, content, "utf-8");
 }
 
+/**
+ * Serialize a block to file content with YAML frontmatter.
+ * Includes description, limit, and read_only (if true) for round-trip preservation.
+ * Label is omitted since it's implied by the file path.
+ */
+export function renderBlockToFileContent(block: {
+  value?: string | null;
+  description?: string | null;
+  limit?: number | null;
+  read_only?: boolean | null;
+}): string {
+  const lines: string[] = ["---"];
+
+  // Always include description (so it round-trips and doesn't silently reset)
+  if (block.description) {
+    // Escape description for YAML if it contains special chars
+    const desc =
+      block.description.includes(":") || block.description.includes("\n")
+        ? `"${block.description.replace(/"/g, '\\"')}"`
+        : block.description;
+    lines.push(`description: ${desc}`);
+  }
+
+  // Always include limit
+  if (block.limit) {
+    lines.push(`limit: ${block.limit}`);
+  }
+
+  // Only include read_only if true (avoid cluttering frontmatter)
+  if (block.read_only === true) {
+    lines.push("read_only: true");
+  }
+
+  lines.push("---");
+  lines.push(""); // blank line after frontmatter
+  lines.push(block.value || "");
+
+  return lines.join("\n");
+}
+
+/**
+ * Parse file content for UPDATING an existing block.
+ * Only includes metadata fields that are explicitly present in frontmatter.
+ * This prevents overwriting existing API metadata when frontmatter is absent.
+ */
+export function parseBlockUpdateFromFileContent(
+  fileContent: string,
+  defaultLabel: string,
+): {
+  label: string;
+  value: string;
+  description?: string;
+  limit?: number;
+  read_only?: boolean;
+  // Flags indicating which fields were explicitly present
+  hasDescription: boolean;
+  hasLimit: boolean;
+  hasReadOnly: boolean;
+} {
+  const { frontmatter, body } = parseMdxFrontmatter(fileContent);
+
+  const label = frontmatter.label || defaultLabel;
+
+  // Check explicit presence using hasOwnProperty
+  const hasDescription = Object.hasOwn(frontmatter, "description");
+  const hasLimit = Object.hasOwn(frontmatter, "limit");
+  const hasReadOnly = Object.hasOwn(frontmatter, "read_only");
+
+  let limit: number | undefined;
+  if (hasLimit && frontmatter.limit) {
+    const parsed = Number.parseInt(frontmatter.limit, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      limit = parsed;
+    }
+  }
+
+  return {
+    label,
+    value: body,
+    ...(hasDescription && { description: frontmatter.description }),
+    ...(hasLimit && limit !== undefined && { limit }),
+    ...(hasReadOnly && { read_only: frontmatter.read_only === "true" }),
+    hasDescription,
+    hasLimit,
+    hasReadOnly,
+  };
+}
+
 async function deleteMemoryFile(dir: string, label: string) {
   const filePath = join(dir, `${label}.md`);
   if (existsSync(filePath)) {
@@ -666,9 +754,10 @@ export async function syncMemoryFilesystem(
 
       // Create file from block - use block's attached status to determine location
       const targetDir = isAttached ? systemDir : detachedDir;
-      await writeMemoryFile(targetDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(targetDir, label, fileContent);
       createdFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
       continue;
     }
 
@@ -711,9 +800,10 @@ export async function syncMemoryFilesystem(
     ) {
       // User explicitly requested block wins via resolution for CONTENT
       // But FS still wins for LOCATION (attachment status)
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
@@ -733,9 +823,10 @@ export async function syncMemoryFilesystem(
     // Handle explicit resolution override
     if (resolution?.resolution === "block") {
       // Block wins for CONTENT, but FS wins for LOCATION
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
@@ -757,14 +848,25 @@ export async function syncMemoryFilesystem(
     if (fileChanged) {
       if (blockEntry.id) {
         try {
-          const blockData = parseBlockFromFileContent(fileEntry.content, label);
-          const updatePayload = isAttached
-            ? { value: blockData.value }
-            : { value: blockData.value, label };
+          // Use update-mode parsing to preserve metadata not in frontmatter
+          const parsed = parseBlockUpdateFromFileContent(
+            fileEntry.content,
+            label,
+          );
+          const updatePayload: Record<string, unknown> = {
+            value: parsed.value,
+          };
+          // Only include metadata if explicitly present in frontmatter
+          if (parsed.hasDescription)
+            updatePayload.description = parsed.description;
+          if (parsed.hasLimit) updatePayload.limit = parsed.limit;
+          if (parsed.hasReadOnly) updatePayload.read_only = parsed.read_only;
+          // For detached blocks, also update label if changed
+          if (!isAttached) updatePayload.label = label;
           await client.blocks.update(blockEntry.id, updatePayload);
           updatedBlocks.push(label);
           allBlocksMap.set(label, {
-            value: blockData.value,
+            value: parsed.value,
             id: blockEntry.id,
           });
 
@@ -814,9 +916,10 @@ export async function syncMemoryFilesystem(
     // Only block changed (file unchanged) → update file from block
     // Also sync attachment status to match file location
     if (blockChanged) {
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
