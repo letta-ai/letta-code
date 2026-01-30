@@ -129,8 +129,8 @@ export const InlineTaskApproval = memo(
     const memoizedTaskContent = useMemo(() => {
       const { subagentType, description, prompt, model } = taskInfo;
 
-      // Truncate prompt if too long (show first ~200 chars)
-      const truncatedPrompt = truncate(prompt, 300);
+      // Show full prompt - users need to see what the task will do
+      const truncatedPrompt = prompt;
 
       return (
         <>
