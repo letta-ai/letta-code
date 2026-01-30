@@ -626,9 +626,11 @@ describeIntegration("memfs sync integration", () => {
       attachedBefore.some((b) => b.label === label) ||
       ownedBefore.some((b) => b.label === label);
 
+    // For fresh test agents, there should be no skills block
+    // If one exists and can't be deleted, we can't run this test
+    expect(blockExists).toBe(false);
     if (blockExists) {
-      // Can't delete the block (e.g., system block), skip test
-      console.log(`Skipping test: could not delete existing "${label}" block`);
+      // This assertion above will fail, but just in case:
       return;
     }
 
