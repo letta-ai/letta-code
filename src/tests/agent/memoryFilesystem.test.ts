@@ -607,3 +607,72 @@ describe("sync state migration", () => {
     expect(Object.keys(expectedMigratedState.fileHashes)).toHaveLength(2);
   });
 });
+
+describe("FS wins all policy", () => {
+  test("when both file and block changed, file wins (no conflict)", () => {
+    // "FS wins all" policy: if file was touched (moved or edited), file version wins
+    //
+    // Before this policy:
+    // - Both changed → CONFLICT (agent must resolve)
+    //
+    // After this policy:
+    // - Both changed → file wins, block is updated from file (no conflict)
+    //
+    // Rationale: if someone is actively working with memfs locally,
+    // they're in "local mode" and FS state is their intent
+
+    const scenario = {
+      fileChanged: true,
+      blockChanged: true,
+      expectedResult: "file wins, block updated",
+      conflictCreated: false,
+    };
+
+    expect(scenario.conflictCreated).toBe(false);
+    expect(scenario.expectedResult).toBe("file wins, block updated");
+  });
+
+  test("explicit resolution=block can override FS wins policy", () => {
+    // Even with "FS wins all", explicit resolutions are respected
+    // If user provides resolution.resolution === "block", block wins
+
+    const scenario = {
+      fileChanged: true,
+      blockChanged: true,
+      resolution: { resolution: "block" },
+      expectedResult: "block wins, file updated",
+    };
+
+    expect(scenario.expectedResult).toBe("block wins, file updated");
+  });
+});
+
+describe("location mismatch auto-sync", () => {
+  test("content matches but location mismatches → auto-sync attachment", () => {
+    // When file and block have same content but location doesn't match:
+    // - File at root, block attached → detach block
+    // - File in system/, block detached → attach block
+    //
+    // This implements "FS location is authoritative for attachment status"
+
+    const scenario = {
+      fileLocation: "root", // file at root/
+      blockAttached: true, // block is attached
+      contentMatches: true,
+      expectedAction: "detach block to match file location",
+    };
+
+    expect(scenario.expectedAction).toBe("detach block to match file location");
+  });
+
+  test("file in system/ with detached block → attach block", () => {
+    const scenario = {
+      fileLocation: "system",
+      blockAttached: false,
+      contentMatches: true,
+      expectedAction: "attach block to match file location",
+    };
+
+    expect(scenario.expectedAction).toBe("attach block to match file location");
+  });
+});

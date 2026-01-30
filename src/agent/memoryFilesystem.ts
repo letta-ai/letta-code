@@ -638,37 +638,22 @@ export async function syncMemoryFilesystem(
     // Case 2: Block exists, no file
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged
+        // File deleted, block unchanged → remove owner tag so file doesn't resurrect
         if (blockEntry.id) {
           try {
             if (isAttached) {
-              // Check if file was moved to root (vs deleted entirely)
-              const movedToRoot = detachedFiles.has(label);
+              // Detach the attached block first
               await client.agents.blocks.detach(blockEntry.id, {
                 agent_id: agentId,
               });
-
-              if (movedToRoot) {
-                // File was moved - block stays with owner tag, will sync in this loop iteration
-                // (detachedFiles.has(label) means we already processed or will process the detached file)
-              } else {
-                // File was deleted entirely - remove owner tag
-                const currentTags = blockEntry.tags || [];
-                const newTags = currentTags.filter(
-                  (tag) => !tag.startsWith(`owner:${agentId}`),
-                );
-                await client.blocks.update(blockEntry.id, { tags: newTags });
-                allBlocksMap.delete(label);
-              }
-            } else {
-              // Detached block: remove owner tag so file doesn't resurrect
-              const currentTags = blockEntry.tags || [];
-              const newTags = currentTags.filter(
-                (tag) => !tag.startsWith(`owner:${agentId}`),
-              );
-              await client.blocks.update(blockEntry.id, { tags: newTags });
-              allBlocksMap.delete(label);
             }
+            // Remove owner tag from block
+            const currentTags = blockEntry.tags || [];
+            const newTags = currentTags.filter(
+              (tag) => !tag.startsWith(`owner:${agentId}`),
+            );
+            await client.blocks.update(blockEntry.id, { tags: newTags });
+            allBlocksMap.delete(label);
             deletedBlocks.push(label);
           } catch (err) {
             if (!(err instanceof Error && err.message.includes("Not Found"))) {
@@ -692,34 +677,46 @@ export async function syncMemoryFilesystem(
       continue;
     }
 
-    // Case 4: Both exist - check for sync/conflict
+    // Case 4: Both exist - check for sync/conflict/location mismatch
+
+    // Check for location mismatch: file location doesn't match block attachment
+    const locationMismatch =
+      (fileInSystem && !isAttached) || (!fileInSystem && isAttached);
+
+    // If content matches but location mismatches, sync attachment to match file location
     if (fileHash === blockHash) {
-      continue;
-    }
-
-    if (fileChanged && blockChanged && !resolution) {
-      conflicts.push({
-        label,
-        blockValue: blockEntry.value || "",
-        fileValue: fileEntry.content,
-      });
-      continue;
-    }
-
-    if (resolution?.resolution === "file") {
-      if (blockEntry.id) {
-        const blockData = parseBlockFromFileContent(fileEntry.content, label);
-        // Policy: update label only for detached blocks
-        const updatePayload = isAttached
-          ? { value: blockData.value }
-          : { value: blockData.value, label };
-        await client.blocks.update(blockEntry.id, updatePayload);
-        updatedBlocks.push(label);
-        allBlocksMap.set(label, { value: blockData.value, id: blockEntry.id });
+      if (locationMismatch && blockEntry.id) {
+        if (fileInSystem && !isAttached) {
+          // File in system/, block detached → attach block
+          await client.agents.blocks.attach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        } else if (!fileInSystem && isAttached) {
+          // File at root, block attached → detach block
+          await client.agents.blocks.detach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        }
       }
       continue;
     }
 
+    // "FS wins all" policy: if file changed, file wins (even if block also changed)
+    // Only conflict if explicit resolution provided but doesn't match
+    if (
+      fileChanged &&
+      blockChanged &&
+      resolution &&
+      resolution.resolution === "block"
+    ) {
+      // User explicitly requested block wins via resolution
+      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      updatedFiles.push(label);
+      allFilesMap.set(label, { content: blockEntry.value || "" });
+      continue;
+    }
+
+    // Handle explicit resolution override
     if (resolution?.resolution === "block") {
       await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
@@ -727,7 +724,8 @@ export async function syncMemoryFilesystem(
       continue;
     }
 
-    if (fileChanged && !blockChanged) {
+    // "FS wins all": if file changed at all, file wins (update block from file)
+    if (fileChanged) {
       if (blockEntry.id) {
         try {
           const blockData = parseBlockFromFileContent(fileEntry.content, label);
@@ -771,7 +769,8 @@ export async function syncMemoryFilesystem(
       continue;
     }
 
-    if (!fileChanged && blockChanged) {
+    // Only block changed (file unchanged) → update file from block
+    if (blockChanged) {
       await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
       allFilesMap.set(label, { content: blockEntry.value || "" });
@@ -1053,17 +1052,15 @@ function classifyLabel(
     return; // In sync
   }
 
-  if (fileChanged && blockChanged) {
-    conflicts.push({ label, blockValue, fileValue: fileContent });
-    return;
-  }
-
-  if (fileChanged && !blockChanged) {
+  // "FS wins all" policy: if file changed at all, file wins
+  // So both-changed is treated as pendingFromFile, not a conflict
+  if (fileChanged) {
     pendingFromFile.push(label);
     return;
   }
 
-  if (!fileChanged && blockChanged) {
+  // Only block changed
+  if (blockChanged) {
     pendingFromBlock.push(label);
   }
 }
