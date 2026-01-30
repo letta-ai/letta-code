@@ -523,13 +523,12 @@ export async function syncMemoryFilesystem(
   // Backfill owner tags on attached blocks (for backwards compat)
   await backfillOwnerTags(agentId, attachedBlocks);
 
-  // Discover detached blocks via owner tag (replaces detachedBlockIds tracking)
+  // Discover detached blocks via owner tag
   const allOwnedBlocks = await fetchOwnedBlocks(agentId);
   const attachedIds = new Set(attachedBlocks.map((b) => b.id));
   const detachedBlocks = allOwnedBlocks.filter((b) => !attachedIds.has(b.id));
 
-  // Build detached block map and IDs (for sync state compatibility)
-  const detachedBlockIds: Record<string, string> = {};
+  // Build detached block map
   const detachedBlockMap = new Map<string, Block>();
   for (const block of detachedBlocks) {
     if (block.label && block.id) {
@@ -542,7 +541,6 @@ export async function syncMemoryFilesystem(
       if (systemBlockMap.has(block.label)) {
         continue;
       }
-      detachedBlockIds[block.label] = block.id;
       detachedBlockMap.set(block.label, block);
     }
   }
