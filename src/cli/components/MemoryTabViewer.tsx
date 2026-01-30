@@ -123,9 +123,9 @@ export function MemoryTabViewer({
     }
   });
 
-  // Render tab bar
+  // Render tab bar (no gap - spacing is handled by padding in each label)
   const renderTabBar = () => (
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
+    <Box flexDirection="row" flexWrap="wrap">
       {displayBlocks.map((block, index) => {
         const isActive = index === selectedTabIndex;
         return (
