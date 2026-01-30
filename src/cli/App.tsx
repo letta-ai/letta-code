@@ -114,6 +114,8 @@ import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
 import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
+import { Buddy } from "./components/Buddy";
+import { getBuddyNames, isValidBuddy, type BuddyState } from "./components/buddies";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { FeedbackDialog } from "./components/FeedbackDialog";
@@ -823,6 +825,13 @@ export default function App({
     [],
   );
 
+  // Derive buddy state from app state
+  const buddyState: BuddyState = useMemo(() => {
+    if (streaming) return "thinking";
+    if (pendingApprovals.length > 0) return "waiting";
+    return "idle";
+  }, [streaming, pendingApprovals.length]);
+
   // Sequential approval: track results as user reviews each approval
   const [approvalResults, setApprovalResults] = useState<
     Array<
@@ -1050,6 +1059,10 @@ export default function App({
     filterProvider?: string;
     forceRefresh?: boolean;
   }>({});
+  // Buddy state - persisted in settings
+  const [buddyName, setBuddyName] = useState<string | null>(
+    settingsManager.getSettings().activeBuddy ?? null
+  );
   const closeOverlay = useCallback(() => {
     setActiveOverlay(null);
     setFeedbackPrefill("");
@@ -5091,6 +5104,71 @@ export default function App({
         // Special handling for /hooks command - opens hooks manager
         if (trimmed === "/hooks") {
           setActiveOverlay("hooks");
+          return { submitted: true };
+        }
+
+        // Special handling for /buddy command - toggle ASCII buddy companion
+        if (trimmed.startsWith("/buddy")) {
+          const arg = trimmed.slice(7).trim().toLowerCase();
+          const cmdId = uid("cmd");
+
+          if (!arg || arg === "list") {
+            // Show available buddies
+            const buddyList = getBuddyNames();
+            const currentBuddy = buddyName ? ` (current: ${buddyName})` : "";
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Available buddies: ${buddyList.join(", ")}${currentBuddy}\nUsage: /buddy <name> to activate, /buddy off to disable`,
+              phase: "finished",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (arg === "off") {
+            setBuddyName(null);
+            settingsManager.updateSettings({ activeBuddy: undefined });
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: "Buddy disabled",
+              phase: "finished",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (isValidBuddy(arg)) {
+            setBuddyName(arg);
+            settingsManager.updateSettings({ activeBuddy: arg });
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: trimmed,
+              output: `Buddy activated: ${arg}`,
+              phase: "finished",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          // Unknown buddy name
+          const buddyList = getBuddyNames();
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: trimmed,
+            output: `Unknown buddy: ${arg}\nAvailable buddies: ${buddyList.join(", ")}`,
+            phase: "finished",
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
           return { submitted: true };
         }
 
@@ -9511,8 +9589,11 @@ Plan file path: ${planFilePath}`;
 
         {loadingState === "ready" && (
           <>
-            {/* Transcript - wrapped in AnimationProvider for overflow-based animation control */}
-            <AnimationProvider shouldAnimate={shouldAnimate}>
+            {/* Transcript with optional buddy in right column */}
+            <Box flexDirection="row">
+              {/* Output area - takes remaining space */}
+              <Box flexGrow={1} flexDirection="column">
+                <AnimationProvider shouldAnimate={shouldAnimate}>
               {/* Show liveItems always - all approvals now render inline */}
               {liveItems.length > 0 && (
                 <Box flexDirection="column">
@@ -9661,6 +9742,15 @@ Plan file path: ${planFilePath}`;
               {/* Subagent group display - shows running/completed subagents */}
               <SubagentGroupDisplay />
             </AnimationProvider>
+              </Box>
+
+              {/* Buddy companion - right column next to output */}
+              {buddyName && (
+                <Box marginLeft={2} flexShrink={0} alignItems="flex-end">
+                  <Buddy name={buddyName} state={buddyState} />
+                </Box>
+              )}
+            </Box>
 
             {/* Exit stats - shown when exiting via double Ctrl+C */}
             {showExitStats && (
@@ -9692,7 +9782,7 @@ Plan file path: ${planFilePath}`;
               </Box>
             )}
 
-            {/* Input row - always mounted to preserve state */}
+            {/* Input row */}
             <Box marginTop={1}>
               <Input
                 visible={

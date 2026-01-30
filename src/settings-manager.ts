@@ -60,6 +60,8 @@ export interface Settings {
   deviceId?: string;
   // Release notes tracking
   lastSeenReleaseNotesVersion?: string; // Base version of last seen release notes (e.g., "0.13.0")
+  // ASCII buddy companion
+  activeBuddy?: string; // Name of active buddy (cat, dog, robot) or undefined for off
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;

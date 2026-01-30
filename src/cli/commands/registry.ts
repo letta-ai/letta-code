@@ -226,6 +226,15 @@ export const commands: Record<string, Command> = {
       return "Opening hooks manager...";
     },
   },
+  "/buddy": {
+    desc: "Toggle ASCII buddy companion (/buddy [name|off])",
+    args: "[cat|dog|robot|off]",
+    order: 37,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing buddy...";
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
     order: 37,
