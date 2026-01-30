@@ -2058,13 +2058,24 @@ export default function App({
         `Conflict check triggered (dirty=${isDirty}, interval=${isIntervalTurn}, turn=${turnCountRef.current})`,
       );
       checkMemoryFilesystemStatus(agentId)
-        .then((status) => {
+        .then(async (status) => {
           if (status.conflicts.length > 0) {
             debugLog(
               "memfs",
               `Found ${status.conflicts.length} conflict(s): ${status.conflicts.map((c) => c.label).join(", ")}`,
             );
             pendingMemfsConflictsRef.current = status.conflicts;
+          } else if (
+            status.newFiles.length > 0 ||
+            status.pendingFromFile.length > 0
+          ) {
+            // New files or file changes detected - auto-sync
+            debugLog(
+              "memfs",
+              `Auto-syncing: ${status.newFiles.length} new, ${status.pendingFromFile.length} changed`,
+            );
+            pendingMemfsConflictsRef.current = null;
+            await runMemoryFilesystemSync("auto");
           } else {
             pendingMemfsConflictsRef.current = null;
           }
