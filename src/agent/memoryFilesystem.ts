@@ -857,6 +857,10 @@ export async function updateMemoryFilesystemBlock(
     Array.from(detachedFiles.keys()),
   );
 
+  // Prepend memory directory path (tilde format for readability)
+  const memoryPath = `~/.letta/agents/${agentId}/memory`;
+  const content = `Memory Directory: ${memoryPath}\n\n${tree}`;
+
   const client = await getClient();
   const blocks = await fetchAgentBlocks(agentId);
   const memfsBlock = blocks.find(
@@ -864,10 +868,10 @@ export async function updateMemoryFilesystemBlock(
   );
 
   if (memfsBlock?.id) {
-    await client.blocks.update(memfsBlock.id, { value: tree });
+    await client.blocks.update(memfsBlock.id, { value: content });
   }
 
-  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, tree);
+  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, content);
 }
 
 export async function ensureMemoryFilesystemBlock(agentId: string) {
