@@ -1953,6 +1953,14 @@ export default function App({
         return;
       }
       if (memorySyncInFlightRef.current) {
+        // If called from a command while another sync is in flight, update the UI
+        if (source === "command" && commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            "Sync already in progress — try again in a moment",
+            false,
+          );
+        }
         return;
       }
 
@@ -6251,6 +6259,12 @@ export default function App({
 
           try {
             await runMemoryFilesystemSync("command", cmdId);
+          } catch (error) {
+            // runMemoryFilesystemSync has its own error handling, but catch any
+            // unexpected errors that slip through
+            const errorText =
+              error instanceof Error ? error.message : String(error);
+            updateMemorySyncCommand(cmdId, `Failed: ${errorText}`, false);
           } finally {
             setCommandRunning(false);
           }
