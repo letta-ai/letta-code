@@ -587,8 +587,65 @@ describeIntegration("memfs sync integration", () => {
   test("read_only label: file-only (no block) is deleted", async () => {
     // This tests the case where someone creates a file for a read_only label
     // but no corresponding block exists - the file should be deleted
-    // Note: This test uses "skills" or "loaded_skills" which are READ_ONLY_BLOCK_LABELS
-    // We can't easily test this without mocking, so we'll skip for now
-    // The unit tests cover this case via mocking
+    const label = "skills";
+
+    // Helper to ensure no block exists for this label
+    async function ensureNoBlock(labelToDelete: string) {
+      // Remove attached blocks with this label
+      const attachedBlocks = await getAttachedBlocks();
+      for (const b of attachedBlocks.filter((x) => x.label === labelToDelete)) {
+        if (b.id) {
+          try {
+            await client.agents.blocks.detach(b.id, { agent_id: testAgentId });
+            await client.blocks.delete(b.id);
+          } catch {
+            // Ignore errors (block may not be deletable)
+          }
+        }
+      }
+      // Remove detached owned blocks with this label
+      const ownedBlocks = await getOwnedBlocks();
+      for (const b of ownedBlocks.filter((x) => x.label === labelToDelete)) {
+        if (b.id) {
+          try {
+            await client.blocks.delete(b.id);
+          } catch {
+            // Ignore errors
+          }
+        }
+      }
+    }
+
+    // Ensure API has no block for this label
+    await ensureNoBlock(label);
+
+    // Verify no block exists
+    const attachedBefore = await getAttachedBlocks();
+    const ownedBefore = await getOwnedBlocks();
+    const blockExists =
+      attachedBefore.some((b) => b.label === label) ||
+      ownedBefore.some((b) => b.label === label);
+
+    if (blockExists) {
+      // Can't delete the block (e.g., system block), skip test
+      console.log(`Skipping test: could not delete existing "${label}" block`);
+      return;
+    }
+
+    // Create local file in system/
+    writeSystemFile(label, "local skills content that should be deleted");
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Sync - should delete the file (API is authoritative for read_only labels)
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be deleted
+    expect(existsSync(filePath)).toBe(false);
+    expect(result.deletedFiles).toContain(label);
   });
 });
