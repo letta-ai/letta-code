@@ -1013,7 +1013,7 @@ function classifyLabel(
   blockValue: string | null,
   lastFileHash: string | null,
   lastBlockHash: string | null,
-  conflicts: MemorySyncConflict[],
+  _conflicts: MemorySyncConflict[], // Unused with "FS wins all" policy (kept for API compatibility)
   pendingFromFile: string[],
   pendingFromBlock: string[],
   newFiles: string[],
