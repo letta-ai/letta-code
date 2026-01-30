@@ -5,7 +5,7 @@ description: Manage memory filesystem sync conflicts with git-like commands. Loa
 
 # Memory Filesystem Sync
 
-When memFS is enabled, your memory blocks are mirrored as `.md` files on disk at `~/.letta/agents/<agent-id>/memory/`. Changes to blocks or files are detected via content hashing and synced at startup and on manual `/memfs-sync`.
+When memFS is enabled, your memory blocks are mirrored as `.md` files on disk at `~/.letta/agents/<agent-id>/memory/`. Changes to blocks or files are detected via content hashing and synced at startup and on manual `/memfs sync`.
 
 **Conflicts** occur when both the file and the block are modified since the last sync (e.g., user edits a file in their editor while the block is also updated manually by the user via the API). Non-conflicting changes (only one side changed) are resolved automatically during the next sync.
 
@@ -96,5 +96,5 @@ npx tsx <SKILL_DIR>/scripts/memfs-resolve.ts $LETTA_AGENT_ID --resolutions '[{"l
 ## Notes
 
 - Non-conflicting changes (only one side modified) are resolved automatically during the next sync — you only need to intervene for true conflicts
-- The `/memfs-sync` command is still available for users to manually trigger sync and resolve conflicts via the CLI overlay
+- The `/memfs sync` command is still available for users to manually trigger sync and resolve conflicts via the CLI overlay
 - After resolving, the sync state is updated so the same conflicts won't reappear
