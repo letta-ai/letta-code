@@ -584,14 +584,15 @@ describe("sync state migration", () => {
     //
     // loadSyncState should detect and migrate the legacy format
 
-    const legacyState = {
-      systemBlocks: { persona: "hash1" },
-      systemFiles: { persona: "hash1" },
-      detachedBlocks: { notes: "hash2" },
-      detachedFiles: { notes: "hash2" },
-      detachedBlockIds: { notes: "block-123" },
-      lastSync: "2024-01-01T00:00:00.000Z",
-    };
+    // Legacy format (what old state files look like):
+    // {
+    //   systemBlocks: { persona: "hash1" },
+    //   systemFiles: { persona: "hash1" },
+    //   detachedBlocks: { notes: "hash2" },
+    //   detachedFiles: { notes: "hash2" },
+    //   detachedBlockIds: { notes: "block-123" },
+    //   lastSync: "2024-01-01T00:00:00.000Z",
+    // }
 
     // After migration, should be unified:
     const expectedMigratedState = {
