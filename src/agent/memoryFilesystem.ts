@@ -583,13 +583,28 @@ export async function syncMemoryFilesystem(
 
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged -> detach only (block stays with owner tag)
+        // File deleted from system/, block unchanged
+        // Check if file was moved to root (vs deleted entirely)
+        const movedToRoot = detachedFiles.has(label);
+
         if (blockEntry.id) {
           try {
             await client.agents.blocks.detach(blockEntry.id, {
               agent_id: agentId,
             });
-            // Note: Don't delete the block - it keeps its owner tag for potential recovery
+
+            if (movedToRoot) {
+              // File was moved to root - add to detachedBlockMap so detached loop can sync
+              detachedBlockMap.set(label, blockEntry);
+              detachedBlockIds[label] = blockEntry.id;
+            } else {
+              // File was deleted entirely - remove owner tag so it doesn't resurrect
+              const currentTags = blockEntry.tags || [];
+              const newTags = currentTags.filter(
+                (tag) => !tag.startsWith(`owner:${agentId}`),
+              );
+              await client.blocks.update(blockEntry.id, { tags: newTags });
+            }
             deletedBlocks.push(label);
           } catch (err) {
             // Block may have been manually deleted already - ignore
@@ -729,8 +744,23 @@ export async function syncMemoryFilesystem(
 
     if (!fileEntry && blockEntry) {
       if (lastFileHash && !blockChanged) {
-        // File deleted, block unchanged -> just remove from tracking (block keeps owner tag)
-        // Note: Don't delete the block - it stays discoverable via owner tag
+        // File deleted, block unchanged -> remove owner tag so file doesn't resurrect
+        // This matches the FS→API mapping: rm file = remove owner tag
+        if (blockEntry.id) {
+          try {
+            // Remove the owner tag by updating the block's tags
+            const currentTags = blockEntry.tags || [];
+            const newTags = currentTags.filter(
+              (tag) => !tag.startsWith(`owner:${agentId}`),
+            );
+            await client.blocks.update(blockEntry.id, { tags: newTags });
+          } catch (err) {
+            // Block may have been manually deleted already - ignore
+            if (!(err instanceof Error && err.message.includes("Not Found"))) {
+              throw err;
+            }
+          }
+        }
         deletedBlocks.push(label);
         delete detachedBlockIds[label];
         continue;
