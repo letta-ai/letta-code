@@ -3,7 +3,8 @@
 # slack - A simple wrapper for common Slack API operations
 #
 # Prerequisites:
-#   export SLACK_BOT_TOKEN="xoxb-..."  # Bot token with appropriate scopes
+#   export SLACK_TOKEN="xoxp-..."  # User token (recommended, supports search)
+#   # or: export SLACK_BOT_TOKEN="xoxb-..."  # Bot token (can't search)
 #
 # Usage:
 #   slack search "query"                    # Search messages
@@ -34,22 +35,19 @@ Usage:
   slack user "user_id"                 Get user details
 
 Environment:
-  SLACK_BOT_TOKEN    Bot token (xoxb-...) with required scopes
+  SLACK_TOKEN        User token (xoxp-...) - recommended, supports search
+  SLACK_BOT_TOKEN    Bot token (xoxb-...) - fallback, cannot search
 
-Required Bot Token Scopes:
-  search:read        For searching messages
-  chat:write         For sending messages
-  channels:read      For listing channels
-  channels:history   For reading channel history
-  users:read         For listing/viewing users
+Note: Search requires a user token (xoxp-). Bot tokens cannot search.
 EOF
   exit 0
 fi
 
-SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_TOKEN:-}}"
+SLACK_TOKEN="${SLACK_TOKEN:-${SLACK_BOT_TOKEN:-}}"
 
 if [[ -z "$SLACK_TOKEN" ]]; then
-  echo "Error: SLACK_BOT_TOKEN or SLACK_TOKEN environment variable not set" >&2
+  echo "Error: SLACK_TOKEN environment variable not set" >&2
+  echo "Set a user token (xoxp-...) for full functionality including search." >&2
   exit 1
 fi
 

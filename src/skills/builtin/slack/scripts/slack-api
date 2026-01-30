@@ -10,10 +10,10 @@
 
 set -euo pipefail
 
-SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_TOKEN:-}}"
+SLACK_TOKEN="${SLACK_TOKEN:-${SLACK_BOT_TOKEN:-}}"
 
 if [[ -z "$SLACK_TOKEN" ]]; then
-  echo "Error: SLACK_BOT_TOKEN not set" >&2
+  echo "Error: SLACK_TOKEN not set" >&2
   exit 1
 fi
 

@@ -9,15 +9,13 @@ Search and interact with Slack workspaces from the command line.
 
 ## Important: Token Security
 
-**NEVER include `$SLACK_BOT_TOKEN` directly in curl commands.** The token will be logged and exposed.
+**NEVER include `$SLACK_TOKEN` directly in curl commands.** The token will be logged and exposed.
 
 Always use the wrapper scripts which read the token from the environment internally:
-- `slack send` - not `curl ... -H "Authorization: Bearer $SLACK_BOT_TOKEN"`
+- `slack send` - not `curl ... -H "Authorization: Bearer $SLACK_TOKEN"`
 - `slack-api POST ...` - for advanced API calls
 
 ## Quick Setup (New Users)
-
-If you don't have a Slack bot token yet:
 
 ```bash
 # Add scripts to PATH
@@ -30,18 +28,18 @@ slack-setup
 This opens Slack's app creation page with all permissions pre-configured. Then:
 1. Click **Create** to create the app
 2. Go to **OAuth & Permissions** → **Install to Workspace**
-3. Copy the **Bot User OAuth Token** (`xoxb-...`)
+3. Copy the **User OAuth Token** (`xoxp-...`) - NOT the bot token
 4. Set it in your shell:
    ```bash
-   export SLACK_BOT_TOKEN="xoxb-..."
+   export SLACK_TOKEN="xoxp-..."
    ```
+
+**Why user token?** Bot tokens (`xoxb-`) cannot search messages (Slack limitation). User tokens can do everything bots can, plus search.
 
 ## Quick Setup (Existing Token)
 
-If you already have a bot token:
-
 ```bash
-export SLACK_BOT_TOKEN="xoxb-..."
+export SLACK_TOKEN="xoxp-..."   # User token (recommended) or xoxb- bot token
 export PATH="$PATH:$HOME/.letta/skills/slack/scripts"
 ```
 

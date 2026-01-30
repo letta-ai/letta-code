@@ -2,40 +2,26 @@ display_information:
   name: Letta Slack Integration
   description: CLI tool for searching messages, reading threads, and sending notifications
   background_color: "#2c2d30"
-features:
-  bot_user:
-    display_name: Letta Bot
-    always_online: false
 oauth_config:
   scopes:
-    bot:
-      # Search
+    # User token (xoxp-) - for search and acting as user
+    user:
       - search:read
-      # Messaging
-      - chat:write
-      - chat:write.public      # Send to channels without joining
-      - reactions:read
-      - reactions:write
-      # Channels (public)
       - channels:read
       - channels:history
-      - channels:join          # Join public channels automatically
-      # Channels (private) - requires invite
       - groups:read
       - groups:history
-      # Direct messages
       - im:read
       - im:write
       - im:history
-      # Users
-      - users:read
-      - users:read.email
-      # Files
+      - chat:write
       - files:read
       - files:write
-      # Optional but useful
+      - users:read
+      - users:read.email
+      - reactions:read
+      - reactions:write
       - emoji:read
-      - links:read
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false
