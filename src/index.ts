@@ -74,6 +74,9 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+  --unsafe-remote-execution
+                        Auto-approve tools triggered by remote messages (e.g., from iMessage).
+                        WARNING: Remote messages can trigger local command execution.
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -408,6 +411,7 @@ async function main(): Promise<void> {
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
+        "unsafe-remote-execution": { type: "boolean" },
         "no-skills": { type: "boolean" },
       },
       strict: true,
@@ -519,7 +523,18 @@ async function main(): Promise<void> {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const unsafeRemoteExecution =
+    (values["unsafe-remote-execution"] as boolean | undefined) ?? false;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+
+  // Emit warning when unsafe-remote-execution is enabled
+  if (unsafeRemoteExecution && !isHeadless) {
+    console.error(
+      "\n⚠️  WARNING: --unsafe-remote-execution is enabled.\n" +
+        "   Remote messages (e.g., from iMessage) can trigger local tool execution.\n" +
+        "   Tools will be auto-approved without user confirmation.\n",
+    );
+  }
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
@@ -891,7 +906,12 @@ async function main(): Promise<void> {
     markMilestone("TOOLS_LOADED");
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
+    await handleHeadlessCommand(
+      process.argv,
+      specifiedModel,
+      skillsDirectory,
+      unsafeRemoteExecution,
+    );
     return;
   }
 
@@ -927,6 +947,7 @@ async function main(): Promise<void> {
     toolset,
     skillsDirectory,
     fromAfFile,
+    unsafeRemoteExecution,
   }: {
     continueSession: boolean;
     forceNew: boolean;
@@ -938,6 +959,7 @@ async function main(): Promise<void> {
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
+    unsafeRemoteExecution?: boolean;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
       boolean | null
@@ -1590,6 +1612,14 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
 
+        // Register proxy tool for remote execution if flag is enabled
+        if (unsafeRemoteExecution) {
+          const { registerProxyTool } = await import(
+            "./agent/remote-execution"
+          );
+          await registerProxyTool(agent.id);
+        }
+
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
         // Don't await - this is just for the skill unload reminder
         initializeLoadedSkillsFlag().catch(() => {
@@ -1946,6 +1976,7 @@ async function main(): Promise<void> {
         resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
         agentProvenance,
+        unsafeRemoteExecution,
         releaseNotes,
       });
     }
@@ -1962,6 +1993,7 @@ async function main(): Promise<void> {
       resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
       agentProvenance,
+      unsafeRemoteExecution,
       releaseNotes,
     });
   }
@@ -1979,6 +2011,7 @@ async function main(): Promise<void> {
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,
+      unsafeRemoteExecution: unsafeRemoteExecution,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
