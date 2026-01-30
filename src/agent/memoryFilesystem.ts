@@ -711,18 +711,46 @@ export async function syncMemoryFilesystem(
       resolution &&
       resolution.resolution === "block"
     ) {
-      // User explicitly requested block wins via resolution
+      // User explicitly requested block wins via resolution for CONTENT
+      // But FS still wins for LOCATION (attachment status)
       await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
       allFilesMap.set(label, { content: blockEntry.value || "" });
+
+      // Sync attachment status to match file location (FS wins for location)
+      if (locationMismatch && blockEntry.id) {
+        if (fileInSystem && !isAttached) {
+          await client.agents.blocks.attach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        } else if (!fileInSystem && isAttached) {
+          await client.agents.blocks.detach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        }
+      }
       continue;
     }
 
     // Handle explicit resolution override
     if (resolution?.resolution === "block") {
+      // Block wins for CONTENT, but FS wins for LOCATION
       await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
       allFilesMap.set(label, { content: blockEntry.value || "" });
+
+      // Sync attachment status to match file location (FS wins for location)
+      if (locationMismatch && blockEntry.id) {
+        if (fileInSystem && !isAttached) {
+          await client.agents.blocks.attach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        } else if (!fileInSystem && isAttached) {
+          await client.agents.blocks.detach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        }
+      }
       continue;
     }
 
