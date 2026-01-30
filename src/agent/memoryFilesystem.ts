@@ -6,11 +6,7 @@ import { dirname, join, relative } from "node:path";
 
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
 import { getClient } from "./client";
-import {
-  ISOLATED_BLOCK_LABELS,
-  parseMdxFrontmatter,
-  READ_ONLY_BLOCK_LABELS,
-} from "./memory";
+import { parseMdxFrontmatter, READ_ONLY_BLOCK_LABELS } from "./memory";
 
 export const MEMORY_FILESYSTEM_BLOCK_LABEL = "memory_filesystem";
 export const MEMORY_FS_ROOT = ".letta";
@@ -22,14 +18,14 @@ export const MEMORY_USER_DIR = "user";
 export const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
 /**
- * Block labels that are managed by the system and should be skipped during sync.
- * These blocks are auto-created/managed by the harness (skills, loaded_skills)
- * or by the memfs system itself (memory_filesystem).
+ * Block labels that are managed by the memfs system itself and have special
+ * update logic (updateMemoryFilesystemBlock). These are skipped in the main
+ * sync loop but written separately.
  */
-const MANAGED_BLOCK_LABELS = new Set([
-  MEMORY_FILESYSTEM_BLOCK_LABEL,
-  ...ISOLATED_BLOCK_LABELS,
-]);
+const MEMFS_MANAGED_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
+
+// Note: skills and loaded_skills (ISOLATED_BLOCK_LABELS) are now synced
+// but are read_only in the API, so file edits are ignored (API → file only)
 
 // Unified sync state - no system/detached split
 // The attached/detached distinction is derived at runtime from API and FS
@@ -147,6 +143,15 @@ export function ensureMemoryFilesystemDirs(
 
 function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Hash just the body content of a file (excluding frontmatter).
+ * Used for "content matches" checks where we compare file body to block value.
+ */
+function hashFileBody(content: string): string {
+  const { body } = parseMdxFrontmatter(content);
+  return hashContent(body);
 }
 
 function loadSyncState(
@@ -314,6 +319,94 @@ async function writeMemoryFile(dir: string, label: string, content: string) {
   const filePath = join(dir, `${label}.md`);
   await ensureFilePath(filePath);
   await writeFile(filePath, content, "utf-8");
+}
+
+/**
+ * Serialize a block to file content with YAML frontmatter.
+ * Includes description, limit, and read_only (if true) for round-trip preservation.
+ * Label is omitted since it's implied by the file path.
+ */
+export function renderBlockToFileContent(block: {
+  value?: string | null;
+  description?: string | null;
+  limit?: number | null;
+  read_only?: boolean | null;
+}): string {
+  const lines: string[] = ["---"];
+
+  // Always include description (so it round-trips and doesn't silently reset)
+  if (block.description) {
+    // Escape description for YAML if it contains special chars
+    const desc =
+      block.description.includes(":") || block.description.includes("\n")
+        ? `"${block.description.replace(/"/g, '\\"')}"`
+        : block.description;
+    lines.push(`description: ${desc}`);
+  }
+
+  // Always include limit
+  if (block.limit) {
+    lines.push(`limit: ${block.limit}`);
+  }
+
+  // Only include read_only if true (avoid cluttering frontmatter)
+  if (block.read_only === true) {
+    lines.push("read_only: true");
+  }
+
+  lines.push("---");
+  lines.push(""); // blank line after frontmatter
+  lines.push(block.value || "");
+
+  return lines.join("\n");
+}
+
+/**
+ * Parse file content for UPDATING an existing block.
+ * Only includes metadata fields that are explicitly present in frontmatter.
+ * This prevents overwriting existing API metadata when frontmatter is absent.
+ */
+export function parseBlockUpdateFromFileContent(
+  fileContent: string,
+  defaultLabel: string,
+): {
+  label: string;
+  value: string;
+  description?: string;
+  limit?: number;
+  read_only?: boolean;
+  // Flags indicating which fields were explicitly present
+  hasDescription: boolean;
+  hasLimit: boolean;
+  hasReadOnly: boolean;
+} {
+  const { frontmatter, body } = parseMdxFrontmatter(fileContent);
+
+  const label = frontmatter.label || defaultLabel;
+
+  // Check explicit presence using hasOwnProperty
+  const hasDescription = Object.hasOwn(frontmatter, "description");
+  const hasLimit = Object.hasOwn(frontmatter, "limit");
+  const hasReadOnly = Object.hasOwn(frontmatter, "read_only");
+
+  let limit: number | undefined;
+  if (hasLimit && frontmatter.limit) {
+    const parsed = Number.parseInt(frontmatter.limit, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      limit = parsed;
+    }
+  }
+
+  return {
+    label,
+    value: body,
+    ...(hasDescription && { description: frontmatter.description }),
+    ...(hasLimit && limit !== undefined && { limit }),
+    ...(hasReadOnly && { read_only: frontmatter.read_only === "true" }),
+    hasDescription,
+    hasLimit,
+    hasReadOnly,
+  };
 }
 
 async function deleteMemoryFile(dir: string, label: string) {
@@ -532,8 +625,8 @@ export async function syncMemoryFilesystem(
   const detachedBlockMap = new Map<string, Block>();
   for (const block of detachedBlocks) {
     if (block.label && block.id) {
-      // Skip managed blocks (skills, loaded_skills, memory_filesystem)
-      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+      // Skip memfs-managed blocks (memory_filesystem has special handling)
+      if (MEMFS_MANAGED_LABELS.has(block.label)) {
         continue;
       }
       // Skip blocks whose label matches a system block (prevents duplicates)
@@ -564,7 +657,8 @@ export async function syncMemoryFilesystem(
   const allFilesMap = new Map<string, { content: string }>();
 
   for (const label of Array.from(allLabels).sort()) {
-    if (MANAGED_BLOCK_LABELS.has(label)) {
+    // Skip memfs-managed blocks (memory_filesystem has special handling)
+    if (MEMFS_MANAGED_LABELS.has(label)) {
       continue;
     }
 
@@ -584,6 +678,8 @@ export async function syncMemoryFilesystem(
     const fileDir = fileInSystem ? systemDir : detachedDir;
 
     const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    // Body hash excludes frontmatter - used for "content matches" checks
+    const fileBodyHash = fileEntry ? hashFileBody(fileEntry.content) : null;
     const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
 
     // Use unified hash lookup
@@ -607,6 +703,14 @@ export async function syncMemoryFilesystem(
     if (fileEntry && !blockEntry) {
       if (lastBlockHash && !fileChanged) {
         // Block was deleted elsewhere; delete file
+        await deleteMemoryFile(fileDir, label);
+        deletedFiles.push(label);
+        allFilesMap.delete(label);
+        continue;
+      }
+
+      // Read-only labels are API-authoritative. If file exists but block doesn't, delete the file.
+      if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
         await deleteMemoryFile(fileDir, label);
         deletedFiles.push(label);
         allFilesMap.delete(label);
@@ -637,6 +741,16 @@ export async function syncMemoryFilesystem(
 
     // Case 2: Block exists, no file
     if (!fileEntry && blockEntry) {
+      // Read-only blocks: never delete/un-tag. Always recreate file instead.
+      if (blockEntry.read_only) {
+        const targetDir = isAttached ? systemDir : detachedDir;
+        const fileContent = renderBlockToFileContent(blockEntry);
+        await writeMemoryFile(targetDir, label, fileContent);
+        createdFiles.push(label);
+        allFilesMap.set(label, { content: fileContent });
+        continue;
+      }
+
       if (lastFileHash && !blockChanged) {
         // File deleted, block unchanged → remove owner tag so file doesn't resurrect
         if (blockEntry.id) {
@@ -666,9 +780,10 @@ export async function syncMemoryFilesystem(
 
       // Create file from block - use block's attached status to determine location
       const targetDir = isAttached ? systemDir : detachedDir;
-      await writeMemoryFile(targetDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(targetDir, label, fileContent);
       createdFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
       continue;
     }
 
@@ -684,7 +799,8 @@ export async function syncMemoryFilesystem(
       (fileInSystem && !isAttached) || (!fileInSystem && isAttached);
 
     // If content matches but location mismatches, sync attachment to match file location
-    if (fileHash === blockHash) {
+    // Use body hash (excludes frontmatter) for "content matches" check
+    if (fileBodyHash === blockHash) {
       if (locationMismatch && blockEntry.id) {
         if (fileInSystem && !isAttached) {
           // File in system/, block detached → attach block
@@ -711,9 +827,10 @@ export async function syncMemoryFilesystem(
     ) {
       // User explicitly requested block wins via resolution for CONTENT
       // But FS still wins for LOCATION (attachment status)
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
@@ -733,9 +850,10 @@ export async function syncMemoryFilesystem(
     // Handle explicit resolution override
     if (resolution?.resolution === "block") {
       // Block wins for CONTENT, but FS wins for LOCATION
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
@@ -753,18 +871,39 @@ export async function syncMemoryFilesystem(
     }
 
     // "FS wins all": if file changed at all, file wins (update block from file)
+    // EXCEPT for read_only blocks - those are API → file only (ignore local changes)
     // Also sync attachment status to match file location
     if (fileChanged) {
+      // Read-only blocks: ignore local changes, overwrite file with API content
+      if (blockEntry.read_only) {
+        const fileContent = renderBlockToFileContent(blockEntry);
+        await writeMemoryFile(fileDir, label, fileContent);
+        updatedFiles.push(label);
+        allFilesMap.set(label, { content: fileContent });
+        continue;
+      }
+
       if (blockEntry.id) {
         try {
-          const blockData = parseBlockFromFileContent(fileEntry.content, label);
-          const updatePayload = isAttached
-            ? { value: blockData.value }
-            : { value: blockData.value, label };
+          // Use update-mode parsing to preserve metadata not in frontmatter
+          const parsed = parseBlockUpdateFromFileContent(
+            fileEntry.content,
+            label,
+          );
+          const updatePayload: Record<string, unknown> = {
+            value: parsed.value,
+          };
+          // Only include metadata if explicitly present in frontmatter
+          if (parsed.hasDescription)
+            updatePayload.description = parsed.description;
+          if (parsed.hasLimit) updatePayload.limit = parsed.limit;
+          if (parsed.hasReadOnly) updatePayload.read_only = parsed.read_only;
+          // For detached blocks, also update label if changed
+          if (!isAttached) updatePayload.label = label;
           await client.blocks.update(blockEntry.id, updatePayload);
           updatedBlocks.push(label);
           allBlocksMap.set(label, {
-            value: blockData.value,
+            value: parsed.value,
             id: blockEntry.id,
           });
 
@@ -814,9 +953,10 @@ export async function syncMemoryFilesystem(
     // Only block changed (file unchanged) → update file from block
     // Also sync attachment status to match file location
     if (blockChanged) {
-      await writeMemoryFile(fileDir, label, blockEntry.value || "");
+      const fileContent = renderBlockToFileContent(blockEntry);
+      await writeMemoryFile(fileDir, label, fileContent);
       updatedFiles.push(label);
-      allFilesMap.set(label, { content: blockEntry.value || "" });
+      allFilesMap.set(label, { content: fileContent });
 
       // Sync attachment status to match file location (FS wins for location)
       if (locationMismatch && blockEntry.id) {
@@ -879,9 +1019,20 @@ export async function updateMemoryFilesystemBlock(
 
   if (memfsBlock?.id) {
     await client.blocks.update(memfsBlock.id, { value: content });
-  }
 
-  await writeMemoryFile(systemDir, MEMORY_FILESYSTEM_BLOCK_LABEL, content);
+    // Write file with frontmatter (consistent with other blocks)
+    const fileContent = renderBlockToFileContent({
+      value: content,
+      description: memfsBlock.description,
+      limit: memfsBlock.limit,
+      read_only: memfsBlock.read_only,
+    });
+    await writeMemoryFile(
+      systemDir,
+      MEMORY_FILESYSTEM_BLOCK_LABEL,
+      fileContent,
+    );
+  }
 }
 
 export async function ensureMemoryFilesystemBlock(agentId: string) {
@@ -994,8 +1145,8 @@ export async function checkMemoryFilesystemStatus(
   const detachedBlockMap = new Map<string, Block>();
   for (const block of detachedBlocks) {
     if (block.label) {
-      // Skip managed blocks
-      if (MANAGED_BLOCK_LABELS.has(block.label)) {
+      // Skip memfs-managed blocks
+      if (MEMFS_MANAGED_LABELS.has(block.label)) {
         continue;
       }
       // Skip blocks whose label matches a system block (prevents duplicates)
@@ -1017,7 +1168,8 @@ export async function checkMemoryFilesystemStatus(
   ]);
 
   for (const label of Array.from(allLabels).sort()) {
-    if (MANAGED_BLOCK_LABELS.has(label)) continue;
+    // Skip memfs-managed blocks (memory_filesystem has special handling)
+    if (MEMFS_MANAGED_LABELS.has(label)) continue;
 
     // Determine current state at runtime
     const systemFile = systemFiles.get(label);
@@ -1098,6 +1250,10 @@ function classifyLabel(
   if (fileContent !== null && blockValue === null) {
     if (lastBlockHash && !fileChanged) {
       // Block was deleted, file unchanged — would delete file
+      return;
+    }
+    // Ignore file-only read_only labels (API is authoritative, file will be deleted on sync)
+    if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
       return;
     }
     newFiles.push(label);

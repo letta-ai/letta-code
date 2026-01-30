@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -45,6 +45,7 @@ import {
   checkMemoryFilesystemStatus,
   detachMemoryFilesystemBlock,
   ensureMemoryFilesystemBlock,
+  ensureMemoryFilesystemDirs,
   formatMemorySyncSummary,
   getMemoryFilesystemRoot,
   type MemorySyncConflict,
@@ -1036,7 +1037,7 @@ export default function App({
   >(null);
   const memorySyncProcessedToolCallsRef = useRef<Set<string>>(new Set());
   const memorySyncCommandIdRef = useRef<string | null>(null);
-  const memorySyncCommandInputRef = useRef<string>("/memfs-sync");
+  const memorySyncCommandInputRef = useRef<string>("/memfs sync");
   const memorySyncInFlightRef = useRef(false);
   const memoryFilesystemInitializedRef = useRef(false);
   const pendingMemfsConflictsRef = useRef<MemorySyncConflict[] | null>(null);
@@ -1931,7 +1932,7 @@ export default function App({
       commandId: string,
       output: string,
       success: boolean,
-      input = "/memfs-sync",
+      input = "/memfs sync",
       keepRunning = false, // If true, keep phase as "running" (for conflict dialogs)
     ) => {
       buffersRef.current.byId.set(commandId, {
@@ -1972,7 +1973,7 @@ export default function App({
 
         if (result.conflicts.length > 0) {
           if (source === "command") {
-            // User explicitly ran /memfs-sync — show the interactive overlay
+            // User explicitly ran /memfs sync — show the interactive overlay
             memorySyncCommandIdRef.current = commandId ?? null;
             setMemorySyncConflicts(result.conflicts);
             setActiveOverlay("memfs-sync");
@@ -1984,7 +1985,7 @@ export default function App({
                   result.conflicts.length === 1 ? "" : "s"
                 } to continue.`,
                 false,
-                "/memfs-sync",
+                "/memfs sync",
                 true, // keepRunning - don't commit until conflicts resolved
               );
             }
@@ -2175,7 +2176,7 @@ export default function App({
       const commandId = memorySyncCommandIdRef.current;
       const commandInput = memorySyncCommandInputRef.current;
       memorySyncCommandIdRef.current = null;
-      memorySyncCommandInputRef.current = "/memfs-sync";
+      memorySyncCommandInputRef.current = "/memfs sync";
 
       const resolutions: MemorySyncResolution[] = memorySyncConflicts.map(
         (conflict) => {
@@ -2259,7 +2260,7 @@ export default function App({
     const commandId = memorySyncCommandIdRef.current;
     const commandInput = memorySyncCommandInputRef.current;
     memorySyncCommandIdRef.current = null;
-    memorySyncCommandInputRef.current = "/memfs-sync";
+    memorySyncCommandInputRef.current = "/memfs sync";
     memorySyncInFlightRef.current = false;
     setMemorySyncConflicts(null);
     setActiveOverlay(null);
@@ -6226,59 +6227,34 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /memfs-sync command - sync filesystem memory
-        if (trimmed === "/memfs-sync") {
-          // Check if memfs is enabled for this agent
-          if (!settingsManager.isMemfsEnabled(agentId)) {
-            const cmdId = uid("cmd");
+        // Special handling for /memfs command - manage filesystem-backed memory
+        if (trimmed.startsWith("/memfs")) {
+          const [, subcommand] = trimmed.split(/\s+/);
+          const cmdId = uid("cmd");
+
+          if (!subcommand || subcommand === "help") {
+            const output = [
+              "memfs commands:",
+              "- /memfs status  — show status",
+              "- /memfs enable  — enable filesystem-backed memory",
+              "- /memfs disable — disable filesystem-backed memory",
+              "- /memfs sync    — sync blocks and files now",
+              "- /memfs reset   — move local memfs to /tmp and recreate dirs",
+            ].join("\n");
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output:
-                "Memory filesystem is disabled. Run `/memfs enable` first.",
+              output,
               phase: "finished",
-              success: false,
+              success: true,
             });
             buffersRef.current.order.push(cmdId);
             refreshDerived();
             return { submitted: true };
           }
 
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Syncing memory filesystem...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          setCommandRunning(true);
-
-          try {
-            await runMemoryFilesystemSync("command", cmdId);
-          } catch (error) {
-            // runMemoryFilesystemSync has its own error handling, but catch any
-            // unexpected errors that slip through
-            const errorText =
-              error instanceof Error ? error.message : String(error);
-            updateMemorySyncCommand(cmdId, `Failed: ${errorText}`, false);
-          } finally {
-            setCommandRunning(false);
-          }
-
-          return { submitted: true };
-        }
-
-        // Special handling for /memfs command - enable/disable filesystem-backed memory
-        if (trimmed.startsWith("/memfs")) {
-          const [, subcommand] = trimmed.split(/\s+/);
-          const cmdId = uid("cmd");
-
-          if (!subcommand || subcommand === "status") {
+          if (subcommand === "status") {
             // Show status
             const enabled = settingsManager.isMemfsEnabled(agentId);
             let output: string;
@@ -6371,6 +6347,104 @@ export default function App({
             return { submitted: true };
           }
 
+          if (subcommand === "sync") {
+            // Check if memfs is enabled for this agent
+            if (!settingsManager.isMemfsEnabled(agentId)) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output:
+                  "Memory filesystem is disabled. Run `/memfs enable` first.",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Syncing memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            setCommandRunning(true);
+
+            try {
+              await runMemoryFilesystemSync("command", cmdId);
+            } catch (error) {
+              // runMemoryFilesystemSync has its own error handling, but catch any
+              // unexpected errors that slip through
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(cmdId, `Failed: ${errorText}`, false);
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          if (subcommand === "reset") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Resetting memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              if (!existsSync(memoryDir)) {
+                updateMemorySyncCommand(
+                  cmdId,
+                  "No local memory filesystem found to reset.",
+                  true,
+                  msg,
+                );
+                return { submitted: true };
+              }
+
+              const backupDir = join(
+                tmpdir(),
+                `letta-memfs-reset-${agentId}-${Date.now()}`,
+              );
+              renameSync(memoryDir, backupDir);
+
+              ensureMemoryFilesystemDirs(agentId);
+
+              updateMemorySyncCommand(
+                cmdId,
+                `Memory filesystem reset.\nBackup moved to ${backupDir}\nRun \`/memfs sync\` to repopulate from API.`,
+                true,
+                msg,
+              );
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to reset memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
           if (subcommand === "disable") {
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -6448,7 +6522,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, or /memfs disable.`,
+            output: `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, /memfs disable, /memfs sync, or /memfs reset.`,
             phase: "finished",
             success: false,
           });

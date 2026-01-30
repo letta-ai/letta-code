@@ -60,18 +60,10 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
-  "/memfs-sync": {
-    desc: "Sync memory blocks with filesystem (requires memFS enabled)",
-    order: 15.5,
-    handler: () => {
-      // Handled specially in App.tsx to run filesystem sync
-      return "Syncing memory filesystem...";
-    },
-  },
   "/memfs": {
-    desc: "Enable/disable filesystem-backed memory (/memfs [enable|disable])",
-    args: "[enable|disable]",
-    order: 15.6,
+    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    args: "[enable|disable|sync|reset]",
+    order: 15.5,
     handler: () => {
       // Handled specially in App.tsx
       return "Managing memory filesystem...";
