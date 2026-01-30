@@ -74,6 +74,8 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+  --memfs               Enable memory filesystem for this agent
+  --no-memfs            Disable memory filesystem for this agent
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -409,6 +411,8 @@ async function main(): Promise<void> {
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
         "no-skills": { type: "boolean" },
+        memfs: { type: "boolean" },
+        "no-memfs": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -518,6 +522,8 @@ async function main(): Promise<void> {
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const memfsFlag = values.memfs as boolean | undefined;
+  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
@@ -1589,6 +1595,13 @@ async function main(): Promise<void> {
 
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
+
+        // Apply memfs flag if specified
+        if (memfsFlag) {
+          settingsManager.setMemfsEnabled(agent.id, true);
+        } else if (noMemfsFlag) {
+          settingsManager.setMemfsEnabled(agent.id, false);
+        }
 
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
         // Don't await - this is just for the skill unload reminder

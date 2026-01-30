@@ -120,6 +120,8 @@ export async function handleHeadlessCommand(
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
       "no-skills": { type: "boolean" },
+      memfs: { type: "boolean" },
+      "no-memfs": { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -235,6 +237,8 @@ export async function handleHeadlessCommand(
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const memfsFlag = values.memfs as boolean | undefined;
+  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
@@ -583,6 +587,13 @@ export async function handleHeadlessCommand(
     if (createdBlocks.length > 0) {
       console.log("Created missing skills blocks for agent compatibility");
     }
+  }
+
+  // Apply memfs flag if specified
+  if (memfsFlag) {
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (noMemfsFlag) {
+    settingsManager.setMemfsEnabled(agent.id, false);
   }
 
   // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
