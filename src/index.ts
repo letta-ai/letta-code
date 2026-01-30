@@ -1427,6 +1427,7 @@ async function main(): Promise<void> {
         const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
+        let isNewlyCreatedAgent = false;
 
         // Priority 1: Import from AgentFile template
         if (fromAfFile) {
@@ -1438,6 +1439,7 @@ async function main(): Promise<void> {
             stripMessages: true,
           });
           agent = result.agent;
+          isNewlyCreatedAgent = true;
           setAgentProvenance({
             isNew: true,
             blocks: [],
@@ -1531,6 +1533,7 @@ async function main(): Promise<void> {
             baseTools,
           );
           agent = result.agent;
+          isNewlyCreatedAgent = true;
           setAgentProvenance(result.provenance);
         }
 
@@ -1596,11 +1599,15 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
 
-        // Apply memfs flag if specified
+        // Apply memfs flag if specified, or enable by default for new agents
+        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         if (memfsFlag) {
           settingsManager.setMemfsEnabled(agent.id, true);
         } else if (noMemfsFlag) {
           settingsManager.setMemfsEnabled(agent.id, false);
+        } else if (isNewlyCreatedAgent && !isSubagent) {
+          // Enable memfs by default for newly created agents (but not subagents)
+          settingsManager.setMemfsEnabled(agent.id, true);
         }
 
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
@@ -1826,7 +1833,6 @@ async function main(): Promise<void> {
 
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
-        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         if (!isSubagent) {
           settingsManager.setLocalLastSession(
             { agentId: agent.id, conversationId: conversationIdToUse },

@@ -213,6 +213,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let isNewlyCreatedAgent = false;
   let specifiedAgentId = values.agent as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
   const useDefaultConv = values.default as boolean | undefined;
@@ -450,6 +451,7 @@ export async function handleHeadlessCommand(
       stripMessages: true,
     });
     agent = result.agent;
+    isNewlyCreatedAgent = true;
   }
 
   // Priority 2: Try to use --agent specified ID
@@ -481,6 +483,7 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
+    isNewlyCreatedAgent = true;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -589,11 +592,14 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Apply memfs flag if specified
+  // Apply memfs flag if specified, or enable by default for new agents
   if (memfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, false);
+  } else if (isNewlyCreatedAgent && !isSubagent) {
+    // Enable memfs by default for newly created agents (but not subagents)
+    settingsManager.setMemfsEnabled(agent.id, true);
   }
 
   // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
