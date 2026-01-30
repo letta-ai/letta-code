@@ -522,6 +522,11 @@ export async function syncMemoryFilesystem(
       if (MANAGED_BLOCK_LABELS.has(block.label)) {
         continue;
       }
+      // Skip blocks whose label matches a system block (prevents duplicates)
+      // This can happen when a system block is detached but keeps its owner tag
+      if (systemBlockMap.has(block.label)) {
+        continue;
+      }
       detachedBlockIds[block.label] = block.id;
       detachedBlockMap.set(block.label, block);
     }
@@ -985,6 +990,10 @@ export async function checkMemoryFilesystemStatus(
     if (block.label) {
       // Skip managed blocks
       if (MANAGED_BLOCK_LABELS.has(block.label)) {
+        continue;
+      }
+      // Skip blocks whose label matches a system block (prevents duplicates)
+      if (systemBlockMap.has(block.label)) {
         continue;
       }
       detachedBlockMap.set(block.label, block);
