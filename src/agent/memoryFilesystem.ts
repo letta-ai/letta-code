@@ -69,6 +69,8 @@ export type MemfsSyncStatus = {
   newFiles: string[];
   /** Labels where a block exists but no file */
   newBlocks: string[];
+  /** Labels where file location doesn't match block attachment (would auto-sync) */
+  locationMismatches: string[];
   /** True when there are no conflicts or pending changes */
   isClean: boolean;
 };
@@ -725,6 +727,7 @@ export async function syncMemoryFilesystem(
     }
 
     // "FS wins all": if file changed at all, file wins (update block from file)
+    // Also sync attachment status to match file location
     if (fileChanged) {
       if (blockEntry.id) {
         try {
@@ -738,6 +741,19 @@ export async function syncMemoryFilesystem(
             value: blockData.value,
             id: blockEntry.id,
           });
+
+          // Sync attachment status to match file location (FS wins for location too)
+          if (locationMismatch) {
+            if (fileInSystem && !isAttached) {
+              await client.agents.blocks.attach(blockEntry.id, {
+                agent_id: agentId,
+              });
+            } else if (!fileInSystem && isAttached) {
+              await client.agents.blocks.detach(blockEntry.id, {
+                agent_id: agentId,
+              });
+            }
+          }
         } catch (err) {
           if (err instanceof Error && err.message.includes("Not Found")) {
             // Block was deleted - create a new one
@@ -770,10 +786,24 @@ export async function syncMemoryFilesystem(
     }
 
     // Only block changed (file unchanged) → update file from block
+    // Also sync attachment status to match file location
     if (blockChanged) {
       await writeMemoryFile(fileDir, label, blockEntry.value || "");
       updatedFiles.push(label);
       allFilesMap.set(label, { content: blockEntry.value || "" });
+
+      // Sync attachment status to match file location (FS wins for location)
+      if (locationMismatch && blockEntry.id) {
+        if (fileInSystem && !isAttached) {
+          await client.agents.blocks.attach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        } else if (!fileInSystem && isAttached) {
+          await client.agents.blocks.detach(blockEntry.id, {
+            agent_id: agentId,
+          });
+        }
+      }
     }
   }
 
@@ -928,6 +958,7 @@ export async function checkMemoryFilesystemStatus(
   const pendingFromBlock: string[] = [];
   const newFiles: string[] = [];
   const newBlocks: string[] = [];
+  const locationMismatches: string[] = [];
 
   // Discover detached blocks via owner tag
   const allOwnedBlocks = await fetchOwnedBlocks(agentId);
@@ -963,14 +994,25 @@ export async function checkMemoryFilesystemStatus(
     if (MANAGED_BLOCK_LABELS.has(label)) continue;
 
     // Determine current state at runtime
-    const fileContent =
-      systemFiles.get(label)?.content ??
-      detachedFiles.get(label)?.content ??
-      null;
-    const blockValue =
-      systemBlockMap.get(label)?.value ??
-      detachedBlockMap.get(label)?.value ??
-      null;
+    const systemFile = systemFiles.get(label);
+    const detachedFile = detachedFiles.get(label);
+    const attachedBlock = systemBlockMap.get(label);
+    const detachedBlock = detachedBlockMap.get(label);
+
+    const fileContent = systemFile?.content ?? detachedFile?.content ?? null;
+    const blockValue = attachedBlock?.value ?? detachedBlock?.value ?? null;
+
+    const fileInSystem = !!systemFile;
+    const isAttached = !!attachedBlock;
+
+    // Check for location mismatch (both file and block exist but location doesn't match)
+    if (fileContent !== null && blockValue !== null) {
+      const locationMismatch =
+        (fileInSystem && !isAttached) || (!fileInSystem && isAttached);
+      if (locationMismatch) {
+        locationMismatches.push(label);
+      }
+    }
 
     classifyLabel(
       label,
@@ -991,7 +1033,8 @@ export async function checkMemoryFilesystemStatus(
     pendingFromFile.length === 0 &&
     pendingFromBlock.length === 0 &&
     newFiles.length === 0 &&
-    newBlocks.length === 0;
+    newBlocks.length === 0 &&
+    locationMismatches.length === 0;
 
   return {
     conflicts,
@@ -999,6 +1042,7 @@ export async function checkMemoryFilesystemStatus(
     pendingFromBlock,
     newFiles,
     newBlocks,
+    locationMismatches,
     isClean,
   };
 }

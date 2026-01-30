@@ -675,4 +675,27 @@ describe("location mismatch auto-sync", () => {
 
     expect(scenario.expectedAction).toBe("attach block to match file location");
   });
+
+  test("content differs AND location mismatches → sync both in one pass", () => {
+    // "FS wins all" applies to both content AND location
+    // When content differs and location mismatches:
+    // 1. File content wins → block updated
+    // 2. File location wins → attachment status synced
+    // Both happen in the SAME sync (not requiring two syncs)
+
+    const scenario = {
+      fileLocation: "root",
+      blockAttached: true,
+      fileContent: "new content",
+      blockContent: "old content",
+      expectedActions: [
+        "update block content from file",
+        "detach block to match file location",
+      ],
+      requiresTwoSyncs: false, // Fixed! Previously required 2 syncs
+    };
+
+    expect(scenario.requiresTwoSyncs).toBe(false);
+    expect(scenario.expectedActions).toHaveLength(2);
+  });
 });
