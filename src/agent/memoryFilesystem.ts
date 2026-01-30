@@ -186,14 +186,22 @@ async function saveSyncState(
   await writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
-async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
+async function scanMdFiles(
+  dir: string,
+  baseDir = dir,
+  excludeDirs: string[] = [],
+): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const results: string[] = [];
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...(await scanMdFiles(fullPath, baseDir)));
+      // Skip excluded directories (e.g., "system" when scanning for detached files)
+      if (excludeDirs.includes(entry.name)) {
+        continue;
+      }
+      results.push(...(await scanMdFiles(fullPath, baseDir, excludeDirs)));
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       results.push(relative(baseDir, fullPath));
     }
@@ -254,8 +262,9 @@ export function parseBlockFromFileContent(
 
 async function readMemoryFiles(
   dir: string,
+  excludeDirs: string[] = [],
 ): Promise<Map<string, { content: string; path: string }>> {
-  const files = await scanMdFiles(dir);
+  const files = await scanMdFiles(dir, dir, excludeDirs);
   const entries = new Map<string, { content: string; path: string }>();
 
   for (const relativePath of files) {
@@ -466,7 +475,7 @@ export async function syncMemoryFilesystem(
   const systemDir = getMemorySystemDir(agentId, homeDir);
   const detachedDir = getMemoryDetachedDir(agentId, homeDir);
   const systemFiles = await readMemoryFiles(systemDir);
-  const detachedFiles = await readMemoryFiles(detachedDir);
+  const detachedFiles = await readMemoryFiles(detachedDir, [MEMORY_SYSTEM_DIR]);
   systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
 
   const attachedBlocks = await fetchAgentBlocks(agentId);
@@ -788,7 +797,9 @@ export async function syncMemoryFilesystem(
 
     const updatedSystemFilesMap = await readMemoryFiles(systemDir);
     updatedSystemFilesMap.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
-    const updatedUserFilesMap = await readMemoryFiles(detachedDir);
+    const updatedUserFilesMap = await readMemoryFiles(detachedDir, [
+      MEMORY_SYSTEM_DIR,
+    ]);
     const refreshedUserBlocks = new Map<string, { value: string }>();
 
     for (const [label, blockId] of Object.entries(detachedBlockIds)) {
@@ -829,7 +840,7 @@ export async function updateMemoryFilesystemBlock(
   const detachedDir = getMemoryDetachedDir(agentId, homeDir);
 
   const systemFiles = await readMemoryFiles(systemDir);
-  const detachedFiles = await readMemoryFiles(detachedDir);
+  const detachedFiles = await readMemoryFiles(detachedDir, [MEMORY_SYSTEM_DIR]);
 
   const tree = renderMemoryFilesystemTree(
     Array.from(systemFiles.keys()).filter(
@@ -933,7 +944,7 @@ export async function checkMemoryFilesystemStatus(
   const systemDir = getMemorySystemDir(agentId, homeDir);
   const detachedDir = getMemoryDetachedDir(agentId, homeDir);
   const systemFiles = await readMemoryFiles(systemDir);
-  const detachedFiles = await readMemoryFiles(detachedDir);
+  const detachedFiles = await readMemoryFiles(detachedDir, [MEMORY_SYSTEM_DIR]);
   systemFiles.delete(MEMORY_FILESYSTEM_BLOCK_LABEL);
 
   const attachedBlocks = await fetchAgentBlocks(agentId);

@@ -123,6 +123,7 @@ import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
+import { MemfsTreeViewer } from "./components/MemfsTreeViewer";
 import { MemoryTabViewer } from "./components/MemoryTabViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -10323,14 +10324,22 @@ Plan file path: ${planFilePath}`;
             )}
 
             {/* Memory Viewer - conditionally mounted as overlay */}
-            {activeOverlay === "memory" && (
-              <MemoryTabViewer
-                blocks={agentState?.memory?.blocks || []}
-                agentId={agentId}
-                onClose={closeOverlay}
-                conversationId={conversationId}
-              />
-            )}
+            {/* Use tree view for memfs-enabled agents, tab view otherwise */}
+            {activeOverlay === "memory" &&
+              (settingsManager.isMemfsEnabled(agentId) ? (
+                <MemfsTreeViewer
+                  agentId={agentId}
+                  onClose={closeOverlay}
+                  conversationId={conversationId}
+                />
+              ) : (
+                <MemoryTabViewer
+                  blocks={agentState?.memory?.blocks || []}
+                  agentId={agentId}
+                  onClose={closeOverlay}
+                  conversationId={conversationId}
+                />
+              ))}
 
             {/* Memory Sync Conflict Resolver */}
             {activeOverlay === "memfs-sync" && memorySyncConflicts && (
