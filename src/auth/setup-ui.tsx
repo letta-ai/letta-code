@@ -10,6 +10,9 @@ import { colors } from "../cli/components/colors";
 import { settingsManager } from "../settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
 
+const upArrow = String.fromCharCode(0x2191);
+const downArrow = String.fromCharCode(0x2193);
+
 type SetupMode = "menu" | "device-code" | "auth-code" | "self-host" | "done";
 
 interface SetupUIProps {
@@ -186,7 +189,9 @@ export function SetupUI({ onComplete }: SetupUIProps) {
         </Text>
       </Box>
       <Text> </Text>
-      <Text dimColor>Use ↑/↓ to navigate, Enter to select</Text>
+      <Text dimColor>
+        Use {upArrow}/{downArrow} to navigate, Enter to select
+      </Text>
     </Box>
   );
 }

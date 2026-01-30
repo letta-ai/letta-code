@@ -4,12 +4,12 @@ import { colors } from "./colors";
 
 function fixBunEncoding(text: string): string {
   if (typeof Bun === "undefined") return text;
-  
+
   // Replace literal characters with Unicode codepoints
   return text
-    .replace(/█/g, String.fromCharCode(0x2588))  // Full block
-    .replace(/▓/g, String.fromCharCode(0x2593))  // Dark shade
-    .replace(/▒/g, String.fromCharCode(0x2592))  // Medium shade
+    .replace(/█/g, String.fromCharCode(0x2588)) // Full block
+    .replace(/▓/g, String.fromCharCode(0x2593)) // Dark shade
+    .replace(/▒/g, String.fromCharCode(0x2592)) // Medium shade
     .replace(/░/g, String.fromCharCode(0x2591)); // Light shade
 }
 
