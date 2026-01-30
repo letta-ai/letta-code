@@ -149,6 +149,15 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+/**
+ * Hash just the body content of a file (excluding frontmatter).
+ * Used for "content matches" checks where we compare file body to block value.
+ */
+function hashFileBody(content: string): string {
+  const { body } = parseMdxFrontmatter(content);
+  return hashContent(body);
+}
+
 function loadSyncState(
   agentId: string,
   homeDir: string = homedir(),
@@ -672,6 +681,8 @@ export async function syncMemoryFilesystem(
     const fileDir = fileInSystem ? systemDir : detachedDir;
 
     const fileHash = fileEntry ? hashContent(fileEntry.content) : null;
+    // Body hash excludes frontmatter - used for "content matches" checks
+    const fileBodyHash = fileEntry ? hashFileBody(fileEntry.content) : null;
     const blockHash = blockEntry ? hashContent(blockEntry.value || "") : null;
 
     // Use unified hash lookup
@@ -773,7 +784,8 @@ export async function syncMemoryFilesystem(
       (fileInSystem && !isAttached) || (!fileInSystem && isAttached);
 
     // If content matches but location mismatches, sync attachment to match file location
-    if (fileHash === blockHash) {
+    // Use body hash (excludes frontmatter) for "content matches" check
+    if (fileBodyHash === blockHash) {
       if (locationMismatch && blockEntry.id) {
         if (fileInSystem && !isAttached) {
           // File in system/, block detached → attach block
