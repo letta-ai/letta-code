@@ -64,8 +64,7 @@ export async function sendMessageStream(
         "agentId is required in opts when using default conversation",
       );
     }
-    // include_compaction_messages: SDK will be updated to support this parameter
-    stream = (await client.agents.messages.create(
+    stream = await client.agents.messages.create(
       opts.agentId,
       {
         messages: messages,
@@ -74,26 +73,23 @@ export async function sendMessageStream(
         background: opts.background ?? true,
         client_tools: getClientToolsFromRegistry(),
         include_compaction_messages: true,
-      } as unknown as Parameters<typeof client.agents.messages.create>[1],
+      },
       requestOptions,
-    )) as unknown as Stream<LettaStreamingResponse>;
+    );
   } else {
     // Use conversations route for explicit conversations
-    // include_compaction_messages: SDK will be updated to support this parameter
-    stream = (await client.conversations.messages.create(
+    stream = await client.conversations.messages.create(
       conversationId,
       {
         messages: messages,
-        stream: true,
+        streaming: true,
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
         client_tools: getClientToolsFromRegistry(),
         include_compaction_messages: true,
-      } as unknown as Parameters<
-        typeof client.conversations.messages.create
-      >[1],
+      },
       requestOptions,
-    )) as unknown as Stream<LettaStreamingResponse>;
+    );
   }
 
   // Attach start time to stream for TTFT calculation in drainStream

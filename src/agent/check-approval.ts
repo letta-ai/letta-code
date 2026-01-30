@@ -162,7 +162,7 @@ export async function getResumeData(
               {
                 limit: MESSAGE_HISTORY_LIMIT,
                 order: "desc",
-                // @ts-expect-error - SDK will be updated to support this parameter
+                // @ts-expect-error - SDK MessageListParams doesn't include this yet
                 include_compaction_messages: true,
               },
             );
@@ -202,7 +202,7 @@ export async function getResumeData(
             {
               limit: MESSAGE_HISTORY_LIMIT,
               order: "desc",
-              // @ts-expect-error - SDK will be updated to support this parameter
+              // @ts-expect-error - SDK MessageListParams doesn't include this yet
               include_compaction_messages: true,
             },
           );
@@ -289,7 +289,7 @@ export async function getResumeData(
             limit: MESSAGE_HISTORY_LIMIT,
             order: "desc",
             conversation_id: "default", // Key: filter to default conversation only
-            // @ts-expect-error - SDK will be updated to support this parameter
+            // @ts-expect-error - SDK MessageListParams doesn't include this yet
             include_compaction_messages: true,
           });
           messages = sortChronological(messagesPage.items);
