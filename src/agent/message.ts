@@ -72,6 +72,7 @@ export async function sendMessageStream(
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
         client_tools: getClientToolsFromRegistry(),
+        include_compaction_messages: true,
       },
       requestOptions,
     );
@@ -81,10 +82,11 @@ export async function sendMessageStream(
       conversationId,
       {
         messages: messages,
-        stream: true,
+        streaming: true,
         stream_tokens: opts.streamTokens ?? true,
         background: opts.background ?? true,
         client_tools: getClientToolsFromRegistry(),
+        include_compaction_messages: true,
       },
       requestOptions,
     );
