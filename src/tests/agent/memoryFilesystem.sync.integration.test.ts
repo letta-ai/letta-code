@@ -43,6 +43,7 @@ import { settingsManager } from "../../settings-manager";
 // Skip all tests if no API key is available
 const LETTA_API_KEY = process.env.LETTA_API_KEY;
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+const API_KEY = LETTA_API_KEY ?? "";
 
 const describeIntegration = LETTA_API_KEY ? describe : describe.skip;
 
@@ -56,7 +57,7 @@ describeIntegration("memfs sync integration", () => {
   beforeAll(async () => {
     client = new Letta({
       baseURL: LETTA_BASE_URL,
-      apiKey: LETTA_API_KEY!,
+      apiKey: API_KEY,
     });
 
     // Create a test agent
@@ -358,14 +359,15 @@ describeIntegration("memfs sync integration", () => {
     let attachedBlocks = await getAttachedBlocks();
     let block = attachedBlocks.find((b) => b.label === label);
     expect(block).toBeDefined();
-    const blockId = block?.id;
-    if (blockId) {
-      createdBlockIds.push(blockId);
+    if (!block?.id) {
+      throw new Error("Expected block to exist after first sync.");
     }
+    const blockId = block.id;
+    createdBlockIds.push(blockId);
 
     // Change both file AND block
     writeSystemFile(label, fileContent);
-    await client.blocks.update(blockId!, { value: blockContent });
+    await client.blocks.update(blockId, { value: blockContent });
 
     // Second sync - file should win (no conflict)
     const result = await syncMemoryFilesystem(testAgentId, {

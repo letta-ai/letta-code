@@ -70,7 +70,7 @@ function ProfileSelectionUI({
   externalFreshRepoMode,
   failedAgentMessage,
   serverModelsForNewAgent,
-  defaultModelHandle,
+  defaultModelHandle: _defaultModelHandle,
   serverBaseUrl,
   onComplete,
 }: {

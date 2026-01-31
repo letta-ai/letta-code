@@ -7069,12 +7069,12 @@ ${conflictRows}
 
 To see the full diff for each conflict, run:
 \`\`\`bash
-npx tsx <SKILL_DIR>/scripts/memfs-diff.ts $LETTA_AGENT_ID
+letta memfs diff --agent $LETTA_AGENT_ID
 \`\`\`
 
 The diff will be written to a file for review. After reviewing, resolve all conflicts at once:
 \`\`\`bash
-npx tsx <SKILL_DIR>/scripts/memfs-resolve.ts $LETTA_AGENT_ID --resolutions '<JSON array of {label, resolution}>'
+letta memfs resolve --agent $LETTA_AGENT_ID --resolutions '<JSON array of {label, resolution}>'
 \`\`\`
 
 Resolution options: \`"file"\` (overwrite block with file) or \`"block"\` (overwrite file with block).

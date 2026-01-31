@@ -61,6 +61,11 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
   "remote",
 ]);
 
+// letta CLI read-only subcommands: group -> allowed actions
+const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
+  memfs: new Set(["status"]),
+};
+
 // gh CLI read-only commands: category -> allowed actions
 // null means any action is allowed for that category
 const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
@@ -86,9 +91,6 @@ const BUNDLED_READ_ONLY_SCRIPTS = [
   // Source path (development): /path/to/src/skills/builtin/searching-messages/scripts/...
   "/skills/builtin/searching-messages/scripts/search-messages.ts",
   "/skills/builtin/searching-messages/scripts/get-messages.ts",
-  // Memfs status check is read-only
-  "/skills/syncing-memory-filesystem/scripts/memfs-status.ts",
-  "/skills/builtin/syncing-memory-filesystem/scripts/memfs-status.ts",
 ];
 
 /**
@@ -206,6 +208,20 @@ function isSafeSegment(segment: string): boolean {
         return false;
       }
       return allowedActions.has(action);
+    }
+    if (command === "letta") {
+      const group = tokens[1];
+      if (!group) {
+        return false;
+      }
+      if (!(group in SAFE_LETTA_COMMANDS)) {
+        return false;
+      }
+      const action = tokens[2];
+      if (!action) {
+        return false;
+      }
+      return SAFE_LETTA_COMMANDS[group]?.has(action) ?? false;
     }
     if (command === "find") {
       return !/-delete|\s-exec\b/.test(segment);
