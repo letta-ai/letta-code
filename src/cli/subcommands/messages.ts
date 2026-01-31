@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
 import { getClient } from "../../agent/client";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 
 type SearchMode = "vector" | "fts" | "hybrid";
 
@@ -10,8 +9,6 @@ function printUsage(): void {
 Usage:
   letta messages search --query <text> [options]
   letta messages list [options]
-  letta messages start-conversation --agent <id> --message "<text>"
-  letta messages continue-conversation --conversation-id <id> --message "<text>"
 
 Search options:
   --query <text>        Search query (required)
@@ -33,16 +30,10 @@ List options:
   --start-date <date>   Client-side filter: after this date (ISO format)
   --end-date <date>     Client-side filter: before this date (ISO format)
 
-Conversation options:
-  --agent <id>          Target agent ID (start-conversation)
-  --message <text>      Message to send
-  --conversation-id <id> Existing conversation ID (continue-conversation)
-  --timeout <ms>        Max wait time (accepted for compatibility)
-
 Notes:
   - Output is JSON only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
-  - Sender agent ID is read from LETTA_AGENT_ID for conversation commands.
+  - For agent-to-agent messaging, use: letta -p --from-agent <sender-id> --agent <target-id> "message"
 `.trim(),
   );
 }
@@ -65,54 +56,6 @@ function getAgentId(agentFromArgs?: string, agentIdFromArgs?: string): string {
   return agentFromArgs || agentIdFromArgs || process.env.LETTA_AGENT_ID || "";
 }
 
-function buildSystemReminder(
-  senderAgentName: string,
-  senderAgentId: string,
-): string {
-  return `${SYSTEM_REMINDER_OPEN}
-This message is from "${senderAgentName}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
-The sender will only see the final message you generate (not tool calls or reasoning).
-If you need to share detailed information, include it in your response text.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-}
-
-async function extractAssistantResponse(
-  stream: AsyncIterable<unknown>,
-): Promise<string> {
-  let finalResponse = "";
-  for await (const chunk of stream) {
-    if (process.env.DEBUG) {
-      console.error("Chunk:", JSON.stringify(chunk, null, 2));
-    }
-    if (
-      typeof chunk === "object" &&
-      chunk !== null &&
-      "message_type" in chunk &&
-      (chunk as { message_type?: string }).message_type === "assistant_message"
-    ) {
-      const content = (chunk as { content?: unknown }).content;
-      if (typeof content === "string") {
-        finalResponse += content;
-      } else if (Array.isArray(content)) {
-        for (const part of content) {
-          if (
-            typeof part === "object" &&
-            part !== null &&
-            "type" in part &&
-            (part as { type?: string }).type === "text" &&
-            "text" in part
-          ) {
-            finalResponse += (part as { text: string }).text;
-          }
-        }
-      }
-    }
-  }
-  return finalResponse;
-}
-
 export async function runMessagesSubcommand(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseArgs>;
   try {
@@ -131,9 +74,6 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
         after: { type: "string" },
         before: { type: "string" },
         order: { type: "string" },
-        message: { type: "string" },
-        "conversation-id": { type: "string" },
-        timeout: { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -234,116 +174,7 @@ export async function runMessagesSubcommand(argv: string[]): Promise<number> {
       return 0;
     }
 
-    if (action === "start-conversation") {
-      const agentId = getAgentId(
-        parsed.values.agent as string | undefined,
-        parsed.values["agent-id"] as string | undefined,
-      );
-      if (!agentId) {
-        console.error("Missing target agent id. Use --agent/--agent-id.");
-        return 1;
-      }
-      const message = parsed.values.message;
-      if (!message || typeof message !== "string") {
-        console.error("Missing required --message <text>.");
-        return 1;
-      }
-
-      const senderAgentId = process.env.LETTA_AGENT_ID;
-      if (!senderAgentId) {
-        console.error(
-          "Missing LETTA_AGENT_ID for sender. Run inside a Letta Code session.",
-        );
-        return 1;
-      }
-
-      const targetAgent = await client.agents.retrieve(agentId);
-      const senderAgent = await client.agents.retrieve(senderAgentId);
-      const conversation = await client.conversations.create({
-        agent_id: targetAgent.id,
-      });
-
-      const systemReminder = buildSystemReminder(
-        senderAgent.name,
-        senderAgentId,
-      );
-      const fullMessage = systemReminder + message;
-      const stream = await client.conversations.messages.create(
-        conversation.id,
-        {
-          input: fullMessage,
-          streaming: true,
-        },
-      );
-
-      const response = await extractAssistantResponse(stream);
-      console.log(
-        JSON.stringify(
-          {
-            conversation_id: conversation.id,
-            response,
-            agent_id: targetAgent.id,
-            agent_name: targetAgent.name,
-          },
-          null,
-          2,
-        ),
-      );
-      return 0;
-    }
-
-    if (action === "continue-conversation") {
-      const conversationId = parsed.values["conversation-id"];
-      if (!conversationId || typeof conversationId !== "string") {
-        console.error("Missing required --conversation-id <conversation-id>.");
-        return 1;
-      }
-      const message = parsed.values.message;
-      if (!message || typeof message !== "string") {
-        console.error("Missing required --message <text>.");
-        return 1;
-      }
-
-      const senderAgentId = process.env.LETTA_AGENT_ID;
-      if (!senderAgentId) {
-        console.error(
-          "Missing LETTA_AGENT_ID for sender. Run inside a Letta Code session.",
-        );
-        return 1;
-      }
-
-      const conversation = await client.conversations.retrieve(conversationId);
-      const targetAgent = await client.agents.retrieve(conversation.agent_id);
-      const senderAgent = await client.agents.retrieve(senderAgentId);
-
-      const systemReminder = buildSystemReminder(
-        senderAgent.name,
-        senderAgentId,
-      );
-      const fullMessage = systemReminder + message;
-      const stream = await client.conversations.messages.create(
-        conversationId,
-        {
-          input: fullMessage,
-          streaming: true,
-        },
-      );
-
-      const response = await extractAssistantResponse(stream);
-      console.log(
-        JSON.stringify(
-          {
-            conversation_id: conversationId,
-            response,
-            agent_id: targetAgent.id,
-            agent_name: targetAgent.name,
-          },
-          null,
-          2,
-        ),
-      );
-      return 0;
-    }
+    // Agent-to-agent messaging uses `letta -p --from-agent <sender-id> ...`
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
