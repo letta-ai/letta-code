@@ -117,6 +117,7 @@ import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { EventMessage } from "./components/EventMessage";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
@@ -1469,6 +1470,12 @@ export default function App({
       const ln = b.byId.get(id);
       if (!ln) continue;
       if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
+        emittedIdsRef.current.add(id);
+        newlyCommitted.push({ ...ln });
+        continue;
+      }
+      // Events only commit when finished (they have running/finished phases)
+      if (ln.kind === "event" && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         continue;
@@ -9394,6 +9401,10 @@ Plan file path: ${planFilePath}`;
         // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
+      // Events (like compaction) show while running
+      if (ln.kind === "event") {
+        return ln.phase === "running";
+      }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
@@ -9577,6 +9588,8 @@ Plan file path: ${planFilePath}`;
               <ErrorMessage line={item} />
             ) : item.kind === "status" ? (
               <StatusMessage line={item} />
+            ) : item.kind === "event" ? (
+              <EventMessage line={item} />
             ) : item.kind === "separator" ? (
               <Box marginTop={1}>
                 <Text dimColor>{"─".repeat(columns)}</Text>
@@ -9722,6 +9735,8 @@ Plan file path: ${planFilePath}`;
                           <ErrorMessage line={ln} />
                         ) : ln.kind === "status" ? (
                           <StatusMessage line={ln} />
+                        ) : ln.kind === "event" ? (
+                          <EventMessage line={ln} />
                         ) : ln.kind === "command" ? (
                           <CommandMessage line={ln} />
                         ) : ln.kind === "bash_command" ? (
