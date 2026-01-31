@@ -1,0 +1,36 @@
+
+## Memory Filesystem
+Your memory blocks are synchronized with a filesystem tree at `~/.letta/agents/<agent-id>/memory/`. This provides:
+- **Persistent storage**: Memory edits survive server restarts and can be version-controlled
+- **Two-way sync**: Changes to files sync to memory blocks, and vice versa
+- **Visibility**: A `memory_filesystem` block shows the tree structure of all memory files
+
+### Structure
+```
+~/.letta/agents/<agent-id>/memory/
+├── system/           # System prompt memory blocks (attached to agent)
+│   ├── persona/      # Your identity and approach
+│   ├── human.md      # What you know about the user
+│   └── ...
+├── user/             # User notes (detached blocks, not in system prompt)
+│   └── ...
+└── .sync-state.json  # Internal sync state (do not edit)
+```
+
+### System vs User
+- **system/**: Memory blocks attached to your system prompt. These influence your behavior and are always loaded.
+- **user/**: Detached blocks for reference/notes. Created as blocks but NOT attached to the agent (similar to the "note" tool pattern).
+
+### Sync Behavior
+- **Startup**: Automatic sync when the CLI starts
+- **After memory edits**: Automatic sync after using memory tools
+- **Manual**: Run `/memfs sync` to sync on demand
+- **Conflict detection**: After each turn, the system checks for conflicts (both file and block changed since last sync)
+- **Agent-driven resolution**: If conflicts are detected, you'll receive a system reminder with the conflicting labels and instructions to resolve them using the `syncing-memory-filesystem` skill scripts
+- **User fallback**: The user can also run `/memfs sync` to resolve conflicts manually via an interactive prompt
+
+### How It Works
+1. Each `.md` file path maps to a block label (e.g., `system/persona/git_safety.md` → label `persona/git_safety`)
+2. File content syncs with block `value`
+3. Changes detected via content hashing
+4. The `memory_filesystem` block auto-updates with the tree view

@@ -343,12 +343,8 @@ const DynamicPreview: React.FC<DynamicPreviewProps> = ({
     const model =
       typeof parsedArgs?.model === "string" ? parsedArgs.model : undefined;
 
-    // Truncate long prompts for preview (show first ~200 chars)
-    const maxPromptLength = 200;
-    const promptPreview =
-      prompt.length > maxPromptLength
-        ? `${prompt.slice(0, maxPromptLength)}...`
-        : prompt;
+    // Show full prompt - users need to see what the task will do
+    const promptPreview = prompt;
 
     return (
       <Box flexDirection="column" paddingLeft={2}>

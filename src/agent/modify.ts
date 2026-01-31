@@ -266,3 +266,49 @@ export async function updateAgentSystemPrompt(
     };
   }
 }
+
+/**
+ * Updates an agent's system prompt to include or exclude the memfs addon section.
+ *
+ * @param agentId - The agent ID to update
+ * @param enableMemfs - Whether to enable (add) or disable (remove) the memfs addon
+ * @returns Result with success status and message
+ */
+export async function updateAgentSystemPromptMemfs(
+  agentId: string,
+  enableMemfs: boolean,
+): Promise<SystemPromptUpdateResult> {
+  try {
+    const client = await getClient();
+    const agent = await client.agents.retrieve(agentId);
+    let currentSystemPrompt = agent.system || "";
+
+    const { SYSTEM_PROMPT_MEMFS_ADDON } = await import("./promptAssets");
+
+    // Remove any existing memfs addon section (to avoid duplicates)
+    // Look for the "## Memory Filesystem" header
+    const memfsHeaderRegex = /\n## Memory Filesystem[\s\S]*?(?=\n# |$)/;
+    currentSystemPrompt = currentSystemPrompt.replace(memfsHeaderRegex, "");
+
+    // If enabling, append the memfs addon
+    if (enableMemfs) {
+      currentSystemPrompt = `${currentSystemPrompt}${SYSTEM_PROMPT_MEMFS_ADDON}`;
+    }
+
+    await client.agents.update(agentId, {
+      system: currentSystemPrompt,
+    });
+
+    return {
+      success: true,
+      message: enableMemfs
+        ? "System prompt updated to include Memory Filesystem section"
+        : "System prompt updated to remove Memory Filesystem section",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Failed to update system prompt memfs: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}

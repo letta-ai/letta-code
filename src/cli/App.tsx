@@ -1,7 +1,7 @@
 // src/cli/App.tsx
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -31,10 +31,8 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
-  buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
   isApprovalPendingError,
-  isApprovalStateDesyncError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
 } from "../agent/approval-recovery";
@@ -43,13 +41,27 @@ import { getResumeData } from "../agent/check-approval";
 import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
+import { getLettaCodeHeaders } from "../agent/http-headers";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
+import {
+  checkMemoryFilesystemStatus,
+  detachMemoryFilesystemBlock,
+  ensureMemoryFilesystemBlock,
+  ensureMemoryFilesystemDirs,
+  formatMemorySyncSummary,
+  getMemoryFilesystemRoot,
+  type MemorySyncConflict,
+  type MemorySyncResolution,
+  syncMemoryFilesystem,
+  updateMemoryFilesystemBlock,
+} from "../agent/memoryFilesystem";
 import { sendMessageStream } from "../agent/message";
 import { getModelInfo, getModelShortName } from "../agent/model";
 import { INTERRUPT_RECOVERY_ALERT } from "../agent/promptAssets";
 import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
+  MEMFS_CONFLICT_CHECK_INTERVAL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
@@ -107,12 +119,15 @@ import { ConversationSelector } from "./components/ConversationSelector";
 import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
+import { EventMessage } from "./components/EventMessage";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
+import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input as DefaultInput, type InputProps } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
+import { MemfsTreeViewer } from "./components/MemfsTreeViewer";
 import { MemoryTabViewer } from "./components/MemoryTabViewer";
 import { MessageSearch } from "./components/MessageSearch";
 import { ModelSelector } from "./components/ModelSelector";
@@ -120,7 +135,6 @@ import { NewAgentDialog } from "./components/NewAgentDialog";
 import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
-// QuestionDialog removed - now using InlineQuestionApproval
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 
 import { formatUsageStats } from "./components/SessionStats";
@@ -166,6 +180,7 @@ import {
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
+import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -223,6 +238,32 @@ const INTERRUPT_MESSAGE =
 // Hint shown after errors to encourage feedback
 const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
+
+// Hint shown when Anthropic Opus 4.5 hits llm_api_error and Bedrock is available
+const OPUS_BEDROCK_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to Bedrock Opus 4.5";
+
+// Generic hint for llm_api_error when specific model suggestion not applicable
+const PROVIDER_FALLBACK_HINT =
+  "Downstream provider issues? Use /model to switch to another provider";
+
+// Helper to get appropriate error hint based on stop reason and current model
+function getErrorHintForStopReason(
+  stopReason: StopReasonType | null,
+  currentModelId: string | null,
+): string {
+  if (
+    currentModelId === "opus" &&
+    stopReason === "llm_api_error" &&
+    getModelInfo("bedrock-opus")
+  ) {
+    return OPUS_BEDROCK_FALLBACK_HINT;
+  }
+  if (stopReason === "llm_api_error") {
+    return PROVIDER_FALLBACK_HINT;
+  }
+  return ERROR_FEEDBACK_HINT;
+}
 
 // Interactive slash commands that open overlays immediately (bypass queueing)
 // These commands let users browse/view while the agent is working
@@ -341,12 +382,17 @@ async function isRetriableError(
 
       // Check for llm_error at top level or nested (handles error.error nesting)
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
-      if (errorType === "llm_error") return true;
+      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+      // Don't retry 4xx client errors (validation, auth, malformed requests)
+      // These are not transient and won't succeed on retry
+      const is4xxError = /Error code: 4\d{2}/.test(detail);
+
+      if (errorType === "llm_error" && !is4xxError) return true;
 
       // Fallback: detect LLM provider errors from detail even if misclassified
       // This handles edge cases where streaming errors weren't properly converted to LLMError
       // Patterns are derived from handle_llm_error() message formats in the backend
-      const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
       const llmProviderPatterns = [
         "Anthropic API error", // anthropic_client.py:759
         "OpenAI API error", // openai_client.py:1034
@@ -356,7 +402,10 @@ async function isRetriableError(
         "Network error", // Transient network failures during streaming
         "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
       ];
-      if (llmProviderPatterns.some((pattern) => detail.includes(pattern))) {
+      if (
+        llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
+        !is4xxError
+      ) {
         return true;
       }
 
@@ -682,6 +731,7 @@ type RenderOverlayArgs = {
   closeOverlay: () => void;
 
   agentId: string;
+  conversationId: string;
   agentName: string | null;
   agentState: AgentState | null | undefined;
 
@@ -1065,7 +1115,41 @@ export default function App({
   }, [pendingApprovals, approvalResults, activeApprovalId]);
 
   // Overlay/selector state - only one can be open at a time
+  type ActiveOverlay =
+    | "model"
+    | "toolset"
+    | "system"
+    | "agent"
+    | "resume"
+    | "conversations"
+    | "search"
+    | "subagent"
+    | "feedback"
+    | "memory"
+    | "memfs-sync"
+    | "pin"
+    | "new"
+    | "mcp"
+    | "mcp-connect"
+    | "help"
+    | "hooks"
+    | "connect"
+    | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  const [memorySyncConflicts, setMemorySyncConflicts] = useState<
+    MemorySyncConflict[] | null
+  >(null);
+  const memorySyncProcessedToolCallsRef = useRef<Set<string>>(new Set());
+  const memorySyncCommandIdRef = useRef<string | null>(null);
+  const memorySyncCommandInputRef = useRef<string>("/memfs sync");
+  const memorySyncInFlightRef = useRef(false);
+  const memoryFilesystemInitializedRef = useRef(false);
+  const pendingMemfsConflictsRef = useRef<MemorySyncConflict[] | null>(null);
+  const memfsDirtyRef = useRef(false);
+  const memfsWatcherRef = useRef<ReturnType<
+    typeof import("node:fs").watch
+  > | null>(null);
+  const memfsConflictCheckInFlightRef = useRef(false);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
@@ -1162,11 +1246,7 @@ export default function App({
         const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
         const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "X-Letta-Source": "letta-code",
-          },
+          headers: getLettaCodeHeaders(apiKey),
         });
 
         if (response.ok) {
@@ -1497,6 +1577,12 @@ export default function App({
         newlyCommitted.push({ ...ln });
         continue;
       }
+      // Events only commit when finished (they have running/finished phases)
+      if (ln.kind === "event" && ln.phase === "finished") {
+        emittedIdsRef.current.add(id);
+        newlyCommitted.push({ ...ln });
+        continue;
+      }
       // Commands with phase should only commit when finished
       if (ln.kind === "command" || ln.kind === "bash_command") {
         if (!ln.phase || ln.phase === "finished") {
@@ -1574,6 +1660,11 @@ export default function App({
   useEffect(() => {
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
+
+  // Keep buffers in sync with agentId for server-side tool hooks
+  useEffect(() => {
+    buffersRef.current.agentId = agentState?.id;
+  }, [agentState?.id]);
 
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
@@ -1945,6 +2036,354 @@ export default function App({
     },
     [refreshDerived, currentModelId],
   );
+
+  const updateMemorySyncCommand = useCallback(
+    (
+      commandId: string,
+      output: string,
+      success: boolean,
+      input = "/memfs sync",
+      keepRunning = false, // If true, keep phase as "running" (for conflict dialogs)
+    ) => {
+      buffersRef.current.byId.set(commandId, {
+        kind: "command",
+        id: commandId,
+        input,
+        output,
+        phase: keepRunning ? "running" : "finished",
+        success,
+      });
+      refreshDerived();
+    },
+    [refreshDerived],
+  );
+
+  const runMemoryFilesystemSync = useCallback(
+    async (source: "startup" | "auto" | "command", commandId?: string) => {
+      if (!agentId || agentId === "loading") {
+        return;
+      }
+      if (memorySyncInFlightRef.current) {
+        // If called from a command while another sync is in flight, update the UI
+        if (source === "command" && commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            "Sync already in progress — try again in a moment",
+            false,
+          );
+        }
+        return;
+      }
+
+      memorySyncInFlightRef.current = true;
+
+      try {
+        await ensureMemoryFilesystemBlock(agentId);
+        const result = await syncMemoryFilesystem(agentId);
+
+        if (result.conflicts.length > 0) {
+          if (source === "command") {
+            // User explicitly ran /memfs sync — show the interactive overlay
+            memorySyncCommandIdRef.current = commandId ?? null;
+            setMemorySyncConflicts(result.conflicts);
+            setActiveOverlay("memfs-sync");
+
+            if (commandId) {
+              updateMemorySyncCommand(
+                commandId,
+                `Memory sync paused — resolve ${result.conflicts.length} conflict${
+                  result.conflicts.length === 1 ? "" : "s"
+                } to continue.`,
+                false,
+                "/memfs sync",
+                true, // keepRunning - don't commit until conflicts resolved
+              );
+            }
+          } else {
+            // Auto or startup sync — queue conflicts for agent-driven resolution
+            debugLog(
+              "memfs",
+              `${source} sync found ${result.conflicts.length} conflict(s), queuing for agent`,
+            );
+            pendingMemfsConflictsRef.current = result.conflicts;
+          }
+          return;
+        }
+
+        await updateMemoryFilesystemBlock(agentId);
+
+        if (commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            formatMemorySyncSummary(result),
+            true,
+          );
+        }
+      } catch (error) {
+        const errorText = formatErrorDetails(error, agentId);
+        if (commandId) {
+          updateMemorySyncCommand(commandId, `Failed: ${errorText}`, false);
+        } else if (source !== "startup") {
+          appendError(`Memory sync failed: ${errorText}`);
+        } else {
+          console.error(`Memory sync failed: ${errorText}`);
+        }
+      } finally {
+        memorySyncInFlightRef.current = false;
+      }
+    },
+    [agentId, appendError, updateMemorySyncCommand],
+  );
+
+  const maybeSyncMemoryFilesystemAfterTurn = useCallback(async () => {
+    // Only auto-sync if memfs is enabled for this agent
+    if (!agentId || agentId === "loading") return;
+    if (!settingsManager.isMemfsEnabled(agentId)) return;
+
+    // Check for memory tool calls that need syncing (legacy path — memory tools
+    // are detached when memfs is enabled, but kept for backwards compatibility)
+    const newToolCallIds: string[] = [];
+    for (const line of buffersRef.current.byId.values()) {
+      if (line.kind !== "tool_call") continue;
+      if (!line.toolCallId || !line.name) continue;
+      if (line.name !== "memory" && line.name !== "memory_apply_patch")
+        continue;
+      if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId))
+        continue;
+      newToolCallIds.push(line.toolCallId);
+    }
+
+    if (newToolCallIds.length > 0) {
+      for (const id of newToolCallIds) {
+        memorySyncProcessedToolCallsRef.current.add(id);
+      }
+      await runMemoryFilesystemSync("auto");
+    }
+
+    // Agent-driven conflict detection (fire-and-forget, non-blocking).
+    // Check when: (a) fs.watch detected a file change, or (b) every N turns
+    // to catch block-only changes (e.g. user manually editing blocks via the API).
+    const isDirty = memfsDirtyRef.current;
+    const isIntervalTurn =
+      turnCountRef.current > 0 &&
+      turnCountRef.current % MEMFS_CONFLICT_CHECK_INTERVAL === 0;
+
+    if ((isDirty || isIntervalTurn) && !memfsConflictCheckInFlightRef.current) {
+      memfsDirtyRef.current = false;
+      memfsConflictCheckInFlightRef.current = true;
+
+      // Fire-and-forget — don't await, don't block the turn
+      debugLog(
+        "memfs",
+        `Conflict check triggered (dirty=${isDirty}, interval=${isIntervalTurn}, turn=${turnCountRef.current})`,
+      );
+      checkMemoryFilesystemStatus(agentId)
+        .then(async (status) => {
+          if (status.conflicts.length > 0) {
+            debugLog(
+              "memfs",
+              `Found ${status.conflicts.length} conflict(s): ${status.conflicts.map((c) => c.label).join(", ")}`,
+            );
+            pendingMemfsConflictsRef.current = status.conflicts;
+          } else if (
+            status.newFiles.length > 0 ||
+            status.pendingFromFile.length > 0 ||
+            status.locationMismatches.length > 0
+          ) {
+            // New files, file changes, or location mismatches detected - auto-sync
+            debugLog(
+              "memfs",
+              `Auto-syncing: ${status.newFiles.length} new, ${status.pendingFromFile.length} changed, ${status.locationMismatches.length} location mismatches`,
+            );
+            pendingMemfsConflictsRef.current = null;
+            await runMemoryFilesystemSync("auto");
+          } else {
+            pendingMemfsConflictsRef.current = null;
+          }
+        })
+        .catch((err) => {
+          debugWarn("memfs", "Conflict check failed", err);
+        })
+        .finally(() => {
+          memfsConflictCheckInFlightRef.current = false;
+        });
+    }
+  }, [agentId, runMemoryFilesystemSync]);
+
+  useEffect(() => {
+    if (loadingState !== "ready") {
+      return;
+    }
+    if (!agentId || agentId === "loading") {
+      return;
+    }
+    if (memoryFilesystemInitializedRef.current) {
+      return;
+    }
+    // Only run startup sync if memfs is enabled for this agent
+    if (!settingsManager.isMemfsEnabled(agentId)) {
+      return;
+    }
+
+    memoryFilesystemInitializedRef.current = true;
+    runMemoryFilesystemSync("startup");
+  }, [agentId, loadingState, runMemoryFilesystemSync]);
+
+  // Set up fs.watch on the memory directory to detect external file edits.
+  // When a change is detected, set a dirty flag — the actual conflict check
+  // runs on the next turn (debounced, non-blocking).
+  useEffect(() => {
+    if (!agentId || agentId === "loading") return;
+    if (!settingsManager.isMemfsEnabled(agentId)) return;
+
+    let watcher: ReturnType<typeof import("node:fs").watch> | null = null;
+
+    (async () => {
+      try {
+        const { watch } = await import("node:fs");
+        const { existsSync } = await import("node:fs");
+        const memRoot = getMemoryFilesystemRoot(agentId);
+        if (!existsSync(memRoot)) return;
+
+        watcher = watch(memRoot, { recursive: true }, () => {
+          memfsDirtyRef.current = true;
+        });
+        memfsWatcherRef.current = watcher;
+        debugLog("memfs", `Watching memory directory: ${memRoot}`);
+
+        watcher.on("error", (err) => {
+          debugWarn(
+            "memfs",
+            "fs.watch error (falling back to interval check)",
+            err,
+          );
+        });
+      } catch (err) {
+        debugWarn(
+          "memfs",
+          "Failed to set up fs.watch (falling back to interval check)",
+          err,
+        );
+      }
+    })();
+
+    return () => {
+      if (watcher) {
+        watcher.close();
+      }
+      if (memfsWatcherRef.current) {
+        memfsWatcherRef.current = null;
+      }
+    };
+  }, [agentId]);
+
+  const handleMemorySyncConflictSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      if (!agentId || agentId === "loading" || !memorySyncConflicts) {
+        return;
+      }
+
+      const commandId = memorySyncCommandIdRef.current;
+      const commandInput = memorySyncCommandInputRef.current;
+      memorySyncCommandIdRef.current = null;
+      memorySyncCommandInputRef.current = "/memfs sync";
+
+      const resolutions: MemorySyncResolution[] = memorySyncConflicts.map(
+        (conflict) => {
+          const answer = answers[`Conflict for ${conflict.label}`];
+          return {
+            label: conflict.label,
+            resolution: answer === "Use file version" ? "file" : "block",
+          };
+        },
+      );
+
+      setMemorySyncConflicts(null);
+      setActiveOverlay(null);
+
+      if (memorySyncInFlightRef.current) {
+        return;
+      }
+
+      memorySyncInFlightRef.current = true;
+
+      try {
+        const result = await syncMemoryFilesystem(agentId, {
+          resolutions,
+        });
+
+        if (result.conflicts.length > 0) {
+          setMemorySyncConflicts(result.conflicts);
+          setActiveOverlay("memfs-sync");
+          if (commandId) {
+            updateMemorySyncCommand(
+              commandId,
+              `Memory sync paused — resolve ${result.conflicts.length} conflict${
+                result.conflicts.length === 1 ? "" : "s"
+              } to continue.`,
+              false,
+              commandInput,
+              true, // keepRunning - don't commit until all conflicts resolved
+            );
+          }
+          return;
+        }
+
+        await updateMemoryFilesystemBlock(agentId);
+
+        // Format resolution summary (align with formatMemorySyncSummary which uses "⎿  " prefix)
+        const resolutionSummary = resolutions
+          .map(
+            (r) =>
+              `⎿  ${r.label}: used ${r.resolution === "file" ? "file" : "block"} version`,
+          )
+          .join("\n");
+
+        if (commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            `${formatMemorySyncSummary(result)}\nConflicts resolved:\n${resolutionSummary}`,
+            true,
+            commandInput,
+          );
+        }
+      } catch (error) {
+        const errorText = formatErrorDetails(error, agentId);
+        if (commandId) {
+          updateMemorySyncCommand(
+            commandId,
+            `Failed: ${errorText}`,
+            false,
+            commandInput,
+          );
+        } else {
+          appendError(`Memory sync failed: ${errorText}`);
+        }
+      } finally {
+        memorySyncInFlightRef.current = false;
+      }
+    },
+    [agentId, appendError, memorySyncConflicts, updateMemorySyncCommand],
+  );
+
+  const handleMemorySyncConflictCancel = useCallback(() => {
+    const commandId = memorySyncCommandIdRef.current;
+    const commandInput = memorySyncCommandInputRef.current;
+    memorySyncCommandIdRef.current = null;
+    memorySyncCommandInputRef.current = "/memfs sync";
+    memorySyncInFlightRef.current = false;
+    setMemorySyncConflicts(null);
+    setActiveOverlay(null);
+
+    if (commandId) {
+      updateMemorySyncCommand(
+        commandId,
+        "Memory sync cancelled.",
+        false,
+        commandInput,
+      );
+    }
+  }, [updateMemorySyncCommand]);
 
   // Core streaming function - iterative loop that processes conversation turns
   const processConversation = useCallback(
@@ -2334,71 +2773,10 @@ export default function App({
                     sendDesktopNotification("Approval needed");
                     return;
                   }
-                  // No approvals found - fall through to general desync recovery
+                  // No approvals found - fall through to error handling below
                 } catch {
-                  // Fetch failed - fall through to general desync recovery
+                  // Fetch failed - fall through to error handling below
                 }
-              }
-
-              // General desync: "no tool call awaiting" or fetch failed above
-              // Recover with keep-alive prompt or strip stale approvals
-              if (
-                isApprovalStateDesyncError(errorDetail) &&
-                llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
-              ) {
-                llmApiErrorRetriesRef.current += 1;
-
-                // Show transient status (matches post-stream desync handler UX)
-                const statusId = uid("status");
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: [
-                    "Approval state desynced; resending keep-alive recovery prompt...",
-                  ],
-                });
-                buffersRef.current.order.push(statusId);
-                refreshDerived();
-
-                // Swap payload to recovery message (or strip stale approvals)
-                const isApprovalOnlyPayload =
-                  hasApprovalInPayload && currentInput.length === 1;
-                if (isApprovalOnlyPayload) {
-                  currentInput.splice(
-                    0,
-                    currentInput.length,
-                    buildApprovalRecoveryMessage(),
-                  );
-                } else {
-                  // Mixed payload: strip stale approvals, keep user message
-                  const messageItems = currentInput.filter(
-                    (item) => item?.type !== "approval",
-                  );
-                  if (messageItems.length > 0) {
-                    currentInput.splice(
-                      0,
-                      currentInput.length,
-                      ...messageItems,
-                    );
-                  } else {
-                    currentInput.splice(
-                      0,
-                      currentInput.length,
-                      buildApprovalRecoveryMessage(),
-                    );
-                  }
-                }
-
-                // Remove transient status before retry
-                buffersRef.current.byId.delete(statusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id) => id !== statusId,
-                );
-                refreshDerived();
-
-                // Reset interrupted flag so retry stream chunks are processed
-                buffersRef.current.interrupted = false;
-                continue;
               }
             }
 
@@ -2526,6 +2904,17 @@ export default function App({
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
 
+            // Get last assistant message and reasoning for Stop hook
+            const lastAssistant = Array.from(
+              buffersRef.current.byId.values(),
+            ).findLast((item) => item.kind === "assistant" && "text" in item);
+            const assistantMessage =
+              lastAssistant && "text" in lastAssistant
+                ? lastAssistant.text
+                : undefined;
+            const precedingReasoning = buffersRef.current.lastReasoning;
+            buffersRef.current.lastReasoning = undefined; // Clear after use
+
             // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
@@ -2533,6 +2922,9 @@ export default function App({
               Array.from(buffersRef.current.byId.values()).filter(
                 (item) => item.kind === "tool_call",
               ).length,
+              undefined, // workingDirectory (uses default)
+              precedingReasoning,
+              assistantMessage,
             );
 
             // If hook blocked (exit 2), inject stderr feedback and continue conversation
@@ -2601,6 +2993,8 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
+
+            await maybeSyncMemoryFilesystemAfterTurn();
 
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
@@ -3158,8 +3552,6 @@ export default function App({
           const hasApprovalInPayload = currentInput.some(
             (item) => item?.type === "approval",
           );
-          const isApprovalOnlyPayload =
-            hasApprovalInPayload && currentInput.length === 1;
 
           // Capture the most recent error text in this turn (if any)
           let latestErrorText: string | null = null;
@@ -3173,17 +3565,9 @@ export default function App({
             }
           }
 
-          // Detect approval desync once per turn
-          const detailFromRun = await fetchRunErrorDetail(lastRunId);
-          const desyncDetected =
-            isApprovalStateDesyncError(detailFromRun) ||
-            isApprovalStateDesyncError(latestErrorText);
-
-          // Track last failure info so we can emit it if retries stop
-          const lastFailureMessage = latestErrorText || detailFromRun || null;
-
-          // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+          // Check for "Invalid tool call IDs" error - server HAS pending approvals but with different IDs.
           // Fetch the actual pending approvals and show them to the user.
+          const detailFromRun = await fetchRunErrorDetail(lastRunId);
           const invalidIdsDetected =
             isInvalidToolCallIdsError(detailFromRun) ||
             isInvalidToolCallIdsError(latestErrorText);
@@ -3264,83 +3648,10 @@ export default function App({
                 sendDesktopNotification("Approval needed");
                 return;
               }
-              // No approvals found - fall through to general desync recovery
+              // No approvals found - fall through to error handling below
             } catch {
-              // Fetch failed - fall through to general desync recovery
+              // Fetch failed - fall through to error handling below
             }
-          }
-
-          // Check for approval desync errors even if stop_reason isn't llm_api_error.
-          // Handle both approval-only payloads and mixed [approval, message] payloads.
-          if (hasApprovalInPayload && desyncDetected) {
-            if (llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES) {
-              llmApiErrorRetriesRef.current += 1;
-              const statusId = uid("status");
-              buffersRef.current.byId.set(statusId, {
-                kind: "status",
-                id: statusId,
-                lines: [
-                  "Approval state desynced; resending keep-alive recovery prompt...",
-                ],
-              });
-              buffersRef.current.order.push(statusId);
-              refreshDerived();
-
-              if (isApprovalOnlyPayload) {
-                // Approval-only payload: send recovery prompt
-                currentInput.splice(
-                  0,
-                  currentInput.length,
-                  buildApprovalRecoveryMessage(),
-                );
-              } else {
-                // Mixed payload [approval, message]: strip stale approval, keep user message
-                const messageItems = currentInput.filter(
-                  (item) => item?.type !== "approval",
-                );
-                if (messageItems.length > 0) {
-                  currentInput.splice(0, currentInput.length, ...messageItems);
-                } else {
-                  // Fallback if somehow no message items remain
-                  currentInput.splice(
-                    0,
-                    currentInput.length,
-                    buildApprovalRecoveryMessage(),
-                  );
-                }
-              }
-
-              // Remove the transient status before retrying
-              buffersRef.current.byId.delete(statusId);
-              buffersRef.current.order = buffersRef.current.order.filter(
-                (id) => id !== statusId,
-              );
-              refreshDerived();
-
-              // Reset interrupted flag so retry stream chunks are processed
-              buffersRef.current.interrupted = false;
-              continue;
-            }
-
-            // No retries left: emit the failure and exit
-            const errorToShow =
-              lastFailureMessage ||
-              `An error occurred during agent execution\n(run_id: ${lastRunId ?? "unknown"}, stop_reason: ${stopReasonToHandle})`;
-            appendError(errorToShow, true);
-            appendError(ERROR_FEEDBACK_HINT, true);
-
-            // Restore dequeued message to input on error
-            if (lastDequeuedMessageRef.current) {
-              setRestoredInput(lastDequeuedMessageRef.current);
-              lastDequeuedMessageRef.current = null;
-            }
-            // Clear any remaining queue on error
-            setMessageQueue([]);
-
-            setStreaming(false);
-            sendDesktopNotification("Agent execution error", "error");
-            refreshDerived();
-            return;
           }
 
           // Check for approval pending error (sent user message while approval waiting)
@@ -3522,14 +3833,24 @@ export default function App({
                   agentIdRef.current,
                 );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               } else {
                 // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   true, // Skip telemetry - already tracked above
                 );
-                appendError(ERROR_FEEDBACK_HINT, true);
+
+                // Show appropriate error hint based on stop reason
+                appendError(
+                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                  true,
+                );
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -3537,7 +3858,12 @@ export default function App({
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 true, // Skip telemetry - already tracked above
               );
-              appendError(ERROR_FEEDBACK_HINT, true);
+
+              // Show appropriate error hint based on stop reason
+              appendError(
+                getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+                true,
+              );
 
               // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
@@ -3558,7 +3884,12 @@ export default function App({
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               true, // Skip telemetry - already tracked above
             );
-            appendError(ERROR_FEEDBACK_HINT, true);
+
+            // Show appropriate error hint based on stop reason
+            appendError(
+              getErrorHintForStopReason(stopReasonToHandle, currentModelId),
+              true,
+            );
           }
 
           // Restore dequeued message to input on error
@@ -3652,6 +3983,7 @@ export default function App({
       needsEagerApprovalCheck,
       queueApprovalResults,
       consumeQueuedMessages,
+      maybeSyncMemoryFilesystemAfterTurn,
     ],
   );
 
@@ -4599,6 +4931,12 @@ export default function App({
         return { submitted: false };
       }
 
+      // Capture successful hook feedback to inject into agent context
+      const userPromptSubmitHookFeedback =
+        hookResult.feedback.length > 0
+          ? `${SYSTEM_REMINDER_OPEN}\n${hookResult.feedback.join("\n")}\n${SYSTEM_REMINDER_CLOSE}`
+          : "";
+
       // Capture the generation at submission time, BEFORE any async work.
       // This allows detecting if ESC was pressed during async operations.
       const submissionGeneration = conversationGenerationRef.current;
@@ -4929,11 +5267,7 @@ export default function App({
                 const balanceResponse = await fetch(
                   `${baseURL}/v1/metadata/balance`,
                   {
-                    headers: {
-                      "Content-Type": "application/json",
-                      Authorization: `Bearer ${apiKey}`,
-                      "X-Letta-Source": "letta-code",
-                    },
+                    headers: getLettaCodeHeaders(apiKey),
                   },
                 );
 
@@ -5374,9 +5708,14 @@ export default function App({
             }
 
             const client = await getClient();
-            const result = await client.conversations.messages.compact(
-              conversationIdRef.current,
-            );
+            // Use agent-level compact API for "default" conversation,
+            // otherwise use conversation-level API
+            const result =
+              conversationIdRef.current === "default"
+                ? await client.agents.messages.compact(agentId)
+                : await client.conversations.messages.compact(
+                    conversationIdRef.current,
+                  );
 
             // Format success message with before/after counts and summary
             const outputLines = [
@@ -5998,6 +6337,310 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /memfs command - manage filesystem-backed memory
+        if (trimmed.startsWith("/memfs")) {
+          const [, subcommand] = trimmed.split(/\s+/);
+          const cmdId = uid("cmd");
+
+          if (!subcommand || subcommand === "help") {
+            const output = [
+              "memfs commands:",
+              "- /memfs status  — show status",
+              "- /memfs enable  — enable filesystem-backed memory",
+              "- /memfs disable — disable filesystem-backed memory",
+              "- /memfs sync    — sync blocks and files now",
+              "- /memfs reset   — move local memfs to /tmp and recreate dirs",
+            ].join("\n");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (subcommand === "status") {
+            // Show status
+            const enabled = settingsManager.isMemfsEnabled(agentId);
+            let output: string;
+            if (enabled) {
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              output = `Memory filesystem is enabled.\nPath: ${memoryDir}`;
+            } else {
+              output =
+                "Memory filesystem is disabled. Run `/memfs enable` to enable.";
+            }
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output,
+              phase: "finished",
+              success: true,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (subcommand === "enable") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Enabling memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              // 1. Detach memory tools from agent
+              const { detachMemoryTools } = await import("../tools/toolset");
+              await detachMemoryTools(agentId);
+
+              // 2. Update settings
+              settingsManager.setMemfsEnabled(agentId, true);
+
+              // 3. Update system prompt to include memfs section
+              const { updateAgentSystemPromptMemfs } = await import(
+                "../agent/modify"
+              );
+              await updateAgentSystemPromptMemfs(agentId, true);
+
+              // 4. Run initial sync (creates files from blocks)
+              await ensureMemoryFilesystemBlock(agentId);
+              const result = await syncMemoryFilesystem(agentId);
+
+              if (result.conflicts.length > 0) {
+                // Handle conflicts - show overlay (keep running so it stays in liveItems)
+                memorySyncCommandIdRef.current = cmdId;
+                memorySyncCommandInputRef.current = msg;
+                setMemorySyncConflicts(result.conflicts);
+                setActiveOverlay("memfs-sync");
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Memory filesystem enabled with ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} to resolve.`,
+                  false,
+                  msg,
+                  true, // keepRunning - don't commit until conflict resolved
+                );
+              } else {
+                await updateMemoryFilesystemBlock(agentId);
+                const memoryDir = getMemoryFilesystemRoot(agentId);
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Memory filesystem enabled.\nPath: ${memoryDir}\n${formatMemorySyncSummary(result)}`,
+                  true,
+                  msg,
+                );
+              }
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to enable memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          if (subcommand === "sync") {
+            // Check if memfs is enabled for this agent
+            if (!settingsManager.isMemfsEnabled(agentId)) {
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output:
+                  "Memory filesystem is disabled. Run `/memfs enable` first.",
+                phase: "finished",
+                success: false,
+              });
+              buffersRef.current.order.push(cmdId);
+              refreshDerived();
+              return { submitted: true };
+            }
+
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Syncing memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            setCommandRunning(true);
+
+            try {
+              await runMemoryFilesystemSync("command", cmdId);
+            } catch (error) {
+              // runMemoryFilesystemSync has its own error handling, but catch any
+              // unexpected errors that slip through
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(cmdId, `Failed: ${errorText}`, false);
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          if (subcommand === "reset") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Resetting memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              if (!existsSync(memoryDir)) {
+                updateMemorySyncCommand(
+                  cmdId,
+                  "No local memory filesystem found to reset.",
+                  true,
+                  msg,
+                );
+                return { submitted: true };
+              }
+
+              const backupDir = join(
+                tmpdir(),
+                `letta-memfs-reset-${agentId}-${Date.now()}`,
+              );
+              renameSync(memoryDir, backupDir);
+
+              ensureMemoryFilesystemDirs(agentId);
+
+              updateMemorySyncCommand(
+                cmdId,
+                `Memory filesystem reset.\nBackup moved to ${backupDir}\nRun \`/memfs sync\` to repopulate from API.`,
+                true,
+                msg,
+              );
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to reset memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          if (subcommand === "disable") {
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: "Disabling memory filesystem...",
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            setCommandRunning(true);
+
+            try {
+              // 1. Run final sync to ensure blocks are up-to-date
+              const result = await syncMemoryFilesystem(agentId);
+
+              if (result.conflicts.length > 0) {
+                // Handle conflicts - show overlay (keep running so it stays in liveItems)
+                memorySyncCommandIdRef.current = cmdId;
+                memorySyncCommandInputRef.current = msg;
+                setMemorySyncConflicts(result.conflicts);
+                setActiveOverlay("memfs-sync");
+                updateMemorySyncCommand(
+                  cmdId,
+                  `Cannot disable: resolve ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} first.`,
+                  false,
+                  msg,
+                  true, // keepRunning - don't commit until conflict resolved
+                );
+                return { submitted: true };
+              }
+
+              // 2. Re-attach memory tool
+              const { reattachMemoryTool } = await import("../tools/toolset");
+              // Use current model or default to Claude
+              const modelId = currentModelId || "anthropic/claude-sonnet-4";
+              await reattachMemoryTool(agentId, modelId);
+
+              // 3. Detach memory_filesystem block
+              await detachMemoryFilesystemBlock(agentId);
+
+              // 4. Update system prompt to remove memfs section
+              const { updateAgentSystemPromptMemfs } = await import(
+                "../agent/modify"
+              );
+              await updateAgentSystemPromptMemfs(agentId, false);
+
+              // 5. Update settings
+              settingsManager.setMemfsEnabled(agentId, false);
+
+              updateMemorySyncCommand(
+                cmdId,
+                "Memory filesystem disabled. Memory tool re-attached.\nFiles on disk have been kept.",
+                true,
+                msg,
+              );
+            } catch (error) {
+              const errorText =
+                error instanceof Error ? error.message : String(error);
+              updateMemorySyncCommand(
+                cmdId,
+                `Failed to disable memfs: ${errorText}`,
+                false,
+                msg,
+              );
+            } finally {
+              setCommandRunning(false);
+            }
+
+            return { submitted: true };
+          }
+
+          // Unknown subcommand
+          buffersRef.current.byId.set(cmdId, {
+            kind: "command",
+            id: cmdId,
+            input: msg,
+            output: `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, /memfs disable, /memfs sync, or /memfs reset.`,
+            phase: "finished",
+            success: false,
+          });
+          buffersRef.current.order.push(cmdId);
+          refreshDerived();
+          return { submitted: true };
+        }
+
         // Special handling for /skill command - enter skill creation mode
         if (trimmed.startsWith("/skill")) {
           // Check for pending approvals before sending
@@ -6273,9 +6916,21 @@ ${recentCommits}
             refreshDerived();
 
             // Send trigger message instructing agent to load the initializing-memory skill
+            // Only include memfs path if memfs is enabled for this agent
+            const memfsSection = settingsManager.isMemfsEnabled(agentId)
+              ? `
+## Memory Filesystem Location
+
+Your memory blocks are synchronized with the filesystem at:
+\`~/.letta/agents/${agentId}/memory/\`
+
+Use this path when working with memory files during initialization.
+`
+              : "";
+
             const initMessage = `${SYSTEM_REMINDER_OPEN}
 The user has requested memory initialization via /init.
-
+${memfsSection}
 ## 1. Load the initializing-memory skill
 
 First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
@@ -6496,6 +7151,45 @@ ${SYSTEM_REMINDER_CLOSE}
       // Increment turn count for next iteration
       turnCountRef.current += 1;
 
+      // Build memfs conflict reminder if conflicts were detected after the last turn
+      let memfsConflictReminder = "";
+      if (
+        pendingMemfsConflictsRef.current &&
+        pendingMemfsConflictsRef.current.length > 0
+      ) {
+        const conflicts = pendingMemfsConflictsRef.current;
+        const conflictRows = conflicts
+          .map((c) => `| ${c.label} | Both file and block modified |`)
+          .join("\n");
+        memfsConflictReminder = `${SYSTEM_REMINDER_OPEN}
+## Memory Filesystem: Sync Conflicts Detected
+
+${conflicts.length} memory block${conflicts.length === 1 ? "" : "s"} ha${conflicts.length === 1 ? "s" : "ve"} conflicts (both the file and the in-memory block were modified since last sync):
+
+| Block | Status |
+|-------|--------|
+${conflictRows}
+
+To see the full diff for each conflict, run:
+\`\`\`bash
+npx tsx <SKILL_DIR>/scripts/memfs-diff.ts $LETTA_AGENT_ID
+\`\`\`
+
+The diff will be written to a file for review. After reviewing, resolve all conflicts at once:
+\`\`\`bash
+npx tsx <SKILL_DIR>/scripts/memfs-resolve.ts $LETTA_AGENT_ID --resolutions '<JSON array of {label, resolution}>'
+\`\`\`
+
+Resolution options: \`"file"\` (overwrite block with file) or \`"block"\` (overwrite file with block).
+You MUST resolve all conflicts. They will not be synced automatically until resolved.
+
+For more context, load the \`syncing-memory-filesystem\` skill.
+${SYSTEM_REMINDER_CLOSE}
+`;
+        // Clear after injecting so it doesn't repeat on subsequent turns
+        pendingMemfsConflictsRef.current = null;
+      }
+
       // Build permission mode change alert if mode changed since last notification
       let permissionModeAlert = "";
       const currentMode = permissionMode.getMode();
@@ -6510,7 +7204,7 @@ ${SYSTEM_REMINDER_CLOSE}
         lastNotifiedModeRef.current = currentMode;
       }
 
-      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then memory reminder)
+      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then hook feedback, then memory reminder, then memfs conflicts)
       const allReminders =
         sessionContextReminder +
         permissionModeAlert +
@@ -6518,7 +7212,9 @@ ${SYSTEM_REMINDER_CLOSE}
         ralphModeReminder +
         skillUnloadReminder +
         bashCommandPrefix +
-        memoryReminderContent;
+        userPromptSubmitHookFeedback +
+        memoryReminderContent +
+        memfsConflictReminder;
       const messageContent =
         allReminders && typeof contentParts === "string"
           ? allReminders + contentParts
@@ -8344,9 +9040,7 @@ ${SYSTEM_REMINDER_CLOSE}
             {
               method: "POST",
               headers: {
-                "Content-Type": "application/json",
-                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-                "X-Letta-Source": "letta-code",
+                ...getLettaCodeHeaders(apiKey),
                 "X-Letta-Code-Device-ID": settingsManager.getOrCreateDeviceId(),
               },
               body: JSON.stringify({
@@ -8357,6 +9051,31 @@ ${SYSTEM_REMINDER_CLOSE}
                 version: process.env.npm_package_version || "unknown",
                 platform: process.platform,
                 settings: JSON.stringify(safeSettings),
+                // Additional context for debugging
+                system_info: {
+                  local_time: getLocalTime(),
+                  device_type: getDeviceType(),
+                  cwd: process.cwd(),
+                },
+                session_stats: (() => {
+                  const stats = sessionStatsRef.current?.getSnapshot();
+                  if (!stats) return undefined;
+                  return {
+                    total_api_ms: stats.totalApiMs,
+                    total_wall_ms: stats.totalWallMs,
+                    step_count: stats.usage.stepCount,
+                    prompt_tokens: stats.usage.promptTokens,
+                    completion_tokens: stats.usage.completionTokens,
+                  };
+                })(),
+                agent_info: {
+                  agent_name: agentName,
+                  agent_description: agentDescription,
+                  model: currentModelId,
+                },
+                account_info: {
+                  billing_tier: billingTier,
+                },
               }),
             },
           );
@@ -8392,7 +9111,16 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       });
     },
-    [agentId, refreshDerived, withCommandLock, closeOverlay],
+    [
+      agentId,
+      agentName,
+      agentDescription,
+      currentModelId,
+      billingTier,
+      refreshDerived,
+      withCommandLock,
+      closeOverlay,
+    ],
   );
 
   const handleProfileEscapeCancel = useCallback(() => {
@@ -8776,6 +9504,10 @@ Plan file path: ${planFilePath}`;
         // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
+      // Events (like compaction) show while running
+      if (ln.kind === "event") {
+        return ln.phase === "running";
+      }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
@@ -8960,6 +9692,8 @@ Plan file path: ${planFilePath}`;
                 <ErrorMessage line={item} />
               ) : item.kind === "status" ? (
                 <StatusMessage line={item} />
+              ) : item.kind === "event" ? (
+                <EventMessage line={item} />
               ) : item.kind === "separator" ? (
                 <Box marginTop={1}>
                   <Text dimColor>{"─".repeat(columns)}</Text>
@@ -9119,6 +9853,8 @@ Plan file path: ${planFilePath}`;
                           <ErrorMessage line={ln} />
                         ) : ln.kind === "status" ? (
                           <StatusMessage line={ln} />
+                        ) : ln.kind === "event" ? (
+                          <EventMessage line={ln} />
                         ) : ln.kind === "command" ? (
                           <CommandMessage line={ln} />
                         ) : ln.kind === "bash_command" ? (
@@ -9979,6 +10715,7 @@ Plan file path: ${planFilePath}`;
                       openOverlay: (overlay) => setActiveOverlay(overlay),
                       closeOverlay,
                       agentId,
+                      conversationId,
                       agentName,
                       agentState,
                       currentModelId,

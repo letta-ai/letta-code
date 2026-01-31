@@ -48,6 +48,7 @@ export async function ensureCorrectMemoryTool(
       : isOpenAIModel(resolvedModel);
 
   try {
+    // Need full agent state for tool_rules, so use retrieve with include
     const agentWithTools = await client.agents.retrieve(agentId, {
       include: ["agent.tools"],
     });
@@ -107,6 +108,89 @@ export async function ensureCorrectMemoryTool(
   } catch (err) {
     console.warn(
       `Warning: Failed to sync memory tool: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Detach all memory tools from an agent.
+ * Used when enabling memfs (filesystem-backed memory).
+ *
+ * @param agentId - Agent to detach memory tools from
+ * @returns true if any tools were detached
+ */
+export async function detachMemoryTools(agentId: string): Promise<boolean> {
+  const client = await getClient();
+
+  try {
+    const agentWithTools = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
+    const currentTools = agentWithTools.tools || [];
+
+    let detachedAny = false;
+    for (const tool of currentTools) {
+      if (tool.name === "memory" || tool.name === "memory_apply_patch") {
+        if (tool.id) {
+          await client.agents.tools.detach(tool.id, { agent_id: agentId });
+          detachedAny = true;
+        }
+      }
+    }
+
+    return detachedAny;
+  } catch (err) {
+    console.warn(
+      `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Re-attach the appropriate memory tool to an agent.
+ * Used when disabling memfs (filesystem-backed memory).
+ * Forces attachment even if agent had no memory tool before.
+ *
+ * @param agentId - Agent to attach memory tool to
+ * @param modelIdentifier - Model handle to determine which memory tool to use
+ */
+export async function reattachMemoryTool(
+  agentId: string,
+  modelIdentifier: string,
+): Promise<void> {
+  const resolvedModel = resolveModel(modelIdentifier) ?? modelIdentifier;
+  const client = await getClient();
+  const shouldUsePatch = isOpenAIModel(resolvedModel);
+
+  try {
+    const agentWithTools = await client.agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
+    const currentTools = agentWithTools.tools || [];
+    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
+
+    // Determine which memory tool we want
+    const desiredMemoryTool = shouldUsePatch ? "memory_apply_patch" : "memory";
+
+    // Already has the tool?
+    if (mapByName.has(desiredMemoryTool)) {
+      return;
+    }
+
+    // Find the tool on the server
+    const resp = await client.tools.list({ name: desiredMemoryTool });
+    const toolId = resp.items[0]?.id;
+    if (!toolId) {
+      console.warn(`Memory tool "${desiredMemoryTool}" not found on server`);
+      return;
+    }
+
+    // Attach it
+    await client.agents.tools.attach(toolId, { agent_id: agentId });
+  } catch (err) {
+    console.warn(
+      `Warning: Failed to reattach memory tool: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

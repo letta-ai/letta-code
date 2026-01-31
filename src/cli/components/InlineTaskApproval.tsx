@@ -122,15 +122,15 @@ export const InlineTaskApproval = memo(
     );
 
     // Generate horizontal line
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const contentWidth = Math.max(0, columns - 4); // 2 padding on each side
 
     // Memoize the static task content so it doesn't re-render on keystroke
     const memoizedTaskContent = useMemo(() => {
       const { subagentType, description, prompt, model } = taskInfo;
 
-      // Truncate prompt if too long (show first ~200 chars)
-      const truncatedPrompt = truncate(prompt, 300);
+      // Show full prompt - users need to see what the task will do
+      const truncatedPrompt = prompt;
 
       return (
         <>

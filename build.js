@@ -15,8 +15,14 @@ const __dirname = dirname(__filename);
 // Read version from package.json
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
+const useMagick = Bun.env.USE_MAGICK;
+const features = []
 
 console.log(`📦 Building Letta Code v${version}...`);
+if (useMagick) {
+  console.log(`🪄 Using magick variant of imageResize...`);
+  features.push("USE_MAGICK")
+}
 
 await Bun.build({
   entrypoints: ["./src/index.ts"],
@@ -31,6 +37,7 @@ await Bun.build({
   define: {
     LETTA_VERSION: JSON.stringify(version),
     BUILD_TIME: JSON.stringify(new Date().toISOString()),
+    __USE_MAGICK__: useMagick ? "true" : "false",
   },
   // Load text files as strings (for markdown, etc.)
   loader: {
@@ -38,6 +45,7 @@ await Bun.build({
     ".mdx": "text",
     ".txt": "text",
   },
+  features: features,
 });
 
 // Add shebang to output file

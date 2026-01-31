@@ -71,6 +71,8 @@ async function runCLI(
     scenarioPrompt(),
     "--yolo",
     "--new-agent",
+    "--base-tools",
+    "memory,web_search,fetch_webpage,conversation_search",
     "--output-format",
     output,
     "-m",

@@ -19,7 +19,7 @@ type Props = {
  */
 export const BashPreview = memo(({ command, description }: Props) => {
   const columns = useTerminalWidth();
-  const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+  const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
 
   return (
     <>

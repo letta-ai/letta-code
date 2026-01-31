@@ -1,10 +1,11 @@
 /**
  * Skills module - provides skill discovery and management functionality
  *
- * Skills are discovered from three sources (in order of priority):
+ * Skills are discovered from four sources (in order of priority):
  * 1. Project skills: .skills/ in current directory (highest priority - overrides)
- * 2. Global skills: ~/.letta/skills/ for user's personal skills
- * 3. Bundled skills: embedded in package (lowest priority - defaults)
+ * 2. Agent skills: ~/.letta/agents/{agent-id}/skills/ for agent-specific skills
+ * 3. Global skills: ~/.letta/skills/ for user's personal skills
+ * 4. Bundled skills: embedded in package (lowest priority - defaults)
  */
 
 import { existsSync } from "node:fs";
@@ -34,7 +35,7 @@ function getBundledSkillsPath(): string {
 /**
  * Source of a skill (for display and override resolution)
  */
-export type SkillSource = "bundled" | "global" | "project";
+export type SkillSource = "bundled" | "global" | "agent" | "project";
 
 /**
  * Represents a skill that can be used by the agent
@@ -92,6 +93,20 @@ export const GLOBAL_SKILLS_DIR = join(
 );
 
 /**
+ * Get the agent-scoped skills directory for a specific agent
+ * @param agentId - The Letta agent ID (e.g., "agent-abc123")
+ * @returns Path like ~/.letta/agents/agent-abc123/skills/
+ */
+export function getAgentSkillsDir(agentId: string): string {
+  return join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".letta/agents",
+    agentId,
+    "skills",
+  );
+}
+
+/**
  * Skills block character limit.
  * If formatted skills exceed this, fall back to compact tree format.
  */
@@ -142,19 +157,22 @@ async function discoverSkillsFromDir(
 }
 
 /**
- * Discovers skills from all sources (bundled, global, project)
+ * Discovers skills from all sources (bundled, global, agent, project)
  * Later sources override earlier ones with the same ID.
  *
  * Priority order (highest to lowest):
  * 1. Project skills (.skills/ in current directory)
- * 2. Global skills (~/.letta/skills/)
- * 3. Bundled skills (embedded in package)
+ * 2. Agent skills (~/.letta/agents/{agent-id}/skills/)
+ * 3. Global skills (~/.letta/skills/)
+ * 4. Bundled skills (embedded in package)
  *
  * @param projectSkillsPath - The project skills directory (default: .skills in current directory)
+ * @param agentId - Optional agent ID for agent-scoped skills
  * @returns A result containing discovered skills and any errors
  */
 export async function discoverSkills(
   projectSkillsPath: string = join(process.cwd(), SKILLS_DIR),
+  agentId?: string,
 ): Promise<SkillDiscoveryResult> {
   const allErrors: SkillDiscoveryError[] = [];
   const skillsById = new Map<string, Skill>();
@@ -172,7 +190,17 @@ export async function discoverSkills(
     skillsById.set(skill.id, skill);
   }
 
-  // 3. Add project skills (override global and bundled)
+  // 3. Add agent skills if agentId provided (override global)
+  if (agentId) {
+    const agentSkillsDir = getAgentSkillsDir(agentId);
+    const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
+    allErrors.push(...agentResult.errors);
+    for (const skill of agentResult.skills) {
+      skillsById.set(skill.id, skill);
+    }
+  }
+
+  // 4. Add project skills (override all - highest priority)
   const projectResult = await discoverSkillsFromDir(
     projectSkillsPath,
     "project",
@@ -390,14 +418,20 @@ function formatSkillsAsTree(skills: Skill[], skillsDirectory: string): string {
  * Formats discovered skills with full metadata
  * @param skills - Array of discovered skills
  * @param skillsDirectory - Absolute path to the skills directory
+ * @param agentId - Optional agent ID for agent-scoped skills display
  * @returns Full metadata string representation
  */
 function formatSkillsWithMetadata(
   skills: Skill[],
   skillsDirectory: string,
+  agentId?: string,
 ): string {
   let output = `Skills Directory: ${skillsDirectory}\n`;
-  output += `Global Skills Directory: ${GLOBAL_SKILLS_DIR}\n\n`;
+  output += `Global Skills Directory: ${GLOBAL_SKILLS_DIR}\n`;
+  if (agentId) {
+    output += `Agent Skills Directory: ${getAgentSkillsDir(agentId)}\n`;
+  }
+  output += "\n";
 
   if (skills.length === 0) {
     return `${output}[NO SKILLS AVAILABLE]`;
@@ -405,7 +439,7 @@ function formatSkillsWithMetadata(
 
   output += "Available Skills:\n";
   output +=
-    "(source: bundled = built-in to Letta Code, global = ~/.letta/skills/, project = .skills/)\n\n";
+    "(source: bundled = built-in to Letta Code, global = shared across all agents on this machine (~/.letta/skills/), agent = skills specific to you (~/.letta/agents/{id}/skills/), project = current project only (.skills/))\n\n";
 
   // Group skills by category if categories exist
   const categorized = new Map<string, Skill[]>();
@@ -464,11 +498,13 @@ function formatSkill(skill: Skill): string {
  * Tries full metadata format first, falls back to compact tree if it exceeds limit.
  * @param skills - Array of discovered skills
  * @param skillsDirectory - Absolute path to the skills directory
+ * @param agentId - Optional agent ID for agent-scoped skills display
  * @returns Formatted string representation of skills
  */
 export function formatSkillsForMemory(
   skills: Skill[],
   skillsDirectory: string,
+  agentId?: string,
 ): string {
   // Handle empty case
   if (skills.length === 0) {
@@ -476,7 +512,7 @@ export function formatSkillsForMemory(
   }
 
   // Try full metadata format first
-  const fullFormat = formatSkillsWithMetadata(skills, skillsDirectory);
+  const fullFormat = formatSkillsWithMetadata(skills, skillsDirectory, agentId);
 
   // If within limit, use full format
   if (fullFormat.length <= SKILLS_BLOCK_CHAR_LIMIT) {
@@ -565,8 +601,8 @@ export async function syncSkillsToAgent(
   skillsDirectory: string,
   options?: { skipIfUnchanged?: boolean },
 ): Promise<{ synced: boolean; skills: Skill[] }> {
-  // Discover skills from filesystem
-  const { skills, errors } = await discoverSkills(skillsDirectory);
+  // Discover skills from filesystem (including agent-scoped skills)
+  const { skills, errors } = await discoverSkills(skillsDirectory, agentId);
 
   if (errors.length > 0) {
     for (const error of errors) {
@@ -575,7 +611,11 @@ export async function syncSkillsToAgent(
   }
 
   // Format skills for memory block
-  const formattedSkills = formatSkillsForMemory(skills, skillsDirectory);
+  const formattedSkills = formatSkillsForMemory(
+    skills,
+    skillsDirectory,
+    agentId,
+  );
 
   // Check if we can skip the update
   if (options?.skipIfUnchanged) {

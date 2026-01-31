@@ -6,6 +6,8 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
+import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -132,6 +134,23 @@ export type Line =
     }
   | { kind: "error"; id: string; text: string }
   | {
+      kind: "event";
+      id: string;
+      eventType: string;
+      eventData: Record<string, unknown>;
+      // Compaction events have additional fields populated when summary_message arrives
+      phase: "running" | "finished";
+      summary?: string;
+      stats?: {
+        trigger?: string;
+        contextTokensBefore?: number;
+        contextTokensAfter?: number;
+        contextWindow?: number;
+        messagesCountBefore?: number;
+        messagesCountAfter?: number;
+      };
+    }
+  | {
       kind: "command";
       id: string;
       input: string;
@@ -157,6 +176,17 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
+/**
+ * Tracks server-side tool calls for hook triggering.
+ * Server-side tools (tool_call_message) are executed by the Letta server,
+ * not the client, so we need to trigger hooks when we receive the stream messages.
+ */
+export interface ServerToolCallInfo {
+  toolName: string;
+  toolArgs: string;
+  preToolUseTriggered: boolean;
+}
+
 // Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
@@ -169,6 +199,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -180,9 +212,13 @@ export type Buffers = {
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
+  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Agent ID for passing to hooks (needed for server-side tools like memory)
+  agentId?: string;
 };
 
-export function createBuffers(): Buffers {
+export function createBuffers(agentId?: string): Buffers {
   return {
     tokenCount: 0,
     order: [],
@@ -202,6 +238,8 @@ export function createBuffers(): Buffers {
     },
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
+    serverToolCalls: new Map(),
+    agentId,
   };
 }
 
@@ -225,6 +263,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -476,6 +523,36 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
+
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, id);
+
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
+
+      // Check if this is a compaction summary message (old format embedded in user_message)
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a finished compaction event
+        ensure(b, id, () => ({
+          kind: "event",
+          id,
+          eventType: "compaction",
+          eventData: {},
+          phase: "finished",
+          summary: compactionSummary,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
+      break;
+    }
+
     case "tool_call_message":
     case "approval_request_message": {
       /* POST-FIX VERSION (what this should look like after backend fix):
@@ -591,6 +668,40 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
       }
+
+      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
+      if (chunk.message_type === "tool_call_message" && toolCallId) {
+        const existing = b.serverToolCalls.get(toolCallId);
+        const toolInfo: ServerToolCallInfo = existing || {
+          toolName: "",
+          toolArgs: "",
+          preToolUseTriggered: false,
+        };
+
+        if (name) toolInfo.toolName = name;
+        if (argsText) toolInfo.toolArgs += argsText;
+        b.serverToolCalls.set(toolCallId, toolInfo);
+
+        if (toolInfo.toolName && !toolInfo.preToolUseTriggered) {
+          toolInfo.preToolUseTriggered = true;
+          let parsedArgs: Record<string, unknown> = {};
+          try {
+            if (toolInfo.toolArgs) {
+              parsedArgs = JSON.parse(toolInfo.toolArgs);
+            }
+          } catch {
+            // Args may be incomplete JSON
+          }
+          runPreToolUseHooks(
+            toolInfo.toolName,
+            parsedArgs,
+            toolCallId,
+            undefined,
+            b.agentId,
+          ).catch(() => {});
+        }
+      }
+
       break;
     }
 
@@ -651,6 +762,43 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           resultOk: status === "success",
         };
         b.byId.set(id, updatedLine);
+
+        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
+        if (toolCallId) {
+          const serverToolInfo = b.serverToolCalls.get(toolCallId);
+          if (serverToolInfo) {
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              if (serverToolInfo.toolArgs) {
+                parsedArgs = JSON.parse(serverToolInfo.toolArgs);
+              }
+            } catch {
+              // Args parsing failed
+            }
+
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
+            runPostToolUseHooks(
+              serverToolInfo.toolName,
+              parsedArgs,
+              {
+                status: status === "success" ? "success" : "error",
+                output: resultText,
+              },
+              toolCallId,
+              undefined,
+              b.agentId,
+              precedingReasoning,
+              precedingAssistantMessage,
+            ).catch(() => {});
+
+            b.serverToolCalls.delete(toolCallId);
+          }
+        }
       }
       break;
     }
@@ -673,8 +821,80 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
-    default:
-      break; // ignore ping/etc
+    default: {
+      // Handle new compaction message types (when include_compaction_messages=true)
+      // These are not yet in the SDK types, so we handle them via string comparison
+      const msgType = chunk.message_type as string | undefined;
+
+      if (msgType === "summary_message") {
+        // Use otid if available, fall back to id
+        const summaryChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          summary?: string;
+          compaction_stats?: {
+            trigger?: string;
+            context_tokens_before?: number;
+            context_tokens_after?: number;
+            context_window?: number;
+            messages_count_before?: number;
+            messages_count_after?: number;
+          };
+        };
+        const summaryText = summaryChunk.summary || "";
+        const stats = summaryChunk.compaction_stats;
+
+        // Find the most recent compaction event line and update it with summary and stats
+        for (let i = b.order.length - 1; i >= 0; i--) {
+          const orderId = b.order[i];
+          if (!orderId) continue;
+          const line = b.byId.get(orderId);
+          if (line?.kind === "event" && line.eventType === "compaction") {
+            line.phase = "finished";
+            line.summary = summaryText;
+            if (stats) {
+              line.stats = {
+                trigger: stats.trigger,
+                contextTokensBefore: stats.context_tokens_before,
+                contextTokensAfter: stats.context_tokens_after,
+                contextWindow: stats.context_window,
+                messagesCountBefore: stats.messages_count_before,
+                messagesCountAfter: stats.messages_count_after,
+              };
+            }
+            break;
+          }
+        }
+        break;
+      }
+
+      if (msgType === "event_message") {
+        // Use otid if available, fall back to id
+        const eventChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          event_type?: string;
+          event_data?: Record<string, unknown>;
+        };
+        const id = eventChunk.otid || eventChunk.id;
+        if (!id) break;
+
+        // Handle otid transition (mark previous line as finished)
+        handleOtidTransition(b, id);
+
+        ensure(b, id, () => ({
+          kind: "event",
+          id,
+          eventType: eventChunk.event_type || "unknown",
+          eventData: eventChunk.event_data || {},
+          phase: "running",
+        }));
+        break;
+      }
+
+      // ignore ping/etc
+      break;
+    }
   }
 }
 

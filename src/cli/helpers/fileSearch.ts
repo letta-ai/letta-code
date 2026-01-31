@@ -6,6 +6,47 @@ interface FileMatch {
   type: "file" | "dir" | "url";
 }
 
+/**
+ * Directories to exclude from file search autocomplete.
+ * These are common dependency/build directories that cause lag when searched.
+ * All values are lowercase for case-insensitive matching (Windows compatibility).
+ */
+const IGNORED_DIRECTORIES = new Set([
+  // JavaScript/Node
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".nuxt",
+  "bower_components",
+
+  // Python
+  "venv",
+  ".venv",
+  "__pycache__",
+  ".tox",
+  "env",
+
+  // Build outputs
+  "target", // Rust/Maven/Java
+  "out",
+  "coverage",
+  ".cache",
+]);
+
+/**
+ * Check if a directory entry should be excluded from search results.
+ * Uses case-insensitive matching for Windows compatibility.
+ */
+function shouldExcludeEntry(entry: string): boolean {
+  // Skip hidden files/directories (starts with .)
+  if (entry.startsWith(".")) {
+    return true;
+  }
+  // Case-insensitive check for Windows compatibility
+  return IGNORED_DIRECTORIES.has(entry.toLowerCase());
+}
+
 export function debounce<T extends (...args: never[]) => unknown>(
   func: T,
   wait: number,
@@ -40,13 +81,8 @@ function searchDirectoryRecursive(
     const entries = readdirSync(dir);
 
     for (const entry of entries) {
-      // Skip hidden files and common ignore patterns
-      if (
-        entry.startsWith(".") ||
-        entry === "node_modules" ||
-        entry === "dist" ||
-        entry === "build"
-      ) {
+      // Skip hidden files and common dependency/build directories
+      if (shouldExcludeEntry(entry)) {
         continue;
       }
 
@@ -151,12 +187,14 @@ export async function searchFiles(
 
       // Filter entries matching the search pattern
       // If pattern is empty, show all entries (for when user just types "@")
-      const matchingEntries =
-        searchPattern.length === 0
-          ? entries
-          : entries.filter((entry) =>
-              entry.toLowerCase().includes(searchPattern.toLowerCase()),
-            );
+      // Also exclude common dependency/build directories
+      const matchingEntries = entries
+        .filter((entry) => !shouldExcludeEntry(entry))
+        .filter(
+          (entry) =>
+            searchPattern.length === 0 ||
+            entry.toLowerCase().includes(searchPattern.toLowerCase()),
+        );
 
       // Get stats for each matching entry
       for (const entry of matchingEntries.slice(0, 50)) {

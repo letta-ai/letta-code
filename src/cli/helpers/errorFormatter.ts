@@ -92,6 +92,23 @@ function getResourceLimitMessage(e: APIError): string | undefined {
 }
 
 /**
+ * Check if the error is an agent limit error (429 with agents-limit-exceeded)
+ */
+function isAgentLimitError(e: APIError): boolean {
+  if (e.status !== 429) return false;
+
+  const errorBody = e.error;
+  if (errorBody && typeof errorBody === "object") {
+    if ("reasons" in errorBody && Array.isArray(errorBody.reasons)) {
+      if (errorBody.reasons.includes("agents-limit-exceeded")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Check if the error is a credit exhaustion error (402 with not-enough-credits)
  */
 function isCreditExhaustedError(e: APIError): boolean {
@@ -152,6 +169,18 @@ export function formatErrorDetails(
       return `You've hit your usage limit. ${resetInfo}. View usage: ${LETTA_USAGE_URL}`;
     }
 
+    // Check for agent limit error (free tier agent count limit)
+    if (isAgentLimitError(e)) {
+      const { billingTier } = getErrorContext();
+
+      if (billingTier?.toLowerCase() === "free") {
+        return `You've reached the agent limit (3) for the Free Plan. Delete agents at: ${LETTA_AGENTS_URL}\nOr upgrade to Pro for unlimited agents at: ${LETTA_USAGE_URL}`;
+      }
+
+      // Fallback for paid tiers (shouldn't normally hit this, but just in case)
+      return `You've reached your agent limit. Delete agents at: ${LETTA_AGENTS_URL}\nOr check your plan at: ${LETTA_USAGE_URL}`;
+    }
+
     // Check for resource limit error (e.g., "You have reached your limit for agents")
     const resourceLimitMsg = getResourceLimitMessage(e);
     if (resourceLimitMsg) {
@@ -168,7 +197,7 @@ export function formatErrorDetails(
       // Free plan users get a special message about BYOK and free models
       if (billingTier?.toLowerCase() === "free") {
         const modelInfo = modelDisplayName ? ` (${modelDisplayName})` : "";
-        return `Selected hosted model${modelInfo} not available on Free plan. Switch to a free model with /model glm-4.7, upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys with /connect.`;
+        return `Selected hosted model${modelInfo} not available on Free plan. Switch to a free model with /model (glm-4.7 or minimax-m2.1), upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys with /connect.`;
       }
 
       return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;

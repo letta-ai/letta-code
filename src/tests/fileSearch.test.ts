@@ -133,6 +133,67 @@ test("searchFiles skips node_modules (deep)", async () => {
   expect(results.some((r) => r.path.includes("index.ts"))).toBe(true);
 });
 
+test("searchFiles skips venv directories (deep)", async () => {
+  const originalCwd = process.cwd();
+  process.chdir(TEST_DIR);
+
+  // Create venv directory (Python virtual environment)
+  mkdirSync(join(TEST_DIR, "venv/lib"), { recursive: true });
+  writeFileSync(join(TEST_DIR, "venv/lib/module.py"), "# python");
+
+  // Also test .venv (common alternative)
+  mkdirSync(join(TEST_DIR, ".venv/lib"), { recursive: true });
+  writeFileSync(join(TEST_DIR, ".venv/lib/other.py"), "# python");
+
+  const results = await searchFiles("module", true);
+
+  process.chdir(originalCwd);
+
+  // Should not find files in venv or .venv
+  expect(results.some((r) => r.path.includes("venv"))).toBe(false);
+  expect(results.some((r) => r.path.includes(".venv"))).toBe(false);
+});
+
+test("searchFiles skips excluded directories in shallow search", async () => {
+  const originalCwd = process.cwd();
+  process.chdir(TEST_DIR);
+
+  // Create excluded directories
+  mkdirSync(join(TEST_DIR, "node_modules"), { recursive: true });
+  mkdirSync(join(TEST_DIR, "venv"), { recursive: true });
+  mkdirSync(join(TEST_DIR, "__pycache__"), { recursive: true });
+
+  const results = await searchFiles("", false);
+
+  process.chdir(originalCwd);
+
+  // Should not include excluded directories in shallow search
+  expect(results.some((r) => r.path === "node_modules")).toBe(false);
+  expect(results.some((r) => r.path === "venv")).toBe(false);
+  expect(results.some((r) => r.path === "__pycache__")).toBe(false);
+  // But should still include non-excluded directories
+  expect(results.some((r) => r.path === "src")).toBe(true);
+});
+
+test("searchFiles uses case-insensitive exclusion for directory names", async () => {
+  const originalCwd = process.cwd();
+  process.chdir(TEST_DIR);
+
+  // Create directory with different casing (Windows-style)
+  // This tests that Node_Modules or NODE_MODULES would be excluded
+  mkdirSync(join(TEST_DIR, "Node_Modules/pkg"), { recursive: true });
+  writeFileSync(join(TEST_DIR, "Node_Modules/pkg/test.js"), "module");
+
+  const results = await searchFiles("test", true);
+
+  process.chdir(originalCwd);
+
+  // Should not find files in Node_Modules (case-insensitive match to node_modules)
+  expect(
+    results.some((r) => r.path.toLowerCase().includes("node_modules")),
+  ).toBe(false);
+});
+
 test("searchFiles handles relative path queries", async () => {
   const originalCwd = process.cwd();
   process.chdir(TEST_DIR);

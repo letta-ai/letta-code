@@ -13,10 +13,8 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import type { ToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
-  buildApprovalRecoveryMessage,
   fetchRunErrorDetail,
   isApprovalPendingError,
-  isApprovalStateDesyncError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
@@ -28,6 +26,12 @@ import {
 } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import {
+  ensureMemoryFilesystemBlock,
+  formatMemorySyncSummary,
+  syncMemoryFilesystem,
+  updateMemoryFilesystemBlock,
+} from "./agent/memoryFilesystem";
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -92,6 +96,7 @@ export async function handleHeadlessCommand(
       conversation: { type: "string" },
       default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
+      "create-only": { type: "boolean" }, // Create agent and exit (for SDK)
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
@@ -120,6 +125,8 @@ export async function handleHeadlessCommand(
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
       "no-skills": { type: "boolean" },
+      memfs: { type: "boolean" },
+      "no-memfs": { type: "boolean" },
     },
     strict: false,
     allowPositionals: true,
@@ -211,6 +218,7 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
+  let isNewlyCreatedAgent = false;
   let specifiedAgentId = values.agent as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
   const useDefaultConv = values.default as boolean | undefined;
@@ -235,6 +243,8 @@ export async function handleHeadlessCommand(
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const memfsFlag = values.memfs as boolean | undefined;
+  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
@@ -446,6 +456,7 @@ export async function handleHeadlessCommand(
       stripMessages: true,
     });
     agent = result.agent;
+    isNewlyCreatedAgent = true;
   }
 
   // Priority 2: Try to use --agent specified ID
@@ -477,6 +488,7 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
+    isNewlyCreatedAgent = true;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -545,18 +557,13 @@ export async function handleHeadlessCommand(
         process.exit(1);
       }
 
-      // Optimization: Skip update if agent is already using the specified model
-      const currentModel = agent.llm_config?.model;
-      const currentEndpointType = agent.llm_config?.model_endpoint_type;
-      const currentHandle = `${currentEndpointType}/${currentModel}`;
-
-      if (currentHandle !== modelHandle) {
-        const { updateAgentLLMConfig } = await import("./agent/modify");
-        const updateArgs = getModelUpdateArgs(model);
-        await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-        // Refresh agent state after model update
-        agent = await client.agents.retrieve(agent.id);
-      }
+      // Always apply model update - different model IDs can share the same
+      // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
+      const { updateAgentLLMConfig } = await import("./agent/modify");
+      const updateArgs = getModelUpdateArgs(model);
+      await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+      // Refresh agent state after model update
+      agent = await client.agents.retrieve(agent.id);
     }
 
     if (systemPromptPreset) {
@@ -587,6 +594,46 @@ export async function handleHeadlessCommand(
     const createdBlocks = await ensureSkillsBlocks(agent.id);
     if (createdBlocks.length > 0) {
       console.log("Created missing skills blocks for agent compatibility");
+    }
+  }
+
+  // Apply memfs flag if specified, or enable by default for new agents
+  if (memfsFlag) {
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (noMemfsFlag) {
+    settingsManager.setMemfsEnabled(agent.id, false);
+  } else if (isNewlyCreatedAgent && !isSubagent) {
+    // Enable memfs by default for newly created agents (but not subagents)
+    settingsManager.setMemfsEnabled(agent.id, true);
+  }
+
+  // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
+  if (settingsManager.isMemfsEnabled(agent.id)) {
+    try {
+      await ensureMemoryFilesystemBlock(agent.id);
+      const syncResult = await syncMemoryFilesystem(agent.id);
+      if (syncResult.conflicts.length > 0) {
+        console.error(
+          `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
+        );
+        process.exit(1);
+      }
+      await updateMemoryFilesystemBlock(agent.id);
+      if (
+        syncResult.updatedBlocks.length > 0 ||
+        syncResult.createdBlocks.length > 0 ||
+        syncResult.deletedBlocks.length > 0 ||
+        syncResult.updatedFiles.length > 0 ||
+        syncResult.createdFiles.length > 0 ||
+        syncResult.deletedFiles.length > 0
+      ) {
+        console.log(formatMemorySyncSummary(syncResult));
+      }
+    } catch (error) {
+      console.error(
+        `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
     }
   }
 
@@ -750,8 +797,8 @@ export async function handleHeadlessCommand(
     return;
   }
 
-  // Create buffers to accumulate stream
-  const buffers = createBuffers();
+  // Create buffers to accumulate stream (pass agent.id for server-side tool hooks)
+  const buffers = createBuffers(agent.id);
 
   // Initialize session stats
   const sessionStats = new SessionStats();
@@ -777,6 +824,11 @@ export async function handleHeadlessCommand(
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
+
+    // --create-only: exit after outputting init (for SDK createAgent)
+    if (values["create-only"]) {
+      process.exit(0);
+    }
   }
 
   // Helper to resolve any pending approvals before sending user input
@@ -921,7 +973,11 @@ export async function handleHeadlessCommand(
           // no-op
         }
       } else {
-        await drainStreamWithResume(approvalStream, createBuffers(), () => {});
+        await drainStreamWithResume(
+          approvalStream,
+          createBuffers(agent.id),
+          () => {},
+        );
       }
     }
   };
@@ -1381,26 +1437,11 @@ export async function handleHeadlessCommand(
         }
       }
 
-      // Detect approval desync once per turn
+      // Fetch run error detail for invalid tool call ID detection
       const detailFromRun = await fetchRunErrorDetail(lastRunId);
-      const approvalDesynced =
-        currentInput.length === 1 &&
-        currentInput[0]?.type === "approval" &&
-        (isApprovalStateDesyncError(detailFromRun) ||
-          isApprovalStateDesyncError(latestErrorText));
-
-      // Track last failure text for emitting on exit
-      const lastFailureText =
-        latestErrorText ||
-        detailFromRun ||
-        (lastRunId
-          ? `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`
-          : `An error occurred during agent execution\n(stop_reason: ${stopReason})`);
 
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
       if (stopReason === "llm_api_error") {
-        const shouldUseApprovalRecovery = approvalDesynced;
-
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
           const baseDelayMs = 1000;
@@ -1422,104 +1463,64 @@ export async function handleHeadlessCommand(
             console.log(JSON.stringify(retryMsg));
           } else {
             const delaySeconds = Math.round(delayMs / 1000);
-            const recoveryNote = shouldUseApprovalRecovery
-              ? " (approval state desynced - sending keep-going prompt)"
-              : "";
             console.error(
-              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...${recoveryNote}`,
+              `LLM API error encountered (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
             );
           }
 
           // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-          if (shouldUseApprovalRecovery) {
-            currentInput = [buildApprovalRecoveryMessage()];
-          }
           continue;
         }
       }
 
-      // Fallback: if we were sending only approvals and hit an internal error that
-      // says there is no pending approval, resend using the keep-alive recovery prompt.
-      if (approvalDesynced) {
-        // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
-        // Fetch the actual pending approvals and process them before retrying.
-        if (
-          isInvalidToolCallIdsError(detailFromRun) ||
-          isInvalidToolCallIdsError(latestErrorText)
-        ) {
-          if (outputFormat === "stream-json") {
-            const recoveryMsg: RecoveryMessage = {
-              type: "recovery",
-              recovery_type: "invalid_tool_call_ids",
-              message:
-                "Tool call ID mismatch; fetching actual pending approvals and resyncing",
-              run_id: lastRunId ?? undefined,
-              session_id: sessionId,
-              uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
-            };
-            console.log(JSON.stringify(recoveryMsg));
-          } else {
-            console.error(
-              "Tool call ID mismatch; fetching actual pending approvals...",
-            );
-          }
+      // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
+      // Fetch the actual pending approvals and process them before retrying.
+      const invalidIdsDetected =
+        isInvalidToolCallIdsError(detailFromRun) ||
+        isInvalidToolCallIdsError(latestErrorText);
 
-          try {
-            // Fetch and process actual pending approvals from server
-            await resolveAllPendingApprovals();
-            // After processing, continue to next iteration (fresh state)
-            continue;
-          } catch {
-            // If fetch fails, fall through to general desync recovery
-          }
-        }
-
-        if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
-          llmApiErrorRetries += 1;
-
-          const retryReason = stopReason ?? "error";
-          if (outputFormat === "stream-json") {
-            const retryMsg: RetryMessage = {
-              type: "retry",
-              reason: retryReason,
-              attempt: llmApiErrorRetries,
-              max_attempts: LLM_API_ERROR_MAX_RETRIES,
-              delay_ms: 0,
-              run_id: lastRunId ?? undefined,
-              session_id: sessionId,
-              uuid: `retry-${lastRunId || crypto.randomUUID()}`,
-            };
-            console.log(JSON.stringify(retryMsg));
-          } else {
-            console.error(
-              "Approval state desynced; resending keep-alive recovery prompt...",
-            );
-          }
-
-          // Small pause to avoid rapid-fire retries
-          await new Promise((resolve) => setTimeout(resolve, 250));
-
-          currentInput = [buildApprovalRecoveryMessage()];
-          continue;
-        }
-
-        // No retries left or non-retriable: emit error and exit
+      if (invalidIdsDetected) {
         if (outputFormat === "stream-json") {
-          const errorMsg: ErrorMessage = {
-            type: "error",
-            message: lastFailureText,
-            stop_reason: stopReason,
+          const recoveryMsg: RecoveryMessage = {
+            type: "recovery",
+            recovery_type: "invalid_tool_call_ids",
+            message:
+              "Tool call ID mismatch; fetching actual pending approvals and resyncing",
             run_id: lastRunId ?? undefined,
             session_id: sessionId,
-            uuid: `error-${lastRunId || crypto.randomUUID()}`,
+            uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
           };
-          console.log(JSON.stringify(errorMsg));
+          console.log(JSON.stringify(recoveryMsg));
         } else {
-          console.error(lastFailureText);
+          console.error(
+            "Tool call ID mismatch; fetching actual pending approvals...",
+          );
         }
-        process.exit(1);
+
+        try {
+          // Fetch and process actual pending approvals from server
+          await resolveAllPendingApprovals();
+          // After processing, continue to next iteration (fresh state)
+          continue;
+        } catch {
+          // If fetch fails, exit with error
+          if (outputFormat === "stream-json") {
+            const errorMsg: ErrorMessage = {
+              type: "error",
+              message: "Failed to fetch pending approvals for resync",
+              stop_reason: stopReason,
+              run_id: lastRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `error-${lastRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(errorMsg));
+          } else {
+            console.error("Failed to fetch pending approvals for resync");
+          }
+          process.exit(1);
+        }
       }
 
       // Unexpected stop reason (error, llm_api_error, etc.)
@@ -1560,6 +1561,11 @@ export async function handleHeadlessCommand(
           // Fallback: detect LLM provider errors from detail even if misclassified
           // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+
+          // Don't retry 4xx client errors (validation, auth, malformed requests)
+          // These are not transient and won't succeed on retry
+          const is4xxError = /Error code: 4\d{2}/.test(detail);
+
           const llmProviderPatterns = [
             "Anthropic API error", // anthropic_client.py:759
             "OpenAI API error", // openai_client.py:1034
@@ -1573,7 +1579,10 @@ export async function handleHeadlessCommand(
             detail.includes(pattern),
           );
 
-          if (errorType === "llm_error" || isLlmErrorFromDetail) {
+          if (
+            (errorType === "llm_error" || isLlmErrorFromDetail) &&
+            !is4xxError
+          ) {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);
@@ -1875,7 +1884,11 @@ async function runBidirectionalMode(
     toolCallId: string,
     toolName: string,
     toolInput: Record<string, unknown>,
-  ): Promise<{ decision: "allow" | "deny"; reason?: string }> {
+  ): Promise<{
+    decision: "allow" | "deny";
+    reason?: string;
+    updatedInput?: Record<string, unknown> | null;
+  }> {
     const requestId = `perm-${toolCallId}`;
 
     // Build can_use_tool control request (Claude SDK format)
@@ -1919,7 +1932,7 @@ async function runBidirectionalMode(
           }
 
           if (response.behavior === "allow") {
-            return { decision: "allow" };
+            return { decision: "allow", updatedInput: response.updatedInput };
           } else {
             return {
               decision: "deny",
@@ -2029,7 +2042,7 @@ async function runBidirectionalMode(
       currentAbortController = new AbortController();
 
       try {
-        const buffers = createBuffers();
+        const buffers = createBuffers(agent.id);
         const startTime = performance.now();
         let numTurns = 0;
 
@@ -2188,9 +2201,18 @@ async function runBidirectionalMode(
                 );
 
                 if (permResponse.decision === "allow") {
+                  // If provided updatedInput (e.g., for AskUserQuestion with answers),
+                  // update the approval's toolArgs to use it
+                  const finalApproval = permResponse.updatedInput
+                    ? {
+                        ...approval,
+                        toolArgs: JSON.stringify(permResponse.updatedInput),
+                      }
+                    : approval;
+
                   decisions.push({
                     type: "approve",
-                    approval,
+                    approval: finalApproval,
                     matchedRule: "SDK callback approved",
                   });
 
@@ -2198,9 +2220,9 @@ async function runBidirectionalMode(
                   const autoApprovalMsg: AutoApprovalMessage = {
                     type: "auto_approval",
                     tool_call: {
-                      name: approval.toolName,
-                      tool_call_id: approval.toolCallId,
-                      arguments: approval.toolArgs,
+                      name: finalApproval.toolName,
+                      tool_call_id: finalApproval.toolCallId,
+                      arguments: finalApproval.toolArgs,
                     },
                     reason: permResponse.reason || "SDK callback approved",
                     matched_rule: "canUseTool callback",

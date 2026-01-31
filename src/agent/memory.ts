@@ -4,6 +4,7 @@
  */
 
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
+import { READ_ONLY_BLOCK_LABELS } from "./memoryConstants";
 import { MEMORY_PROMPTS } from "./promptAssets";
 
 /**
@@ -14,11 +15,7 @@ export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
 /**
  * Block labels that are stored per-project (local to the current directory).
  */
-export const PROJECT_BLOCK_LABELS = [
-  "project",
-  "skills",
-  "loaded_skills",
-] as const;
+export const PROJECT_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
 
 /**
  * All available memory block labels (derived from global + project blocks)
@@ -37,7 +34,7 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
  * Block labels that should be read-only (agent cannot modify via memory tools).
  * These blocks are managed by specific tools (e.g., Skill tool for skills/loaded_skills).
  */
-export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+export { READ_ONLY_BLOCK_LABELS };
 
 /**
  * Block labels that should be isolated per-conversation.
@@ -200,7 +197,10 @@ export async function ensureSkillsBlocks(agentId: string): Promise<string[]> {
     }
 
     // Create the block and attach to agent
-    const createdBlock = await client.blocks.create(blockData);
+    const createdBlock = await client.blocks.create({
+      ...blockData,
+      tags: [`owner:${agentId}`],
+    });
     await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
     createdLabels.push(label);
   }

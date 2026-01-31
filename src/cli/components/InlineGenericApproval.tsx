@@ -130,7 +130,7 @@ export const InlineGenericApproval = memo(
     );
 
     // Generate horizontal line
-    const solidLine = SOLID_LINE.repeat(Math.max(columns - 2, 10));
+    const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const formattedArgs = formatArgs(toolArgs);
 
     // Memoize the static tool content so it doesn't re-render on keystroke

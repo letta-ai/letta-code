@@ -38,6 +38,67 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 const ESC_CLEAR_WINDOW_MS = 2500;
 
 /**
+ * Represents a visual line segment in the text.
+ * A visual line ends at either a newline character or when it reaches lineWidth.
+ */
+interface VisualLine {
+  start: number; // Start index in text
+  end: number; // End index (exclusive, not including \n)
+}
+
+/**
+ * Computes visual lines from text, accounting for both hard breaks (\n)
+ * and soft wrapping at lineWidth.
+ */
+function getVisualLines(text: string, lineWidth: number): VisualLine[] {
+  const lines: VisualLine[] = [];
+  let lineStart = 0;
+
+  for (let i = 0; i <= text.length; i++) {
+    const char = text[i];
+    const lineLength = i - lineStart;
+
+    if (char === "\n" || i === text.length) {
+      // Hard break or end of text
+      lines.push({ start: lineStart, end: i });
+      lineStart = i + 1;
+    } else if (lineLength >= lineWidth && lineWidth > 0) {
+      // Soft wrap - line is full
+      lines.push({ start: lineStart, end: i });
+      lineStart = i;
+    }
+  }
+
+  // Ensure at least one line for empty text
+  if (lines.length === 0) {
+    lines.push({ start: 0, end: 0 });
+  }
+
+  return lines;
+}
+
+/**
+ * Finds which visual line the cursor is on and the column within that line.
+ */
+function findCursorLine(
+  cursorPos: number,
+  visualLines: VisualLine[],
+): { lineIndex: number; column: number } {
+  for (let i = 0; i < visualLines.length; i++) {
+    const line = visualLines[i];
+    if (line && cursorPos >= line.start && cursorPos <= line.end) {
+      return { lineIndex: i, column: cursorPos - line.start };
+    }
+  }
+  // Fallback to last line
+  const lastLine = visualLines[visualLines.length - 1];
+  return {
+    lineIndex: visualLines.length - 1,
+    column: Math.max(0, cursorPos - (lastLine?.start ?? 0)),
+  };
+}
+
+/**
  * Memoized footer component to prevent re-renders during high-frequency
  * shimmer/timer updates. Only updates when its specific props change.
  */
@@ -201,6 +262,9 @@ export function Input({
   const [atStartBoundary, setAtStartBoundary] = useState(false);
   const [atEndBoundary, setAtEndBoundary] = useState(false);
 
+  // Track preferred column for vertical navigation (sticky column behavior)
+  const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
+
   // Bash mode state
   const [isBashMode, setIsBashMode] = useState(false);
 
@@ -235,7 +299,7 @@ export function Input({
     }
   }, [cursorPos]);
 
-  // Reset boundary flags when cursor moves (via left/right arrows)
+  // Reset boundary flags and preferred column when cursor moves or value changes
   useEffect(() => {
     if (currentCursorPosition !== 0) {
       setAtStartBoundary(false);
@@ -243,6 +307,8 @@ export function Input({
     if (currentCursorPosition !== value.length) {
       setAtEndBoundary(false);
     }
+    // Reset preferred column - it will be set again when vertical navigation starts
+    setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
   // Sync with external mode changes (from plan approval dialog)
@@ -411,32 +477,27 @@ export function Input({
     }
 
     if (key.upArrow || key.downArrow) {
-      // Calculate which wrapped line the cursor is on
-      const lineWidth = contentWidth; // Available width for text
+      // Calculate visual lines accounting for both soft wrapping and hard newlines
+      const visualLines = getVisualLines(value, contentWidth);
+      const { lineIndex, column } = findCursorLine(
+        currentCursorPosition,
+        visualLines,
+      );
 
-      // Calculate current wrapped line number and position within that line
-      const currentWrappedLine = Math.floor(currentCursorPosition / lineWidth);
-      const columnInCurrentLine = currentCursorPosition % lineWidth;
-
-      // Calculate total number of wrapped lines
-      const totalWrappedLines = Math.ceil(value.length / lineWidth) || 1;
+      // Use preferred column if set (for sticky column behavior), otherwise current column
+      const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
-        if (currentWrappedLine > 0) {
-          // Not on first wrapped line - move cursor up one wrapped line
-          // Try to maintain the same column position
-          const targetLine = currentWrappedLine - 1;
-          const targetLineStart = targetLine * lineWidth;
-          const targetLineEnd = Math.min(
-            targetLineStart + lineWidth,
-            value.length,
-          );
-          const targetLineLength = targetLineEnd - targetLineStart;
-
-          // Move to same column in previous line, or end of line if shorter
-          const newPosition =
-            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
-          setCursorPos(newPosition);
+        const targetLine = visualLines[lineIndex - 1];
+        if (lineIndex > 0 && targetLine) {
+          // Not on first visual line - move cursor up one visual line
+          // Set preferred column if not already set
+          if (preferredColumn === null) {
+            setPreferredColumn(column);
+          }
+          const targetLineLength = targetLine.end - targetLine.start;
+          const newColumn = Math.min(targetColumn, targetLineLength);
+          setCursorPos(targetLine.start + newColumn);
           setAtStartBoundary(false); // Reset boundary flag
           return; // Don't trigger history
         }
@@ -494,21 +555,16 @@ export function Input({
           setCursorPos(olderEntry.length); // Cursor at end (traditional terminal behavior)
         }
       } else if (key.downArrow) {
-        if (currentWrappedLine < totalWrappedLines - 1) {
-          // Not on last wrapped line - move cursor down one wrapped line
-          // Try to maintain the same column position
-          const targetLine = currentWrappedLine + 1;
-          const targetLineStart = targetLine * lineWidth;
-          const targetLineEnd = Math.min(
-            targetLineStart + lineWidth,
-            value.length,
-          );
-          const targetLineLength = targetLineEnd - targetLineStart;
-
-          // Move to same column in next line, or end of line if shorter
-          const newPosition =
-            targetLineStart + Math.min(columnInCurrentLine, targetLineLength);
-          setCursorPos(newPosition);
+        const targetLine = visualLines[lineIndex + 1];
+        if (lineIndex < visualLines.length - 1 && targetLine) {
+          // Not on last visual line - move cursor down one visual line
+          // Set preferred column if not already set
+          if (preferredColumn === null) {
+            setPreferredColumn(column);
+          }
+          const targetLineLength = targetLine.end - targetLine.start;
+          const newColumn = Math.min(targetColumn, targetLineLength);
+          setCursorPos(targetLine.start + newColumn);
           setAtEndBoundary(false); // Reset boundary flag
           return; // Don't trigger history
         }

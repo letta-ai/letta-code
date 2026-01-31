@@ -60,6 +60,15 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
+  "/memfs": {
+    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    args: "[enable|disable|sync|reset]",
+    order: 15.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing memory filesystem...";
+    },
+  },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
     order: 16,

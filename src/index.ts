@@ -11,7 +11,7 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
-import { INCOGNITO_TAG, MEMO_TAG } from "./agent/defaults";
+import { getLettaCodeHeaders } from "./agent/http-headers";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -28,37 +28,6 @@ import { markMilestone } from "./utils/timing";
 // anti-pattern of creating new [] on every render which triggers useEffect re-runs
 const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
-
-/**
- * Check if pinned agents consist only of default agents (Memo + Incognito).
- * Used to auto-select Memo for fresh users without showing a selector.
- */
-async function hasOnlyDefaultAgents(
-  pinnedIds: string[],
-): Promise<{ onlyDefaults: boolean; memoId: string | null }> {
-  if (pinnedIds.length === 0) return { onlyDefaults: true, memoId: null };
-  if (pinnedIds.length > 2) return { onlyDefaults: false, memoId: null };
-
-  const client = await getClient();
-  let memoId: string | null = null;
-
-  for (const id of pinnedIds) {
-    try {
-      const agent = await client.agents.retrieve(id);
-      const tags = agent.tags || [];
-      if (tags.includes(MEMO_TAG)) {
-        memoId = agent.id;
-      } else if (!tags.includes(INCOGNITO_TAG)) {
-        // Found a non-default agent
-        return { onlyDefaults: false, memoId: null };
-      }
-    } catch {
-      // Agent doesn't exist, skip it
-    }
-  }
-
-  return { onlyDefaults: true, memoId };
-}
 
 function printHelp() {
   // Keep this plaintext (no colors) so output pipes cleanly
@@ -89,7 +58,7 @@ OPTIONS
   --new                 Create new conversation (for concurrent sessions)
   --new-agent           Create new agent directly (skip profile selection)
   --init-blocks <list>  Comma-separated memory blocks to initialize when using --new-agent (e.g., "persona,skills")
-  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,conversation_search")
+  --base-tools <list>   Comma-separated base tools to attach when using --new-agent (e.g., "memory,web_search,fetch_webpage")
   -a, --agent <id>      Use a specific agent ID
   -n, --name <name>     Resume agent by name (from pinned agents, case-insensitive)
   -m, --model <id>      Model ID or handle (e.g., "opus-4.5" or "anthropic/claude-opus-4-5")
@@ -105,6 +74,8 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+  --memfs               Enable memory filesystem for this agent
+  --no-memfs            Disable memory filesystem for this agent
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -122,7 +93,7 @@ BEHAVIOR
 EXAMPLES
   # when installed as an executable
   letta                    # Show profile selector or create new
-  letta --new              # Create new agent directly
+  letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
 
   # inside the interactive session
@@ -344,6 +315,10 @@ async function getPinnedAgentNames(): Promise<{ id: string; name: string }[]> {
 async function main(): Promise<void> {
   markMilestone("CLI_START");
 
+  // Initialize terminal theme detection (OSC 11 query with fallback)
+  const { initTerminalTheme } = await import("./cli/helpers/terminalTheme");
+  await initTerminalTheme();
+
   // Initialize settings manager (loads settings once into memory)
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
@@ -436,6 +411,8 @@ async function main(): Promise<void> {
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
         "no-skills": { type: "boolean" },
+        memfs: { type: "boolean" },
+        "no-memfs": { type: "boolean" },
       },
       strict: true,
       allowPositionals: true,
@@ -545,6 +522,8 @@ async function main(): Promise<void> {
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
+  const memfsFlag = values.memfs as boolean | undefined;
+  const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
@@ -1117,7 +1096,7 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        let globalPinned = settingsManager.getGlobalPinnedAgents();
+        const globalPinned = settingsManager.getGlobalPinnedAgents();
         const client = await getClient();
 
         // For self-hosted servers, pre-fetch available models
@@ -1128,6 +1107,9 @@ async function main(): Promise<void> {
           settings.env?.LETTA_BASE_URL ||
           LETTA_CLOUD_API_URL;
         const isSelfHosted = !baseURL.includes("api.letta.com");
+
+        // Track whether we need model picker (for skipping ensureDefaultAgents)
+        let needsModelPicker = false;
 
         if (isSelfHosted) {
           setSelfHostedBaseUrl(baseURL);
@@ -1143,6 +1125,7 @@ async function main(): Promise<void> {
             // Only set if default model isn't available
             if (!handles.includes(defaultModel)) {
               setAvailableServerModels(handles);
+              needsModelPicker = true;
             }
           } catch {
             // Ignore errors - will fail naturally during agent creation if needed
@@ -1303,18 +1286,18 @@ async function main(): Promise<void> {
         const wouldShowSelector =
           !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
 
-        // Ensure default agents (Memo/Incognito) exist for all users
-        const { ensureDefaultAgents } = await import("./agent/defaults");
-
-        if (wouldShowSelector && globalPinned.length === 0) {
-          // New user with no agents - create defaults first, then trigger init
-          // NOTE: Don't set loadingState to "assembling" until we have the agent ID,
-          // otherwise init will run before we've set selectedGlobalAgentId
+        if (
+          wouldShowSelector &&
+          globalPinned.length === 0 &&
+          !needsModelPicker
+        ) {
+          // New user with no pinned agents - create a fresh Memo agent
+          // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
+          // picking up agents created by other users on shared orgs.
+          // Skip if needsModelPicker is true - let user select a model first.
+          const { ensureDefaultAgents } = await import("./agent/defaults");
           try {
             const memoAgent = await ensureDefaultAgents(client);
-            // Refresh pinned list after defaults created
-            globalPinned = settingsManager.getGlobalPinnedAgents();
-            // Auto-select Memo for fresh users
             if (memoAgent) {
               setSelectedGlobalAgentId(memoAgent.id);
               setLoadingState("assembling");
@@ -1327,14 +1310,9 @@ async function main(): Promise<void> {
             );
             process.exit(1);
           }
-        } else {
-          // Existing user - fire and forget, don't block startup
-          ensureDefaultAgents(client).catch(() => {
-            // Silently ignore - defaults may already exist
-          });
         }
 
-        // If there's a local LRU, use it directly
+        // If there's a local LRU, use it directly (takes priority over model picker)
         if (localSettings.lastAgent) {
           try {
             await client.agents.retrieve(localSettings.lastAgent);
@@ -1348,20 +1326,14 @@ async function main(): Promise<void> {
           }
         }
 
-        // Check if we should show selector or auto-select Memo
+        // On self-hosted with unavailable default model, show selector to pick a model
+        if (needsModelPicker) {
+          setLoadingState("selecting_global");
+          return;
+        }
+
+        // Show selector if there are pinned agents to choose from
         if (wouldShowSelector && globalPinned.length > 0) {
-          // Check if only default agents are pinned
-          const { onlyDefaults, memoId } =
-            await hasOnlyDefaultAgents(globalPinned);
-
-          if (onlyDefaults && memoId) {
-            // Only defaults pinned - auto-select Memo
-            setSelectedGlobalAgentId(memoId);
-            setLoadingState("assembling");
-            return;
-          }
-
-          // Has custom agents - show selector
           setLoadingState("selecting_global");
           return;
         }
@@ -1463,6 +1435,7 @@ async function main(): Promise<void> {
         const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
+        let isNewlyCreatedAgent = false;
 
         // Priority 1: Import from AgentFile template
         if (fromAfFile) {
@@ -1474,6 +1447,7 @@ async function main(): Promise<void> {
             stripMessages: true,
           });
           agent = result.agent;
+          isNewlyCreatedAgent = true;
           setAgentProvenance({
             isNew: true,
             blocks: [],
@@ -1539,7 +1513,7 @@ async function main(): Promise<void> {
               const apiKey =
                 process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
               const response = await fetch(`${baseURL}/v1/metadata/balance`, {
-                headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+                headers: getLettaCodeHeaders(apiKey),
               });
               if (response.ok) {
                 const data = (await response.json()) as {
@@ -1567,6 +1541,7 @@ async function main(): Promise<void> {
             baseTools,
           );
           agent = result.agent;
+          isNewlyCreatedAgent = true;
           setAgentProvenance(result.provenance);
         }
 
@@ -1632,6 +1607,17 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
 
+        // Apply memfs flag if specified, or enable by default for new agents
+        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+        if (memfsFlag) {
+          settingsManager.setMemfsEnabled(agent.id, true);
+        } else if (noMemfsFlag) {
+          settingsManager.setMemfsEnabled(agent.id, false);
+        } else if (isNewlyCreatedAgent && !isSubagent) {
+          // Enable memfs by default for newly created agents (but not subagents)
+          settingsManager.setMemfsEnabled(agent.id, true);
+        }
+
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
         // Don't await - this is just for the skill unload reminder
         initializeLoadedSkillsFlag().catch(() => {
@@ -1681,26 +1667,22 @@ async function main(): Promise<void> {
         // If resuming and a model or system prompt was specified, apply those changes
         if (resuming && (model || systemPromptPreset)) {
           if (model) {
-            const { resolveModel } = await import("./agent/model");
+            const { resolveModel, getModelUpdateArgs } = await import(
+              "./agent/model"
+            );
             const modelHandle = resolveModel(model);
             if (!modelHandle) {
               console.error(`Error: Invalid model "${model}"`);
               process.exit(1);
             }
 
-            // Optimization: Skip update if agent is already using the specified model
-            const currentModel = agent.llm_config?.model;
-            const currentEndpointType = agent.llm_config?.model_endpoint_type;
-            const currentHandle = `${currentEndpointType}/${currentModel}`;
-
-            if (currentHandle !== modelHandle) {
-              const { updateAgentLLMConfig } = await import("./agent/modify");
-              const { getModelUpdateArgs } = await import("./agent/model");
-              const updateArgs = getModelUpdateArgs(model);
-              await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
-              // Refresh agent state after model update
-              agent = await client.agents.retrieve(agent.id);
-            }
+            // Always apply model update - different model IDs can share the same
+            // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
+            const { updateAgentLLMConfig } = await import("./agent/modify");
+            const updateArgs = getModelUpdateArgs(model);
+            await updateAgentLLMConfig(agent.id, modelHandle, updateArgs);
+            // Refresh agent state after model update
+            agent = await client.agents.retrieve(agent.id);
           }
 
           if (systemPromptPreset) {
@@ -1859,7 +1841,6 @@ async function main(): Promise<void> {
 
         // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
-        const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         if (!isSubagent) {
           settingsManager.setLocalLastSession(
             { agentId: agent.id, conversationId: conversationIdToUse },

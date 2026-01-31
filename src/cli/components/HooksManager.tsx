@@ -2,8 +2,7 @@
 // Interactive TUI for managing hooks configuration
 
 import { Box, Text, useInput } from "ink";
-import TextInput from "ink-text-input";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   type HookEvent,
   type HookMatcher,
@@ -19,13 +18,17 @@ import {
   countTotalHooks,
   type HookMatcherWithSource,
   type HookWithSource,
+  isUserHooksDisabled,
   loadMatchersWithSource,
   loadSimpleMatchersWithSource,
   removeHook,
   type SaveLocation,
+  setHooksDisabled,
 } from "../../hooks/writer";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
 // Box drawing characters
 const BOX_TOP_LEFT = "╭";
@@ -37,6 +40,7 @@ const BOX_VERTICAL = "│";
 
 interface HooksManagerProps {
   onClose: () => void;
+  agentId?: string;
 }
 
 type Screen =
@@ -62,8 +66,8 @@ const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "SessionEnd", description: "When a session ends" },
 ];
 
-// Available tools for matcher suggestions
-const TOOL_NAMES = [
+// Fallback tool names if agent tools can't be fetched
+const FALLBACK_TOOL_NAMES = [
   "Task",
   "Bash",
   "Glob",
@@ -71,14 +75,13 @@ const TOOL_NAMES = [
   "Read",
   "Edit",
   "Write",
-  "WebFetch",
   "TodoWrite",
-  "WebSearch",
   "AskUserQuestion",
   "Skill",
   "EnterPlanMode",
   "ExitPlanMode",
-  "KillShell",
+  "BashOutput",
+  "KillBash",
 ];
 
 // Save location options
@@ -130,6 +133,7 @@ function boxBottom(width: number): string {
 
 export const HooksManager = memo(function HooksManager({
   onClose,
+  agentId,
 }: HooksManagerProps) {
   const terminalWidth = useTerminalWidth();
   const boxWidth = Math.min(terminalWidth - 4, 70);
@@ -140,6 +144,40 @@ export const HooksManager = memo(function HooksManager({
   // For tool events: HookMatcherWithSource[], for simple events: HookCommandWithSource[]
   const [hooks, setHooks] = useState<HookWithSource[]>([]);
   const [totalHooks, setTotalHooks] = useState(0);
+
+  // Dynamic tool names from agent
+  const [toolNames, setToolNames] = useState<string[]>(FALLBACK_TOOL_NAMES);
+
+  // Track whether all hooks are disabled
+  const [hooksDisabled, setHooksDisabledState] = useState(isUserHooksDisabled);
+
+  // Fetch agent tools on mount
+  useEffect(() => {
+    if (!agentId) return;
+
+    const fetchAgentTools = async () => {
+      try {
+        const { getClient } = await import("../../agent/client");
+        const client = await getClient();
+        // Use dedicated tools endpoint instead of fetching whole agent
+        // Pass limit to avoid pagination issues
+        const toolsPage = await client.agents.tools.list(agentId, {
+          limit: 50,
+        });
+        const names = toolsPage.items
+          ?.map((t) => t.name)
+          .filter((n): n is string => !!n);
+        if (names && names.length > 0) {
+          // Sort alphabetically for easier scanning
+          setToolNames(names.sort());
+        }
+      } catch {
+        // Keep fallback tool names on error
+      }
+    };
+
+    fetchAgentTools();
+  }, [agentId]);
 
   // New hook state
   const [newMatcher, setNewMatcher] = useState("");
@@ -156,9 +194,30 @@ export const HooksManager = memo(function HooksManager({
   // Refresh counts - called when hooks change
   const refreshCounts = useCallback(() => {
     setTotalHooks(countTotalHooks());
+    setHooksDisabledState(isUserHooksDisabled());
   }, []);
 
-  // Load total hooks count on mount and when returning to events screen
+  // Track if initial settings load has been done
+  const initialLoadDone = useRef(false);
+
+  // Ensure settings are loaded before counting hooks (runs once on mount)
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
+    const loadSettings = async () => {
+      try {
+        await settingsManager.loadProjectSettings();
+        await settingsManager.loadLocalProjectSettings();
+      } catch {
+        // Settings may already be loaded or not available
+      }
+      refreshCounts();
+    };
+    loadSettings();
+  }, [refreshCounts]);
+
+  // Refresh counts when returning to events screen
   useEffect(() => {
     if (screen === "events") {
       refreshCounts();
@@ -235,6 +294,13 @@ export const HooksManager = memo(function HooksManager({
     setSelectedIndex(0);
   }, [deleteHookIndex, selectedEvent, hooks, loadHooks, refreshCounts]);
 
+  // Handle toggling the "disable all hooks" setting
+  const handleToggleDisableAll = useCallback(() => {
+    const newValue = !hooksDisabled;
+    setHooksDisabled(newValue);
+    setHooksDisabledState(newValue);
+  }, [hooksDisabled]);
+
   useInput((input, key) => {
     // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
@@ -244,17 +310,26 @@ export const HooksManager = memo(function HooksManager({
 
     // Handle each screen
     if (screen === "events") {
+      // Total items: 1 (disable toggle) + HOOK_EVENTS.length
+      const totalItems = 1 + HOOK_EVENTS.length;
+
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(HOOK_EVENTS.length - 1, prev + 1));
+        setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
       } else if (key.return) {
-        const selected = HOOK_EVENTS[selectedIndex];
-        if (selected) {
-          setSelectedEvent(selected.event);
-          loadHooks(selected.event);
-          setScreen("hooks-list");
-          setSelectedIndex(0);
+        if (selectedIndex === 0) {
+          // Toggle "disable all hooks"
+          handleToggleDisableAll();
+        } else {
+          // Select a hook event (index is shifted by 1)
+          const selected = HOOK_EVENTS[selectedIndex - 1];
+          if (selected) {
+            setSelectedEvent(selected.event);
+            loadHooks(selected.event);
+            setScreen("hooks-list");
+            setSelectedIndex(0);
+          }
         }
       } else if (key.escape) {
         onClose();
@@ -278,13 +353,11 @@ export const HooksManager = memo(function HooksManager({
             setNewCommand("");
           }
         } else {
-          // Could add edit functionality here
+          // Delete selected hook
+          setDeleteHookIndex(selectedIndex - 1);
+          setDeleteConfirmIndex(1); // Default to No
+          setScreen("delete-confirm");
         }
-      } else if ((input === "d" || input === "D") && selectedIndex > 0) {
-        // Delete selected hook
-        setDeleteHookIndex(selectedIndex - 1);
-        setDeleteConfirmIndex(1); // Default to No
-        setScreen("delete-confirm");
       } else if (key.escape) {
         setScreen("events");
         setSelectedIndex(0);
@@ -342,20 +415,45 @@ export const HooksManager = memo(function HooksManager({
 
   // Render Events List
   if (screen === "events") {
+    const disableToggleSelected = selectedIndex === 0;
+    const disableToggleLabel = hooksDisabled
+      ? "Enable all hooks"
+      : "Disable all hooks";
+    const titleBase = " Hooks";
+    const titleSuffix = hooksDisabled ? " (disabled)" : "";
+    const hooksCountText = `${totalHooks} hooks `;
+    const titlePadding =
+      boxWidth -
+      titleBase.length -
+      titleSuffix.length -
+      hooksCountText.length -
+      2;
+
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
         <Text>
-          {boxLine(
-            ` Hooks${" ".repeat(boxWidth - 20)}${totalHooks} hooks `,
-            boxWidth,
-          )}
+          {BOX_VERTICAL}
+          {titleBase}
+          <Text color="red">{titleSuffix}</Text>
+          {" ".repeat(Math.max(0, titlePadding))}
+          {hooksCountText}
+          {BOX_VERTICAL}
         </Text>
         <Text>{boxBottom(boxWidth)}</Text>
         <Text> </Text>
 
+        {/* Disable all hooks toggle - first item */}
+        <Text>
+          <Text color={disableToggleSelected ? colors.input.prompt : undefined}>
+            {disableToggleSelected ? "❯" : " "} 1.
+          </Text>
+          <Text dimColor> {disableToggleLabel}</Text>
+        </Text>
+
+        {/* Hook events */}
         {HOOK_EVENTS.map((item, index) => {
-          const isSelected = index === selectedIndex;
+          const isSelected = index + 1 === selectedIndex;
           const hookCount = countHooksForEvent(item.event);
           const prefix = isSelected ? "❯" : " ";
           const countStr = hookCount > 0 ? ` (${hookCount})` : "";
@@ -363,7 +461,7 @@ export const HooksManager = memo(function HooksManager({
           return (
             <Text key={item.event}>
               <Text color={isSelected ? colors.input.prompt : undefined}>
-                {prefix} {index + 1}. {item.event}
+                {prefix} {index + 2}. {item.event}
               </Text>
               <Text dimColor> - {item.description}</Text>
               <Text color="yellow">{countStr}</Text>
@@ -436,7 +534,7 @@ export const HooksManager = memo(function HooksManager({
           // Both types have hooks array
           const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
           const truncatedCommand =
-            command.length > 30 ? `${command.slice(0, 27)}...` : command;
+            command.length > 50 ? `${command.slice(0, 47)}...` : command;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -444,8 +542,10 @@ export const HooksManager = memo(function HooksManager({
                 {prefix} {index + 2}.{" "}
               </Text>
               <Text color="cyan">{sourceLabel}</Text>
-              {matcherPattern !== null && (
+              {matcherPattern !== null ? (
                 <Text> {matcherPattern.padEnd(12)} </Text>
+              ) : (
+                <Text> </Text>
               )}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
@@ -453,7 +553,7 @@ export const HooksManager = memo(function HooksManager({
         })}
 
         <Text> </Text>
-        <Text dimColor>Enter to select · d to delete · esc to go back</Text>
+        <Text dimColor>Enter to select · esc to go back</Text>
       </Box>
     );
   }
@@ -476,20 +576,25 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         <Text dimColor>Possible matcher values for field tool_name:</Text>
-        <Text dimColor>{TOOL_NAMES.join(", ")}</Text>
+        <Text dimColor>{toolNames.join(", ")}</Text>
         <Text> </Text>
 
         <Text>Tool matcher:</Text>
-        <Text>{boxTop(boxWidth - 2)}</Text>
-        <Box>
-          <Text>{BOX_VERTICAL} </Text>
-          <TextInput
-            value={newMatcher}
-            onChange={setNewMatcher}
-            placeholder="* (matches all tools)"
-          />
+        <Box
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+          width={boxWidth - 2}
+          flexDirection="column"
+        >
+          <Box flexWrap="wrap">
+            <PasteAwareTextInput
+              value={newMatcher}
+              onChange={setNewMatcher}
+              placeholder="* (matches all tools)"
+            />
+          </Box>
         </Box>
-        <Text>{boxBottom(boxWidth - 2)}</Text>
         <Text> </Text>
 
         <Text dimColor>Example Matchers:</Text>
@@ -518,16 +623,21 @@ export const HooksManager = memo(function HooksManager({
         {isCurrentToolEvent && <Text> </Text>}
 
         <Text>Command:</Text>
-        <Text>{boxTop(boxWidth - 2)}</Text>
-        <Box>
-          <Text>{BOX_VERTICAL} </Text>
-          <TextInput
-            value={newCommand}
-            onChange={setNewCommand}
-            placeholder="/path/to/script.sh"
-          />
+        <Box
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+          width={boxWidth - 2}
+          flexDirection="column"
+        >
+          <Box flexWrap="wrap">
+            <PasteAwareTextInput
+              value={newCommand}
+              onChange={setNewCommand}
+              placeholder="/path/to/script.sh"
+            />
+          </Box>
         </Box>
-        <Text>{boxBottom(boxWidth - 2)}</Text>
 
         <Text> </Text>
         <Text dimColor>Enter to continue · esc to go back</Text>

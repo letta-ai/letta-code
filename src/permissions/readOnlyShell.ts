@@ -86,6 +86,9 @@ const BUNDLED_READ_ONLY_SCRIPTS = [
   // Source path (development): /path/to/src/skills/builtin/searching-messages/scripts/...
   "/skills/builtin/searching-messages/scripts/search-messages.ts",
   "/skills/builtin/searching-messages/scripts/get-messages.ts",
+  // Memfs status check is read-only
+  "/skills/syncing-memory-filesystem/scripts/memfs-status.ts",
+  "/skills/builtin/syncing-memory-filesystem/scripts/memfs-status.ts",
 ];
 
 /**

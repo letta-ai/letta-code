@@ -74,7 +74,13 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
         renderedValue = value.length > 0 ? '' : chalk.inverse(' ');
         let i = 0;
         for (const char of value) {
-            renderedValue += i >= cursorOffset - cursorActualWidth && i <= cursorOffset ? chalk.inverse(char) : char;
+            const isCursorPosition = i >= cursorOffset - cursorActualWidth && i <= cursorOffset;
+            if (isCursorPosition && char === '\n') {
+                // Newline at cursor: show inverted space (visible cursor) then the newline
+                renderedValue += chalk.inverse(' ') + char;
+            } else {
+                renderedValue += isCursorPosition ? chalk.inverse(char) : char;
+            }
             i++;
         }
         if (value.length > 0 && cursorOffset === value.length) {

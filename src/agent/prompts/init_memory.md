@@ -2,6 +2,111 @@
 
 The user has requested that you initialize or reorganize your memory state. You have access to the `memory` tool which allows you to create, edit, and manage memory blocks.
 
+## Your Goal: Explode Into 15-25 Hierarchical Files
+
+Your goal is to **explode** memory into a **deeply hierarchical structure of 15-25 small, focused files**.
+
+### Target Output
+
+| Metric | Target |
+|--------|--------|
+| **Total files** | 15-25 (aim for ~20) |
+| **Max lines per file** | ~40 lines (split if larger) |
+| **Hierarchy depth** | 2-3 levels using `/` naming (e.g., `project/tooling/bun.md`) |
+| **Nesting requirement** | Every new block MUST be nested under a parent using `/` |
+
+**Anti-patterns to avoid:**
+- ❌ Ending with only 3-5 large files
+- ❌ Flat naming (all blocks at top level)
+- ❌ Mega-blocks with 10+ sections
+- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+
+## Memory Filesystem Integration
+
+If the memory filesystem feature is enabled (check your `memory_filesystem` block), your memory blocks are synchronized with actual files at `~/.letta/agents/<agent-id>/memory/`. The actual path with your agent ID is provided in the system reminder above when you run `/init`.
+
+This changes how you should approach initialization:
+
+**With memory filesystem enabled (MANDATORY approach):**
+- Memory blocks are stored as `.md` files in a directory hierarchy
+- You can use bash commands (`ls`, `mkdir`, `mv`) to organize memory files
+- File paths map to block labels using `/` for hierarchy (e.g., `system/persona/behavior.md` → label `persona/behavior`)
+- You MUST create a **deeply hierarchical file structure** - flat naming is NOT acceptable
+- Think in terms of directories and subdirectories to organize information
+- **Target: 15-25 files total** - if you create fewer than 15 files, you haven't split enough
+
+**Directory structure:**
+```
+~/.letta/agents/<agent-id>/memory/
+├── system/              # Attached to your system prompt (always loaded)
+│   ├── persona/         # Behavioral adaptations
+│   ├── human.md         # User information
+│   ├── project/         # Project-specific info
+│   └── ...
+├── notes.md             # Detached block at root (on-demand)
+└── archive/             # Detached blocks can be nested too
+    └── ...
+```
+
+**MANDATORY principles for hierarchical organization:**
+
+| Requirement | Target |
+|-------------|--------|
+| **Total files** | 15-25 files (aim for ~20) |
+| **Max lines per file** | ~40 lines (split if larger) |
+| **Hierarchy depth** | 2-3 levels using `/` naming |
+| **Nesting requirement** | EVERY new file MUST use `/` naming (no flat files) |
+
+**Anti-patterns to avoid:**
+- ❌ Creating only 3-5 large files
+- ❌ Flat naming (all blocks at top level like `project-commands.md`)
+- ❌ Mega-blocks with 10+ sections
+- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+
+**Rules:**
+- Use **2-3 levels of nesting** for ALL files (e.g., `project/tooling/bun.md`)
+- Keep files **focused and small** (~40 lines max per file)
+- Create **index files** that point to children (e.g., `project.md` lists `project/architecture.md`, `project/tooling.md`)
+- Use **descriptive paths** that make sense when you see just the filename
+- Split when a file has **2+ concepts** (be aggressive)
+
+**Example target structure (what success looks like):**
+
+Starting from default memory blocks, you should end with something like this:
+
+```
+system/
+├── human.md                      # Index: points to children
+├── human/
+│   ├── background.md             # Who they are
+│   ├── prefs.md                  # Index for preferences
+│   ├── prefs/
+│   │   ├── communication.md      # How they like to communicate
+│   │   ├── coding_style.md       # Code formatting preferences
+│   │   └── review_style.md       # PR/code review preferences
+│   └── context.md                # Current project context
+├── project.md                    # Index: points to children
+├── project/
+│   ├── overview.md               # What the project is
+│   ├── architecture.md           # System design
+│   ├── tooling.md                # Index for tooling
+│   ├── tooling/
+│   │   ├── bun.md                # Bun-specific notes
+│   │   ├── testing.md            # Test framework details
+│   │   └── linting.md            # Linter configuration
+│   ├── conventions.md            # Code conventions
+│   └── gotchas.md                # Footguns and warnings
+├── persona.md                    # Index: points to children
+└── persona/
+    ├── role.md                   # Agent's role definition
+    ├── behavior.md               # How to behave
+    └── constraints.md            # What not to do
+```
+
+This example has **~20 files** with **3 levels of hierarchy**. Your output should look similar.
+
+This approach makes memory more **scannable**, **maintainable**, and **shareable** with other agents.
+
 ## Understanding Your Context
 
 **Important**: You are a Letta Code agent, which is fundamentally different from typical AI coding assistants. Letta Code agents are **stateful** - users expect to work with the same agent over extended periods, potentially for the entire lifecycle of a project or even longer. Your memory is not just a convenience; it's how you get better over time and maintain continuity across sessions.
@@ -60,22 +165,35 @@ Consider whether information is:
 
 ## Recommended Memory Structure
 
-### Core Blocks (Usually Present)
+**Understanding system/ vs root level (with memory filesystem):**
+- **system/**: Memory blocks attached to your system prompt - always loaded and influence your behavior
+  - Use for: Current work context, active preferences, project conventions you need constantly
+  - Examples: `persona`, `human`, `project`, active `ticket` or `context`
+- **Root level** (outside system/): Detached blocks - not in system prompt but available via tools
+  - Use for: Historical information, archived decisions, reference material, completed investigations
+  - Examples: `notes.md`, `archive/old-project.md`, `research/findings.md`
+
+**Rule of thumb**: If you need to see it every time you respond → `system/`. If it's reference material you'll look up occasionally → root level.
+
+### Core Blocks (Usually Present in system/)
 
 **`persona`**: Your behavioral guidelines that augment your base system prompt.
 - Your system prompt already contains comprehensive instructions for how to code and behave
 - The persona block is for **learned adaptations** - things you discover about how the user wants you to behave
 - Examples: "User said never use emojis", "User prefers terse responses", "Always explain reasoning before making changes"
 - This block may start empty and grow over time as you learn the user's preferences
+- **With memfs**: Can be split into `persona/behavior.md`, `persona/constraints.md`, etc.
 
 **`project`**: Project-specific information, conventions, and commands
 - Build/test/lint commands
 - Key directories and architecture
 - Project-specific conventions from README, AGENTS.md, etc.
+- **With memfs**: Split into `project/overview.md`, `project/commands.md`, `project/tooling/testing.md`, `project/gotchas.md`, etc.
 
 **`human`**: User preferences, communication style, general habits
 - Cross-project preferences
 - Working style and communication preferences
+- **With memfs**: Can be split into `human/background.md`, `human/prefs/communication.md`, `human/prefs/coding_style.md`, etc.
 
 ### Optional Blocks (Create as Needed)
 
@@ -85,15 +203,19 @@ Consider whether information is:
 - A ticket/task memory block is a **scratchpad** for pinned context that should stay visible
 - Examples: Linear ticket ID and URL, Jira issue key, branch name, PR number, relevant links
 - Information that's useful to keep in context but doesn't fit in a TODO list
+- **Location**: Usually in `system/` if you want it always visible, or root level if it's reference material
 
 **`context`**: Debugging or investigation scratchpad
 - Current hypotheses being tested
 - Files already examined
 - Clues and observations
+- **Location**: Usually in `system/` during active investigations, move to root level when complete
 
 **`decisions`**: Architectural decisions and their rationale
 - Why certain approaches were chosen
 - Trade-offs that were considered
+- **Location**: `system/` for currently relevant decisions, root level for historical archive
+- **With memfs**: Could organize as `project/decisions/architecture.md`, `project/decisions/tech_stack.md`
 
 ## Writing Good Memory Blocks
 
@@ -231,16 +353,71 @@ You should ask these questions at the start (bundle them together in one AskUser
 
 ## Memory Block Strategy
 
-### Split Large Blocks
+### Hierarchical Organization (MANDATORY with Memory Filesystem)
 
-**Don't create monolithic blocks.** If a block is getting long (>50-100 lines), split it:
+**With memory filesystem enabled, you MUST organize memory as a deeply nested file hierarchy using bash commands:**
 
-Instead of one huge `project` block, consider:
+**NEVER create flat blocks** like `project-overview.md`, `project-commands.md`. Instead, create deeply nested structures with `/` naming:
+
+```bash
+# Create the hierarchy
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/tooling
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
+
+# Files will be:
+# system/project.md           (index file)
+# system/project/overview.md
+# system/project/commands.md
+# system/project/tooling/testing.md
+# system/human.md             (index file)
+# system/human/background.md
+# system/human/prefs/communication.md
+```
+
+**Naming convention (MANDATORY):**
+- **Every new file MUST use `/` naming** - no flat files allowed
+- Use `/` for hierarchy: `project/tooling/testing` (not `project-tooling-testing`)
+- Block label derives from file path: `system/project/overview.md` → label `project/overview`
+- Keep files small and focused (~40 lines max)
+- Create index files (`project.md`, `human.md`) that list children with "Related blocks" section
+
+**Checkpoint before proceeding:**
+Count your proposed files. **If you have fewer than 15 files, go back and split more aggressively.**
+
+**Benefits:**
+- More scannable and maintainable
+- Easier to share specific subtrees with other agents
+- Natural progressive disclosure (load parent, then drill into children)
+- Works like a file system you're familiar with
+
+### Split Aggressively - Target 15-25 Files
+
+**Don't create monolithic blocks.** Your goal is **15-25 total files**. Be aggressive about splitting:
+
+**Split when:**
+- A block has **40+ lines** (lower threshold than typical)
+- A block has **2+ distinct concepts** (not 3+, be aggressive)
+- A section could stand alone as its own file
+- You can name the extracted content with a clear `/` path
+
+If a block is getting long (>40 lines), split it:
+
+**Without memory filesystem** (flat naming - acceptable but not ideal):
 - `project-overview`: High-level description, tech stack, repo links
 - `project-commands`: Build, test, lint, dev commands
 - `project-conventions`: Commit style, PR process, code style
 - `project-architecture`: Directory structure, key modules
 - `project-gotchas`: Footguns, things to watch out for
+
+**With memory filesystem** (MANDATORY hierarchical naming with `/`):
+- `project.md`: Index file listing all children
+- `project/overview`: High-level description, tech stack, repo links
+- `project/commands`: Build, test, lint, dev commands
+- `project/conventions`: Commit style, PR process, code style
+- `project/architecture`: Directory structure, key modules
+- `project/gotchas`: Footguns, things to watch out for
+- **Must further nest**: `project/tooling/testing`, `project/tooling/linting`, `project/tooling/bun`
+- **Target 15-25 files total** - if commands is long, split into `project/commands/dev`, `project/commands/build`, etc.
 
 This makes memory more scannable and easier to update and share with other agents.
 
@@ -273,33 +450,187 @@ And add memory blocks that you think make sense to add (e.g., `project-architect
 
 ## Your Task
 
-1. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it.
-2. **Inspect existing memory**: You may already have some memory blocks initialized. See what already exists, and analyze how it is or is not insufficient or incomplete.
-3. **Identify the user**: From git logs and their answer, figure out who they are and store in `human` block. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
-4. **Update human/persona early**: Based on answers, update your memory blocks eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
-5. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
-6. **Create/update project blocks incrementally**: Don't wait until the end - write findings as you go.
-7. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
-8. **Ask user if done**: Check if they're satisfied or want you to continue refining.
+1. **Check memory filesystem status**: Look for the `memory_filesystem` block to see if the filesystem feature is enabled. This determines whether you should organize memory hierarchically.
+
+2. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it.
+
+3. **Inspect existing memory**: 
+   - If memfs enabled: Use `ls -la ~/.letta/agents/<agent-id>/memory/system/` to see the file structure
+   - Otherwise: Use memory tools to inspect existing blocks
+   - Analyze what exists and what needs improvement
+
+4. **Identify the user**: From git logs and their answer, figure out who they are and store in `human` block. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
+
+5. **Update human/persona early**: Based on answers, update your memory blocks eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
+
+6. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
+
+7. **Create/update memory structure**:
+   - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
+     - Use `mkdir -p` to create subdirectories (2-3 levels deep)
+     - Create `.md` files for memory blocks using `/` naming
+     - **Target 15-25 total files** - be aggressive about splitting
+     - Use nested paths like `project/tooling/testing.md` (never flat like `project-testing.md`)
+     - Create index files (`project.md`, `human.md`) with "Related blocks" sections
+     - **Every new file MUST be nested** under a parent using `/`
+   - **Without memfs**: Use memory tools to create/update blocks with hierarchical naming
+   - **Don't wait until the end** - write findings as you go
+   
+   **Checkpoint verification:**
+   - After creating files, count them: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
+   - **If count < 15, you haven't split enough** - go back and split more
+   - Check maximum depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
+   - **Should be 2-3 levels deep** minimum
+
+8. **Organize incrementally**:
+   - Start with a basic structure
+   - Add detail as you research
+   - Refine organization as patterns emerge
+   - Split large files into smaller, focused ones
+
+9. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
+
+10. **Ask user if done**: Check if they're satisfied or want you to continue refining.
 
 ## Reflection Phase (Critical for Deep Research)
 
 Before finishing, you MUST do a reflection step. **Your memory blocks are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
 
-1. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+1. **File count check**: 
+   - Count your memory files: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
+   - **Do you have 15-25 files?** If not, you haven't split enough
+   - Too few files means blocks are too large - split more aggressively
 
-2. **Completeness check**: Did you actually update ALL relevant blocks? For example:
+2. **Hierarchy check**:
+   - Are ALL new files using `/` naming? (e.g., `project/tooling/bun.md`)
+   - Do you have 2-3 levels of nesting minimum?
+   - Are there any flat files like `project-commands.md`? **These should be nested**
+
+3. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+
+4. **Completeness check**: Did you actually update ALL relevant blocks? For example:
    - Did you update `human` with the user's identity and preferences?
    - Did you update `persona` with behavioral rules they expressed?
    - Or did you only update project blocks and forget the rest?
 
-3. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
+5. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
 
-4. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
+6. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
 
 **After reflection**, fix any issues you found. Then ask the user:
 > "I've completed the initialization. Here's a brief summary of what I set up: [summary]. Should I continue refining, or is this good to proceed?"
 
 This gives the user a chance to provide feedback or ask for adjustments before you finish.
+
+## Working with Memory Filesystem (Practical Guide)
+
+If the memory filesystem feature is enabled, here's how to work with it during initialization:
+
+### Inspecting Current Structure
+
+```bash
+# See what memory files currently exist
+ls -la ~/.letta/agents/<agent-id>/memory/system/
+
+# Check the tree structure
+tree ~/.letta/agents/<agent-id>/memory/system/
+
+# Read existing memory files
+cat ~/.letta/agents/<agent-id>/memory/system/persona.md
+```
+
+### Creating Hierarchical Structure (MANDATORY)
+
+**Good examples (nested with `/`):**
+✅ `project/overview.md`
+✅ `project/tooling/bun.md`  
+✅ `project/tooling/testing.md`
+✅ `human/prefs/communication.md`
+✅ `persona/behavior/tone.md`
+
+**Bad examples (flat naming - NEVER do this):**
+❌ `project-overview.md` (flat, not nested)
+❌ `bun.md` (orphan file, no parent)
+❌ `project_testing.md` (underscore instead of `/`)
+
+```bash
+# Create deeply nested directory structure (2-3 levels)
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/{tooling,architecture,conventions}
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/persona/behavior
+
+# Create memory files using Write tool - ALL files must be nested
+Write({
+  file_path: "~/.letta/agents/<agent-id>/memory/system/project/overview.md",
+  content: "## Project Overview\n\n..."
+})
+
+Write({
+  file_path: "~/.letta/agents/<agent-id>/memory/system/project/tooling/testing.md",
+  content: "## Testing Setup\n\n..."
+})
+
+Write({
+  file_path: "~/.letta/agents/<agent-id>/memory/system/project/tooling/bun.md",
+  content: "## Bun Configuration\n\n..."
+})
+```
+
+### Organizing Existing Files
+
+```bash
+# If you have flat files that should be hierarchical
+mv ~/.letta/agents/<agent-id>/memory/system/project-tooling.md \
+   ~/.letta/agents/<agent-id>/memory/system/project/tooling.md
+
+# Create subdirectories as needed
+mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/tooling
+mv ~/.letta/agents/<agent-id>/memory/system/project/tooling.md \
+   ~/.letta/agents/<agent-id>/memory/system/project/tooling/overview.md
+```
+
+### Creating Index Files
+
+Index files help navigate the hierarchy:
+
+```markdown
+# project.md (index file)
+
+## Project: [Project Name]
+
+This is the main project memory block. See specialized blocks for details:
+
+## Related blocks
+- `project/overview` - High-level description and tech stack
+- `project/commands` - Build, test, lint commands
+- `project/tooling` - Development tools index
+  - `project/tooling/testing` - Test framework details
+  - `project/tooling/linting` - Linter configuration
+- `project/architecture` - System design and structure
+- `project/gotchas` - Important warnings and footguns
+```
+
+### Final Checklist (Verify Before Submitting)
+
+Before you tell the user you're done, confirm:
+
+- [ ] **File count is 15-25** — Count your files with `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`. If < 15, split more.
+- [ ] **All new files use `/` naming** — No flat files like `my_notes.md` or `project-commands.md`
+- [ ] **Hierarchy is 2-3 levels deep** — e.g., `project/tooling/bun.md`, not just `project.md`
+- [ ] **No file exceeds ~40 lines** — Split larger files
+- [ ] **Each file has one concept** — If 2+ topics, split into 2+ files
+- [ ] **Parent files have "Related blocks" sections** — Index files point to children
+- [ ] **Verify sync**: After creating files, check they appear in your memory blocks
+
+**If you have fewer than 15 files, you haven't split enough. Go back and split more.**
+
+### Best Practices
+
+1. **Check memfs status first**: Look for `memory_filesystem` block before deciding on organization strategy
+2. **Start with directories**: Create the directory structure before populating files
+3. **Use short paths**: Aim for 2-3 levels (e.g., `project/tooling/testing`, not `project/dev/tools/testing/setup`)
+4. **Keep files focused**: Each file should cover one concept (~40 lines max)
+5. **Create indexes**: Top-level files (`project.md`) should list children with "Related blocks"
+6. **Be aggressive about splitting**: If in doubt, split. Too many small files is better than too few large ones.
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
