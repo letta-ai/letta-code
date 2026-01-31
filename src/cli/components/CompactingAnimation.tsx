@@ -24,7 +24,7 @@ export interface FanOutAnimationOptions {
   tickMs?: number;
   /** Minimum garbage characters before each reveal (default 1) */
   minGarbage?: number;
-  /** Maximum garbage characters before each reveal (default 3) */
+  /** Maximum garbage characters before each reveal (default 2) */
   maxGarbage?: number;
   /** Cursor character shown at the end (default █) */
   cursor?: string;
