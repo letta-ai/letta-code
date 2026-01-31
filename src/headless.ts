@@ -41,6 +41,7 @@ import { formatErrorDetails } from "./cli/helpers/errorFormatter";
 import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
 import { drainStreamWithResume } from "./cli/helpers/stream";
 import { StreamProcessor } from "./cli/helpers/streamProcessor";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { settingsManager } from "./settings-manager";
 import { checkToolPermission } from "./tools/manager";
 import type {
@@ -105,6 +106,7 @@ export async function handleHeadlessCommand(
       "output-format": { type: "string" },
       "input-format": { type: "string" },
       "include-partial-messages": { type: "boolean" },
+      "from-agent": { type: "string" },
       // Additional flags from index.ts that need to be filtered out
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -209,7 +211,8 @@ export async function handleHeadlessCommand(
   }
 
   // --new: Create a new conversation (for concurrent sessions)
-  const forceNewConversation = (values.new as boolean | undefined) ?? false;
+  let forceNewConversation = (values.new as boolean | undefined) ?? false;
+  const fromAgentId = values["from-agent"] as string | undefined;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -260,6 +263,26 @@ export async function handleHeadlessCommand(
     console.error("Usage: letta --agent agent-xyz --conv default");
     console.error("   or: letta --conv agent-xyz (shorthand)");
     process.exit(1);
+  }
+
+  if (fromAgentId) {
+    if (!specifiedAgentId && !specifiedConversationId) {
+      console.error(
+        "Error: --from-agent requires --agent <id> or --conversation <id>.",
+      );
+      process.exit(1);
+    }
+    if (shouldContinue) {
+      console.error("Error: --from-agent cannot be used with --continue");
+      process.exit(1);
+    }
+    if (forceNew) {
+      console.error("Error: --from-agent cannot be used with --new-agent");
+      process.exit(1);
+    }
+    if (!specifiedConversationId && !forceNewConversation) {
+      forceNewConversation = true;
+    }
   }
 
   // Validate --conversation flag (mutually exclusive with agent-selection flags)
@@ -987,6 +1010,19 @@ export async function handleHeadlessCommand(
   const { permissionMode } = await import("./permissions/mode");
   const { hasLoadedSkills } = await import("./agent/context");
   let messageContent = "";
+
+  if (fromAgentId) {
+    const senderAgentId = fromAgentId;
+    const senderAgent = await client.agents.retrieve(senderAgentId);
+    const systemReminder = `${SYSTEM_REMINDER_OPEN}
+This message is from "${senderAgent.name}" (agent ID: ${senderAgentId}), an agent currently running inside the Letta Code CLI (docs.letta.com/letta-code).
+The sender will only see the final message you generate (not tool calls or reasoning).
+If you need to share detailed information, include it in your response text.
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+    messageContent += systemReminder;
+  }
 
   // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {

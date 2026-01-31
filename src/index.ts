@@ -76,6 +76,7 @@ OPTIONS
                         When set, reads JSON messages from stdin for bidirectional communication
   --include-partial-messages
                         Emit stream_event wrappers for each chunk (stream-json only)
+  --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
@@ -435,6 +436,7 @@ async function main(): Promise<void> {
         "output-format": { type: "string" },
         "input-format": { type: "string" },
         "include-partial-messages": { type: "boolean" },
+        "from-agent": { type: "string" },
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },

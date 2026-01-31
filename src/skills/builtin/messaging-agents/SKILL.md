@@ -58,27 +58,26 @@ letta messages search --query "topic" --all-agents
 ```
 Results include `agent_id` for each matching message.
 
-## CLI Usage
+## CLI Usage (agent-to-agent)
 
 ### Starting a New Conversation
 
 ```bash
-letta messages start-conversation --agent <id> --message "<text>"
+letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
-| `--agent-id <id>` | No | Alias for `--agent` |
-| `--message <text>` | Yes | Message to send |
-| `--timeout <ms>` | No | Max wait time in ms (default: 120000) |
+| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
 ```bash
-letta messages start-conversation \
+letta -p --from-agent $LETTA_AGENT_ID \
   --agent agent-abc123 \
-  --message "What do you know about the authentication system?"
+  "What do you know about the authentication system?"
 ```
 
 **Response:**
@@ -94,21 +93,21 @@ letta messages start-conversation \
 ### Continuing a Conversation
 
 ```bash
-letta messages continue-conversation --conversation-id <id> --message "<text>"
+letta -p --from-agent $LETTA_AGENT_ID --conversation <id> "message text"
 ```
 
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
-| `--conversation-id <id>` | Yes | Existing conversation ID |
-| `--message <text>` | Yes | Follow-up message to send |
-| `--timeout <ms>` | No | Max wait time in ms (default: 120000) |
+| `--conversation <id>` | Yes | Existing conversation ID |
+| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `"message text"` | Yes | Follow-up message (positional after flags) |
 
 **Example:**
 ```bash
-letta messages continue-conversation \
-  --conversation-id conversation-xyz789 \
-  --message "Can you explain more about the token refresh flow?"
+letta -p --from-agent $LETTA_AGENT_ID \
+  --conversation conversation-xyz789 \
+  "Can you explain more about the token refresh flow?"
 ```
 
 ## Understanding the Response
