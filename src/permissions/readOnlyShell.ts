@@ -63,9 +63,10 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
 
 // letta CLI read-only subcommands: group -> allowed actions
 const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
-  memfs: new Set(["status", "help", "backups"]),
+  memfs: new Set(["status", "help", "backups", "export"]),
   agents: new Set(["list", "help"]),
   messages: new Set(["search", "list", "help"]),
+  blocks: new Set(["list", "help"]),
 };
 
 // gh CLI read-only commands: category -> allowed actions

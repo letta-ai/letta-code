@@ -7,6 +7,14 @@ description: Migrate memory blocks from an existing agent to the current agent. 
 
 This skill helps migrate memory blocks from an existing agent to a new agent, similar to macOS Migration Assistant for AI agents.
 
+> **Requires Memory Filesystem (memfs)**
+>
+> This workflow is memfs-first. If memfs is enabled, do **not** use the legacy block commands — they can conflict with file-based edits.
+>
+> **To check:** Look for a `memory_filesystem` block in your system prompt. If it shows a tree structure starting with `/memory/` including a `system/` directory, memfs is enabled.
+>
+> **To enable:** Ask the user to run `/memfs enable`, then reload the CLI.
+
 ## When to Use This Skill
 
 - User is setting up a new agent that should inherit memory from an existing one
@@ -14,30 +22,42 @@ This skill helps migrate memory blocks from an existing agent to a new agent, si
 - User is replacing an old agent with a new one
 - User mentions they have an existing agent with useful memory
 
-## Migration Methods
+## Migration Method (memfs-first)
 
-### 1. Manual Copy (Recommended for partial content)
+### Export → Copy → Sync
 
-If you only need **part** of a source block, or the source is messy and needs cleanup:
-1. Use `get-agent-blocks.ts` to view the source block's content
-2. Use the `memory` tool to create a new block with just the content you want
-3. No scripts needed - you have full control over what gets copied
+This is the recommended flow:
 
-Best for: Extracting sections, cleaning up messy content, selective migration.
+1. **Export the source agent's memfs to a temp directory**
+   ```bash
+   letta memfs export --agent <source-agent-id> --out /tmp/letta-memfs-<source-agent-id>
+   ```
 
-### 2. Script Copy (Full block duplication)
+2. **Copy the files you want into your own memfs**
+   - `system/` = attached blocks (always loaded)
+   - root = detached blocks
 
-Creates new blocks with the same content using `copy-block.ts`. After copying:
-- You own the copy - changes don't sync
-- Best for: One-time migration, forking an agent
+   Example:
+   ```bash
+   cp -r /tmp/letta-memfs-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
+   cp /tmp/letta-memfs-agent-abc123/notes.md ~/.letta/agents/$LETTA_AGENT_ID/memory/
+   ```
 
-### 3. Share (Linked Blocks)
+3. **Sync to API**
+   ```bash
+   letta memfs sync --agent $LETTA_AGENT_ID
+   ```
 
-Attaches the same block to multiple agents using `attach-block.ts`. After sharing:
-- All agents see the same block content
-- Changes by any agent are visible to all others
-- Can be read-only (target can read but not modify)
-- Best for: Shared knowledge bases, synchronized state
+This gives you full control over what you bring across and keeps everything consistent with memfs.
+
+## Legacy Fallback (only if memfs is disabled)
+
+If memfs is **not enabled**, you can use block-level commands:
+- `letta blocks list`
+- `letta blocks copy`
+- `letta blocks attach`
+
+⚠️ **Do not use these if memfs is enabled** — they can diverge from file-based edits.
 
 ## Handling Duplicate Label Errors
 
@@ -47,13 +67,13 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
 
 1. **Use `--label` (copy only):** Rename the block when copying:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --label project-imported
+   letta blocks copy --block-id <id> --label project-imported
    ```
 
 2. **Use `--override` (copy or attach):** Automatically detach your existing block first:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <id> --override
-   npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id <id> --override
+   letta blocks copy --block-id <id> --override
+   letta blocks attach --block-id <id> --override
    ```
    If the operation fails, the original block is automatically reattached.
 
@@ -63,7 +83,7 @@ Attaches the same block to multiple agents using `attach-block.ts`. After sharin
    ```
    Then run the copy/attach script.
 
-**Note:** `attach-block.ts` does NOT support `--label` because attached blocks keep their original label (they're shared, not copied).
+**Note:** `letta blocks attach` does NOT support `--label` because attached blocks keep their original label (they're shared, not copied).
 
 ## Workflow
 
@@ -78,55 +98,6 @@ Skill({ command: "load", skills: ["finding-agents"] })
 
 Example: "What's the ID of the agent you want to migrate memory from?"
 
-### Step 2: View Source Agent's Blocks
-
-Inspect what memory blocks the source agent has:
-
-```bash
-npx tsx <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id <source-agent-id>
-```
-
-This shows each block's ID, label, description, and value.
-
-### Step 3: Migrate Blocks
-
-For each block you want to migrate, choose copy or share:
-
-**To Copy (create independent block):**
-```bash
-npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id <block-id> [--label <new-label>]
-```
-
-Use `--label` if you already have a block with that label (e.g., `--label project-imported`).
-
-**To Share (attach existing block):**
-```bash
-npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id <block-id>
-```
-
-Add `--read-only` flag to share to make this agent unable to modify the block.
-
-Note: These scripts automatically target the current agent (you) for safety.
-
-## Script Reference
-
-All scripts are located in the `scripts/` directory and output raw API responses (JSON).
-
-| Script | Purpose | Args |
-|--------|---------|------|
-| `get-agent-blocks.ts` | Get blocks from an agent | `--agent-id` |
-| `copy-block.ts` | Copy block to current agent | `--block-id`, optional `--label`, `--override` |
-| `attach-block.ts` | Attach existing block to current agent | `--block-id`, optional `--read-only`, `--override` |
-
-## Authentication
-
-The bundled scripts automatically use the same authentication as Letta Code:
-- Keychain/secrets storage
-- `~/.config/letta/settings.json` fallback
-- `LETTA_API_KEY` environment variable
-
-You can also make direct API calls using the Letta SDK if you have the API key available.
-
 ## Example: Migrating Project Memory
 
 Scenario: You're a new agent and want to inherit memory from an existing agent "ProjectX-v1".
@@ -134,22 +105,17 @@ Scenario: You're a new agent and want to inherit memory from an existing agent "
 1. **Get source agent ID from user:**
    User provides: `agent-abc123`
 
-2. **List its blocks:**
+2. **Export their memfs:**
    ```bash
-   npx tsx <SKILL_DIR>/scripts/get-agent-blocks.ts --agent-id agent-abc123
-   # Shows: project (block-def456), human (block-ghi789), persona (block-jkl012)
+   letta memfs export --agent agent-abc123 --out /tmp/letta-memfs-agent-abc123
    ```
 
-3. **Copy project knowledge to yourself:**
+3. **Copy the relevant files into your memfs:**
    ```bash
-   # If you don't have a 'project' block yet:
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456
-   
-   # If you already have 'project', use --label to rename:
-   npx tsx <SKILL_DIR>/scripts/copy-block.ts --block-id block-def456 --label project-v1
+   cp -r /tmp/letta-memfs-agent-abc123/system/project ~/.letta/agents/$LETTA_AGENT_ID/memory/system/
    ```
 
-4. **Optionally share human preferences (read-only):**
+4. **Sync:**
    ```bash
-   npx tsx <SKILL_DIR>/scripts/attach-block.ts --block-id block-ghi789 --read-only
+   letta memfs sync --agent $LETTA_AGENT_ID
    ```

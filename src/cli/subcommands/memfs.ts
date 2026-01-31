@@ -41,6 +41,7 @@ Usage:
   letta memfs backup [--agent <id>]
   letta memfs backups [--agent <id>]
   letta memfs restore --from <backup> --force [--agent <id>]
+  letta memfs export --agent <id> --out <dir>
 
 Notes:
   - Requires agent id via --agent or LETTA_AGENT_ID.
@@ -53,6 +54,7 @@ Examples:
   letta memfs backup --agent agent-123
   letta memfs backups --agent agent-123
   letta memfs restore --agent agent-123 --from memory-backup-20260131-204903 --force
+  letta memfs export --agent agent-123 --out /tmp/letta-memfs-agent-123
 `.trim(),
   );
 }
@@ -604,6 +606,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
         "agent-id": { type: "string" },
         from: { type: "string" },
         force: { type: "boolean" },
+        out: { type: "string" },
         resolutions: { type: "string" },
       },
       strict: true,
@@ -757,6 +760,45 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
       rmSync(root, { recursive: true, force: true });
       cpSync(backupPath, root, { recursive: true });
       console.log(JSON.stringify({ restoredFrom: backupPath }, null, 2));
+      return 0;
+    }
+
+    if (action === "export") {
+      const out = parsed.values.out as string | undefined;
+      if (!out) {
+        console.error("Missing --out <dir>.");
+        return 1;
+      }
+      const root = getMemoryRoot(agentId);
+      if (!existsSync(root)) {
+        console.error(
+          `Memory directory not found for agent ${agentId}. Run memfs sync first.`,
+        );
+        return 1;
+      }
+      if (existsSync(out)) {
+        const stat = statSync(out);
+        if (stat.isDirectory()) {
+          const contents = await readdir(out);
+          if (contents.length > 0) {
+            console.error(`Export directory not empty: ${out}`);
+            return 1;
+          }
+        } else {
+          console.error(`Export path is not a directory: ${out}`);
+          return 1;
+        }
+      } else {
+        mkdirSync(out, { recursive: true });
+      }
+      cpSync(root, out, { recursive: true });
+      console.log(
+        JSON.stringify(
+          { exportedFrom: root, exportedTo: out, agentId },
+          null,
+          2,
+        ),
+      );
       return 0;
     }
   } catch (error) {
