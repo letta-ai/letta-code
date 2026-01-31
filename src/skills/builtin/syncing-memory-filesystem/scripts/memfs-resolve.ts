@@ -23,6 +23,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { parseFrontmatter } from "./lib/frontmatter";
 
 const require = createRequire(import.meta.url);
 const Letta = require("@letta-ai/letta-client")
@@ -67,41 +68,7 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-/**
- * Parse frontmatter from file content.
- */
-function parseFrontmatter(content: string): {
-  frontmatter: Record<string, string>;
-  body: string;
-} {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
-
-  if (!match || !match[1] || !match[2]) {
-    return { frontmatter: {}, body: content };
-  }
-
-  const frontmatterText = match[1];
-  const body = match[2];
-  const frontmatter: Record<string, string> = {};
-
-  for (const line of frontmatterText.split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim();
-      let value = line.slice(colonIdx + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      frontmatter[key] = value;
-    }
-  }
-
-  return { frontmatter, body: body.trim() };
-}
+// parseFrontmatter provided by shared helper
 
 /**
  * Parse block update from file content (update-mode: only update metadata if present in frontmatter).
