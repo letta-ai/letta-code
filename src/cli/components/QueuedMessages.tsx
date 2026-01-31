@@ -1,5 +1,6 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
+import { Text } from "./Text";
 
 interface QueuedMessagesProps {
   messages: string[];

@@ -1,4 +1,5 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
+import { Text } from "./Text";
 
 export type Row =
   | { kind: "user"; text: string; id?: string }

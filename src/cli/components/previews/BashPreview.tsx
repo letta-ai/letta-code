@@ -1,7 +1,8 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../../hooks/useTerminalWidth";
 import { colors } from "../colors";
+import { Text } from "../Text";
 
 const SOLID_LINE = "─";
 

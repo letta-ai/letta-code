@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import type { StreamingState } from "../helpers/accumulator";
@@ -8,6 +8,7 @@ import { CollapsedOutputDisplay } from "./CollapsedOutputDisplay";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { StreamingOutputDisplay } from "./StreamingOutputDisplay";
+import { Text } from "./Text";
 
 type BashCommandLine = {
   kind: "bash_command";

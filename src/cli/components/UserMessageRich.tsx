@@ -1,9 +1,9 @@
-import { Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
+import { Text } from "./Text";
 
 type UserLine = {
   kind: "user";

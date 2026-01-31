@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useMemo, useState } from "react";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../../agent/memoryFilesystem";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Line characters
 const SOLID_LINE = "─";

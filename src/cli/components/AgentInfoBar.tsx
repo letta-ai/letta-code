@@ -1,10 +1,11 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import Link from "ink-link";
 import { memo, useMemo } from "react";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 interface AgentInfoBarProps {
   agentId?: string;

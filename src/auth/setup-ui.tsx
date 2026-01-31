@@ -3,10 +3,11 @@
  */
 
 import { hostname } from "node:os";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, useApp, useInput } from "ink";
 import { useState } from "react";
 import { AnimatedLogo } from "../cli/components/AnimatedLogo";
 import { colors } from "../cli/components/colors";
+import { Text } from "../cli/components/Text";
 import { settingsManager } from "../settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
 

@@ -14,7 +14,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { Box, Static, Text } from "ink";
+import { Box, Static } from "ink";
 import {
   useCallback,
   useEffect,
@@ -134,7 +134,6 @@ import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
-
 import { formatUsageStats } from "./components/SessionStats";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -143,6 +142,7 @@ import { SubagentGroupDisplay } from "./components/SubagentGroupDisplay";
 import { SubagentGroupStatic } from "./components/SubagentGroupStatic";
 import { SubagentManager } from "./components/SubagentManager";
 import { SystemPromptSelector } from "./components/SystemPromptSelector";
+import { Text } from "./components/Text";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
 import { UserMessage } from "./components/UserMessageRich";
@@ -6152,9 +6152,8 @@ export default function App({
 
         // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
-          const { backgroundProcesses } = await import(
-            "../tools/impl/process_manager"
-          );
+          const { backgroundProcesses } =
+            await import("../tools/impl/process_manager");
           const cmdId = uid("cmd");
 
           let output: string;
@@ -6306,9 +6305,8 @@ export default function App({
               settingsManager.setMemfsEnabled(agentId, true);
 
               // 3. Update system prompt to include memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "../agent/modify"
-              );
+              const { updateAgentSystemPromptMemfs } =
+                await import("../agent/modify");
               await updateAgentSystemPromptMemfs(agentId, true);
 
               // 4. Run initial sync (creates files from blocks)
@@ -6494,9 +6492,8 @@ export default function App({
               await detachMemoryFilesystemBlock(agentId);
 
               // 4. Update system prompt to remove memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "../agent/modify"
-              );
+              const { updateAgentSystemPromptMemfs } =
+                await import("../agent/modify");
               await updateAgentSystemPromptMemfs(agentId, false);
 
               // 5. Update settings
@@ -6570,9 +6567,8 @@ export default function App({
 
           try {
             // Import the skill-creation prompt
-            const { SKILL_CREATOR_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            const { SKILL_CREATOR_PROMPT } =
+              await import("../agent/promptAssets.js");
 
             // Build system-reminder content for skill creation
             const userDescriptionLine = description
@@ -6651,9 +6647,8 @@ export default function App({
 
           try {
             // Import the remember prompt
-            const { REMEMBER_PROMPT } = await import(
-              "../agent/promptAssets.js"
-            );
+            const { REMEMBER_PROMPT } =
+              await import("../agent/promptAssets.js");
 
             // Build system-reminder content for memory request
             const rememberMessage = userText
@@ -7011,9 +7006,8 @@ ${SYSTEM_REMINDER_CLOSE}`;
         "sessionContextEnabled",
       );
       if (!hasSentSessionContextRef.current && sessionContextEnabled) {
-        const { buildSessionContext } = await import(
-          "./helpers/sessionContext"
-        );
+        const { buildSessionContext } =
+          await import("./helpers/sessionContext");
         sessionContextReminder = buildSessionContext({
           agentInfo: {
             id: agentId,
@@ -7898,9 +7892,8 @@ ${SYSTEM_REMINDER_CLOSE}
         refreshDerived();
 
         // Execute approved tools and format results using shared function
-        const { executeApprovalBatch } = await import(
-          "../agent/approval-execution"
-        );
+        const { executeApprovalBatch } =
+          await import("../agent/approval-execution");
         const executedResults = await executeApprovalBatch(
           allDecisions,
           (chunk) => {
@@ -8215,9 +8208,8 @@ ${SYSTEM_REMINDER_CLOSE}
 
           try {
             // Execute ALL decisions together
-            const { executeApprovalBatch } = await import(
-              "../agent/approval-execution"
-            );
+            const { executeApprovalBatch } =
+              await import("../agent/approval-execution");
             const executedResults = await executeApprovalBatch(
               allDecisions,
               (chunk) => {
@@ -8388,9 +8380,8 @@ ${SYSTEM_REMINDER_CLOSE}
           if (!selectedModel && modelId.includes("/")) {
             // Treat it as a BYOK model - the modelId is actually the handle
             // Look up the context window from the API-cached model info
-            const { getModelContextWindow } = await import(
-              "../agent/available-models"
-            );
+            const { getModelContextWindow } =
+              await import("../agent/available-models");
             const apiContextWindow = getModelContextWindow(modelId);
 
             selectedModel = {
@@ -8444,9 +8435,8 @@ ${SYSTEM_REMINDER_CLOSE}
           setCurrentModelId(modelId);
 
           // After switching models, only switch toolset if it actually changes
-          const { isOpenAIModel, isGeminiModel } = await import(
-            "../tools/manager"
-          );
+          const { isOpenAIModel, isGeminiModel } =
+            await import("../tools/manager");
           const targetToolset:
             | "codex"
             | "codex_snake"
@@ -8778,9 +8768,8 @@ ${SYSTEM_REMINDER_CLOSE}
           refreshDerived();
 
           // Update the agent's system prompt
-          const { updateAgentSystemPromptRaw } = await import(
-            "../agent/modify"
-          );
+          const { updateAgentSystemPromptRaw } =
+            await import("../agent/modify");
           const result = await updateAgentSystemPromptRaw(
             agentId,
             selectedPrompt.content,

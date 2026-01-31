@@ -1,9 +1,9 @@
-import { Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { searchFiles } from "../helpers/fileSearch";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { colors } from "./colors";
+import { Text } from "./Text";
 import type { AutocompleteProps, FileMatch } from "./types/autocomplete";
 
 // Extract the text after the "@" symbol where the cursor is positioned

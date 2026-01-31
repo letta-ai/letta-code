@@ -1,7 +1,8 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { Text } from "./Text";
 
 const DEFAULT_COLLAPSED_LINES = 3;
 const PREFIX_WIDTH = 5; // "  ⎿  " or "     "

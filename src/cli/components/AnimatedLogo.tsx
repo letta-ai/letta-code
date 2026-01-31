@@ -1,90 +1,90 @@
-import { Text } from "ink";
 import { useEffect, useState } from "react";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Define animation frames - 3D rotation effect with gradient (█ → ▓ → ▒ → ░)
 // Each frame is ~10 chars wide, 5 lines tall - matches login dialog asciiLogo size
 const logoFrames = [
   // 1. Front view (fully facing)
-  `  ██████  
+  `  ██████
 ██      ██
 ██  ██  ██
 ██      ██
   ██████  `,
   // 2. Just starting to turn right
-  `  ▓█████  
+  `  ▓█████
 ▓█      ▓█
 ▓█  ▓█  ▓█
 ▓█      ▓█
   ▓█████  `,
   // 3. Slight right turn
-  `  ▓▓████  
+  `  ▓▓████
 ▓▓      ▓▓
 ▓▓  ▓▓  ▓▓
 ▓▓      ▓▓
   ▓▓████  `,
   // 4. More right (gradient deepening)
-  `  ░▓▓███  
+  `  ░▓▓███
 ░▓▓    ░▓▓
 ░▓▓ ░▓ ░▓▓
 ░▓▓    ░▓▓
   ░▓▓███  `,
   // 5. Even more right
-  `  ░░▓▓██  
- ░▓▓  ░▓▓ 
- ░▓▓░▓░▓▓ 
- ░▓▓  ░▓▓ 
+  `  ░░▓▓██
+ ░▓▓  ░▓▓
+ ░▓▓░▓░▓▓
+ ░▓▓  ░▓▓
   ░░▓▓██  `,
   // 6. Approaching side
-  `   ░▓▓█   
-  ░░▓░░▓  
-  ░░▓▓░▓  
-  ░░▓░░▓  
+  `   ░▓▓█
+  ░░▓░░▓
+  ░░▓▓░▓
+  ░░▓░░▓
    ░▓▓█   `,
   // 7. Almost side
-  `   ░▓▓▓   
-   ░▓░▓   
-   ░▓▓▓   
-   ░▓░▓   
+  `   ░▓▓▓
+   ░▓░▓
+   ░▓▓▓
+   ░▓░▓
    ░▓▓▓   `,
   // 8. Side view
-  `   ▓▓▓▓   
-   ▓▓▓▓   
-   ▓▓▓▓   
-   ▓▓▓▓   
+  `   ▓▓▓▓
+   ▓▓▓▓
+   ▓▓▓▓
+   ▓▓▓▓
    ▓▓▓▓   `,
   // 9. Leaving side (mirror of 7)
-  `   ▓▓▓░   
-   ▓░▓░   
-   ▓▓▓░   
-   ▓░▓░   
+  `   ▓▓▓░
+   ▓░▓░
+   ▓▓▓░
+   ▓░▓░
    ▓▓▓░   `,
   // 10. Past side (mirror of 6)
-  `   █▓▓░   
-  ▓░░▓░░  
-  ▓░▓▓░░  
-  ▓░░▓░░  
+  `   █▓▓░
+  ▓░░▓░░
+  ▓░▓▓░░
+  ▓░░▓░░
    █▓▓░   `,
   // 11. More past side (mirror of 5)
-  `  ██▓▓░░  
- ▓▓░  ▓▓░ 
- ▓▓░▓░▓▓░ 
- ▓▓░  ▓▓░ 
+  `  ██▓▓░░
+ ▓▓░  ▓▓░
+ ▓▓░▓░▓▓░
+ ▓▓░  ▓▓░
   ██▓▓░░  `,
   // 12. Returning (mirror of 4)
-  `  ███▓▓░  
+  `  ███▓▓░
 ▓▓░    ▓▓░
 ▓▓░ ▓░ ▓▓░
 ▓▓░    ▓▓░
   ███▓▓░  `,
   // 13. Almost front (mirror of 3)
-  `  ████▓▓  
+  `  ████▓▓
 ▓▓      ▓▓
 ▓▓  ▓▓  ▓▓
 ▓▓      ▓▓
   ████▓▓  `,
   // 14. Nearly front (mirror of 2)
-  `  █████▓  
+  `  █████▓
 █▓      █▓
 █▓  █▓  █▓
 █▓      █▓

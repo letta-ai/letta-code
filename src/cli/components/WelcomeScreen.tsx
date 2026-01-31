@@ -1,8 +1,7 @@
 import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useEffect, useState } from "react";
-
 import type { AgentProvenance } from "../../agent/create";
 import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
@@ -10,6 +9,7 @@ import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AnimatedLogo } from "./AnimatedLogo";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 /**
  * Convert absolute path to use ~ for home directory

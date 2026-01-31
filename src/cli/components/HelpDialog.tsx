@@ -1,8 +1,9 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "../../version";
 import { commands } from "../commands/registry";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 const PAGE_SIZE = 10;
 

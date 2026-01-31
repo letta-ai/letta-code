@@ -4,11 +4,12 @@
  */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { getClient } from "../agent/client";
 import { settingsManager } from "../settings-manager";
 import { colors } from "./components/colors";
+import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 
 interface ProfileOption {

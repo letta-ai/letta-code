@@ -3,9 +3,8 @@
  * Flow: Select transport → Enter URL → Connect (OAuth if needed) → Enter name → Create
  */
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useCallback, useState } from "react";
-
 import { getClient } from "../../agent/client";
 import {
   connectMcpServer,
@@ -16,6 +15,7 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 
