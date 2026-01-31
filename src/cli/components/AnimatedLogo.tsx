@@ -2,17 +2,6 @@ import { Text } from "ink";
 import { useEffect, useState } from "react";
 import { colors } from "./colors";
 
-function fixBunEncoding(text: string): string {
-  if (typeof Bun === "undefined") return text;
-  
-  // Replace literal characters with Unicode codepoints
-  return text
-    .replace(/█/g, String.fromCharCode(0x2588))  // Full block
-    .replace(/▓/g, String.fromCharCode(0x2593))  // Dark shade
-    .replace(/▒/g, String.fromCharCode(0x2592))  // Medium shade
-    .replace(/░/g, String.fromCharCode(0x2591)); // Light shade
-}
-
 // Define animation frames - 3D rotation effect with gradient (█ → ▓ → ▒ → ░)
 // Each frame is ~10 chars wide, 5 lines tall - matches login dialog asciiLogo size
 const logoFrames = [
@@ -100,7 +89,7 @@ const logoFrames = [
 █▓  █▓  █▓
 █▓      █▓
   █████▓  `,
-].map(fixBunEncoding);
+];
 
 interface AnimatedLogoProps {
   color?: string;
