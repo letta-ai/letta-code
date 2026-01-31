@@ -11,6 +11,7 @@ import Letta from "@letta-ai/letta-client";
 // Skip all tests if no API key is available
 const LETTA_API_KEY = process.env.LETTA_API_KEY;
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+const API_KEY = LETTA_API_KEY ?? "";
 
 const describeIntegration = LETTA_API_KEY ? describe : describe.skip;
 
@@ -22,7 +23,7 @@ describeIntegration("block tagging integration", () => {
   beforeAll(async () => {
     client = new Letta({
       baseURL: LETTA_BASE_URL,
-      apiKey: LETTA_API_KEY!,
+      apiKey: API_KEY,
     });
 
     // Create a test agent

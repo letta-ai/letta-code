@@ -17,6 +17,7 @@ import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
+import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
@@ -48,6 +49,10 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta agents ...      Agents subcommands (JSON-only)
+  letta messages ...    Messages subcommands (JSON-only)
+  letta blocks ...      Blocks subcommands (JSON-only)
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -76,6 +81,23 @@ OPTIONS
   --from-af <path>      Create agent from an AgentFile (.af) template
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
+
+SUBCOMMANDS (JSON-only)
+  letta memfs status --agent <id>
+  letta memfs diff --agent <id>
+  letta memfs resolve --agent <id> --resolutions '<JSON>'
+  letta memfs backup --agent <id>
+  letta memfs backups --agent <id>
+  letta memfs restore --agent <id> --from <backup> --force
+  letta memfs export --agent <id> --out <dir>
+  letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta messages search --query <text> [--all-agents]
+  letta messages list [--agent <id>]
+  letta messages start-conversation --agent <id> --message "<text>"
+  letta messages continue-conversation --conversation-id <id> --message "<text>"
+  letta blocks list --agent <id>
+  letta blocks copy --block-id <id> [--label <label>] [--agent <id>] [--override]
+  letta blocks attach --block-id <id> [--agent <id>] [--read-only] [--override]
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -323,6 +345,12 @@ async function main(): Promise<void> {
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
+
+  // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
+  const subcommandResult = await runSubcommand(process.argv.slice(2));
+  if (subcommandResult !== null) {
+    process.exit(subcommandResult);
+  }
 
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {

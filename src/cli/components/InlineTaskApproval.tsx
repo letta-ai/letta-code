@@ -25,14 +25,6 @@ type Props = {
 const SOLID_LINE = "─";
 
 /**
- * Truncate text to max length with ellipsis
- */
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 3)}...`;
-}
-
-/**
  * InlineTaskApproval - Renders Task tool approval UI inline with pretty formatting
  *
  * Shows subagent type, description, and prompt in a readable format.
