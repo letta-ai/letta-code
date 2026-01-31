@@ -50,6 +50,8 @@ USAGE
   # maintenance
   letta update          Manually check for updates and install if available
   letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta agents ...      Agents subcommands (JSON-only)
+  letta messages ...    Messages subcommands (JSON-only)
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -83,6 +85,11 @@ SUBCOMMANDS (JSON-only)
   letta memfs status --agent <id>
   letta memfs diff --agent <id>
   letta memfs resolve --agent <id> --resolutions '<JSON>'
+  letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta messages search --query <text> [--all-agents]
+  letta messages list [--agent <id>]
+  letta messages start-conversation --agent <id> --message "<text>"
+  letta messages continue-conversation --conversation-id <id> --message "<text>"
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
