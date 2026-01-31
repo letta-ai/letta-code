@@ -100,7 +100,7 @@ function parseFrontmatter(content: string): {
     }
   }
 
-  return { frontmatter, body };
+  return { frontmatter, body: body.trim() };
 }
 
 /**
