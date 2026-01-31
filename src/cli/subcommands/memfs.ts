@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, normalize, relative } from "node:path";
@@ -30,6 +38,9 @@ Usage:
   letta memfs status [--agent <id>]
   letta memfs diff [--agent <id>]
   letta memfs resolve --resolutions '<JSON>' [--agent <id>]
+  letta memfs backup [--agent <id>]
+  letta memfs backups [--agent <id>]
+  letta memfs restore --from <backup> --force [--agent <id>]
 
 Notes:
   - Requires agent id via --agent or LETTA_AGENT_ID.
@@ -39,6 +50,9 @@ Examples:
   LETTA_AGENT_ID=agent-123 letta memfs status
   letta memfs diff --agent agent-123
   letta memfs resolve --agent agent-123 --resolutions '[{"label":"human/prefs","resolution":"file"}]'
+  letta memfs backup --agent agent-123
+  letta memfs backups --agent agent-123
+  letta memfs restore --agent agent-123 --from memory-backup-20260131-204903 --force
 `.trim(),
   );
 }
@@ -89,6 +103,58 @@ function loadSyncState(agentId: string): SyncState {
 
 function getMemoryRoot(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId, "memory");
+}
+
+function getAgentRoot(agentId: string): string {
+  return join(homedir(), ".letta", "agents", agentId);
+}
+
+function formatBackupTimestamp(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+}
+
+async function listBackups(
+  agentId: string,
+): Promise<Array<{ name: string; path: string; createdAt: string | null }>> {
+  const agentRoot = getAgentRoot(agentId);
+  if (!existsSync(agentRoot)) {
+    return [];
+  }
+  const entries = await readdir(agentRoot, { withFileTypes: true });
+  const backups: Array<{
+    name: string;
+    path: string;
+    createdAt: string | null;
+  }> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!entry.name.startsWith("memory-backup-")) continue;
+    const path = join(agentRoot, entry.name);
+    let createdAt: string | null = null;
+    try {
+      const stat = statSync(path);
+      createdAt = stat.mtime.toISOString();
+    } catch {
+      createdAt = null;
+    }
+    backups.push({ name: entry.name, path, createdAt });
+  }
+  backups.sort((a, b) => a.name.localeCompare(b.name));
+  return backups;
+}
+
+function resolveBackupPath(agentId: string, from: string): string {
+  if (from.startsWith("/") || /^[A-Za-z]:[\\/]/.test(from)) {
+    return from;
+  }
+  return join(getAgentRoot(agentId), from);
 }
 
 async function scanMdFiles(
@@ -536,6 +602,8 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
         help: { type: "boolean", short: "h" },
         agent: { type: "string" },
         "agent-id": { type: "string" },
+        from: { type: "string" },
+        force: { type: "boolean" },
         resolutions: { type: "string" },
       },
       strict: true,
@@ -567,16 +635,16 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  ensureMemoryFilesystemDirs(agentId);
-
   try {
     if (action === "status") {
+      ensureMemoryFilesystemDirs(agentId);
       const status = await computeStatus(agentId);
       console.log(JSON.stringify(status, null, 2));
       return status.isClean ? 0 : 2;
     }
 
     if (action === "diff") {
+      ensureMemoryFilesystemDirs(agentId);
       const { conflicts, metadataOnly } = await computeDiff(agentId);
       if (conflicts.length === 0 && metadataOnly.length === 0) {
         console.log(
@@ -609,6 +677,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "resolve") {
+      ensureMemoryFilesystemDirs(agentId);
       const resolutionsRaw = parsed.values.resolutions as string | undefined;
       if (!resolutionsRaw) {
         console.error("Missing --resolutions JSON.");
@@ -636,6 +705,59 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
 
       console.log(JSON.stringify(result, null, 2));
       return result.conflicts.length > 0 ? 2 : 0;
+    }
+
+    if (action === "backup") {
+      const root = getMemoryRoot(agentId);
+      if (!existsSync(root)) {
+        console.error(
+          `Memory directory not found for agent ${agentId}. Run memfs sync first.`,
+        );
+        return 1;
+      }
+      const agentRoot = getAgentRoot(agentId);
+      const backupName = `memory-backup-${formatBackupTimestamp()}`;
+      const backupPath = join(agentRoot, backupName);
+      if (existsSync(backupPath)) {
+        console.error(`Backup already exists at ${backupPath}`);
+        return 1;
+      }
+      cpSync(root, backupPath, { recursive: true });
+      console.log(JSON.stringify({ backupName, backupPath }, null, 2));
+      return 0;
+    }
+
+    if (action === "backups") {
+      const backups = await listBackups(agentId);
+      console.log(JSON.stringify({ backups }, null, 2));
+      return 0;
+    }
+
+    if (action === "restore") {
+      const from = parsed.values.from as string | undefined;
+      if (!from) {
+        console.error("Missing --from <backup>.");
+        return 1;
+      }
+      if (!parsed.values.force) {
+        console.error("Restore is destructive. Re-run with --force.");
+        return 1;
+      }
+      const backupPath = resolveBackupPath(agentId, from);
+      if (!existsSync(backupPath)) {
+        console.error(`Backup not found: ${backupPath}`);
+        return 1;
+      }
+      const stat = statSync(backupPath);
+      if (!stat.isDirectory()) {
+        console.error(`Backup path is not a directory: ${backupPath}`);
+        return 1;
+      }
+      const root = getMemoryRoot(agentId);
+      rmSync(root, { recursive: true, force: true });
+      cpSync(backupPath, root, { recursive: true });
+      console.log(JSON.stringify({ restoredFrom: backupPath }, null, 2));
+      return 0;
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -37,7 +37,7 @@ Memory files live at `~/.letta/agents/$LETTA_AGENT_ID/memory/` and are synced to
 Before the subagent edits files, create a timestamped backup of the memfs directory:
 
 ```bash
-cp -r ~/.letta/agents/$LETTA_AGENT_ID/memory/ ~/.letta/agents/$LETTA_AGENT_ID/memory-backup-$(date +%Y%m%d-%H%M%S)/
+letta memfs backup --agent $LETTA_AGENT_ID
 ```
 
 ⚠️ **CRITICAL**: You MUST complete the backup before proceeding to Step 2. The backup is your safety net.
@@ -160,7 +160,7 @@ After the subagent finishes, **memfs sync will automatically propagate changes**
 ```typescript
 // Step 1: Safety backup (MANDATORY)
 Bash({
-  command: "cp -r ~/.letta/agents/$LETTA_AGENT_ID/memory/ ~/.letta/agents/$LETTA_AGENT_ID/memory-backup-$(date +%Y%m%d-%H%M%S)/",
+  command: "letta memfs backup --agent $LETTA_AGENT_ID",
   description: "Backup memfs directory before defrag"
 })
 
@@ -180,11 +180,10 @@ If something goes wrong, restore from the safety backup:
 
 ```bash
 # Find backups
-ls -la ~/.letta/agents/$LETTA_AGENT_ID/memory-backup-*/
+letta memfs backups --agent $LETTA_AGENT_ID
 
 # Restore from a specific backup (replace the current memory dir)
-rm -rf ~/.letta/agents/$LETTA_AGENT_ID/memory/
-cp -r ~/.letta/agents/$LETTA_AGENT_ID/memory-backup-<TIMESTAMP>/ ~/.letta/agents/$LETTA_AGENT_ID/memory/
+letta memfs restore --agent $LETTA_AGENT_ID --from memory-backup-<TIMESTAMP> --force
 ```
 
 On next CLI startup, memfs sync will detect the changes and update API blocks accordingly.

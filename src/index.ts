@@ -85,6 +85,9 @@ SUBCOMMANDS (JSON-only)
   letta memfs status --agent <id>
   letta memfs diff --agent <id>
   letta memfs resolve --agent <id> --resolutions '<JSON>'
+  letta memfs backup --agent <id>
+  letta memfs backups --agent <id>
+  letta memfs restore --agent <id> --from <backup> --force
   letta agents list [--query <text> | --name <name> | --tags <tags>]
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
