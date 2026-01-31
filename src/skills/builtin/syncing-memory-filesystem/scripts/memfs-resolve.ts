@@ -23,6 +23,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { parseFrontmatter, READ_ONLY_LABELS } from "./lib/frontmatter";
 
 const require = createRequire(import.meta.url);
 const Letta = require("@letta-ai/letta-client")
@@ -67,41 +68,7 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-/**
- * Parse frontmatter from file content.
- */
-function parseFrontmatter(content: string): {
-  frontmatter: Record<string, string>;
-  body: string;
-} {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
-
-  if (!match || !match[1] || !match[2]) {
-    return { frontmatter: {}, body: content };
-  }
-
-  const frontmatterText = match[1];
-  const body = match[2];
-  const frontmatter: Record<string, string> = {};
-
-  for (const line of frontmatterText.split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim();
-      let value = line.slice(colonIdx + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      frontmatter[key] = value;
-    }
-  }
-
-  return { frontmatter, body };
-}
+// parseFrontmatter provided by shared helper
 
 /**
  * Parse block update from file content (update-mode: only update metadata if present in frontmatter).
@@ -355,9 +322,12 @@ async function resolveConflicts(
         continue;
       }
 
+      const effectiveReadOnly =
+        !!block.read_only || READ_ONLY_LABELS.has(label);
+
       if (resolution === "file") {
         // read_only blocks: ignore local edits, overwrite file from API
-        if (block.read_only) {
+        if (effectiveReadOnly) {
           const fileContent = renderBlockToFileContent(block);
           writeMemoryFile(dir, label, fileContent);
           result.resolved.push({
