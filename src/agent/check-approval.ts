@@ -162,8 +162,6 @@ export async function getResumeData(
               {
                 limit: MESSAGE_HISTORY_LIMIT,
                 order: "desc",
-                // @ts-expect-error - SDK MessageListParams doesn't include this yet
-                include_compaction_messages: true,
               },
             );
             return {
@@ -202,8 +200,6 @@ export async function getResumeData(
             {
               limit: MESSAGE_HISTORY_LIMIT,
               order: "desc",
-              // @ts-expect-error - SDK MessageListParams doesn't include this yet
-              include_compaction_messages: true,
             },
           );
           messages = sortChronological(backfillPage.getPaginatedItems());
@@ -289,8 +285,6 @@ export async function getResumeData(
             limit: MESSAGE_HISTORY_LIMIT,
             order: "desc",
             conversation_id: "default", // Key: filter to default conversation only
-            // @ts-expect-error - SDK MessageListParams doesn't include this yet
-            include_compaction_messages: true,
           });
           messages = sortChronological(messagesPage.items);
 

@@ -1468,13 +1468,13 @@ export default function App({
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
       if (!ln) continue;
-      if (
-        ln.kind === "user" ||
-        ln.kind === "error" ||
-        ln.kind === "status" ||
-        ln.kind === "summary" ||
-        ln.kind === "event"
-      ) {
+      if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
+        emittedIdsRef.current.add(id);
+        newlyCommitted.push({ ...ln });
+        continue;
+      }
+      // Events only commit when finished (they have running/finished phases)
+      if (ln.kind === "event" && ln.phase === "finished") {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         continue;
@@ -9327,6 +9327,10 @@ Plan file path: ${planFilePath}`;
         // Always show other tool calls in progress
         return ln.phase !== "finished";
       }
+      // Events (like compaction) show while running
+      if (ln.kind === "event") {
+        return ln.phase === "running";
+      }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
@@ -9492,7 +9496,7 @@ Plan file path: ${planFilePath}`;
           <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
             {item.kind === "welcome" ? (
               <WelcomeScreen loadingState="ready" {...item.snapshot} />
-            ) : item.kind === "user" || item.kind === "summary" ? (
+            ) : item.kind === "user" ? (
               <UserMessage line={item} />
             ) : item.kind === "reasoning" ? (
               <ReasoningMessage line={item} />
@@ -9615,7 +9619,7 @@ Plan file path: ${planFilePath}`;
                               currentApprovalContext?.allowPersistence ?? true
                             }
                           />
-                        ) : ln.kind === "user" || ln.kind === "summary" ? (
+                        ) : ln.kind === "user" ? (
                           <UserMessage line={ln} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />

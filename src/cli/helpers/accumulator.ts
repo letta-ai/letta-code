@@ -5,10 +5,7 @@
 // - Exposes `onChunk` to feed SDK events and `toLines` to render.
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import {
-  COMPACTION_SUMMARY_HEADER,
-  INTERRUPTED_BY_USER,
-} from "../../constants";
+import { INTERRUPTED_BY_USER } from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
@@ -137,9 +134,13 @@ export type Line =
     }
   | { kind: "error"; id: string; text: string }
   | {
-      kind: "summary";
+      kind: "event";
       id: string;
-      text: string; // The summary content
+      eventType: string;
+      eventData: Record<string, unknown>;
+      // Compaction events have additional fields populated when summary_message arrives
+      phase: "running" | "finished";
+      summary?: string;
       stats?: {
         trigger?: string;
         contextTokensBefore?: number;
@@ -148,12 +149,6 @@ export type Line =
         messagesCountBefore?: number;
         messagesCountAfter?: number;
       };
-    }
-  | {
-      kind: "event";
-      id: string;
-      eventType: string;
-      eventData: Record<string, unknown>;
     }
   | {
       kind: "command";
@@ -541,14 +536,17 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
 
-      // Check if this is a compaction summary message
+      // Check if this is a compaction summary message (old format embedded in user_message)
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
-        // Render as a user message with context header and summary
+        // Render as a finished compaction event
         ensure(b, id, () => ({
-          kind: "user",
+          kind: "event",
           id,
-          text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+          eventType: "compaction",
+          eventData: {},
+          phase: "finished",
+          summary: compactionSummary,
         }));
       }
       // If not a summary, ignore it (user messages aren't rendered during streaming)
@@ -843,32 +841,30 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             messages_count_after?: number;
           };
         };
-        const id = summaryChunk.otid || summaryChunk.id;
-        if (!id) break;
-
-        // Handle otid transition (mark previous line as finished)
-        handleOtidTransition(b, id);
-
         const summaryText = summaryChunk.summary || "";
         const stats = summaryChunk.compaction_stats;
 
-        ensure(b, id, () => ({
-          kind: "summary",
-          id,
-          text: `${COMPACTION_SUMMARY_HEADER}\n\n${summaryText}`,
-          ...(stats
-            ? {
-                stats: {
-                  trigger: stats.trigger,
-                  contextTokensBefore: stats.context_tokens_before,
-                  contextTokensAfter: stats.context_tokens_after,
-                  contextWindow: stats.context_window,
-                  messagesCountBefore: stats.messages_count_before,
-                  messagesCountAfter: stats.messages_count_after,
-                },
-              }
-            : {}),
-        }));
+        // Find the most recent compaction event line and update it with summary and stats
+        for (let i = b.order.length - 1; i >= 0; i--) {
+          const orderId = b.order[i];
+          if (!orderId) continue;
+          const line = b.byId.get(orderId);
+          if (line?.kind === "event" && line.eventType === "compaction") {
+            line.phase = "finished";
+            line.summary = summaryText;
+            if (stats) {
+              line.stats = {
+                trigger: stats.trigger,
+                contextTokensBefore: stats.context_tokens_before,
+                contextTokensAfter: stats.context_tokens_after,
+                contextWindow: stats.context_window,
+                messagesCountBefore: stats.messages_count_before,
+                messagesCountAfter: stats.messages_count_after,
+              };
+            }
+            break;
+          }
+        }
         break;
       }
 
@@ -891,6 +887,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           id,
           eventType: eventChunk.event_type || "unknown",
           eventData: eventChunk.event_data || {},
+          phase: "running",
         }));
         break;
       }

@@ -5,11 +5,7 @@ import type {
   Message,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import {
-  COMPACTION_SUMMARY_HEADER,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "../../constants";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import type { Buffers } from "./accumulator";
 
 /**
@@ -183,15 +179,18 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       case "user_message": {
         const rawText = renderUserContentParts(msg.content);
 
-        // Check if this is a compaction summary message (system_alert with summary)
+        // Check if this is a compaction summary message (old format embedded in user_message)
         const compactionSummary = extractCompactionSummary(rawText);
         if (compactionSummary) {
-          // Render as a user message with context header and summary
+          // Render as a finished compaction event
           const exists = buffers.byId.has(lineId);
           buffers.byId.set(lineId, {
-            kind: "user",
+            kind: "event",
             id: lineId,
-            text: `${COMPACTION_SUMMARY_HEADER}\n\n${compactionSummary}`,
+            eventType: "compaction",
+            eventData: {},
+            phase: "finished",
+            summary: compactionSummary,
           });
           if (!exists) buffers.order.push(lineId);
           break;
@@ -358,25 +357,27 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           const summaryText = summaryMsg.summary || "";
           const stats = summaryMsg.compaction_stats;
 
-          const exists = buffers.byId.has(lineId);
-          buffers.byId.set(lineId, {
-            kind: "summary",
-            id: lineId,
-            text: `${COMPACTION_SUMMARY_HEADER}\n\n${summaryText}`,
-            ...(stats
-              ? {
-                  stats: {
-                    trigger: stats.trigger,
-                    contextTokensBefore: stats.context_tokens_before,
-                    contextTokensAfter: stats.context_tokens_after,
-                    contextWindow: stats.context_window,
-                    messagesCountBefore: stats.messages_count_before,
-                    messagesCountAfter: stats.messages_count_after,
-                  },
-                }
-              : {}),
-          });
-          if (!exists) buffers.order.push(lineId);
+          // Find the most recent compaction event line and update it with summary and stats
+          for (let i = buffers.order.length - 1; i >= 0; i--) {
+            const orderId = buffers.order[i];
+            if (!orderId) continue;
+            const line = buffers.byId.get(orderId);
+            if (line?.kind === "event" && line.eventType === "compaction") {
+              line.phase = "finished";
+              line.summary = summaryText;
+              if (stats) {
+                line.stats = {
+                  trigger: stats.trigger,
+                  contextTokensBefore: stats.context_tokens_before,
+                  contextTokensAfter: stats.context_tokens_after,
+                  contextWindow: stats.context_window,
+                  messagesCountBefore: stats.messages_count_before,
+                  messagesCountAfter: stats.messages_count_after,
+                };
+              }
+              break;
+            }
+          }
           break;
         }
 
@@ -393,6 +394,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
             id: lineId,
             eventType: eventMsg.event_type || "unknown",
             eventData: eventMsg.event_data || {},
+            phase: "finished", // In backfill, events are always finished (summary already processed)
           });
           if (!exists) buffers.order.push(lineId);
           break;
