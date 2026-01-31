@@ -18,7 +18,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import { hashFileBody } from "./lib/frontmatter";
+import { hashFileBody, READ_ONLY_LABELS } from "./lib/frontmatter";
 
 const require = createRequire(import.meta.url);
 const Letta = require("@letta-ai/letta-client")
@@ -134,12 +134,6 @@ async function readMemoryFiles(
 
 // Only memory_filesystem is managed by memfs itself
 const MEMFS_MANAGED_LABELS = new Set(["memory_filesystem"]);
-// Read-only labels are API-authoritative (file-only copies should be ignored)
-const READ_ONLY_LABELS = new Set([
-  "skills",
-  "loaded_skills",
-  "memory_filesystem",
-]);
 
 interface StatusResult {
   conflicts: Array<{ label: string }>;
@@ -258,6 +252,8 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
     const fileInSystem = !!systemFile;
     const blockEntry = attachedBlock || detachedBlock;
     const isAttached = !!attachedBlock;
+    const effectiveReadOnly =
+      !!blockEntry?.read_only || READ_ONLY_LABELS.has(label);
 
     // Check for location mismatch
     if (fileEntry && blockEntry) {
@@ -290,6 +286,10 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
     }
 
     if (!fileEntry && blockEntry) {
+      if (effectiveReadOnly) {
+        pendingFromFile.push(label);
+        continue;
+      }
       if (lastFileHash && !blockChanged) continue; // File deleted, block unchanged
       newBlocks.push(label);
       continue;
@@ -298,7 +298,7 @@ async function checkStatus(agentId: string): Promise<StatusResult> {
     if (!fileEntry || !blockEntry) continue;
 
     // Both exist - read_only blocks are API-authoritative
-    if (blockEntry.read_only) {
+    if (effectiveReadOnly) {
       if (blockChanged) pendingFromBlock.push(label);
       continue;
     }

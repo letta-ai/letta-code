@@ -1,4 +1,12 @@
 import { createHash } from "node:crypto";
+import { READ_ONLY_BLOCK_LABELS } from "../../../../../agent/memoryConstants";
+
+/**
+ * Read-only block labels. These are API-authoritative.
+ */
+export const READ_ONLY_LABELS = new Set(
+  READ_ONLY_BLOCK_LABELS as readonly string[],
+);
 
 /**
  * Parse MDX-style frontmatter from content.

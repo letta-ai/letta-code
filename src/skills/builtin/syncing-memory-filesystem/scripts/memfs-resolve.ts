@@ -23,7 +23,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { parseFrontmatter } from "./lib/frontmatter";
+import { parseFrontmatter, READ_ONLY_LABELS } from "./lib/frontmatter";
 
 const require = createRequire(import.meta.url);
 const Letta = require("@letta-ai/letta-client")
@@ -322,9 +322,12 @@ async function resolveConflicts(
         continue;
       }
 
+      const effectiveReadOnly =
+        !!block.read_only || READ_ONLY_LABELS.has(label);
+
       if (resolution === "file") {
         // read_only blocks: ignore local edits, overwrite file from API
-        if (block.read_only) {
+        if (effectiveReadOnly) {
           const fileContent = renderBlockToFileContent(block);
           writeMemoryFile(dir, label, fileContent);
           result.resolved.push({

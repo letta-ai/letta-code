@@ -673,6 +673,10 @@ export async function syncMemoryFilesystem(
     const fileInSystem = !!systemFile;
     const blockEntry = attachedBlock || detachedBlock;
     const isAttached = !!attachedBlock;
+    const isReadOnlyLabel = (
+      READ_ONLY_BLOCK_LABELS as readonly string[]
+    ).includes(label);
+    const effectiveReadOnly = !!blockEntry?.read_only || isReadOnlyLabel;
 
     // Get directory for file operations
     const fileDir = fileInSystem ? systemDir : detachedDir;
@@ -742,7 +746,7 @@ export async function syncMemoryFilesystem(
     // Case 2: Block exists, no file
     if (!fileEntry && blockEntry) {
       // Read-only blocks: never delete/un-tag. Always recreate file instead.
-      if (blockEntry.read_only) {
+      if (effectiveReadOnly) {
         const targetDir = isAttached ? systemDir : detachedDir;
         const fileContent = renderBlockToFileContent(blockEntry);
         await writeMemoryFile(targetDir, label, fileContent);
@@ -818,7 +822,7 @@ export async function syncMemoryFilesystem(
       // Frontmatter-only change: update metadata even when body matches
       if (fileChanged) {
         // Read-only blocks: ignore local changes, overwrite file with API content
-        if (blockEntry.read_only) {
+        if (effectiveReadOnly) {
           const fileContent = renderBlockToFileContent(blockEntry);
           await writeMemoryFile(fileDir, label, fileContent);
           updatedFiles.push(label);
@@ -910,7 +914,7 @@ export async function syncMemoryFilesystem(
     // Also sync attachment status to match file location
     if (fileChanged) {
       // Read-only blocks: ignore local changes, overwrite file with API content
-      if (blockEntry.read_only) {
+      if (effectiveReadOnly) {
         const fileContent = renderBlockToFileContent(blockEntry);
         await writeMemoryFile(fileDir, label, fileContent);
         updatedFiles.push(label);
@@ -1215,7 +1219,8 @@ export async function checkMemoryFilesystemStatus(
     const fileContent = systemFile?.content ?? detachedFile?.content ?? null;
     const blockValue = attachedBlock?.value ?? detachedBlock?.value ?? null;
     const blockReadOnly =
-      attachedBlock?.read_only ?? detachedBlock?.read_only ?? false;
+      (attachedBlock?.read_only ?? detachedBlock?.read_only ?? false) ||
+      (READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label);
 
     const fileInSystem = !!systemFile;
     const isAttached = !!attachedBlock;
@@ -1301,6 +1306,11 @@ function classifyLabel(
   }
 
   if (fileContent === null && blockValue !== null) {
+    if (blockReadOnly) {
+      // Read-only blocks: missing file should be recreated
+      pendingFromFile.push(label);
+      return;
+    }
     if (lastFileHash && !blockChanged) {
       // File was deleted, block unchanged — would delete block
       return;

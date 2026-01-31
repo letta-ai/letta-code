@@ -18,7 +18,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, normalize, relative } from "node:path";
-import { hashFileBody } from "./lib/frontmatter";
+import { hashFileBody, READ_ONLY_LABELS } from "./lib/frontmatter";
 
 const require = createRequire(import.meta.url);
 const Letta = require("@letta-ai/letta-client")
@@ -267,7 +267,9 @@ async function findConflicts(agentId: string): Promise<{
     if (!fileEntry || !blockEntry) continue;
 
     // read_only blocks are API-authoritative; no conflicts possible
-    if (blockEntry.read_only) continue;
+    const effectiveReadOnly =
+      !!blockEntry.read_only || READ_ONLY_LABELS.has(label);
+    if (effectiveReadOnly) continue;
 
     // Full file hash for "file changed" check
     const fileHash = hashContent(fileEntry.content);
