@@ -814,6 +814,41 @@ export async function syncMemoryFilesystem(
           });
         }
       }
+
+      // Frontmatter-only change: update metadata even when body matches
+      if (fileChanged) {
+        // Read-only blocks: ignore local changes, overwrite file with API content
+        if (blockEntry.read_only) {
+          const fileContent = renderBlockToFileContent(blockEntry);
+          await writeMemoryFile(fileDir, label, fileContent);
+          updatedFiles.push(label);
+          allFilesMap.set(label, { content: fileContent });
+          continue;
+        }
+
+        if (blockEntry.id) {
+          const parsed = parseBlockUpdateFromFileContent(
+            fileEntry.content,
+            label,
+          );
+          const updatePayload: Record<string, unknown> = {};
+          if (parsed.hasDescription)
+            updatePayload.description = parsed.description;
+          if (parsed.hasLimit) updatePayload.limit = parsed.limit;
+          if (parsed.hasReadOnly) updatePayload.read_only = parsed.read_only;
+          // For detached blocks, keep label in sync
+          if (!isAttached) updatePayload.label = label;
+
+          if (Object.keys(updatePayload).length > 0) {
+            await client.blocks.update(blockEntry.id, updatePayload);
+            updatedBlocks.push(label);
+            allBlocksMap.set(label, {
+              value: parsed.value,
+              id: blockEntry.id,
+            });
+          }
+        }
+      }
       continue;
     }
 
@@ -1179,6 +1214,8 @@ export async function checkMemoryFilesystemStatus(
 
     const fileContent = systemFile?.content ?? detachedFile?.content ?? null;
     const blockValue = attachedBlock?.value ?? detachedBlock?.value ?? null;
+    const blockReadOnly =
+      attachedBlock?.read_only ?? detachedBlock?.read_only ?? false;
 
     const fileInSystem = !!systemFile;
     const isAttached = !!attachedBlock;
@@ -1203,6 +1240,7 @@ export async function checkMemoryFilesystemStatus(
       pendingFromBlock,
       newFiles,
       newBlocks,
+      blockReadOnly,
     );
   }
 
@@ -1240,8 +1278,10 @@ function classifyLabel(
   pendingFromBlock: string[],
   newFiles: string[],
   newBlocks: string[],
+  blockReadOnly: boolean,
 ): void {
   const fileHash = fileContent !== null ? hashContent(fileContent) : null;
+  const fileBodyHash = fileContent !== null ? hashFileBody(fileContent) : null;
   const blockHash = blockValue !== null ? hashContent(blockValue) : null;
 
   const fileChanged = fileHash !== lastFileHash;
@@ -1274,7 +1314,17 @@ function classifyLabel(
   }
 
   // Both exist — check for differences
-  if (fileHash === blockHash) {
+  if (blockReadOnly) {
+    if (blockChanged) {
+      pendingFromBlock.push(label);
+    }
+    return;
+  }
+
+  if (fileBodyHash === blockHash) {
+    if (fileChanged) {
+      pendingFromFile.push(label); // frontmatter-only change
+    }
     return; // In sync
   }
 

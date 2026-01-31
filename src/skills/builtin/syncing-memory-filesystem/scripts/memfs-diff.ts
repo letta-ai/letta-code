@@ -45,17 +45,60 @@ function getApiKey(): string {
 
 const MEMORY_FS_STATE_FILE = ".sync-state.json";
 
+// Unified sync state format (matches main memoryFilesystem.ts)
 type SyncState = {
-  systemBlocks: Record<string, string>;
-  systemFiles: Record<string, string>;
-  detachedBlocks: Record<string, string>;
-  detachedFiles: Record<string, string>;
-  detachedBlockIds: Record<string, string>;
+  blockHashes: Record<string, string>;
+  fileHashes: Record<string, string>;
+  blockIds: Record<string, string>;
   lastSync: string | null;
 };
 
 function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Parse frontmatter from file content.
+ */
+function parseFrontmatter(content: string): {
+  frontmatter: Record<string, string>;
+  body: string;
+} {
+  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+  const match = content.match(frontmatterRegex);
+
+  if (!match || !match[1] || !match[2]) {
+    return { frontmatter: {}, body: content };
+  }
+
+  const frontmatterText = match[1];
+  const body = match[2];
+  const frontmatter: Record<string, string> = {};
+
+  for (const line of frontmatterText.split("\n")) {
+    const colonIdx = line.indexOf(":");
+    if (colonIdx > 0) {
+      const key = line.slice(0, colonIdx).trim();
+      let value = line.slice(colonIdx + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      frontmatter[key] = value;
+    }
+  }
+
+  return { frontmatter, body };
+}
+
+/**
+ * Hash just the body of file content (excluding frontmatter).
+ */
+function hashFileBody(content: string): string {
+  const { body } = parseFrontmatter(content);
+  return hashContent(body);
 }
 
 function getMemoryRoot(agentId: string): string {
@@ -66,49 +109,45 @@ function loadSyncState(agentId: string): SyncState {
   const statePath = join(getMemoryRoot(agentId), MEMORY_FS_STATE_FILE);
   if (!existsSync(statePath)) {
     return {
-      systemBlocks: {},
-      systemFiles: {},
-      detachedBlocks: {},
-      detachedFiles: {},
-      detachedBlockIds: {},
+      blockHashes: {},
+      fileHashes: {},
+      blockIds: {},
       lastSync: null,
     };
   }
 
   try {
     const raw = readFileSync(statePath, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<SyncState> & {
-      blocks?: Record<string, string>;
-      files?: Record<string, string>;
-    };
+    const parsed = JSON.parse(raw);
     return {
-      systemBlocks: parsed.systemBlocks || parsed.blocks || {},
-      systemFiles: parsed.systemFiles || parsed.files || {},
-      detachedBlocks: parsed.detachedBlocks || {},
-      detachedFiles: parsed.detachedFiles || {},
-      detachedBlockIds: parsed.detachedBlockIds || {},
+      blockHashes: parsed.blockHashes || {},
+      fileHashes: parsed.fileHashes || {},
+      blockIds: parsed.blockIds || {},
       lastSync: parsed.lastSync || null,
     };
   } catch {
     return {
-      systemBlocks: {},
-      systemFiles: {},
-      detachedBlocks: {},
-      detachedFiles: {},
-      detachedBlockIds: {},
+      blockHashes: {},
+      fileHashes: {},
+      blockIds: {},
       lastSync: null,
     };
   }
 }
 
-async function scanMdFiles(dir: string, baseDir = dir): Promise<string[]> {
+async function scanMdFiles(
+  dir: string,
+  baseDir = dir,
+  excludeDirs: string[] = [],
+): Promise<string[]> {
   if (!existsSync(dir)) return [];
   const entries = await readdir(dir, { withFileTypes: true });
   const results: string[] = [];
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...(await scanMdFiles(fullPath, baseDir)));
+      if (excludeDirs.includes(entry.name)) continue;
+      results.push(...(await scanMdFiles(fullPath, baseDir, excludeDirs)));
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       results.push(relative(baseDir, fullPath));
     }
@@ -122,8 +161,9 @@ function labelFromPath(relativePath: string): string {
 
 async function readMemoryFiles(
   dir: string,
+  excludeDirs: string[] = [],
 ): Promise<Map<string, { content: string }>> {
-  const files = await scanMdFiles(dir);
+  const files = await scanMdFiles(dir, dir, excludeDirs);
   const entries = new Map<string, { content: string }>();
   for (const rel of files) {
     const label = labelFromPath(rel);
@@ -133,13 +173,16 @@ async function readMemoryFiles(
   return entries;
 }
 
-const MANAGED_LABELS = new Set([
-  "memory_filesystem",
-  "skills",
-  "loaded_skills",
-]);
+// Only memory_filesystem is managed by memfs itself
+const MEMFS_MANAGED_LABELS = new Set(["memory_filesystem"]);
 
 interface Conflict {
+  label: string;
+  fileContent: string;
+  blockContent: string;
+}
+
+interface MetadataChange {
   label: string;
   fileContent: string;
   blockContent: string;
@@ -160,122 +203,161 @@ function getOverflowDirectory(): string {
   return join(homedir(), ".letta", "projects", sanitizedPath, "agent-tools");
 }
 
-async function findConflicts(agentId: string): Promise<Conflict[]> {
+async function findConflicts(agentId: string): Promise<{
+  conflicts: Conflict[];
+  metadataOnly: MetadataChange[];
+}> {
   const baseUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
   const client = new Letta({ apiKey: getApiKey(), baseUrl });
 
   const root = getMemoryRoot(agentId);
   const systemDir = join(root, "system");
-  // Detached files go at root level (flat structure)
   const detachedDir = root;
 
   for (const dir of [root, systemDir]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
+  // Read files from both locations
   const systemFiles = await readMemoryFiles(systemDir);
-  const detachedFiles = await readMemoryFiles(detachedDir);
-  systemFiles.delete("memory_filesystem");
+  const detachedFiles = await readMemoryFiles(detachedDir, ["system", "user"]);
 
+  // Fetch attached blocks
   const blocksResponse = await client.agents.blocks.list(agentId, {
     limit: 1000,
   });
-  const blocks = Array.isArray(blocksResponse)
+  const attachedBlocks = Array.isArray(blocksResponse)
     ? blocksResponse
     : ((blocksResponse as { items?: unknown[] }).items as Array<{
+        id?: string;
         label?: string;
         value?: string;
+        read_only?: boolean;
       }>) || [];
 
-  const systemBlockMap = new Map(
-    blocks
-      .filter((b: { label?: string }) => b.label)
-      .map((b: { label?: string; value?: string }) => [
-        b.label as string,
-        b.value || "",
-      ]),
-  );
-  systemBlockMap.delete("memory_filesystem");
+  const systemBlockMap = new Map<
+    string,
+    { value: string; id: string; read_only?: boolean }
+  >();
+  for (const block of attachedBlocks) {
+    if (block.label && block.id) {
+      systemBlockMap.set(block.label, {
+        value: block.value || "",
+        id: block.id,
+        read_only: block.read_only,
+      });
+    }
+  }
+
+  // Fetch detached blocks via owner tag
+  const ownedBlocksResponse = await client.blocks.list({
+    tags: [`owner:${agentId}`],
+    limit: 1000,
+  });
+  const ownedBlocks = Array.isArray(ownedBlocksResponse)
+    ? ownedBlocksResponse
+    : ((ownedBlocksResponse as { items?: unknown[] }).items as Array<{
+        id?: string;
+        label?: string;
+        value?: string;
+        read_only?: boolean;
+      }>) || [];
+
+  const attachedIds = new Set(attachedBlocks.map((b) => b.id));
+  const detachedBlockMap = new Map<
+    string,
+    { value: string; id: string; read_only?: boolean }
+  >();
+  for (const block of ownedBlocks) {
+    if (block.label && block.id && !attachedIds.has(block.id)) {
+      if (!systemBlockMap.has(block.label)) {
+        detachedBlockMap.set(block.label, {
+          value: block.value || "",
+          id: block.id,
+          read_only: block.read_only,
+        });
+      }
+    }
+  }
 
   const lastState = loadSyncState(agentId);
-
-  const detachedBlockMap = new Map<string, string>();
-  for (const [label, blockId] of Object.entries(lastState.detachedBlockIds)) {
-    try {
-      const block = await client.blocks.retrieve(blockId);
-      detachedBlockMap.set(label, block.value || "");
-    } catch {
-      // Block no longer exists
-    }
-  }
-
   const conflicts: Conflict[] = [];
+  const metadataOnly: MetadataChange[] = [];
 
-  function checkConflict(
-    label: string,
-    fileContent: string | null,
-    blockValue: string | null,
-    lastFileHash: string | null,
-    lastBlockHash: string | null,
-  ) {
-    if (fileContent === null || blockValue === null) return;
-    const fileHash = hashContent(fileContent);
-    const blockHash = hashContent(blockValue);
-    if (fileHash === blockHash) return;
+  // Collect all labels
+  const allLabels = new Set<string>([
+    ...systemFiles.keys(),
+    ...detachedFiles.keys(),
+    ...systemBlockMap.keys(),
+    ...detachedBlockMap.keys(),
+    ...Object.keys(lastState.blockHashes),
+    ...Object.keys(lastState.fileHashes),
+  ]);
+
+  for (const label of [...allLabels].sort()) {
+    if (MEMFS_MANAGED_LABELS.has(label)) continue;
+
+    const systemFile = systemFiles.get(label);
+    const detachedFile = detachedFiles.get(label);
+    const attachedBlock = systemBlockMap.get(label);
+    const detachedBlock = detachedBlockMap.get(label);
+
+    const fileEntry = systemFile || detachedFile;
+    const blockEntry = attachedBlock || detachedBlock;
+
+    if (!fileEntry || !blockEntry) continue;
+
+    // read_only blocks are API-authoritative; no conflicts possible
+    if (blockEntry.read_only) continue;
+
+    // Full file hash for "file changed" check
+    const fileHash = hashContent(fileEntry.content);
+    // Body hash for "content matches" check
+    const fileBodyHash = hashFileBody(fileEntry.content);
+    const blockHash = hashContent(blockEntry.value);
+
+    const lastFileHash = lastState.fileHashes[label] ?? null;
+    const lastBlockHash = lastState.blockHashes[label] ?? null;
     const fileChanged = fileHash !== lastFileHash;
     const blockChanged = blockHash !== lastBlockHash;
+
+    // Content matches - check for frontmatter-only changes
+    if (fileBodyHash === blockHash) {
+      if (fileChanged) {
+        metadataOnly.push({
+          label,
+          fileContent: fileEntry.content,
+          blockContent: blockEntry.value,
+        });
+      }
+      continue;
+    }
+
+    // Conflict only if both changed
     if (fileChanged && blockChanged) {
-      conflicts.push({ label, fileContent, blockContent: blockValue });
+      conflicts.push({
+        label,
+        fileContent: fileEntry.content,
+        blockContent: blockEntry.value,
+      });
     }
   }
 
-  // Check system labels
-  const systemLabels = new Set([
-    ...systemFiles.keys(),
-    ...systemBlockMap.keys(),
-    ...Object.keys(lastState.systemBlocks),
-    ...Object.keys(lastState.systemFiles),
-  ]);
-
-  for (const label of [...systemLabels].sort()) {
-    if (MANAGED_LABELS.has(label)) continue;
-    checkConflict(
-      label,
-      systemFiles.get(label)?.content ?? null,
-      systemBlockMap.get(label) ?? null,
-      lastState.systemFiles[label] ?? null,
-      lastState.systemBlocks[label] ?? null,
-    );
-  }
-
-  // Check user labels
-  const userLabels = new Set([
-    ...detachedFiles.keys(),
-    ...detachedBlockMap.keys(),
-    ...Object.keys(lastState.detachedBlocks),
-    ...Object.keys(lastState.detachedFiles),
-  ]);
-
-  for (const label of [...userLabels].sort()) {
-    checkConflict(
-      label,
-      detachedFiles.get(label)?.content ?? null,
-      detachedBlockMap.get(label) ?? null,
-      lastState.detachedFiles[label] ?? null,
-      lastState.detachedBlocks[label] ?? null,
-    );
-  }
-
-  return conflicts;
+  return { conflicts, metadataOnly };
 }
 
-function formatDiffFile(conflicts: Conflict[], agentId: string): string {
+function formatDiffFile(
+  conflicts: Conflict[],
+  metadataOnly: MetadataChange[],
+  agentId: string,
+): string {
   const lines: string[] = [
     `# Memory Filesystem Diff`,
     ``,
     `Agent: ${agentId}`,
     `Generated: ${new Date().toISOString()}`,
     `Conflicts: ${conflicts.length}`,
+    `Metadata-only changes: ${metadataOnly.length}`,
     ``,
     `---`,
     ``,
@@ -296,6 +378,32 @@ function formatDiffFile(conflicts: Conflict[], agentId: string): string {
     lines.push(``);
     lines.push(`---`);
     lines.push(``);
+  }
+
+  if (metadataOnly.length > 0) {
+    lines.push(`## Metadata-only Changes`);
+    lines.push(``);
+    lines.push(
+      `Frontmatter changed while body content stayed the same (file wins).`,
+    );
+    lines.push(``);
+
+    for (const change of metadataOnly) {
+      lines.push(`### ${change.label}`);
+      lines.push(``);
+      lines.push(`#### File Version (with frontmatter)`);
+      lines.push(`\`\`\``);
+      lines.push(change.fileContent);
+      lines.push(`\`\`\``);
+      lines.push(``);
+      lines.push(`#### Block Version (body only)`);
+      lines.push(`\`\`\``);
+      lines.push(change.blockContent);
+      lines.push(`\`\`\``);
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    }
   }
 
   return lines.join("\n");
@@ -329,13 +437,13 @@ Output: Path to the diff file, or a message if no conflicts exist.
   }
 
   findConflicts(agentId)
-    .then((conflicts) => {
-      if (conflicts.length === 0) {
+    .then(({ conflicts, metadataOnly }) => {
+      if (conflicts.length === 0 && metadataOnly.length === 0) {
         console.log("No conflicts found. Memory filesystem is clean.");
         return;
       }
 
-      const diffContent = formatDiffFile(conflicts, agentId);
+      const diffContent = formatDiffFile(conflicts, metadataOnly, agentId);
 
       // Write to overflow directory (same pattern as tool output overflow)
       const overflowDir = getOverflowDirectory();
@@ -348,7 +456,7 @@ Output: Path to the diff file, or a message if no conflicts exist.
       writeFileSync(diffPath, diffContent, "utf-8");
 
       console.log(
-        `Diff (${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}) written to: ${diffPath}`,
+        `Diff (${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}, ${metadataOnly.length} metadata-only change${metadataOnly.length === 1 ? "" : "s"}) written to: ${diffPath}`,
       );
     })
     .catch((error) => {
