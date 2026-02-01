@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -91,6 +91,37 @@ const logoFrames = [
   █████▓  `,
 ];
 
+// Shared module-level ticker for animation sync across all AnimatedLogo instances
+// Single timer, guaranteed sync, no time-jump artifacts
+let tick = 0;
+const listeners = new Set<() => void>();
+let tickerInterval: ReturnType<typeof setInterval> | null = null;
+
+function subscribe(callback: () => void): () => void {
+  listeners.add(callback);
+  // Start ticker on first subscriber
+  if (!tickerInterval) {
+    tickerInterval = setInterval(() => {
+      tick++;
+      for (const cb of listeners) {
+        cb();
+      }
+    }, 100);
+  }
+  return () => {
+    listeners.delete(callback);
+    // Stop ticker when no subscribers
+    if (listeners.size === 0 && tickerInterval) {
+      clearInterval(tickerInterval);
+      tickerInterval = null;
+    }
+  };
+}
+
+function getSnapshot(): number {
+  return tick;
+}
+
 interface AnimatedLogoProps {
   color?: string;
 }
@@ -98,15 +129,8 @@ interface AnimatedLogoProps {
 export function AnimatedLogo({
   color = colors.welcome.accent,
 }: AnimatedLogoProps) {
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((prev) => (prev + 1) % logoFrames.length);
-    }, 100);
-
-    return () => clearInterval(timer);
-  }, []);
+  const tick = useSyncExternalStore(subscribe, getSnapshot);
+  const frame = tick % logoFrames.length;
 
   const logoLines = logoFrames[frame]?.split("\n") ?? [];
 
