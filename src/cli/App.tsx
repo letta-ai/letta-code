@@ -9264,10 +9264,13 @@ ${SYSTEM_REMINDER_CLOSE}
       parseMemoryPreference(questions, answers);
 
       // Format the answer string like Claude Code does
-      const answerParts = questions.map((q) => {
-        const answer = answers[q.question] || "";
-        return `"${q.question}"="${answer}"`;
-      });
+      // Filter out malformed questions (LLM might send invalid data)
+      const answerParts = questions
+        .filter((q) => q.question)
+        .map((q) => {
+          const answer = answers[q.question] || "";
+          return `"${q.question}"="${answer}"`;
+        });
       const toolReturn = `User has answered your questions: ${answerParts.join(", ")}. You can now continue with the user's answers in mind.`;
 
       const precomputedResult: ToolExecutionResult = {
