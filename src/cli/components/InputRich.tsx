@@ -843,7 +843,7 @@ export function Input({
   const networkArrow = useMemo(() => {
     if (!networkPhase) return "";
     if (networkPhase === "upload") return "↑";
-    if (networkPhase === "download") return "↓";
+    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
     return "↑\u0338";
   }, [networkPhase]);
 
