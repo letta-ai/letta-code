@@ -63,7 +63,7 @@ export const commands: Record<string, Command> = {
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",
-    order: 15.5,
+    order: 27.5, // Advanced feature, near /toolset
     handler: () => {
       // Handled specially in App.tsx
       return "Managing memory filesystem...";
