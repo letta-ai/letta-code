@@ -2,7 +2,7 @@
  * SubagentManager component - displays available subagents
  */
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useEffect, useState } from "react";
 import {
   AGENTS_DIR,
@@ -13,6 +13,7 @@ import {
   type SubagentConfig,
 } from "../../agent/subagents";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 interface SubagentManagerProps {
   onClose: () => void;

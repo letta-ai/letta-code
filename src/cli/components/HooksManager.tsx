@@ -1,7 +1,7 @@
 // src/cli/components/HooksManager.tsx
 // Interactive TUI for managing hooks configuration
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   type HookEvent,
@@ -29,6 +29,7 @@ import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { Text } from "./Text";
 
 // Box drawing characters
 const BOX_TOP_LEFT = "╭";

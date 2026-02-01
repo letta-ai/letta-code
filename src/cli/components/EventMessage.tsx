@@ -1,10 +1,11 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { COMPACTION_SUMMARY_HEADER } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { CompactingAnimation } from "./CompactingAnimation";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 type EventLine = {
   kind: "event";

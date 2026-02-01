@@ -4,11 +4,12 @@ import type {
   StreamableHTTPMcpServer,
 } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";

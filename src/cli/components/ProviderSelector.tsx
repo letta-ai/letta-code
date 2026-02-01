@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type AuthMethod,
@@ -17,6 +17,7 @@ import {
 } from "../../utils/aws-credentials";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 

@@ -1,6 +1,6 @@
 import { relative } from "node:path";
 import * as Diff from "diff";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useMemo } from "react";
 import {
   ADV_DIFF_CONTEXT_LINES,
@@ -10,6 +10,7 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { EditRenderer, MultiEditRenderer, WriteRenderer } from "./DiffRenderer";
+import { Text } from "./Text";
 
 type EditItem = {
   old_string: string;

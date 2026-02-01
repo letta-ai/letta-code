@@ -1,6 +1,6 @@
 // existsSync, readFileSync removed - no longer needed since plan content
 // is shown via StaticPlanApproval during approval, not in tool result
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { clipToolReturn } from "../../tools/manager.js";
@@ -23,6 +23,7 @@ import {
   isTaskTool,
   isTodoTool,
 } from "../helpers/toolNameMapping.js";
+import { Text } from "./Text";
 
 /**
  * Check if tool is AskUserQuestion

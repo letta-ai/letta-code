@@ -1,7 +1,8 @@
 import * as Diff from "diff";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 interface MemoryDiffRendererProps {
   argsText: string;

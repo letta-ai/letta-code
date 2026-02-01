@@ -1,9 +1,10 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type Props = {
   toolName: string;

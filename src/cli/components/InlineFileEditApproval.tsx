@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { parsePatchToAdvancedDiff } from "../helpers/diff";
@@ -8,6 +8,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type FileEditInfo = {
   toolName: string;

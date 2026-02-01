@@ -3,7 +3,7 @@
 import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import {
   type ComponentType,
@@ -30,6 +30,7 @@ import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import { Text } from "./Text";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;

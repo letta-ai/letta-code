@@ -13,11 +13,12 @@
  * Shows: "Ran N subagents" with final stats (tool count, tokens).
  */
 
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 // ============================================================================
 // Types

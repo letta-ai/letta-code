@@ -1,9 +1,10 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { Text } from "./Text";
 
 type CommandLine = {
   kind: "command";

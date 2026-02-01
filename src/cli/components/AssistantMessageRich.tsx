@@ -1,7 +1,8 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { Text } from "./Text";
 
 // Helper function to normalize text - copied from old codebase
 const normalize = (s: string) =>

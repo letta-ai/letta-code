@@ -1,7 +1,7 @@
 import chalk from "chalk";
-import { Text } from "ink";
 import { memo } from "react";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 interface ShimmerTextProps {
   color?: string;

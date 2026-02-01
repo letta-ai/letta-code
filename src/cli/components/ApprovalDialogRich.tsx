@@ -1,5 +1,5 @@
 // Import useInput from vendored Ink for bracketed paste support
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import type React from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ApprovalContext } from "../../permissions/analyzer";
@@ -14,6 +14,7 @@ import type { ApprovalRequest } from "../helpers/stream";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { Text } from "./Text";
 
 type Props = {
   approvals: ApprovalRequest[];

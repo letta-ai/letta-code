@@ -1,9 +1,9 @@
-import { Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
 import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
+import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
 const VISIBLE_COMMANDS = 8; // Number of commands visible at once

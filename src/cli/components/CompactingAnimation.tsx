@@ -1,5 +1,5 @@
-import { Text } from "ink";
 import { memo, useEffect, useState } from "react";
+import { Text } from "./Text";
 
 // Default configuration
 const DEFAULT_GARBAGE_CHARS = "._";

@@ -15,7 +15,7 @@
  * SubagentGroupStatic instead (a pure props-based snapshot with no hooks).
  */
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
 import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
@@ -28,6 +28,7 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 function formatToolArgs(argsStr: string): string {
   try {
