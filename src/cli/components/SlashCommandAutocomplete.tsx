@@ -52,6 +52,8 @@ export function SlashCommandAutocomplete({
 }: AutocompleteProps) {
   const [matches, setMatches] = useState<CommandMatch[]>([]);
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
+  // Track if we should show "no matching commands" (non-empty query with no results)
+  const [showNoMatches, setShowNoMatches] = useState(false);
 
   // Load custom commands once on mount
   useEffect(() => {
@@ -112,8 +114,15 @@ export function SlashCommandAutocomplete({
     onAutocomplete: onAutocomplete
       ? (item) => onAutocomplete(item.cmd)
       : undefined,
-    onActiveChange,
+    // Disable automatic active state management - we handle it manually below
+    manageActiveState: false,
   });
+
+  // Manually manage active state to include the "no matches" case
+  useEffect(() => {
+    const isActive = matches.length > 0 || showNoMatches;
+    onActiveChange?.(isActive);
+  }, [matches.length, showNoMatches, onActiveChange]);
 
   // Update matches when input changes
   useEffect(() => {
@@ -121,6 +130,7 @@ export function SlashCommandAutocomplete({
 
     if (!result) {
       setMatches([]);
+      setShowNoMatches(false);
       return;
     }
 
@@ -129,6 +139,7 @@ export function SlashCommandAutocomplete({
     // If there's a space after the command, user has moved on - hide autocomplete
     if (hasSpaceAfter) {
       setMatches([]);
+      setShowNoMatches(false);
       return;
     }
 
@@ -137,6 +148,8 @@ export function SlashCommandAutocomplete({
     // If query is empty (just typed "/"), show all commands
     if (query.length === 0) {
       newMatches = allCommands;
+      setMatches(newMatches);
+      setShowNoMatches(false);
     } else {
       // Filter commands that contain the query (case-insensitive)
       // Match against the command name without the leading "/"
@@ -145,9 +158,10 @@ export function SlashCommandAutocomplete({
         const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
         return cmdName.includes(lowerQuery);
       });
+      setMatches(newMatches);
+      // Show "no matches" message if query is non-empty and no results
+      setShowNoMatches(newMatches.length === 0);
     }
-
-    setMatches(newMatches);
   }, [currentInput, cursorPosition, allCommands]);
 
   // Don't show if input doesn't start with "/"
@@ -155,7 +169,16 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
-  // Don't show if no matches
+  // Show "no matching commands" message when query has content but no results
+  if (showNoMatches) {
+    return (
+      <AutocompleteBox>
+        <Text dimColor>{"  "}No matching commands</Text>
+      </AutocompleteBox>
+    );
+  }
+
+  // Don't show if no matches and query is empty (shouldn't happen, but safety check)
   if (matches.length === 0) {
     return null;
   }
