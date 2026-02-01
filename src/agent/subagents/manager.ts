@@ -24,9 +24,10 @@ import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
 import { preloadSkillsContent } from "../../tools/impl/Skill";
 import { getErrorMessage } from "../../utils/error";
+import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
-import { resolveModelByLlmConfig } from "../model";
+import { resolveModel } from "../model";
 import { SKILLS_DIR } from "../skills";
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
@@ -67,16 +68,23 @@ interface ExecutionState {
  * Get the primary agent's model ID
  * Fetches from API and resolves to a known model ID
  */
-async function getPrimaryAgentModel(): Promise<string | null> {
+function getModelHandleFromAgent(agent: {
+  llm_config?: { model_endpoint_type?: string | null; model?: string | null };
+}): string | null {
+  const endpoint = agent.llm_config?.model_endpoint_type;
+  const model = agent.llm_config?.model;
+  if (endpoint && model) {
+    return `${endpoint}/${model}`;
+  }
+  return model || null;
+}
+
+async function getPrimaryAgentModelHandle(): Promise<string | null> {
   try {
     const agentId = getCurrentAgentId();
     const client = await getClient();
     const agent = await client.agents.retrieve(agentId);
-    const model = agent.llm_config?.model;
-    if (model) {
-      return resolveModelByLlmConfig(model);
-    }
-    return null;
+    return getModelHandleFromAgent(agent);
   } catch {
     return null;
   }
@@ -91,6 +99,111 @@ function isProviderNotSupportedError(errorOutput: string): boolean {
     errorOutput.includes("is not supported") &&
     errorOutput.includes("supported providers:")
   );
+}
+
+const BYOK_PROVIDER_TO_BASE: Record<string, string> = {
+  "lc-anthropic": "anthropic",
+  "lc-openai": "openai",
+  "lc-zai": "zai",
+  "lc-gemini": "google_ai",
+  "lc-openrouter": "openrouter",
+  "lc-minimax": "minimax",
+  "lc-bedrock": "bedrock",
+  "chatgpt-plus-pro": "chatgpt-plus-pro",
+};
+
+function getProviderPrefix(handle: string): string | null {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return null;
+  return handle.slice(0, slashIndex);
+}
+
+function swapProviderPrefix(
+  parentHandle: string,
+  recommendedHandle: string,
+): string | null {
+  const parentProvider = getProviderPrefix(parentHandle);
+  if (!parentProvider) return null;
+
+  const baseProvider = BYOK_PROVIDER_TO_BASE[parentProvider];
+  if (!baseProvider) return null;
+
+  const recommendedProvider = getProviderPrefix(recommendedHandle);
+  if (!recommendedProvider || recommendedProvider !== baseProvider) return null;
+
+  const modelPortion = recommendedHandle.slice(recommendedProvider.length + 1);
+  return `${parentProvider}/${modelPortion}`;
+}
+
+export async function resolveSubagentModel(options: {
+  userModel?: string;
+  recommendedModel?: string;
+  parentModelHandle?: string | null;
+  availableHandles?: Set<string>;
+}): Promise<string | null> {
+  const { userModel, recommendedModel, parentModelHandle } = options;
+
+  if (userModel) return userModel;
+
+  let recommendedHandle: string | null = null;
+  if (recommendedModel && recommendedModel !== "inherit") {
+    recommendedHandle = resolveModel(recommendedModel);
+  }
+
+  let availableHandles: Set<string> | null = options.availableHandles ?? null;
+  const isAvailable = async (handle: string): Promise<boolean> => {
+    try {
+      if (!availableHandles) {
+        const result = await getAvailableModelHandles();
+        availableHandles = result.handles;
+      }
+      return availableHandles.has(handle);
+    } catch {
+      return false;
+    }
+  };
+
+  if (parentModelHandle) {
+    const parentProvider = getProviderPrefix(parentModelHandle);
+    const parentBaseProvider = parentProvider
+      ? BYOK_PROVIDER_TO_BASE[parentProvider]
+      : null;
+    const parentIsByok = !!parentBaseProvider;
+
+    if (recommendedHandle) {
+      const recommendedProvider = getProviderPrefix(recommendedHandle);
+
+      if (parentIsByok) {
+        if (recommendedProvider === parentProvider) {
+          if (await isAvailable(recommendedHandle)) {
+            return recommendedHandle;
+          }
+        } else {
+          const swapped = swapProviderPrefix(
+            parentModelHandle,
+            recommendedHandle,
+          );
+          if (swapped && (await isAvailable(swapped))) {
+            return swapped;
+          }
+        }
+
+        return parentModelHandle;
+      }
+
+      if (await isAvailable(recommendedHandle)) {
+        return recommendedHandle;
+      }
+    }
+
+    return parentModelHandle;
+  }
+
+  if (recommendedHandle && (await isAvailable(recommendedHandle))) {
+    return recommendedHandle;
+  }
+
+  return recommendedHandle;
 }
 
 /**
@@ -553,7 +666,7 @@ async function executeSubagent(
     if (exitCode !== 0) {
       // Check if this is a provider-not-supported error and we haven't retried yet
       if (!isRetry && isProviderNotSupportedError(stderr)) {
-        const primaryModel = await getPrimaryAgentModel();
+        const primaryModel = await getPrimaryAgentModelHandle();
         if (primaryModel) {
           // Retry with the primary agent's model
           return executeSubagent(
@@ -692,10 +805,16 @@ export async function spawnSubagent(
     existingAgentId || existingConversationId,
   );
 
+  const parentModelHandle = await getPrimaryAgentModelHandle();
+
   // For existing agents, don't override model; for new agents, use provided or config default
   const model = isDeployingExisting
     ? null
-    : userModel || config.recommendedModel;
+    : await resolveSubagentModel({
+        userModel,
+        recommendedModel: config.recommendedModel,
+        parentModelHandle,
+      });
   const baseURL = getBaseURL();
 
   // Build the prompt with system reminder for deployed agents
