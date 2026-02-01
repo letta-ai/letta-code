@@ -145,6 +145,7 @@ import { SystemPromptSelector } from "./components/SystemPromptSelector";
 import { Text } from "./components/Text";
 import { ToolCallMessage } from "./components/ToolCallMessageRich";
 import { ToolsetSelector } from "./components/ToolsetSelector";
+import { TrajectorySummary } from "./components/TrajectorySummary";
 import { UserMessage } from "./components/UserMessageRich";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { AnimationProvider } from "./contexts/AnimationContext";
@@ -193,7 +194,10 @@ import {
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
-import { getRandomThinkingVerb } from "./helpers/thinkingMessages";
+import {
+  getRandomPastTenseVerb,
+  getRandomThinkingVerb,
+} from "./helpers/thinkingMessages";
 import {
   isFileEditTool,
   isFileWriteTool,
@@ -1175,6 +1179,15 @@ export default function App({
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
 
+  // Trajectory token/time bases (accumulated across runs)
+  const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
+  const [trajectoryElapsedBaseMs, setTrajectoryElapsedBaseMs] = useState(0);
+  const [streamElapsedMs, setStreamElapsedMs] = useState(0);
+  const trajectoryRunTokenStartRef = useRef(0);
+  const trajectoryTokenDisplayRef = useRef(0);
+  const trajectorySegmentStartRef = useRef<number | null>(null);
+  const streamElapsedMsRef = useRef(0);
+
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
@@ -1184,6 +1197,43 @@ export default function App({
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
+
+  const syncTrajectoryTokenBase = useCallback(() => {
+    const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
+    setTrajectoryTokenBase(snapshot?.tokens ?? 0);
+  }, []);
+
+  const openTrajectorySegment = useCallback(() => {
+    if (trajectorySegmentStartRef.current === null) {
+      trajectorySegmentStartRef.current = performance.now();
+      sessionStatsRef.current.startTrajectory();
+    }
+  }, []);
+
+  const closeTrajectorySegment = useCallback(() => {
+    const start = trajectorySegmentStartRef.current;
+    if (start !== null) {
+      const segmentMs = performance.now() - start;
+      sessionStatsRef.current.accumulateTrajectory({ wallMs: segmentMs });
+      trajectorySegmentStartRef.current = null;
+    }
+  }, []);
+
+  const syncTrajectoryElapsedBase = useCallback(() => {
+    const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
+    setTrajectoryElapsedBaseMs(snapshot?.wallMs ?? 0);
+  }, []);
+
+  const resetTrajectoryBases = useCallback(() => {
+    sessionStatsRef.current.resetTrajectory();
+    setTrajectoryTokenBase(0);
+    setTrajectoryElapsedBaseMs(0);
+    setStreamElapsedMs(0);
+    trajectoryRunTokenStartRef.current = 0;
+    trajectoryTokenDisplayRef.current = 0;
+    trajectorySegmentStartRef.current = null;
+    streamElapsedMsRef.current = 0;
+  }, []);
 
   // Wire up session stats to telemetry for safety net handlers
   useEffect(() => {
@@ -1196,6 +1246,41 @@ export default function App({
       telemetry.setSessionStatsGetter(undefined);
     };
   }, []);
+
+  // Track trajectory wall time based on streaming state (matches InputRich timer)
+  useEffect(() => {
+    if (streaming) {
+      openTrajectorySegment();
+      return;
+    }
+    closeTrajectorySegment();
+    syncTrajectoryElapsedBase();
+  }, [
+    streaming,
+    openTrajectorySegment,
+    closeTrajectorySegment,
+    syncTrajectoryElapsedBase,
+  ]);
+
+  useEffect(() => {
+    if (!streaming) {
+      streamElapsedMsRef.current = 0;
+      setStreamElapsedMs(0);
+      return;
+    }
+
+    openTrajectorySegment();
+    const tick = () => {
+      const start = trajectorySegmentStartRef.current;
+      const next = start ? performance.now() - start : 0;
+      streamElapsedMsRef.current = next;
+      setStreamElapsedMs(next);
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [streaming, openTrajectorySegment]);
 
   // Run SessionStart hooks when agent becomes available
   useEffect(() => {
@@ -1479,7 +1564,12 @@ export default function App({
       if (emittedIdsRef.current.has(id)) continue;
       const ln = b.byId.get(id);
       if (!ln) continue;
-      if (ln.kind === "user" || ln.kind === "error" || ln.kind === "status") {
+      if (
+        ln.kind === "user" ||
+        ln.kind === "error" ||
+        ln.kind === "status" ||
+        ln.kind === "trajectory_summary"
+      ) {
         emittedIdsRef.current.add(id);
         newlyCommitted.push({ ...ln });
         continue;
@@ -2429,6 +2519,7 @@ export default function App({
         }
 
         setStreaming(true);
+        openTrajectorySegment();
         setNetworkPhase("upload");
         abortControllerRef.current = new AbortController();
 
@@ -2759,6 +2850,10 @@ export default function App({
             void syncAgentState();
           };
 
+          const runTokenStart = buffersRef.current.tokenCount;
+          trajectoryRunTokenStartRef.current = runTokenStart;
+          sessionStatsRef.current.startTrajectory();
+
           const {
             stopReason,
             approval,
@@ -2777,9 +2872,21 @@ export default function App({
           // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
 
-          // Track API duration
+          // Track API duration and trajectory deltas
           sessionStatsRef.current.endTurn(apiDurationMs);
-          sessionStatsRef.current.updateUsageFromBuffers(buffersRef.current);
+          const usageDelta = sessionStatsRef.current.updateUsageFromBuffers(
+            buffersRef.current,
+          );
+          const tokenDelta = Math.max(
+            0,
+            buffersRef.current.tokenCount - runTokenStart,
+          );
+          sessionStatsRef.current.accumulateTrajectory({
+            apiDurationMs,
+            usageDelta,
+            tokenDelta,
+          });
+          syncTrajectoryTokenBase();
 
           const wasInterrupted = !!buffersRef.current.interrupted;
           const wasAborted = !!signal?.aborted;
@@ -2812,6 +2919,12 @@ export default function App({
           // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             setStreaming(false);
+            const liveElapsedMs = (() => {
+              const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
+              const base = snapshot?.wallMs ?? 0;
+              return base + streamElapsedMsRef.current;
+            })();
+            closeTrajectorySegment();
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
@@ -2883,6 +2996,32 @@ export default function App({
               setNeedsEagerApprovalCheck(false);
             }
 
+            const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
+            setTrajectoryTokenBase(0);
+            setTrajectoryElapsedBaseMs(0);
+            trajectoryRunTokenStartRef.current = 0;
+            trajectoryTokenDisplayRef.current = 0;
+            if (trajectorySnapshot) {
+              const summaryWallMs = Math.max(
+                liveElapsedMs,
+                trajectorySnapshot.wallMs,
+              );
+              const shouldShowSummary =
+                trajectorySnapshot.stepCount > 3 || summaryWallMs > 10000;
+              if (shouldShowSummary) {
+                const summaryId = uid("trajectory-summary");
+                buffersRef.current.byId.set(summaryId, {
+                  kind: "trajectory_summary",
+                  id: summaryId,
+                  durationMs: summaryWallMs,
+                  stepCount: trajectorySnapshot.stepCount,
+                  verb: getRandomPastTenseVerb(),
+                });
+                buffersRef.current.order.push(summaryId);
+                refreshDerived();
+              }
+            }
+
             // Send desktop notification when turn completes
             // and we're not about to auto-send another queued message
             if (!waitingForQueueCancelRef.current) {
@@ -2923,6 +3062,8 @@ export default function App({
           // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             setStreaming(false);
+            closeTrajectorySegment();
+            syncTrajectoryElapsedBase();
 
             // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {
@@ -2973,6 +3114,9 @@ export default function App({
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
+            setStreaming(false);
+            closeTrajectorySegment();
+            syncTrajectoryElapsedBase();
 
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
@@ -3718,6 +3862,7 @@ export default function App({
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
             refreshDerived();
+            resetTrajectoryBases();
             return;
           }
 
@@ -3790,6 +3935,7 @@ export default function App({
               setStreaming(false);
               sendDesktopNotification();
               refreshDerived();
+              resetTrajectoryBases();
               return;
             }
           } else {
@@ -3817,6 +3963,7 @@ export default function App({
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
           refreshDerived();
+          resetTrajectoryBases();
           return;
         }
       } catch (e) {
@@ -3871,6 +4018,7 @@ export default function App({
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error
         refreshDerived();
+        resetTrajectoryBases();
       } finally {
         // Check if this conversation was superseded by an ESC interrupt
         const isStale = myGeneration !== conversationGenerationRef.current;
@@ -3898,6 +4046,11 @@ export default function App({
       queueApprovalResults,
       consumeQueuedMessages,
       maybeSyncMemoryFilesystemAfterTurn,
+      openTrajectorySegment,
+      syncTrajectoryTokenBase,
+      syncTrajectoryElapsedBase,
+      closeTrajectorySegment,
+      resetTrajectoryBases,
     ],
   );
 
@@ -4264,6 +4417,7 @@ export default function App({
         emittedIdsRef.current.clear();
         setStaticItems([]);
         setStaticRenderEpoch((e) => e + 1);
+        resetTrajectoryBases();
 
         // Reset turn counter for memory reminders when switching agents
         turnCountRef.current = 0;
@@ -4322,7 +4476,14 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId, agentName, setCommandRunning, isAgentBusy],
+    [
+      refreshDerived,
+      agentId,
+      agentName,
+      setCommandRunning,
+      isAgentBusy,
+      resetTrajectoryBases,
+    ],
   );
 
   // Handle creating a new agent and switching to it
@@ -4362,6 +4523,7 @@ export default function App({
         emittedIdsRef.current.clear();
         setStaticItems([]);
         setStaticRenderEpoch((e) => e + 1);
+        resetTrajectoryBases();
 
         // Reset turn counter for memory reminders
         turnCountRef.current = 0;
@@ -4411,7 +4573,7 @@ export default function App({
         setCommandRunning(false);
       }
     },
-    [refreshDerived, agentId, setCommandRunning],
+    [refreshDerived, agentId, setCommandRunning, resetTrajectoryBases],
   );
 
   // Handle bash mode command submission
@@ -5911,6 +6073,7 @@ export default function App({
                 emittedIdsRef.current.clear();
                 setStaticItems([]);
                 setStaticRenderEpoch((e) => e + 1);
+                resetTrajectoryBases();
 
                 // Build success message
                 const currentAgentName = agentState.name || "Unnamed Agent";
@@ -7147,12 +7310,19 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
+      // If the previous trajectory ended, ensure the live token display resets.
+      if (!sessionStatsRef.current.getTrajectorySnapshot()) {
+        trajectoryTokenDisplayRef.current = 0;
+        setTrajectoryTokenBase(0);
+        trajectoryRunTokenStartRef.current = 0;
+      }
       // Clear interrupted flag from previous turn
       buffersRef.current.interrupted = false;
       // Rotate to a new thinking message for this turn
       setThinkingMessage(getRandomThinkingVerb());
       // Show streaming state immediately for responsiveness (pending approval check takes ~100ms)
       setStreaming(true);
+      openTrajectorySegment();
       refreshDerived();
 
       // Check for pending approvals before sending message (skip if we already have
@@ -7795,6 +7965,8 @@ ${SYSTEM_REMINDER_CLOSE}
       setStreaming,
       setCommandRunning,
       pendingRalphConfig,
+      openTrajectorySegment,
+      resetTrajectoryBases,
     ],
   );
 
@@ -7889,6 +8061,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
+        openTrajectorySegment();
         // Ensure interrupted flag is cleared for this execution
         buffersRef.current.interrupted = false;
 
@@ -7918,30 +8091,40 @@ ${SYSTEM_REMINDER_CLOSE}
         const { executeApprovalBatch } = await import(
           "../agent/approval-execution"
         );
-        const executedResults = await executeApprovalBatch(
-          allDecisions,
-          (chunk) => {
-            onChunk(buffersRef.current, chunk);
-            // Also log errors to the UI error display
-            if (
-              chunk.status === "error" &&
-              chunk.message_type === "tool_return_message"
-            ) {
-              const isToolError = chunk.tool_return?.startsWith(
-                "Error executing tool:",
-              );
-              if (isToolError) {
-                appendError(chunk.tool_return);
+        sessionStatsRef.current.startTrajectory();
+        const toolRunStart = performance.now();
+        let executedResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
+        try {
+          executedResults = await executeApprovalBatch(
+            allDecisions,
+            (chunk) => {
+              onChunk(buffersRef.current, chunk);
+              // Also log errors to the UI error display
+              if (
+                chunk.status === "error" &&
+                chunk.message_type === "tool_return_message"
+              ) {
+                const isToolError = chunk.tool_return?.startsWith(
+                  "Error executing tool:",
+                );
+                if (isToolError) {
+                  appendError(chunk.tool_return);
+                }
               }
-            }
-            // Flush UI so completed tools show up while the batch continues
-            refreshDerived();
-          },
-          {
-            abortSignal: approvalAbortController.signal,
-            onStreamingOutput: updateStreamingOutput,
-          },
-        );
+              // Flush UI so completed tools show up while the batch continues
+              refreshDerived();
+            },
+            {
+              abortSignal: approvalAbortController.signal,
+              onStreamingOutput: updateStreamingOutput,
+            },
+          );
+        } finally {
+          const toolRunMs = performance.now() - toolRunStart;
+          sessionStatsRef.current.accumulateTrajectory({
+            localToolMs: toolRunMs,
+          });
+        }
 
         // Combine with auto-handled and auto-denied results using snapshots
         const allResults = [
@@ -8005,6 +8188,8 @@ ${SYSTEM_REMINDER_CLOSE}
             queueApprovalResults(allResults as ApprovalResult[]);
           }
           setStreaming(false);
+          closeTrajectorySegment();
+          syncTrajectoryElapsedBase();
 
           // Reset queue-cancel flag so dequeue effect can fire
           waitingForQueueCancelRef.current = false;
@@ -8062,6 +8247,9 @@ ${SYSTEM_REMINDER_CLOSE}
       updateStreamingOutput,
       queueApprovalResults,
       consumeQueuedMessages,
+      syncTrajectoryElapsedBase,
+      closeTrajectorySegment,
+      openTrajectorySegment,
     ],
   );
 
@@ -8219,6 +8407,7 @@ ${SYSTEM_REMINDER_CLOSE}
           setAutoDeniedApprovals([]);
 
           setStreaming(true);
+          openTrajectorySegment();
           buffersRef.current.interrupted = false;
 
           // Set phase to "running" for all approved tools
@@ -8294,6 +8483,7 @@ ${SYSTEM_REMINDER_CLOSE}
       refreshDerived,
       isExecutingTool,
       setStreaming,
+      openTrajectorySegment,
       updateStreamingOutput,
     ],
   );
@@ -9579,6 +9769,25 @@ Plan file path: ${planFilePath}`;
     releaseNotes,
   ]);
 
+  const liveTrajectorySnapshot =
+    sessionStatsRef.current.getTrajectorySnapshot();
+  const liveTrajectoryTokenBase =
+    liveTrajectorySnapshot?.tokens ?? trajectoryTokenBase;
+  const liveTrajectoryElapsedBaseMs =
+    liveTrajectorySnapshot?.wallMs ?? trajectoryElapsedBaseMs;
+  const runTokenDelta = Math.max(
+    0,
+    tokenCount - trajectoryRunTokenStartRef.current,
+  );
+  const trajectoryTokenDisplay = Math.max(
+    liveTrajectoryTokenBase + runTokenDelta,
+    trajectoryTokenDisplayRef.current,
+  );
+
+  useEffect(() => {
+    trajectoryTokenDisplayRef.current = trajectoryTokenDisplay;
+  }, [trajectoryTokenDisplay]);
+
   return (
     <Box key={resumeKey} flexDirection="column">
       <Static
@@ -9618,6 +9827,8 @@ Plan file path: ${planFilePath}`;
               <CommandMessage line={item} />
             ) : item.kind === "bash_command" ? (
               <BashCommandMessage line={item} />
+            ) : item.kind === "trajectory_summary" ? (
+              <TrajectorySummary line={item} />
             ) : item.kind === "approval_preview" ? (
               <ApprovalPreview
                 toolName={item.toolName}
@@ -9866,7 +10077,9 @@ Plan file path: ${planFilePath}`;
                 streaming={
                   streaming && !abortControllerRef.current?.signal.aborted
                 }
-                tokenCount={tokenCount}
+                tokenCount={trajectoryTokenDisplay}
+                elapsedBaseMs={liveTrajectoryElapsedBaseMs}
+                elapsedMsOverride={streamElapsedMs}
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
@@ -10075,6 +10288,7 @@ Plan file path: ${planFilePath}`;
                       emittedIdsRef.current.clear();
                       setStaticItems([]);
                       setStaticRenderEpoch((e) => e + 1);
+                      resetTrajectoryBases();
 
                       // Build success command with agent + conversation info
                       const currentAgentName =
@@ -10239,6 +10453,7 @@ Plan file path: ${planFilePath}`;
                     emittedIdsRef.current.clear();
                     setStaticItems([]);
                     setStaticRenderEpoch((e) => e + 1);
+                    resetTrajectoryBases();
 
                     // Build success command with agent + conversation info
                     const currentAgentName =
@@ -10364,6 +10579,7 @@ Plan file path: ${planFilePath}`;
                       emittedIdsRef.current.clear();
                       setStaticItems([]);
                       setStaticRenderEpoch((e) => e + 1);
+                      resetTrajectoryBases();
 
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";

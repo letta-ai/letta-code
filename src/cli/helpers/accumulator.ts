@@ -174,6 +174,13 @@ export type Line =
       id: string;
       lines: string[]; // Multi-line status message with arrow formatting
     }
+  | {
+      kind: "trajectory_summary";
+      id: string;
+      durationMs: number;
+      stepCount: number;
+      verb: string;
+    }
   | { kind: "separator"; id: string };
 
 /**

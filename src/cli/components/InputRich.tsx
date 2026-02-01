@@ -184,6 +184,8 @@ export function Input({
   visible = true,
   streaming,
   tokenCount,
+  elapsedBaseMs = 0,
+  elapsedMsOverride,
   thinkingMessage,
   onSubmit,
   onBashSubmit,
@@ -214,6 +216,8 @@ export function Input({
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
+  elapsedBaseMs?: number;
+  elapsedMsOverride?: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
@@ -658,14 +662,19 @@ export function Input({
 
   // Elapsed time tracking
   useEffect(() => {
+    if (elapsedMsOverride !== undefined) {
+      streamStartRef.current = null;
+      setElapsedMs(0);
+      return;
+    }
     if (streaming && visible) {
       // Start tracking when streaming begins
       if (streamStartRef.current === null) {
-        streamStartRef.current = Date.now();
+        streamStartRef.current = performance.now();
       }
       const id = setInterval(() => {
         if (streamStartRef.current !== null) {
-          setElapsedMs(Date.now() - streamStartRef.current);
+          setElapsedMs(performance.now() - streamStartRef.current);
         }
       }, 1000);
       return () => clearInterval(id);
@@ -673,7 +682,7 @@ export function Input({
     // Reset when streaming stops
     streamStartRef.current = null;
     setElapsedMs(0);
-  }, [streaming, visible]);
+  }, [streaming, visible, elapsedMsOverride]);
 
   const handleSubmit = async () => {
     // Don't submit if autocomplete is active with matches
@@ -834,11 +843,13 @@ export function Input({
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   const estimatedTokens = charsToTokens(tokenCount);
+  const effectiveElapsedMs = elapsedMsOverride ?? elapsedMs;
+  const totalElapsedMs = elapsedBaseMs + effectiveElapsedMs;
   const shouldShowTokenCount =
     streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
-    streaming && elapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
-  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
+  const elapsedLabel = formatElapsedLabel(totalElapsedMs);
 
   const networkArrow = useMemo(() => {
     if (!networkPhase) return "";
@@ -846,6 +857,7 @@ export function Input({
     if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
     return "↑\u0338";
   }, [networkPhase]);
+  const showErrorArrow = networkArrow === "↑\u0338";
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
   // Uses chalk.dim to match reasoning text styling
@@ -855,13 +867,13 @@ export function Input({
     const hintBold = hintColor.bold;
     const parts: string[] = [];
     if (shouldShowElapsed) {
-      parts.push(`${elapsedMinutes}m`);
+      parts.push(elapsedLabel);
     }
     if (shouldShowTokenCount) {
       parts.push(
         `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
       );
-    } else if (networkArrow) {
+    } else if (showErrorArrow) {
       parts.push(networkArrow);
     }
     const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
@@ -873,11 +885,12 @@ export function Input({
     );
   }, [
     shouldShowElapsed,
-    elapsedMinutes,
+    elapsedLabel,
     shouldShowTokenCount,
     estimatedTokens,
     interruptRequested,
     networkArrow,
+    showErrorArrow,
   ]);
 
   // Create a horizontal line using box-drawing characters
@@ -990,4 +1003,22 @@ export function Input({
       </Box>
     </Box>
   );
+}
+
+function formatElapsedLabel(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes === 0) {
+    return `${seconds}s`;
+  }
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) {
+    const parts: string[] = [`${hours}hr`];
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0) parts.push(`${seconds}s`);
+    return parts.join(" ");
+  }
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
