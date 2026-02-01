@@ -44,7 +44,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   }
 
   // Alien ASCII art lines (4 lines tall, with 2-char indent + extra space before text)
-  const alienLines = ["   ▗▖▗▖   ", "  ▙█▜▛█▟  ", "  ▝▜▛▜▛▘  ", "   ▀  ▀   "];
+  const alienLines = ["   ▗▖▗▖   ", "  ▙█▜▛█▟  ", "  ▝▜▛▜▛▘  ", "          "];
 
   return (
     <Box flexDirection="column">
@@ -107,9 +107,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         <Text dimColor>{agentId}</Text>
       </Box>
 
-      {/* Alien + Conversation ID */}
+      {/* Phantom alien row + Conversation ID */}
       <Box>
-        <Text color={colors.footer.agentName}>{alienLines[3]}</Text>
+        <Text>{alienLines[3]}</Text>
         {conversationId && conversationId !== "default" ? (
           <Text dimColor>{conversationId}</Text>
         ) : (

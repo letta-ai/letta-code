@@ -134,7 +134,7 @@ import { PendingApprovalStub } from "./components/PendingApprovalStub";
 import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
-import { formatUsageStats } from "./components/SessionStats";
+import { formatDuration, formatUsageStats } from "./components/SessionStats";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
 import { StatusMessage } from "./components/StatusMessage";
@@ -166,6 +166,7 @@ import {
 } from "./helpers/diff";
 import { setErrorContext } from "./helpers/errorContext";
 import { formatErrorDetails } from "./helpers/errorFormatter";
+import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildMemoryReminder,
@@ -9795,55 +9796,61 @@ Plan file path: ${planFilePath}`;
             </AnimationProvider>
 
             {/* Exit stats - shown when exiting via double Ctrl+C */}
-            {showExitStats && (
-              <Box flexDirection="column" marginTop={1}>
-                <Text dimColor>
-                  {formatUsageStats({
-                    stats: sessionStatsRef.current.getSnapshot(),
-                  })}
-                </Text>
-                {/* Alien + Resume commands */}
-                <Box>
-                  <Text color={colors.footer.agentName}>{" ▗▖▗▖  "}</Text>
-                  <Text dimColor>Resume this agent with:</Text>
-                </Box>
-                <Box>
-                  <Text color={colors.footer.agentName}>{"▙█▜▛█▟ "}</Text>
-                  <Text color={colors.link.url}>
-                    {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
-                    {agentName &&
-                    (settingsManager.getLocalPinnedAgents().includes(agentId) ||
-                      settingsManager.getGlobalPinnedAgents().includes(agentId))
-                      ? `letta -n "${agentName}"`
-                      : `letta --agent ${agentId}`}
-                  </Text>
-                </Box>
-                {/* Only show conversation hint if not on default (default is resumed automatically) */}
-                {conversationId !== "default" ? (
-                  <>
+            {showExitStats &&
+              (() => {
+                const stats = sessionStatsRef.current.getSnapshot();
+                return (
+                  <Box flexDirection="column" marginTop={1}>
+                    {/* Alien + Stats (3 lines) */}
                     <Box>
-                      <Text color={colors.footer.agentName}>{"▝▜▛▜▛▘ "}</Text>
-                      <Text dimColor>Resume this conversation with:</Text>
-                    </Box>
-                    <Box>
-                      <Text color={colors.footer.agentName}>{" ▀  ▀  "}</Text>
-                      <Text color={colors.link.url}>
-                        {`letta --conv ${conversationId}`}
+                      <Text color={colors.footer.agentName}>{" ▗▖▗▖   "}</Text>
+                      <Text dimColor>
+                        Total duration (API): {formatDuration(stats.totalApiMs)}
                       </Text>
                     </Box>
-                  </>
-                ) : (
-                  <>
                     <Box>
-                      <Text color={colors.footer.agentName}>{"▝▜▛▜▛▘ "}</Text>
+                      <Text color={colors.footer.agentName}>{"▙█▜▛█▟  "}</Text>
+                      <Text dimColor>
+                        Total duration (wall):{" "}
+                        {formatDuration(stats.totalWallMs)}
+                      </Text>
                     </Box>
                     <Box>
-                      <Text color={colors.footer.agentName}>{" ▀  ▀  "}</Text>
+                      <Text color={colors.footer.agentName}>{"▝▜▛▜▛▘  "}</Text>
+                      <Text dimColor>
+                        Session usage: {stats.usage.stepCount} steps,{" "}
+                        {formatCompact(stats.usage.promptTokens)} input,{" "}
+                        {formatCompact(stats.usage.completionTokens)} output
+                      </Text>
                     </Box>
-                  </>
-                )}
-              </Box>
-            )}
+                    {/* Resume commands (no alien) */}
+                    <Box height={1} />
+                    <Text dimColor>Resume this agent with:</Text>
+                    <Text color={colors.link.url}>
+                      {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
+                      {agentName &&
+                      (settingsManager
+                        .getLocalPinnedAgents()
+                        .includes(agentId) ||
+                        settingsManager
+                          .getGlobalPinnedAgents()
+                          .includes(agentId))
+                        ? `letta -n "${agentName}"`
+                        : `letta --agent ${agentId}`}
+                    </Text>
+                    {/* Only show conversation hint if not on default (default is resumed automatically) */}
+                    {conversationId !== "default" && (
+                      <>
+                        <Box height={1} />
+                        <Text dimColor>Resume this conversation with:</Text>
+                        <Text color={colors.link.url}>
+                          {`letta --conv ${conversationId}`}
+                        </Text>
+                      </>
+                    )}
+                  </Box>
+                );
+              })()}
 
             {/* Input row - always mounted to preserve state */}
             <Box marginTop={1}>
