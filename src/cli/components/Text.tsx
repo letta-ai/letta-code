@@ -46,7 +46,6 @@ function looksLikeMojibake(value: string): boolean {
       ) {
         sawUtf8Sequence = true;
         i += 3;
-        continue;
       }
     }
   }

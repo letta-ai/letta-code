@@ -46,7 +46,7 @@ export const commands: Record<string, Command> = {
   },
   "/skill": {
     desc: "Enter skill creation mode (/skill [description])",
-    order: 14,
+    order: 28, // Advanced feature, moved below visible commands
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";

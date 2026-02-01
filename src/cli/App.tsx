@@ -9802,23 +9802,44 @@ Plan file path: ${planFilePath}`;
                     stats: sessionStatsRef.current.getSnapshot(),
                   })}
                 </Text>
-                <Text dimColor>Resume this agent with:</Text>
-                <Text color={colors.link.url}>
-                  {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
-                  {agentName &&
-                  (settingsManager.getLocalPinnedAgents().includes(agentId) ||
-                    settingsManager.getGlobalPinnedAgents().includes(agentId))
-                    ? `letta -n "${agentName}"`
-                    : `letta --agent ${agentId}`}
-                </Text>
+                {/* Alien + Resume commands */}
+                <Box>
+                  <Text color={colors.footer.agentName}>{" ▗▖▗▖  "}</Text>
+                  <Text dimColor>Resume this agent with:</Text>
+                </Box>
+                <Box>
+                  <Text color={colors.footer.agentName}>{"▙█▜▛█▟ "}</Text>
+                  <Text color={colors.link.url}>
+                    {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
+                    {agentName &&
+                    (settingsManager.getLocalPinnedAgents().includes(agentId) ||
+                      settingsManager.getGlobalPinnedAgents().includes(agentId))
+                      ? `letta -n "${agentName}"`
+                      : `letta --agent ${agentId}`}
+                  </Text>
+                </Box>
                 {/* Only show conversation hint if not on default (default is resumed automatically) */}
-                {conversationId !== "default" && (
+                {conversationId !== "default" ? (
                   <>
-                    <Text> </Text>
-                    <Text dimColor>Resume this conversation with:</Text>
-                    <Text color={colors.link.url}>
-                      {`letta --conv ${conversationId}`}
-                    </Text>
+                    <Box>
+                      <Text color={colors.footer.agentName}>{"▝▜▛▜▛▘ "}</Text>
+                      <Text dimColor>Resume this conversation with:</Text>
+                    </Box>
+                    <Box>
+                      <Text color={colors.footer.agentName}>{" ▀  ▀  "}</Text>
+                      <Text color={colors.link.url}>
+                        {`letta --conv ${conversationId}`}
+                      </Text>
+                    </Box>
+                  </>
+                ) : (
+                  <>
+                    <Box>
+                      <Text color={colors.footer.agentName}>{"▝▜▛▜▛▘ "}</Text>
+                    </Box>
+                    <Box>
+                      <Text color={colors.footer.agentName}>{" ▀  ▀  "}</Text>
+                    </Box>
                   </>
                 )}
               </Box>
