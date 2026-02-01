@@ -59,11 +59,12 @@ export function formatUsageStats({
     const toDollars = (credits: number) => (credits / 1000).toFixed(2);
 
     outputLines.push(
-      `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})       Plan: [${balance.billing_tier}]`,
-      `  Monthly credits:     ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
-      `  Purchased credits:   ◎${formatNumber(purchasedCredits)} ($${toDollars(purchasedCredits)})`,
-      "",
+      `Plan: [${balance.billing_tier}]`,
       "https://app.letta.com/settings/organization/usage",
+      "",
+      `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})`,
+      `Monthly credits:       ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
+      `Purchased credits:     ◎${formatNumber(purchasedCredits)} ($${toDollars(purchasedCredits)})`,
     );
   }
 
