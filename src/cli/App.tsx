@@ -793,6 +793,15 @@ export default function App({
   // Whether a stream is in flight (disables input)
   // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
+  const [networkPhase, setNetworkPhase] = useState<
+    "upload" | "download" | "error" | null
+  >(null);
+
+  useEffect(() => {
+    if (!streaming) {
+      setNetworkPhase(null);
+    }
+  }, [streaming]);
 
   // Guard ref for preventing concurrent processConversation calls
   // Separate from streaming state which may be set early for UI responsiveness
@@ -2419,6 +2428,7 @@ export default function App({
         }
 
         setStreaming(true);
+        setNetworkPhase("upload");
         abortControllerRef.current = new AbortController();
 
         // Recover interrupted message: if cache contains ONLY user messages, prepend them
@@ -2743,6 +2753,11 @@ export default function App({
             }
           };
 
+          const handleFirstMessage = () => {
+            setNetworkPhase("download");
+            void syncAgentState();
+          };
+
           const {
             stopReason,
             approval,
@@ -2755,7 +2770,7 @@ export default function App({
             buffersRef.current,
             refreshDerivedThrottled,
             signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-            syncAgentState,
+            handleFirstMessage,
           );
 
           // Update currentRunId for error reporting in catch block
@@ -3684,6 +3699,7 @@ export default function App({
           // If we have a client-side stream error (e.g., JSON parse error), show it directly
           // Fallback error: no run_id available, show whatever error message we have
           if (fallbackError) {
+            setNetworkPhase("error");
             const errorMsg = lastRunId
               ? `Stream error: ${fallbackError}\n(run_id: ${lastRunId})`
               : `Stream error: ${fallbackError}`;
@@ -9847,6 +9863,7 @@ Plan file path: ${planFilePath}`;
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
+                networkPhase={networkPhase}
               />
             </Box>
 

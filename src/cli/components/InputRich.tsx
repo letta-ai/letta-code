@@ -209,6 +209,7 @@ export function Input({
   onPasteError,
   restoredInput,
   onRestoredInputConsumed,
+  networkPhase = null,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -238,6 +239,7 @@ export function Input({
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
+  networkPhase?: "upload" | "download" | "error" | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -838,16 +840,31 @@ export function Input({
     streaming && elapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
   const elapsedMinutes = Math.floor(elapsedMs / 60000);
 
+  const networkArrow = useMemo(() => {
+    if (!networkPhase) return "";
+    if (networkPhase === "upload") return "↑";
+    if (networkPhase === "download") return "↓";
+    return "↑\u0338";
+  }, [networkPhase]);
+
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
   // Uses chalk.dim to match reasoning text styling
   // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
-    const suffix =
-      (shouldShowElapsed ? ` · ${elapsedMinutes}m` : "") +
-      (shouldShowTokenCount ? ` · ${formatCompact(estimatedTokens)} ↑` : "") +
-      ")";
+    const parts: string[] = [];
+    if (shouldShowElapsed) {
+      parts.push(`${elapsedMinutes}m`);
+    }
+    if (shouldShowTokenCount) {
+      parts.push(
+        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
+      );
+    } else if (networkArrow) {
+      parts.push(networkArrow);
+    }
+    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
     if (interruptRequested) {
       return hintColor(` (interrupting${suffix}`);
     }
@@ -860,6 +877,7 @@ export function Input({
     shouldShowTokenCount,
     estimatedTokens,
     interruptRequested,
+    networkArrow,
   ]);
 
   // Create a horizontal line using box-drawing characters
