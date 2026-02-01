@@ -57,6 +57,7 @@ async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
 }
 
 type LoadingState =
+  | "loading_profiles"
   | "assembling"
   | "importing"
   | "initializing"
@@ -146,6 +147,8 @@ function getLoadingMessage(
   continueSession: boolean,
 ): string {
   switch (loadingState) {
+    case "loading_profiles":
+      return "Loading pinned agents...";
     case "initializing":
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":

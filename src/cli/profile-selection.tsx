@@ -284,7 +284,7 @@ function ProfileSelectionUI({
     <Box flexDirection="column">
       {/* Welcome Screen */}
       <WelcomeScreen
-        loadingState="ready"
+        loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
         agentProvenance={null}
@@ -298,9 +298,7 @@ function ProfileSelectionUI({
         </>
       )}
 
-      {loading ? (
-        <Text dimColor>Loading pinned agents...</Text>
-      ) : selectingModel && serverModelsForNewAgent ? (
+      {loading ? null : selectingModel && serverModelsForNewAgent ? (
         // Model selection mode
         <Box flexDirection="column" gap={1}>
           <Text bold color={colors.selector.title}>
