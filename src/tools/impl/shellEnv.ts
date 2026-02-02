@@ -44,6 +44,13 @@ function getPackageNodeModulesDir(): string | undefined {
   }
 }
 
+function getPathKey(env: NodeJS.ProcessEnv): "PATH" | "Path" {
+  if (process.platform !== "win32") return "PATH";
+  if (env.Path) return "Path";
+  if (env.PATH) return "PATH";
+  return "Path";
+}
+
 /**
  * Get enhanced environment variables for shell execution.
  * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
@@ -54,8 +61,15 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
-    const currentPath = env.PATH || "";
-    env.PATH = `${rgBinDir}${path.delimiter}${currentPath}`;
+    const pathKey = getPathKey(env);
+    const currentPath = env[pathKey] || "";
+    env[pathKey] = `${rgBinDir}${path.delimiter}${currentPath}`;
+    if (process.platform === "win32") {
+      const otherKey = pathKey === "Path" ? "PATH" : "Path";
+      if (otherKey in env) {
+        delete (env as Record<string, string | undefined>)[otherKey];
+      }
+    }
   }
 
   // Add Letta context for skill scripts
