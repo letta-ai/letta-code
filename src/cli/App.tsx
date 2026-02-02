@@ -1575,6 +1575,19 @@ export default function App({
       const deferredCommits = deferredToolCallCommitsRef.current;
       const now = Date.now();
       let blockedByDeferred = false;
+      // If we eagerly committed a tall preview for file tools, don't also
+      // commit the successful tool_call line (preview already represents it).
+      const shouldSkipCommittedToolCall = (ln: Line): boolean => {
+        if (ln.kind !== "tool_call") return false;
+        if (!ln.toolCallId || !ln.name) return false;
+        if (ln.phase !== "finished" || ln.resultOk === false) return false;
+        if (!eagerCommittedPreviewsRef.current.has(ln.toolCallId)) return false;
+        return (
+          isFileEditTool(ln.name) ||
+          isFileWriteTool(ln.name) ||
+          isPatchTool(ln.name)
+        );
+      };
       if (!deferToolCalls && deferredCommits.size > 0) {
         deferredCommits.clear();
         setDeferredCommitAt(null);
@@ -1646,6 +1659,11 @@ export default function App({
           continue;
         }
         if ("phase" in ln && ln.phase === "finished") {
+          if (shouldSkipCommittedToolCall(ln)) {
+            deferredCommits.delete(id);
+            emittedIdsRef.current.add(id);
+            continue;
+          }
           if (
             deferToolCalls &&
             ln.kind === "tool_call" &&
@@ -8361,17 +8379,30 @@ ${SYSTEM_REMINDER_CLOSE}
           ...(additionalDecision ? [additionalDecision] : []),
         ];
 
-        executingToolCallIdsRef.current = allDecisions
-          .filter((decision) => decision.type === "approve")
-          .map((decision) => decision.approval.toolCallId);
+        const approvedDecisions = allDecisions.filter(
+          (
+            decision,
+          ): decision is {
+            type: "approve";
+            approval: ApprovalRequest;
+            precomputedResult?: ToolExecutionResult;
+          } => decision.type === "approve",
+        );
+        const runningDecisions = approvedDecisions.filter(
+          (decision) => !decision.precomputedResult,
+        );
+
+        executingToolCallIdsRef.current = runningDecisions.map(
+          (decision) => decision.approval.toolCallId,
+        );
 
         // Set phase to "running" for all approved tools
-        setToolCallsRunning(
-          buffersRef.current,
-          allDecisions
-            .filter((d) => d.type === "approve")
-            .map((d) => d.approval.toolCallId),
-        );
+        if (runningDecisions.length > 0) {
+          setToolCallsRunning(
+            buffersRef.current,
+            runningDecisions.map((d) => d.approval.toolCallId),
+          );
+        }
         refreshDerived();
 
         // Execute approved tools and format results using shared function
@@ -9770,12 +9801,6 @@ ${SYSTEM_REMINDER_CLOSE}
       setThinkingMessage(getRandomThinkingVerb());
       refreshDerived();
 
-      // Mark as eagerly committed to prevent duplicate rendering
-      // (sendAllResults will call setToolCallsRunning which resets phase to "running")
-      if (approval.toolCallId) {
-        eagerCommittedPreviewsRef.current.add(approval.toolCallId);
-      }
-
       const decision = {
         type: "approve" as const,
         approval,
@@ -10095,53 +10120,55 @@ Plan file path: ${planFilePath}`;
         items={staticItems}
         style={{ flexDirection: "column" }}
       >
-        {(item: StaticItem, index: number) => (
-          <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
-            {item.kind === "welcome" ? (
-              <WelcomeScreen loadingState="ready" {...item.snapshot} />
-            ) : item.kind === "user" ? (
-              <UserMessage line={item} />
-            ) : item.kind === "reasoning" ? (
-              <ReasoningMessage line={item} />
-            ) : item.kind === "assistant" ? (
-              <AssistantMessage line={item} />
-            ) : item.kind === "tool_call" ? (
-              <ToolCallMessage
-                line={item}
-                precomputedDiffs={precomputedDiffsRef.current}
-                lastPlanFilePath={lastPlanFilePathRef.current}
-              />
-            ) : item.kind === "subagent_group" ? (
-              <SubagentGroupStatic agents={item.agents} />
-            ) : item.kind === "error" ? (
-              <ErrorMessage line={item} />
-            ) : item.kind === "status" ? (
-              <StatusMessage line={item} />
-            ) : item.kind === "event" ? (
-              <EventMessage line={item} />
-            ) : item.kind === "separator" ? (
-              <Box marginTop={1}>
-                <Text dimColor>{"─".repeat(columns)}</Text>
-              </Box>
-            ) : item.kind === "command" ? (
-              <CommandMessage line={item} />
-            ) : item.kind === "bash_command" ? (
-              <BashCommandMessage line={item} />
-            ) : item.kind === "trajectory_summary" ? (
-              <TrajectorySummary line={item} />
-            ) : item.kind === "approval_preview" ? (
-              <ApprovalPreview
-                toolName={item.toolName}
-                toolArgs={item.toolArgs}
-                precomputedDiff={item.precomputedDiff}
-                allDiffs={precomputedDiffsRef.current}
-                planContent={item.planContent}
-                planFilePath={item.planFilePath}
-                toolCallId={item.toolCallId}
-              />
-            ) : null}
-          </Box>
-        )}
+        {(item: StaticItem, index: number) => {
+          return (
+            <Box key={item.id} marginTop={index > 0 ? 1 : 0}>
+              {item.kind === "welcome" ? (
+                <WelcomeScreen loadingState="ready" {...item.snapshot} />
+              ) : item.kind === "user" ? (
+                <UserMessage line={item} />
+              ) : item.kind === "reasoning" ? (
+                <ReasoningMessage line={item} />
+              ) : item.kind === "assistant" ? (
+                <AssistantMessage line={item} />
+              ) : item.kind === "tool_call" ? (
+                <ToolCallMessage
+                  line={item}
+                  precomputedDiffs={precomputedDiffsRef.current}
+                  lastPlanFilePath={lastPlanFilePathRef.current}
+                />
+              ) : item.kind === "subagent_group" ? (
+                <SubagentGroupStatic agents={item.agents} />
+              ) : item.kind === "error" ? (
+                <ErrorMessage line={item} />
+              ) : item.kind === "status" ? (
+                <StatusMessage line={item} />
+              ) : item.kind === "event" ? (
+                <EventMessage line={item} />
+              ) : item.kind === "separator" ? (
+                <Box marginTop={1}>
+                  <Text dimColor>{"─".repeat(columns)}</Text>
+                </Box>
+              ) : item.kind === "command" ? (
+                <CommandMessage line={item} />
+              ) : item.kind === "bash_command" ? (
+                <BashCommandMessage line={item} />
+              ) : item.kind === "trajectory_summary" ? (
+                <TrajectorySummary line={item} />
+              ) : item.kind === "approval_preview" ? (
+                <ApprovalPreview
+                  toolName={item.toolName}
+                  toolArgs={item.toolArgs}
+                  precomputedDiff={item.precomputedDiff}
+                  allDiffs={precomputedDiffsRef.current}
+                  planContent={item.planContent}
+                  planFilePath={item.planFilePath}
+                  toolCallId={item.toolCallId}
+                />
+              ) : null}
+            </Box>
+          );
+        }}
       </Static>
 
       <Box flexDirection="column">
@@ -10162,6 +10189,21 @@ Plan file path: ${planFilePath}`;
               {liveItems.length > 0 && (
                 <Box flexDirection="column">
                   {liveItems.map((ln) => {
+                    const isFileTool =
+                      ln.kind === "tool_call" &&
+                      ln.name &&
+                      (isFileEditTool(ln.name) ||
+                        isFileWriteTool(ln.name) ||
+                        isPatchTool(ln.name));
+                    const isApprovalTracked =
+                      ln.kind === "tool_call" &&
+                      ln.toolCallId &&
+                      (ln.toolCallId === currentApproval?.toolCallId ||
+                        pendingIds.has(ln.toolCallId) ||
+                        queuedIds.has(ln.toolCallId));
+                    if (isFileTool && !isApprovalTracked) {
+                      return null;
+                    }
                     // Skip Task tools that don't have a pending approval
                     // They render as empty Boxes (ToolCallMessage returns null for non-finished Task tools)
                     // which causes N blank lines when N Task tools are called in parallel
@@ -10173,18 +10215,6 @@ Plan file path: ${planFilePath}`;
                       isTaskTool(ln.name) &&
                       ln.toolCallId &&
                       !pendingIds.has(ln.toolCallId) &&
-                      ln.toolCallId !== currentApproval?.toolCallId
-                    ) {
-                      return null;
-                    }
-
-                    // Skip tool calls that were eagerly committed to staticItems
-                    // (e.g., ExitPlanMode preview) - but only AFTER approval is complete
-                    // We still need to render the approval options while awaiting approval
-                    if (
-                      ln.kind === "tool_call" &&
-                      ln.toolCallId &&
-                      eagerCommittedPreviewsRef.current.has(ln.toolCallId) &&
                       ln.toolCallId !== currentApproval?.toolCallId
                     ) {
                       return null;

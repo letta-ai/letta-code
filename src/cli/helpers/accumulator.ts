@@ -314,8 +314,7 @@ export function markCurrentLineAsFinished(b: Buffers) {
     // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
     return;
   }
-  // Try both the plain otid and the -tool suffix (in case of collision workaround)
-  const prev = b.byId.get(b.lastOtid) || b.byId.get(`${b.lastOtid}-tool`);
+  const prev = b.byId.get(b.lastOtid);
   // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
   if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
     // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
@@ -386,6 +385,7 @@ function getStringProp(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : undefined;
 }
+
 function extractTextPart(v: unknown): string {
   if (typeof v === "string") return v;
   if (Array.isArray(v)) {
@@ -562,25 +562,8 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
 
     case "tool_call_message":
     case "approval_request_message": {
-      /* POST-FIX VERSION (what this should look like after backend fix):
-      const id = chunk.otid;
-
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
-
-      if (!id) break;
-
-      const toolCall = chunk.tool_call || (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0 ? chunk.tool_calls[0] : null);
-      const toolCallId = toolCall?.tool_call_id;
-      const name = toolCall?.name;
-      const argsText = toolCall?.arguments;
-
-      // Record correlation: toolCallId → line id (otid)
-      if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
-      */
-
-      let id = chunk.otid;
-      // console.log(`[TOOL_CALL] Received ${chunk.message_type} with otid=${id}, toolCallId=${chunk.tool_call?.tool_call_id}, name=${chunk.tool_call?.name}`);
+      handleOtidTransition(b, chunk.otid ?? undefined);
 
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
@@ -588,73 +571,37 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
           ? chunk.tool_calls[0]
           : null);
+      if (!toolCall || !toolCall.tool_call_id) break;
 
-      const toolCallId = toolCall?.tool_call_id;
-      const name = toolCall?.name;
-      const argsText = toolCall?.arguments;
+      const toolCallId = toolCall.tool_call_id;
+      const name = toolCall.name;
+      const argsText = toolCall.arguments;
 
-      // ========== START BACKEND BUG WORKAROUND (Remove after OTID fix) ==========
-      // Bug: Backend sends same otid for reasoning and tool_call, and multiple otids for same tool_call
-
-      // Check if we already have a line for this toolCallId (prevents duplicates)
-      if (toolCallId && b.toolCallIdToLineId.has(toolCallId)) {
-        // Update the existing line instead of creating a new one
-        const existingId = b.toolCallIdToLineId.get(toolCallId);
-        if (existingId) {
-          id = existingId;
-        }
-
-        // Handle otid transition for tracking purposes
-        handleOtidTransition(b, chunk.otid ?? undefined);
-      } else {
-        // Check if this otid is already used by another line
-        if (id && b.byId.has(id)) {
-          const existing = b.byId.get(id);
-          if (existing && existing.kind === "reasoning") {
-            // Mark the reasoning as finished before we create the tool_call
-            markAsFinished(b, id);
-            // Use a different ID for the tool_call to avoid overwriting the reasoning
-            id = `${id}-tool`;
-          } else if (existing && existing.kind === "tool_call") {
-            // Parallel tool calls: same otid, different tool_call_id
-            // Create unique ID for this parallel tool using its tool_call_id
-            if (toolCallId) {
-              id = `${id}-${toolCallId.slice(-8)}`;
-            } else {
-              // Fallback: append timestamp
-              id = `${id}-${Date.now().toString(36)}`;
-            }
-          }
-        }
-        // ========== END BACKEND BUG WORKAROUND ==========
-
-        // This part stays after fix:
-        // Handle otid transition (mark previous line as finished)
-        // This must happen BEFORE the break, so reasoning gets finished even when tool has no otid
-        handleOtidTransition(b, id ?? undefined);
-
-        if (!id) {
-          // console.log(`[TOOL_CALL] No otid, breaking`);
-          break;
-        }
-
-        // Record correlation: toolCallId → line id (otid) for future updates
-        if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
+      // Use tool_call_id as the stable line id (server guarantees uniqueness).
+      const id = b.toolCallIdToLineId.get(toolCallId) ?? toolCallId;
+      if (!b.toolCallIdToLineId.has(toolCallId)) {
+        b.toolCallIdToLineId.set(toolCallId, id);
       }
 
-      // Early exit if no valid id
-      if (!id) break;
-
       // Tool calls should be "ready" (blinking) while pending execution
-      // Only approval requests explicitly set to "ready", but regular tool calls should also blink
       const desiredPhase = "ready";
-      const line = ensure<ToolCallLine>(b, id, () => ({
+      let line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
-        toolCallId: toolCallId ?? undefined,
+        toolCallId,
         name: name ?? undefined,
         phase: desiredPhase,
       }));
+
+      // If additional metadata arrives later (e.g., name), update the line.
+      if ((name && !line.name) || line.toolCallId !== toolCallId) {
+        line = {
+          ...line,
+          toolCallId,
+          name: line.name ?? name ?? undefined,
+        };
+        b.byId.set(id, line);
+      }
 
       // If this is an approval request and the line already exists, bump phase to ready
       if (
