@@ -115,6 +115,7 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider,
   isByokProvider,
   isAutocompleteActive,
+  hideFooter,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -127,9 +128,10 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   isAutocompleteActive: boolean;
+  hideFooter: boolean;
 }) {
   // Hide footer when autocomplete is showing
-  if (isAutocompleteActive) {
+  if (hideFooter || isAutocompleteActive) {
     return null;
   }
 
@@ -258,6 +260,7 @@ export function Input({
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
   const interactionEnabled = visible && inputEnabled;
+  const hideFooter = interactionEnabled && value.startsWith("/");
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -1002,6 +1005,7 @@ export function Input({
             currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
           }
           isAutocompleteActive={isAutocompleteActive}
+          hideFooter={hideFooter}
         />
       </Box>
     </Box>
