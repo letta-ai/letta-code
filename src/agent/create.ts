@@ -8,6 +8,7 @@ import type {
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
@@ -282,10 +283,11 @@ export async function createAgent(
   }
 
   // Get the model's context window from its configuration (if known)
-  // For unknown models (e.g., from self-hosted servers), don't set a context window
-  // and let the server use its default
+  // First try models.json, then fall back to API-cached context window for BYOK models
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
-  const contextWindow = modelUpdateArgs?.context_window as number | undefined;
+  const contextWindow =
+    (modelUpdateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
 
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
