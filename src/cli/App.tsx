@@ -231,9 +231,9 @@ const EAGER_CANCEL = true;
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
-// Retry config for 409 "conversation busy" errors
-const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
-const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
+// Retry config for 409 "conversation busy" errors (exponential backoff)
+const CONVERSATION_BUSY_MAX_RETRIES = 3; // 2.5s -> 5s -> 10s
+const CONVERSATION_BUSY_RETRY_BASE_DELAY_MS = 2500; // 2.5 seconds
 
 // Message shown when user interrupts the stream
 const INTERRUPT_MESSAGE =
@@ -2898,6 +2898,9 @@ export default function App({
               conversationBusyRetriesRef.current < CONVERSATION_BUSY_MAX_RETRIES
             ) {
               conversationBusyRetriesRef.current += 1;
+              const retryDelayMs =
+                CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
+                2 ** (conversationBusyRetriesRef.current - 1);
 
               // Show status message
               const statusId = uid("status");
@@ -2912,10 +2915,7 @@ export default function App({
               // Wait with abort checking (same pattern as LLM API error retry)
               let cancelled = false;
               const startTime = Date.now();
-              while (
-                Date.now() - startTime <
-                CONVERSATION_BUSY_RETRY_DELAY_MS
-              ) {
+              while (Date.now() - startTime < retryDelayMs) {
                 if (
                   abortControllerRef.current?.signal.aborted ||
                   userCancelledRef.current
