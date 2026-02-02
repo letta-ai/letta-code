@@ -1847,6 +1847,12 @@ export default function App({
     [estimateApprovalPreviewLines, terminalRows],
   );
 
+  const currentApprovalShouldCommitPreview = useMemo(() => {
+    if (!currentApproval) return false;
+    if (currentApproval.toolName === "ExitPlanMode") return false;
+    return shouldEagerCommitApprovalPreview(currentApproval);
+  }, [currentApproval, shouldEagerCommitApprovalPreview]);
+
   // Recompute UI state from buffers after each streaming chunk
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
@@ -2022,7 +2028,7 @@ export default function App({
     const toolCallId = currentApproval.toolCallId;
     if (!toolCallId) return;
     if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
-    if (!shouldEagerCommitApprovalPreview(currentApproval)) return;
+    if (!currentApprovalShouldCommitPreview) return;
 
     const previewItem: StaticItem = {
       kind: "approval_preview",
@@ -2042,7 +2048,7 @@ export default function App({
 
     setStaticItems((prev) => [...prev, previewItem]);
     eagerCommittedPreviewsRef.current.add(toolCallId);
-  }, [currentApproval, shouldEagerCommitApprovalPreview]);
+  }, [currentApproval, currentApprovalShouldCommitPreview]);
 
   // Backfill message history when resuming (only once)
   useEffect(() => {
@@ -10007,6 +10013,8 @@ Plan file path: ${planFilePath}`;
   const currentApprovalPreviewCommitted = currentApproval?.toolCallId
     ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
     : false;
+  const showApprovalPreview =
+    !currentApprovalShouldCommitPreview && !currentApprovalPreviewCommitted;
 
   useEffect(() => {
     trajectoryTokenDisplayRef.current = trajectoryTokenDisplay;
@@ -10147,7 +10155,7 @@ Plan file path: ${planFilePath}`;
                             allowPersistence={
                               currentApprovalContext?.allowPersistence ?? true
                             }
-                            showPreview={!currentApprovalPreviewCommitted}
+                            showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} />
@@ -10226,7 +10234,7 @@ Plan file path: ${planFilePath}`;
                     allowPersistence={
                       currentApprovalContext?.allowPersistence ?? true
                     }
-                    showPreview={!currentApprovalPreviewCommitted}
+                    showPreview={showApprovalPreview}
                   />
                 </Box>
               )}
