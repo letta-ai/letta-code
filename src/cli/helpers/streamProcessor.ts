@@ -41,9 +41,6 @@ export class StreamProcessor {
   public lastSeqId: number | null = null;
   public stopReason: StopReasonType | null = null;
 
-  // Approval ID fallback (for backends that don't include tool_call_id in every chunk)
-  private lastApprovalId: string | null = null;
-
   processChunk(chunk: LettaStreamingResponse): ChunkProcessingResult {
     let errorInfo: ErrorInfo | undefined;
     let updatedApproval: ApprovalRequest | undefined;
@@ -110,11 +107,6 @@ export class StreamProcessor {
       // Continue processing this chunk (for UI display)
     }
 
-    // Need to store the approval request ID to send an approval in a new run
-    if (chunk.message_type === "approval_request_message") {
-      this.lastApprovalId = chunk.id;
-    }
-
     // Accumulate approval request state across streaming chunks
     // Support parallel tool calls by tracking each tool_call_id separately
     // NOTE: Only track approval_request_message, NOT tool_call_message
@@ -134,21 +126,9 @@ export class StreamProcessor {
           : [];
 
       for (const toolCall of toolCalls) {
-        // Many backends stream tool_call chunks where only the first frame
-        // carries the tool_call_id; subsequent argument deltas omit it.
-        // Fall back to the last seen id within this turn so we can
-        // properly accumulate args.
-        let id: string | null = toolCall?.tool_call_id ?? this.lastApprovalId;
-        if (!id) {
-          // As an additional guard, if exactly one approval is being
-          // tracked already, use that id for continued argument deltas.
-          if (this.pendingApprovals.size === 1) {
-            id = Array.from(this.pendingApprovals.keys())[0] ?? null;
-          }
-        }
-        if (!id) continue; // cannot safely attribute this chunk
-
-        this.lastApprovalId = id;
+        const toolCallId = toolCall?.tool_call_id;
+        if (!toolCallId) continue; // contract: approval chunks include tool_call_id
+        const id = toolCallId;
 
         // Get or create entry for this tool_call_id
         const existing = this.pendingApprovals.get(id) || {
