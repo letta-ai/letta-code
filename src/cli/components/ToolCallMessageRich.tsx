@@ -182,24 +182,23 @@ export const ToolCallMessage = memo(
     // If name exceeds available width, fall back to simple wrapped rendering
     const fallback = displayName.length >= rightWidth;
 
-    // Determine dot state based on phase
-    const getDotElement = () => {
+    const dotColor = (() => {
       switch (line.phase) {
         case "streaming":
-          return <Text color={colors.tool.streaming}>●</Text>;
+          return colors.tool.streaming;
         case "ready":
-          return <BlinkDot color={colors.tool.pending} />;
+          return colors.tool.pending;
         case "running":
-          return <BlinkDot color={colors.tool.running} />;
+          return colors.tool.running;
         case "finished":
-          if (line.resultOk === false) {
-            return <Text color={colors.tool.error}>●</Text>;
-          }
-          return <Text color={colors.tool.completed}>●</Text>;
+          return line.resultOk === false
+            ? colors.tool.error
+            : colors.tool.completed;
         default:
-          return <Text>●</Text>;
+          return undefined;
       }
-    };
+    })();
+    const dotShouldAnimate = line.phase === "ready" || line.phase === "running";
 
     // Format result for display
     const getResultElement = () => {
@@ -770,7 +769,7 @@ export const ToolCallMessage = memo(
         {/* Tool call with exact wrapping logic from old codebase */}
         <Box flexDirection="row">
           <Box width={2} flexShrink={0}>
-            {getDotElement()}
+            <BlinkDot color={dotColor} shouldAnimate={dotShouldAnimate} />
             <Text></Text>
           </Box>
           <Box flexGrow={1} width={rightWidth}>
