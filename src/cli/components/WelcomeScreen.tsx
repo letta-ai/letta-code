@@ -117,7 +117,10 @@ export function WelcomeScreen({
     <Box flexDirection="row" marginTop={1}>
       {/* Left column: Logo */}
       <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
-        <AnimatedLogo color={colors.welcome.accent} />
+        <AnimatedLogo
+          color={colors.welcome.accent}
+          animate={loadingState !== "ready"}
+        />
       </Box>
 
       {/* Right column: Text info */}
