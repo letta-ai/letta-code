@@ -326,6 +326,49 @@ function isNonStateCommand(msg: string): boolean {
   return false;
 }
 
+const APPROVAL_OPTIONS_HEIGHT = 8;
+const APPROVAL_PREVIEW_BUFFER = 4;
+const MIN_WRAP_WIDTH = 10;
+const TEXT_WRAP_GUTTER = 6;
+const DIFF_WRAP_GUTTER = 12;
+
+function countWrappedLines(text: string, width: number): number {
+  if (!text) return 0;
+  const wrapWidth = Math.max(1, width);
+  return text.split(/\r?\n/).reduce((sum, line) => {
+    const len = line.length;
+    const wrapped = Math.max(1, Math.ceil(len / wrapWidth));
+    return sum + wrapped;
+  }, 0);
+}
+
+function countWrappedLinesFromList(lines: string[], width: number): number {
+  if (!lines.length) return 0;
+  const wrapWidth = Math.max(1, width);
+  return lines.reduce((sum, line) => {
+    const len = line.length;
+    const wrapped = Math.max(1, Math.ceil(len / wrapWidth));
+    return sum + wrapped;
+  }, 0);
+}
+
+function estimateAdvancedDiffLines(
+  diff: AdvancedDiffSuccess,
+  width: number,
+): number {
+  const wrapWidth = Math.max(1, width);
+  let total = 0;
+  for (const hunk of diff.hunks) {
+    for (const line of hunk.lines) {
+      const raw = line.raw || "";
+      if (raw.startsWith("\\")) continue;
+      const text = raw.slice(1);
+      total += Math.max(1, Math.ceil(text.length / wrapWidth));
+    }
+  }
+  return total;
+}
+
 // tiny helper for unique ids (avoid overwriting prior user lines)
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1653,6 +1696,157 @@ export default function App({
   // This prevents double-committing when the approval changes
   const eagerCommittedPreviewsRef = useRef<Set<string>>(new Set());
 
+  const estimateApprovalPreviewLines = useCallback(
+    (approval: ApprovalRequest): number => {
+      const toolName = approval.toolName;
+      if (!toolName) return 0;
+      const args = safeJsonParseOr<Record<string, unknown>>(
+        approval.toolArgs || "{}",
+        {},
+      );
+      const wrapWidth = Math.max(MIN_WRAP_WIDTH, columns - TEXT_WRAP_GUTTER);
+      const diffWrapWidth = Math.max(
+        MIN_WRAP_WIDTH,
+        columns - DIFF_WRAP_GUTTER,
+      );
+
+      if (isShellTool(toolName)) {
+        const t = toolName.toLowerCase();
+        let command = "(no command)";
+        let description = "";
+
+        if (t === "shell") {
+          const cmdVal = args.command;
+          command = Array.isArray(cmdVal)
+            ? cmdVal.join(" ")
+            : typeof cmdVal === "string"
+              ? cmdVal
+              : "(no command)";
+          description =
+            typeof args.justification === "string" ? args.justification : "";
+        } else {
+          command =
+            typeof args.command === "string" ? args.command : "(no command)";
+          description =
+            typeof args.description === "string"
+              ? args.description
+              : typeof args.justification === "string"
+                ? args.justification
+                : "";
+        }
+
+        let lines = 3; // solid line + header + blank line
+        lines += countWrappedLines(command, wrapWidth);
+        if (description) {
+          lines += countWrappedLines(description, wrapWidth);
+        }
+        return lines;
+      }
+
+      if (
+        isFileEditTool(toolName) ||
+        isFileWriteTool(toolName) ||
+        isPatchTool(toolName)
+      ) {
+        const headerLines = 4; // solid line + header + dotted lines
+        let diffLines = 0;
+        const toolCallId = approval.toolCallId;
+
+        if (isPatchTool(toolName) && typeof args.input === "string") {
+          const operations = parsePatchOperations(args.input);
+          operations.forEach((op, idx) => {
+            if (idx > 0) diffLines += 1; // blank line between operations
+            diffLines += 1; // filename line
+
+            const diffKey = toolCallId ? `${toolCallId}:${op.path}` : undefined;
+            const opDiff =
+              diffKey && precomputedDiffsRef.current.has(diffKey)
+                ? precomputedDiffsRef.current.get(diffKey)
+                : undefined;
+
+            if (opDiff) {
+              diffLines += estimateAdvancedDiffLines(opDiff, diffWrapWidth);
+              return;
+            }
+
+            if (op.kind === "add") {
+              diffLines += countWrappedLines(op.content, wrapWidth);
+              return;
+            }
+            if (op.kind === "update") {
+              if (op.patchLines?.length) {
+                diffLines += countWrappedLinesFromList(
+                  op.patchLines,
+                  wrapWidth,
+                );
+              } else {
+                diffLines += countWrappedLines(op.oldString || "", wrapWidth);
+                diffLines += countWrappedLines(op.newString || "", wrapWidth);
+              }
+              return;
+            }
+
+            diffLines += 1; // delete placeholder
+          });
+
+          return headerLines + diffLines;
+        }
+
+        const diff =
+          toolCallId && precomputedDiffsRef.current.has(toolCallId)
+            ? precomputedDiffsRef.current.get(toolCallId)
+            : undefined;
+
+        if (diff) {
+          diffLines += estimateAdvancedDiffLines(diff, diffWrapWidth);
+          return headerLines + diffLines;
+        }
+
+        if (Array.isArray(args.edits)) {
+          for (const edit of args.edits) {
+            if (!edit || typeof edit !== "object") continue;
+            const oldString =
+              typeof edit.old_string === "string" ? edit.old_string : "";
+            const newString =
+              typeof edit.new_string === "string" ? edit.new_string : "";
+            diffLines += countWrappedLines(oldString, wrapWidth);
+            diffLines += countWrappedLines(newString, wrapWidth);
+          }
+          return headerLines + diffLines;
+        }
+
+        if (typeof args.content === "string") {
+          diffLines += countWrappedLines(args.content, wrapWidth);
+          return headerLines + diffLines;
+        }
+
+        const oldString =
+          typeof args.old_string === "string" ? args.old_string : "";
+        const newString =
+          typeof args.new_string === "string" ? args.new_string : "";
+        diffLines += countWrappedLines(oldString, wrapWidth);
+        diffLines += countWrappedLines(newString, wrapWidth);
+        return headerLines + diffLines;
+      }
+
+      return 0;
+    },
+    [columns],
+  );
+
+  const shouldEagerCommitApprovalPreview = useCallback(
+    (approval: ApprovalRequest): boolean => {
+      if (!terminalRows) return false;
+      const previewLines = estimateApprovalPreviewLines(approval);
+      if (previewLines === 0) return false;
+      return (
+        previewLines + APPROVAL_OPTIONS_HEIGHT + APPROVAL_PREVIEW_BUFFER >=
+        terminalRows
+      );
+    },
+    [estimateApprovalPreviewLines, terminalRows],
+  );
+
   // Recompute UI state from buffers after each streaming chunk
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
@@ -1819,6 +2013,36 @@ export default function App({
       // Failed to read plan, don't commit preview
     }
   }, [currentApproval]);
+
+  // Eager commit for large approval previews (bash/file edits) to avoid flicker
+  useEffect(() => {
+    if (!currentApproval) return;
+    if (currentApproval.toolName === "ExitPlanMode") return;
+
+    const toolCallId = currentApproval.toolCallId;
+    if (!toolCallId) return;
+    if (eagerCommittedPreviewsRef.current.has(toolCallId)) return;
+    if (!shouldEagerCommitApprovalPreview(currentApproval)) return;
+
+    const previewItem: StaticItem = {
+      kind: "approval_preview",
+      id: `approval-preview-${toolCallId}`,
+      toolCallId,
+      toolName: currentApproval.toolName,
+      toolArgs: currentApproval.toolArgs || "{}",
+    };
+
+    if (
+      (isFileEditTool(currentApproval.toolName) ||
+        isFileWriteTool(currentApproval.toolName)) &&
+      precomputedDiffsRef.current.has(toolCallId)
+    ) {
+      previewItem.precomputedDiff = precomputedDiffsRef.current.get(toolCallId);
+    }
+
+    setStaticItems((prev) => [...prev, previewItem]);
+    eagerCommittedPreviewsRef.current.add(toolCallId);
+  }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
   // Backfill message history when resuming (only once)
   useEffect(() => {
@@ -9780,6 +10004,9 @@ Plan file path: ${planFilePath}`;
   const inputVisible = !showExitStats;
   const inputEnabled =
     !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+  const currentApprovalPreviewCommitted = currentApproval?.toolCallId
+    ? eagerCommittedPreviewsRef.current.has(currentApproval.toolCallId)
+    : false;
 
   useEffect(() => {
     trajectoryTokenDisplayRef.current = trajectoryTokenDisplay;
@@ -9920,6 +10147,7 @@ Plan file path: ${planFilePath}`;
                             allowPersistence={
                               currentApprovalContext?.allowPersistence ?? true
                             }
+                            showPreview={!currentApprovalPreviewCommitted}
                           />
                         ) : ln.kind === "user" ? (
                           <UserMessage line={ln} />
@@ -9998,6 +10226,7 @@ Plan file path: ${planFilePath}`;
                     allowPersistence={
                       currentApprovalContext?.allowPersistence ?? true
                     }
+                    showPreview={!currentApprovalPreviewCommitted}
                   />
                 </Box>
               )}
