@@ -193,6 +193,7 @@ export function Input({
   bashRunning = false,
   onBashInterrupt,
   inputEnabled = true,
+  collapseInputWhenDisabled = false,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -225,6 +226,7 @@ export function Input({
   bashRunning?: boolean;
   onBashInterrupt?: () => void;
   inputEnabled?: boolean;
+  collapseInputWhenDisabled?: boolean;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -259,8 +261,18 @@ export function Input({
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
+
+  // Terminal width (reactive to window resizing)
+  const columns = useTerminalWidth();
+  const contentWidth = Math.max(0, columns - 2);
+
   const interactionEnabled = visible && inputEnabled;
-  const hideFooter = interactionEnabled && value.startsWith("/");
+  const reserveInputSpace = !collapseInputWhenDisabled;
+  const hideFooter = !interactionEnabled || value.startsWith("/");
+  const inputRowLines = useMemo(() => {
+    return Math.max(1, getVisualLines(value, contentWidth).length);
+  }, [value, contentWidth]);
+  const inputChromeHeight = inputRowLines + 3; // top divider + input rows + bottom divider + footer
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -337,10 +349,6 @@ export function Input({
       setIsAutocompleteActive(false);
     }
   }, [interactionEnabled]);
-
-  // Terminal width (reactive to window resizing)
-  const columns = useTerminalWidth();
-  const contentWidth = Math.max(0, columns - 2);
 
   // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
@@ -932,47 +940,49 @@ export function Input({
         <QueuedMessages messages={messageQueue} />
       )}
 
-      <Box flexDirection="column">
-        {/* Top horizontal divider */}
-        <Text
-          dimColor={!isBashMode}
-          color={isBashMode ? colors.bash.border : undefined}
-        >
-          {horizontalLine}
-        </Text>
+      {interactionEnabled ? (
+        <Box flexDirection="column">
+          {/* Top horizontal divider */}
+          <Text
+            dimColor={!isBashMode}
+            color={isBashMode ? colors.bash.border : undefined}
+          >
+            {horizontalLine}
+          </Text>
 
-        {/* Two-column layout for input, matching message components */}
-        <Box flexDirection="row">
-          <Box width={2} flexShrink={0}>
-            <Text color={isBashMode ? colors.bash.prompt : colors.input.prompt}>
-              {isBashMode ? "!" : ">"}
-            </Text>
-            <Text> </Text>
+          {/* Two-column layout for input, matching message components */}
+          <Box flexDirection="row">
+            <Box width={2} flexShrink={0}>
+              <Text
+                color={isBashMode ? colors.bash.prompt : colors.input.prompt}
+              >
+                {isBashMode ? "!" : ">"}
+              </Text>
+              <Text> </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <PasteAwareTextInput
+                value={value}
+                onChange={setValue}
+                onSubmit={handleSubmit}
+                cursorPosition={cursorPos}
+                onCursorMove={setCurrentCursorPosition}
+                focus={interactionEnabled && !onEscapeCancel}
+                onBangAtEmpty={handleBangAtEmpty}
+                onBackspaceAtEmpty={handleBackspaceAtEmpty}
+                onPasteError={onPasteError}
+              />
+            </Box>
           </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <PasteAwareTextInput
-              value={value}
-              onChange={setValue}
-              onSubmit={handleSubmit}
-              cursorPosition={cursorPos}
-              onCursorMove={setCurrentCursorPosition}
-              focus={interactionEnabled && !onEscapeCancel}
-              onBangAtEmpty={handleBangAtEmpty}
-              onBackspaceAtEmpty={handleBackspaceAtEmpty}
-              onPasteError={onPasteError}
-            />
-          </Box>
-        </Box>
 
-        {/* Bottom horizontal divider */}
-        <Text
-          dimColor={!isBashMode}
-          color={isBashMode ? colors.bash.border : undefined}
-        >
-          {horizontalLine}
-        </Text>
+          {/* Bottom horizontal divider */}
+          <Text
+            dimColor={!isBashMode}
+            color={isBashMode ? colors.bash.border : undefined}
+          >
+            {horizontalLine}
+          </Text>
 
-        {interactionEnabled && (
           <InputAssist
             currentInput={value}
             cursorPosition={currentCursorPosition}
@@ -986,28 +996,30 @@ export function Input({
             workingDirectory={process.cwd()}
             conversationId={conversationId}
           />
-        )}
 
-        <InputFooter
-          ctrlCPressed={ctrlCPressed}
-          escapePressed={escapePressed}
-          isBashMode={isBashMode}
-          modeName={modeInfo?.name ?? null}
-          modeColor={modeInfo?.color ?? null}
-          showExitHint={ralphActive || ralphPending}
-          agentName={agentName}
-          currentModel={currentModel}
-          isOpenAICodexProvider={
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-          }
-          isByokProvider={
-            currentModelProvider?.startsWith("lc-") ||
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-          }
-          isAutocompleteActive={isAutocompleteActive}
-          hideFooter={hideFooter}
-        />
-      </Box>
+          <InputFooter
+            ctrlCPressed={ctrlCPressed}
+            escapePressed={escapePressed}
+            isBashMode={isBashMode}
+            modeName={modeInfo?.name ?? null}
+            modeColor={modeInfo?.color ?? null}
+            showExitHint={ralphActive || ralphPending}
+            agentName={agentName}
+            currentModel={currentModel}
+            isOpenAICodexProvider={
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+            }
+            isByokProvider={
+              currentModelProvider?.startsWith("lc-") ||
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+            }
+            isAutocompleteActive={isAutocompleteActive}
+            hideFooter={hideFooter}
+          />
+        </Box>
+      ) : reserveInputSpace ? (
+        <Box height={inputChromeHeight} />
+      ) : null}
     </Box>
   );
 }
