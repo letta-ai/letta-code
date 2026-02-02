@@ -10076,6 +10076,9 @@ Plan file path: ${planFilePath}`;
                 bashRunning={bashRunning}
                 onBashInterrupt={handleBashInterrupt}
                 inputEnabled={inputEnabled}
+                collapseInputWhenDisabled={
+                  pendingApprovals.length > 0 || anySelectorOpen
+                }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}
