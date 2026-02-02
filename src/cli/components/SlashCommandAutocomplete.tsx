@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { settingsManager } from "../../settings-manager";
 import { commands } from "../commands/registry";
 import { useAutocompleteNavigation } from "../hooks/useAutocompleteNavigation";
@@ -50,10 +50,7 @@ export function SlashCommandAutocomplete({
   agentId,
   workingDirectory = process.cwd(),
 }: AutocompleteProps) {
-  const [matches, setMatches] = useState<CommandMatch[]>([]);
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
-  // Track if we should show "no matching commands" (non-empty query with no results)
-  const [showNoMatches, setShowNoMatches] = useState(false);
 
   // Load custom commands once on mount
   useEffect(() => {
@@ -108,6 +105,50 @@ export function SlashCommandAutocomplete({
     );
   }, [agentId, workingDirectory, customCommands]);
 
+  const queryInfo = useMemo(
+    () => extractSearchQuery(currentInput, cursorPosition),
+    [currentInput, cursorPosition],
+  );
+
+  const { matches, showNoMatches, hideAutocomplete } = useMemo(() => {
+    if (!queryInfo) {
+      return {
+        matches: [] as CommandMatch[],
+        showNoMatches: false,
+        hideAutocomplete: true,
+      };
+    }
+
+    const { query, hasSpaceAfter } = queryInfo;
+    if (hasSpaceAfter) {
+      return {
+        matches: [] as CommandMatch[],
+        showNoMatches: false,
+        hideAutocomplete: true,
+      };
+    }
+
+    if (query.length === 0) {
+      return {
+        matches: allCommands,
+        showNoMatches: false,
+        hideAutocomplete: allCommands.length === 0,
+      };
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const filtered = allCommands.filter((item) => {
+      const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
+      return cmdName.includes(lowerQuery);
+    });
+
+    return {
+      matches: filtered,
+      showNoMatches: filtered.length === 0,
+      hideAutocomplete: false,
+    };
+  }, [queryInfo, allCommands]);
+
   const { selectedIndex } = useAutocompleteNavigation({
     matches,
     onSelect: onSelect ? (item) => onSelect(item.cmd) : undefined,
@@ -119,50 +160,10 @@ export function SlashCommandAutocomplete({
   });
 
   // Manually manage active state to include the "no matches" case
-  useEffect(() => {
+  useLayoutEffect(() => {
     const isActive = matches.length > 0 || showNoMatches;
     onActiveChange?.(isActive);
   }, [matches.length, showNoMatches, onActiveChange]);
-
-  // Update matches when input changes
-  useEffect(() => {
-    const result = extractSearchQuery(currentInput, cursorPosition);
-
-    if (!result) {
-      setMatches([]);
-      setShowNoMatches(false);
-      return;
-    }
-
-    const { query, hasSpaceAfter } = result;
-
-    // If there's a space after the command, user has moved on - hide autocomplete
-    if (hasSpaceAfter) {
-      setMatches([]);
-      setShowNoMatches(false);
-      return;
-    }
-
-    let newMatches: CommandMatch[];
-
-    // If query is empty (just typed "/"), show all commands
-    if (query.length === 0) {
-      newMatches = allCommands;
-      setMatches(newMatches);
-      setShowNoMatches(false);
-    } else {
-      // Filter commands that contain the query (case-insensitive)
-      // Match against the command name without the leading "/"
-      const lowerQuery = query.toLowerCase();
-      newMatches = allCommands.filter((item) => {
-        const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
-        return cmdName.includes(lowerQuery);
-      });
-      setMatches(newMatches);
-      // Show "no matches" message if query is non-empty and no results
-      setShowNoMatches(newMatches.length === 0);
-    }
-  }, [currentInput, cursorPosition, allCommands]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
@@ -179,7 +180,7 @@ export function SlashCommandAutocomplete({
   }
 
   // Don't show if no matches and query is empty (shouldn't happen, but safety check)
-  if (matches.length === 0) {
+  if (hideAutocomplete || matches.length === 0) {
     return null;
   }
 
