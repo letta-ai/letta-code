@@ -87,35 +87,39 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
         </Box>
       </Box>
 
-      {/* Result section (only when finished) - matches CollapsedOutputDisplay format */}
-      {!isRunning && line.summary && (
-        <>
-          {/* Header line with L-bracket */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text dimColor>{"  ⎿  "}</Text>
+      {/* Result section (only when finished and LETTA_DEBUG is enabled) */}
+      {/* By default, hide the verbose summary to avoid overwhelming users */}
+      {!isRunning &&
+        line.summary &&
+        (process.env.LETTA_DEBUG === "1" ||
+          process.env.LETTA_DEBUG === "true") && (
+          <>
+            {/* Header line with L-bracket */}
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text dimColor>{"  ⎿  "}</Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
+                <Text dimColor>{COMPACTION_SUMMARY_HEADER}</Text>
+              </Box>
             </Box>
-            <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
-              <Text dimColor>{COMPACTION_SUMMARY_HEADER}</Text>
+            {/* Empty line for separation */}
+            <Box flexDirection="row">
+              <Text> </Text>
             </Box>
-          </Box>
-          {/* Empty line for separation */}
-          <Box flexDirection="row">
-            <Text> </Text>
-          </Box>
-          {/* Summary text - indented with 5 spaces to align */}
-          <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
-              <Text>{"     "}</Text>
+            {/* Summary text - indented with 5 spaces to align */}
+            <Box flexDirection="row">
+              <Box width={5} flexShrink={0}>
+                <Text>{"     "}</Text>
+              </Box>
+              <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
+                <Text dimColor wrap="wrap">
+                  {line.summary}
+                </Text>
+              </Box>
             </Box>
-            <Box flexGrow={1} width={Math.max(0, rightWidth - 3)}>
-              <Text dimColor wrap="wrap">
-                {line.summary}
-              </Text>
-            </Box>
-          </Box>
-        </>
-      )}
+          </>
+        )}
     </Box>
   );
 });
