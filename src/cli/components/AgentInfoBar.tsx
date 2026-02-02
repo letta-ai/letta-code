@@ -56,7 +56,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         <Text>
           {"  "}Letta Code v{getVersion()} · Report bugs with /feedback or{" "}
           <Link url="https://discord.gg/letta">
-            <Text>join our Discord ↗</Text>
+            <Text>on Discord ↗</Text>
           </Link>
         </Text>
       </Box>

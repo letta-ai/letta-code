@@ -42,4 +42,4 @@ export const COMPACTION_SUMMARY_HEADER =
 // Show token count after 100 estimated tokens (shows exact count until 1k, then compact)
 export const TOKEN_DISPLAY_THRESHOLD = 100;
 // Show elapsed time after 2 minutes (in ms)
-export const ELAPSED_DISPLAY_THRESHOLD_MS = 2 * 60 * 1000;
+export const ELAPSED_DISPLAY_THRESHOLD_MS = 60 * 1000;
