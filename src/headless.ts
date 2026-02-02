@@ -37,13 +37,14 @@ import {
   markIncompleteToolsAsCancelled,
   toLines,
 } from "./cli/helpers/accumulator";
+import { classifyApprovals } from "./cli/helpers/approvalClassification";
 import { formatErrorDetails } from "./cli/helpers/errorFormatter";
-import { safeJsonParseOr } from "./cli/helpers/safeJsonParse";
-import { drainStreamWithResume } from "./cli/helpers/stream";
-import { StreamProcessor } from "./cli/helpers/streamProcessor";
+import {
+  type DrainStreamHook,
+  drainStreamWithResume,
+} from "./cli/helpers/stream";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { settingsManager } from "./settings-manager";
-import { checkToolPermission } from "./tools/manager";
 import type {
   AutoApprovalMessage,
   CanUseToolControlRequest,
@@ -896,54 +897,40 @@ export async function handleHeadlessCommand(
             reason: string;
           };
 
-      const decisions: Decision[] = [];
+      const { autoAllowed, autoDenied } = await classifyApprovals(
+        pendingApprovals,
+        {
+          treatAskAsDeny: true,
+          denyReasonForAsk: "Tool requires approval (headless mode)",
+          requireArgsForAutoApprove: true,
+          missingNameReason: "Tool call incomplete - missing name",
+        },
+      );
 
-      for (const currentApproval of pendingApprovals) {
-        const { toolName, toolArgs } = currentApproval;
-        const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-          toolArgs || "{}",
-          {},
-        );
-        const permission = await checkToolPermission(toolName, parsedArgs);
-
-        if (permission.decision === "deny" || permission.decision === "ask") {
-          const denyReason =
-            permission.decision === "ask"
-              ? "Tool requires approval (headless mode)"
-              : `Permission denied: ${permission.matchedRule || permission.reason}`;
-          decisions.push({
-            type: "deny",
-            approval: currentApproval,
-            reason: denyReason,
-          });
-          continue;
-        }
-
-        // Verify required args present; if missing, deny so the model retries with args
-        const { getToolSchema } = await import("./tools/manager");
-        const schema = getToolSchema(toolName);
-        const required =
-          (schema?.input_schema?.required as string[] | undefined) || [];
-        const missing = required.filter(
-          (key) => !(key in parsedArgs) || parsedArgs[key] == null,
-        );
-        if (missing.length > 0) {
-          decisions.push({
-            type: "deny",
-            approval: currentApproval,
-            reason: `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}`,
-          });
-          continue;
-        }
-
-        // Approve for execution
-        decisions.push({
-          type: "approve",
-          approval: currentApproval,
-          reason: permission.reason || "Allowed by permission rule",
-          matchedRule: permission.matchedRule || "auto-approved",
-        });
-      }
+      const decisions: Decision[] = [
+        ...autoAllowed.map((ac) => ({
+          type: "approve" as const,
+          approval: ac.approval,
+          reason: ac.permission.reason || "Allowed by permission rule",
+          matchedRule:
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? ac.permission.matchedRule
+              : "auto-approved",
+        })),
+        ...autoDenied.map((ac) => {
+          const fallback =
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? `Permission denied: ${ac.permission.matchedRule}`
+              : ac.permission.reason
+                ? `Permission denied: ${ac.permission.reason}`
+                : "Permission denied: Unknown reason";
+          return {
+            type: "deny" as const,
+            approval: ac.approval,
+            reason: ac.denyReason ?? fallback,
+          };
+        }),
+      ];
 
       // Phase 2: Execute approved tools and format results using shared function
       const { executeApprovalBatch } = await import(
@@ -1137,20 +1124,20 @@ ${SYSTEM_REMINDER_CLOSE}
       }> = [];
       let apiDurationMs: number;
       let lastRunId: string | null = null;
+      let approvalPendingRecovery = false;
 
       if (outputFormat === "stream-json") {
-        const startTime = performance.now();
-
         // Track approval requests across streamed chunks
         const autoApprovalEmitted = new Set<string>();
 
-        const streamProcessor = new StreamProcessor();
+        const streamJsonHook: DrainStreamHook = async ({
+          chunk,
+          shouldOutput,
+          errorInfo,
+          updatedApproval,
+        }) => {
+          let shouldOutputChunk = shouldOutput;
 
-        for await (const chunk of stream) {
-          const { shouldOutput, errorInfo, updatedApproval } =
-            streamProcessor.processChunk(chunk);
-
-          // Detect mid-stream errors
           if (errorInfo && shouldOutput) {
             const errorEvent: ErrorMessage = {
               type: "error",
@@ -1171,13 +1158,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 }),
             };
             console.log(JSON.stringify(errorEvent));
-
-            // Still accumulate for tracking
-            const { onChunk: accumulatorOnChunk } = await import(
-              "./cli/helpers/accumulator"
-            );
-            accumulatorOnChunk(buffers, chunk);
-            continue;
+            shouldOutputChunk = false;
           }
 
           // Detect server conflict due to pending approval; handle it and retry
@@ -1186,77 +1167,56 @@ ${SYSTEM_REMINDER_CLOSE}
             isApprovalPendingError(errorInfo?.detail) ||
             isApprovalPendingError(errorInfo?.message)
           ) {
-            // Emit recovery message for stream-json mode (enables testing)
-            if (outputFormat === "stream-json") {
-              const recoveryMsg: RecoveryMessage = {
-                type: "recovery",
-                recovery_type: "approval_pending",
-                message:
-                  "Detected pending approval conflict; auto-denying stale approval and retrying",
-                run_id: lastRunId ?? undefined,
-                session_id: sessionId,
-                uuid: `recovery-${lastRunId || crypto.randomUUID()}`,
-              };
-              console.log(JSON.stringify(recoveryMsg));
-            }
-            // Clear approvals and retry outer loop
-            await resolveAllPendingApprovals();
-            // Reset state and restart turn
-            stopReason = "error" as StopReasonType;
-            break;
+            const recoveryRunId = errorInfo?.run_id;
+            const recoveryMsg: RecoveryMessage = {
+              type: "recovery",
+              recovery_type: "approval_pending",
+              message:
+                "Detected pending approval conflict; auto-denying stale approval and retrying",
+              run_id: recoveryRunId ?? undefined,
+              session_id: sessionId,
+              uuid: `recovery-${recoveryRunId || crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(recoveryMsg));
+            approvalPendingRecovery = true;
+            return { stopReason: "error", shouldAccumulate: true };
           }
-
-          // Check if we should skip outputting approval requests in bypass mode
-          let shouldOutputChunk = shouldOutput;
 
           // Check if this approval will be auto-approved. Dedup per tool_call_id
           if (
             updatedApproval &&
-            !autoApprovalEmitted.has(updatedApproval.toolCallId) &&
-            updatedApproval.toolName
+            !autoApprovalEmitted.has(updatedApproval.toolCallId)
           ) {
-            const parsedArgs = safeJsonParseOr<Record<string, unknown> | null>(
-              updatedApproval.toolArgs || "{}",
-              null,
-            );
-            const permission = await checkToolPermission(
-              updatedApproval.toolName,
-              parsedArgs || {},
-            );
-            if (permission.decision === "allow" && parsedArgs) {
-              // Only emit auto_approval if we already have all required params
-              const { getToolSchema } = await import("./tools/manager");
-              const schema = getToolSchema(updatedApproval.toolName);
-              const required =
-                (schema?.input_schema?.required as string[] | undefined) || [];
-              const missing = required.filter(
-                (key) =>
-                  !(key in parsedArgs) ||
-                  (parsedArgs as Record<string, unknown>)[key] == null,
-              );
-              if (missing.length === 0) {
-                shouldOutputChunk = false;
-                const autoApprovalMsg: AutoApprovalMessage = {
-                  type: "auto_approval",
-                  tool_call: {
-                    name: updatedApproval.toolName,
-                    tool_call_id: updatedApproval.toolCallId,
-                    arguments: updatedApproval.toolArgs || "{}",
-                  },
-                  reason: permission.reason || "Allowed by permission rule",
-                  matched_rule: permission.matchedRule || "auto-approved",
-                  session_id: sessionId,
-                  uuid: `auto-approval-${updatedApproval.toolCallId}`,
-                };
-                console.log(JSON.stringify(autoApprovalMsg));
-                autoApprovalEmitted.add(updatedApproval.toolCallId);
-              }
+            const { autoAllowed } = await classifyApprovals([updatedApproval], {
+              requireArgsForAutoApprove: true,
+              missingNameReason: "Tool call incomplete - missing name",
+            });
+
+            const [approval] = autoAllowed;
+            if (approval) {
+              const permission = approval.permission;
+              shouldOutputChunk = false;
+              const autoApprovalMsg: AutoApprovalMessage = {
+                type: "auto_approval",
+                tool_call: {
+                  name: approval.approval.toolName,
+                  tool_call_id: approval.approval.toolCallId,
+                  arguments: approval.approval.toolArgs || "{}",
+                },
+                reason: permission.reason || "Allowed by permission rule",
+                matched_rule:
+                  "matchedRule" in permission && permission.matchedRule
+                    ? permission.matchedRule
+                    : "auto-approved",
+                session_id: sessionId,
+                uuid: `auto-approval-${approval.approval.toolCallId}`,
+              };
+              console.log(JSON.stringify(autoApprovalMsg));
+              autoApprovalEmitted.add(approval.approval.toolCallId);
             }
           }
 
-          // Output chunk as message event (unless filtered)
           if (shouldOutputChunk) {
-            // Use existing otid or id from the Letta SDK chunk
             const chunkWithIds = chunk as typeof chunk & {
               otid?: string;
               id?: string;
@@ -1264,7 +1224,6 @@ ${SYSTEM_REMINDER_CLOSE}
             const uuid = chunkWithIds.otid || chunkWithIds.id;
 
             if (includePartialMessages) {
-              // Emit as stream_event wrapper (like Claude Code with --include-partial-messages)
               const streamEvent: StreamEvent = {
                 type: "stream_event",
                 event: chunk,
@@ -1273,7 +1232,6 @@ ${SYSTEM_REMINDER_CLOSE}
               };
               console.log(JSON.stringify(streamEvent));
             } else {
-              // Emit as regular message (default)
               const msg: MessageWire = {
                 type: "message",
                 ...chunk,
@@ -1284,23 +1242,22 @@ ${SYSTEM_REMINDER_CLOSE}
             }
           }
 
-          // Still accumulate for approval tracking
-          const { onChunk } = await import("./cli/helpers/accumulator");
-          onChunk(buffers, chunk);
-        }
+          return { shouldOutput: shouldOutputChunk, shouldAccumulate: true };
+        };
 
-        stopReason = stopReason || streamProcessor.stopReason || "error";
-        apiDurationMs = performance.now() - startTime;
-        approvals = streamProcessor.getApprovals();
-        // Use the last run_id we saw (if any)
-        lastRunId = streamProcessor.lastRunId;
-        if (lastRunId) lastKnownRunId = lastRunId;
-
-        // Mark final line as finished
-        const { markCurrentLineAsFinished } = await import(
-          "./cli/helpers/accumulator"
+        const result = await drainStreamWithResume(
+          stream,
+          buffers,
+          () => {},
+          undefined,
+          undefined,
+          streamJsonHook,
         );
-        markCurrentLineAsFinished(buffers);
+        stopReason = result.stopReason;
+        approvals = result.approvals || [];
+        apiDurationMs = result.apiDurationMs;
+        lastRunId = result.lastRunId || null;
+        if (lastRunId) lastKnownRunId = lastRunId;
       } else {
         // Normal mode: use drainStreamWithResume
         const result = await drainStreamWithResume(
@@ -1317,6 +1274,10 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+      if (approvalPendingRecovery) {
+        await resolveAllPendingApprovals();
+        continue;
+      }
 
       // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
@@ -1353,63 +1314,32 @@ ${SYSTEM_REMINDER_CLOSE}
               reason: string;
             };
 
-        const decisions: Decision[] = [];
+        const { autoAllowed, autoDenied } = await classifyApprovals(approvals, {
+          treatAskAsDeny: true,
+          denyReasonForAsk: "Tool requires approval (headless mode)",
+          requireArgsForAutoApprove: true,
+          missingNameReason: "Tool call incomplete - missing name",
+        });
 
-        for (const currentApproval of approvals) {
-          const { toolName, toolArgs } = currentApproval;
-
-          // Check permission using existing permission system
-          const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-            toolArgs,
-            {},
-          );
-          const permission = await checkToolPermission(toolName, parsedArgs);
-
-          // Handle deny decision
-          if (permission.decision === "deny") {
-            const denyReason = `Permission denied: ${permission.matchedRule || permission.reason}`;
-            decisions.push({
-              type: "deny",
-              approval: currentApproval,
-              reason: denyReason,
-            });
-            continue;
-          }
-
-          // Handle ask decision - in headless mode, auto-deny
-          if (permission.decision === "ask") {
-            decisions.push({
-              type: "deny",
-              approval: currentApproval,
-              reason: "Tool requires approval (headless mode)",
-            });
-            continue;
-          }
-
-          // Permission is "allow" - verify we have required arguments before executing
-          const { getToolSchema } = await import("./tools/manager");
-          const schema = getToolSchema(toolName);
-          const required =
-            (schema?.input_schema?.required as string[] | undefined) || [];
-          const missing = required.filter(
-            (key) => !(key in parsedArgs) || parsedArgs[key] == null,
-          );
-          if (missing.length > 0) {
-            // Auto-deny with a clear reason so the model can retry with arguments
-            decisions.push({
-              type: "deny",
-              approval: currentApproval,
-              reason: `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}`,
-            });
-            continue;
-          }
-
-          // Approve this tool for execution
-          decisions.push({
-            type: "approve",
-            approval: currentApproval,
-          });
-        }
+        const decisions: Decision[] = [
+          ...autoAllowed.map((ac) => ({
+            type: "approve" as const,
+            approval: ac.approval,
+          })),
+          ...autoDenied.map((ac) => {
+            const fallback =
+              "matchedRule" in ac.permission && ac.permission.matchedRule
+                ? `Permission denied: ${ac.permission.matchedRule}`
+                : ac.permission.reason
+                  ? `Permission denied: ${ac.permission.reason}`
+                  : "Permission denied: Unknown reason";
+            return {
+              type: "deny" as const,
+              approval: ac.approval,
+              reason: ac.denyReason ?? fallback,
+            };
+          }),
+        ];
 
         // Phase 2: Execute all approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
@@ -2069,53 +1999,48 @@ async function runBidirectionalMode(
           const stream = await sendMessageStream(conversationId, currentInput, {
             agentId: agent.id,
           });
-
-          const streamProcessor = new StreamProcessor();
-
-          // Process stream
-          for await (const chunk of stream) {
-            // Check if aborted
-            if (currentAbortController?.signal.aborted) {
-              break;
+          const streamJsonHook: DrainStreamHook = ({ chunk, shouldOutput }) => {
+            if (!shouldOutput) {
+              return { shouldAccumulate: true };
             }
 
-            // Process chunk through StreamProcessor
-            const { shouldOutput } = streamProcessor.processChunk(chunk);
+            const chunkWithIds = chunk as typeof chunk & {
+              otid?: string;
+              id?: string;
+            };
+            const uuid = chunkWithIds.otid || chunkWithIds.id;
 
-            // Output chunk if not suppressed
-            if (shouldOutput) {
-              const chunkWithIds = chunk as typeof chunk & {
-                otid?: string;
-                id?: string;
+            if (includePartialMessages) {
+              const streamEvent: StreamEvent = {
+                type: "stream_event",
+                event: chunk,
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
               };
-              const uuid = chunkWithIds.otid || chunkWithIds.id;
-
-              if (includePartialMessages) {
-                const streamEvent: StreamEvent = {
-                  type: "stream_event",
-                  event: chunk,
-                  session_id: sessionId,
-                  uuid: uuid || crypto.randomUUID(),
-                };
-                console.log(JSON.stringify(streamEvent));
-              } else {
-                const msg: MessageWire = {
-                  type: "message",
-                  ...chunk,
-                  session_id: sessionId,
-                  uuid: uuid || crypto.randomUUID(),
-                };
-                console.log(JSON.stringify(msg));
-              }
+              console.log(JSON.stringify(streamEvent));
+            } else {
+              const msg: MessageWire = {
+                type: "message",
+                ...chunk,
+                session_id: sessionId,
+                uuid: uuid || crypto.randomUUID(),
+              };
+              console.log(JSON.stringify(msg));
             }
 
-            // Accumulate for result
-            const { onChunk } = await import("./cli/helpers/accumulator");
-            onChunk(buffers, chunk);
-          }
+            return { shouldAccumulate: true };
+          };
 
-          // Get stop reason from processor
-          const stopReason = streamProcessor.stopReason || "error";
+          const result = await drainStreamWithResume(
+            stream,
+            buffers,
+            () => {},
+            currentAbortController?.signal,
+            undefined,
+            streamJsonHook,
+          );
+          const stopReason = result.stopReason;
+          const approvals = result.approvals || [];
 
           // Case 1: Turn ended normally - break out of loop
           if (stopReason === "end_turn") {
@@ -2123,14 +2048,15 @@ async function runBidirectionalMode(
           }
 
           // Case 2: Aborted - break out of loop
-          if (currentAbortController?.signal.aborted) {
+          if (
+            currentAbortController?.signal.aborted ||
+            stopReason === "cancelled"
+          ) {
             break;
           }
 
           // Case 3: Requires approval - process approvals and continue
           if (stopReason === "requires_approval") {
-            const approvals = streamProcessor.getApprovals();
-
             if (approvals.length === 0) {
               // No approvals to process - break
               break;
@@ -2157,91 +2083,100 @@ async function runBidirectionalMode(
                   reason: string;
                 };
 
-            const decisions: Decision[] = [];
+            const { autoAllowed, autoDenied, needsUserInput } =
+              await classifyApprovals(approvals, {
+                requireArgsForAutoApprove: true,
+                missingNameReason: "Tool call incomplete - missing name",
+              });
 
-            for (const approval of approvals) {
-              const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                approval.toolArgs,
-                {},
-              );
-              const permission = await checkToolPermission(
-                approval.toolName,
-                parsedArgs,
+            const decisions: Decision[] = [
+              ...autoAllowed.map((ac) => ({
+                type: "approve" as const,
+                approval: ac.approval,
+                matchedRule:
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? ac.permission.matchedRule
+                    : "auto-approved",
+              })),
+              ...autoDenied.map((ac) => {
+                const fallback =
+                  "matchedRule" in ac.permission && ac.permission.matchedRule
+                    ? `Permission denied: ${ac.permission.matchedRule}`
+                    : ac.permission.reason
+                      ? `Permission denied: ${ac.permission.reason}`
+                      : "Permission denied: Unknown reason";
+                return {
+                  type: "deny" as const,
+                  approval: ac.approval,
+                  reason: ac.denyReason ?? fallback,
+                };
+              }),
+            ];
+
+            for (const approvalItem of autoAllowed) {
+              const permission = approvalItem.permission;
+              const autoApprovalMsg: AutoApprovalMessage = {
+                type: "auto_approval",
+                tool_call: {
+                  name: approvalItem.approval.toolName,
+                  tool_call_id: approvalItem.approval.toolCallId,
+                  arguments: approvalItem.approval.toolArgs,
+                },
+                reason: permission.reason || "auto-approved",
+                matched_rule:
+                  "matchedRule" in permission && permission.matchedRule
+                    ? permission.matchedRule
+                    : "auto-approved",
+                session_id: sessionId,
+                uuid: `auto-approval-${approvalItem.approval.toolCallId}`,
+              };
+              console.log(JSON.stringify(autoApprovalMsg));
+            }
+
+            for (const ac of needsUserInput) {
+              // permission.decision === "ask" - request permission from SDK
+              const permResponse = await requestPermission(
+                ac.approval.toolCallId,
+                ac.approval.toolName,
+                ac.parsedArgs,
               );
 
-              if (permission.decision === "allow") {
+              if (permResponse.decision === "allow") {
+                // If provided updatedInput (e.g., for AskUserQuestion with answers),
+                // update the approval's toolArgs to use it
+                const finalApproval = permResponse.updatedInput
+                  ? {
+                      ...ac.approval,
+                      toolArgs: JSON.stringify(permResponse.updatedInput),
+                    }
+                  : ac.approval;
+
                 decisions.push({
                   type: "approve",
-                  approval,
-                  matchedRule: permission.matchedRule || "auto-approved",
+                  approval: finalApproval,
+                  matchedRule: "SDK callback approved",
                 });
 
-                // Emit auto_approval event
+                // Emit auto_approval event for SDK-approved tool
                 const autoApprovalMsg: AutoApprovalMessage = {
                   type: "auto_approval",
                   tool_call: {
-                    name: approval.toolName,
-                    tool_call_id: approval.toolCallId,
-                    arguments: approval.toolArgs,
+                    name: finalApproval.toolName,
+                    tool_call_id: finalApproval.toolCallId,
+                    arguments: finalApproval.toolArgs,
                   },
-                  reason: permission.reason || "auto-approved",
-                  matched_rule: permission.matchedRule || "auto-approved",
+                  reason: permResponse.reason || "SDK callback approved",
+                  matched_rule: "canUseTool callback",
                   session_id: sessionId,
-                  uuid: `auto-approval-${approval.toolCallId}`,
+                  uuid: `auto-approval-${ac.approval.toolCallId}`,
                 };
                 console.log(JSON.stringify(autoApprovalMsg));
-              } else if (permission.decision === "deny") {
-                // Explicitly denied by permission rules
+              } else {
                 decisions.push({
                   type: "deny",
-                  approval,
-                  reason: `Permission denied: ${permission.matchedRule || permission.reason}`,
+                  approval: ac.approval,
+                  reason: permResponse.reason || "Denied by SDK callback",
                 });
-              } else {
-                // permission.decision === "ask" - request permission from SDK
-                const permResponse = await requestPermission(
-                  approval.toolCallId,
-                  approval.toolName,
-                  parsedArgs,
-                );
-
-                if (permResponse.decision === "allow") {
-                  // If provided updatedInput (e.g., for AskUserQuestion with answers),
-                  // update the approval's toolArgs to use it
-                  const finalApproval = permResponse.updatedInput
-                    ? {
-                        ...approval,
-                        toolArgs: JSON.stringify(permResponse.updatedInput),
-                      }
-                    : approval;
-
-                  decisions.push({
-                    type: "approve",
-                    approval: finalApproval,
-                    matchedRule: "SDK callback approved",
-                  });
-
-                  // Emit auto_approval event for SDK-approved tool
-                  const autoApprovalMsg: AutoApprovalMessage = {
-                    type: "auto_approval",
-                    tool_call: {
-                      name: finalApproval.toolName,
-                      tool_call_id: finalApproval.toolCallId,
-                      arguments: finalApproval.toolArgs,
-                    },
-                    reason: permResponse.reason || "SDK callback approved",
-                    matched_rule: "canUseTool callback",
-                    session_id: sessionId,
-                    uuid: `auto-approval-${approval.toolCallId}`,
-                  };
-                  console.log(JSON.stringify(autoApprovalMsg));
-                } else {
-                  decisions.push({
-                    type: "deny",
-                    approval,
-                    reason: permResponse.reason || "Denied by SDK callback",
-                  });
-                }
               }
             }
 

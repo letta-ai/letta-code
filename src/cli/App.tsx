@@ -159,6 +159,7 @@ import {
   setToolCallsRunning,
   toLines,
 } from "./helpers/accumulator";
+import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
 import {
   type AdvancedDiffSuccess,
@@ -3478,65 +3479,13 @@ export default function App({
             }
 
             // Check permissions for all approvals (including fancy UI tools)
-            const approvalResults = await Promise.all(
-              approvalsToProcess.map(async (approvalItem) => {
-                // Check if approval is incomplete (missing name)
-                // Note: toolArgs can be empty string for tools with no arguments (e.g., EnterPlanMode)
-                if (!approvalItem.toolName) {
-                  return {
-                    approval: approvalItem,
-                    permission: {
-                      decision: "deny" as const,
-                      reason:
-                        "Tool call incomplete - missing name or arguments",
-                    },
-                    context: null,
-                  };
-                }
-
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approvalItem.toolArgs,
-                  {},
-                );
-                const permission = await checkToolPermission(
-                  approvalItem.toolName,
-                  parsedArgs,
-                );
-                const context = await analyzeToolApproval(
-                  approvalItem.toolName,
-                  parsedArgs,
-                );
-                return { approval: approvalItem, permission, context };
-              }),
-            );
-
-            // Categorize approvals by permission decision
-            // Fancy UI tools should always go through their dialog, even if auto-allowed
-            const needsUserInput: typeof approvalResults = [];
-            const autoDenied: typeof approvalResults = [];
-            const autoAllowed: typeof approvalResults = [];
-
-            for (const ac of approvalResults) {
-              const { approval, permission } = ac;
-              let decision = permission.decision;
-
-              // Some tools always need user input regardless of yolo mode
-              if (
-                alwaysRequiresUserInput(approval.toolName) &&
-                decision === "allow"
-              ) {
-                decision = "ask";
-              }
-
-              if (decision === "ask") {
-                needsUserInput.push(ac);
-              } else if (decision === "deny") {
-                autoDenied.push(ac);
-              } else {
-                // decision === "allow"
-                autoAllowed.push(ac);
-              }
-            }
+            const { needsUserInput, autoAllowed, autoDenied } =
+              await classifyApprovals(approvalsToProcess, {
+                getContext: analyzeToolApproval,
+                alwaysRequiresUserInput,
+                missingNameReason:
+                  "Tool call incomplete - missing name or arguments",
+              });
 
             // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
             // This is needed for inline approval UI to show diffs, and for post-approval rendering
@@ -5054,58 +5003,12 @@ export default function App({
       }
 
       // There are pending approvals - check permissions (respects yolo mode)
-      const approvalResults = await Promise.all(
-        existingApprovals.map(async (approvalItem) => {
-          if (!approvalItem.toolName) {
-            return {
-              approval: approvalItem,
-              permission: {
-                decision: "deny" as const,
-                reason: "Tool call incomplete - missing name",
-              },
-              context: null,
-            };
-          }
-          const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-            approvalItem.toolArgs,
-            {},
-          );
-          const permission = await checkToolPermission(
-            approvalItem.toolName,
-            parsedArgs,
-          );
-          const context = await analyzeToolApproval(
-            approvalItem.toolName,
-            parsedArgs,
-          );
-          return { approval: approvalItem, permission, context };
-        }),
-      );
-
-      // Categorize by permission decision
-      const needsUserInput: typeof approvalResults = [];
-      const autoAllowed: typeof approvalResults = [];
-      const autoDenied: typeof approvalResults = [];
-
-      for (const ac of approvalResults) {
-        const { approval, permission } = ac;
-        let decision = permission.decision;
-
-        if (
-          alwaysRequiresUserInput(approval.toolName) &&
-          decision === "allow"
-        ) {
-          decision = "ask";
-        }
-
-        if (decision === "ask") {
-          needsUserInput.push(ac);
-        } else if (decision === "deny") {
-          autoDenied.push(ac);
-        } else {
-          autoAllowed.push(ac);
-        }
-      }
+      const { needsUserInput, autoAllowed, autoDenied } =
+        await classifyApprovals(existingApprovals, {
+          getContext: analyzeToolApproval,
+          alwaysRequiresUserInput,
+          missingNameReason: "Tool call incomplete - missing name",
+        });
 
       // If any approvals need user input, show dialog
       if (needsUserInput.length > 0) {
@@ -7680,33 +7583,12 @@ ${SYSTEM_REMINDER_CLOSE}
 
           if (existingApprovals && existingApprovals.length > 0) {
             // There are pending approvals - check permissions first (respects yolo mode)
-            const approvalResults = await Promise.all(
-              existingApprovals.map(async (approvalItem) => {
-                if (!approvalItem.toolName) {
-                  return {
-                    approval: approvalItem,
-                    permission: {
-                      decision: "deny" as const,
-                      reason: "Tool call incomplete - missing name",
-                    },
-                    context: null,
-                  };
-                }
-                const parsedArgs = safeJsonParseOr<Record<string, unknown>>(
-                  approvalItem.toolArgs,
-                  {},
-                );
-                const permission = await checkToolPermission(
-                  approvalItem.toolName,
-                  parsedArgs,
-                );
-                const context = await analyzeToolApproval(
-                  approvalItem.toolName,
-                  parsedArgs,
-                );
-                return { approval: approvalItem, permission, context };
-              }),
-            );
+            const { needsUserInput, autoAllowed, autoDenied } =
+              await classifyApprovals(existingApprovals, {
+                getContext: analyzeToolApproval,
+                alwaysRequiresUserInput,
+                missingNameReason: "Tool call incomplete - missing name",
+              });
 
             // Check if user cancelled during permission check
             if (
@@ -7721,32 +7603,6 @@ ${SYSTEM_REMINDER_CLOSE}
               setStreaming(false);
               refreshDerived();
               return { submitted: false };
-            }
-
-            // Categorize by permission decision
-            const needsUserInput: typeof approvalResults = [];
-            const autoAllowed: typeof approvalResults = [];
-            const autoDenied: typeof approvalResults = [];
-
-            for (const ac of approvalResults) {
-              const { approval, permission } = ac;
-              let decision = permission.decision;
-
-              // Some tools always need user input regardless of yolo mode
-              if (
-                alwaysRequiresUserInput(approval.toolName) &&
-                decision === "allow"
-              ) {
-                decision = "ask";
-              }
-
-              if (decision === "ask") {
-                needsUserInput.push(ac);
-              } else if (decision === "deny") {
-                autoDenied.push(ac);
-              } else {
-                autoAllowed.push(ac);
-              }
             }
 
             // If all approvals can be auto-handled (yolo mode), process them immediately
