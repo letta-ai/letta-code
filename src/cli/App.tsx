@@ -1182,11 +1182,9 @@ export default function App({
   // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
   const [trajectoryElapsedBaseMs, setTrajectoryElapsedBaseMs] = useState(0);
-  const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const trajectoryRunTokenStartRef = useRef(0);
   const trajectoryTokenDisplayRef = useRef(0);
   const trajectorySegmentStartRef = useRef<number | null>(null);
-  const streamElapsedMsRef = useRef(0);
 
   // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
@@ -1228,11 +1226,9 @@ export default function App({
     sessionStatsRef.current.resetTrajectory();
     setTrajectoryTokenBase(0);
     setTrajectoryElapsedBaseMs(0);
-    setStreamElapsedMs(0);
     trajectoryRunTokenStartRef.current = 0;
     trajectoryTokenDisplayRef.current = 0;
     trajectorySegmentStartRef.current = null;
-    streamElapsedMsRef.current = 0;
   }, []);
 
   // Wire up session stats to telemetry for safety net handlers
@@ -1261,26 +1257,6 @@ export default function App({
     closeTrajectorySegment,
     syncTrajectoryElapsedBase,
   ]);
-
-  useEffect(() => {
-    if (!streaming) {
-      streamElapsedMsRef.current = 0;
-      setStreamElapsedMs(0);
-      return;
-    }
-
-    openTrajectorySegment();
-    const tick = () => {
-      const start = trajectorySegmentStartRef.current;
-      const next = start ? performance.now() - start : 0;
-      streamElapsedMsRef.current = next;
-      setStreamElapsedMs(next);
-    };
-
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [streaming, openTrajectorySegment]);
 
   // Run SessionStart hooks when agent becomes available
   useEffect(() => {
@@ -2922,7 +2898,11 @@ export default function App({
             const liveElapsedMs = (() => {
               const snapshot = sessionStatsRef.current.getTrajectorySnapshot();
               const base = snapshot?.wallMs ?? 0;
-              return base + streamElapsedMsRef.current;
+              const segmentStart = trajectorySegmentStartRef.current;
+              if (segmentStart === null) {
+                return base;
+              }
+              return base + (performance.now() - segmentStart);
             })();
             closeTrajectorySegment();
             llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
@@ -3007,7 +2987,8 @@ export default function App({
                 trajectorySnapshot.wallMs,
               );
               const shouldShowSummary =
-                trajectorySnapshot.stepCount > 3 || summaryWallMs > 10000;
+                (trajectorySnapshot.stepCount > 3 && summaryWallMs > 10000) ||
+                summaryWallMs > 60000;
               if (shouldShowSummary) {
                 const summaryId = uid("trajectory-summary");
                 buffersRef.current.byId.set(summaryId, {
@@ -3114,9 +3095,6 @@ export default function App({
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
-            setStreaming(false);
-            closeTrajectorySegment();
-            syncTrajectoryElapsedBase();
 
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
@@ -3131,6 +3109,8 @@ export default function App({
                 `Unexpected empty approvals with stop reason: ${stopReason}`,
               );
               setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
               return;
             }
 
@@ -3174,6 +3154,8 @@ export default function App({
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
               return;
             }
 
@@ -3183,6 +3165,8 @@ export default function App({
               abortControllerRef.current?.signal.aborted
             ) {
               setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
               markIncompleteToolsAsCancelled(
                 buffersRef.current,
                 true,
@@ -3440,6 +3424,8 @@ export default function App({
                     queueApprovalResults(allResults, autoAllowedMetadata);
                   }
                   setStreaming(false);
+                  closeTrajectorySegment();
+                  syncTrajectoryElapsedBase();
                   markIncompleteToolsAsCancelled(
                     buffersRef.current,
                     true,
@@ -3499,6 +3485,8 @@ export default function App({
                   waitingForQueueCancelRef.current = false;
                   queueSnapshotRef.current = [];
                   setStreaming(false);
+                  closeTrajectorySegment();
+                  syncTrajectoryElapsedBase();
                   return;
                 }
 
@@ -3561,6 +3549,8 @@ export default function App({
                 waitingForQueueCancelRef.current = false;
                 queueSnapshotRef.current = [];
                 setStreaming(false);
+                closeTrajectorySegment();
+                syncTrajectoryElapsedBase();
                 return;
               }
             } finally {
@@ -3579,6 +3569,8 @@ export default function App({
               abortControllerRef.current?.signal.aborted
             ) {
               setStreaming(false);
+              closeTrajectorySegment();
+              syncTrajectoryElapsedBase();
               markIncompleteToolsAsCancelled(
                 buffersRef.current,
                 true,
@@ -3598,6 +3590,8 @@ export default function App({
             setAutoHandledResults(autoAllowedResults);
             setAutoDeniedApprovals(autoDeniedResults);
             setStreaming(false);
+            closeTrajectorySegment();
+            syncTrajectoryElapsedBase();
             // Notify user that approval is needed
             sendDesktopNotification("Approval needed");
             return;
@@ -9783,6 +9777,9 @@ Plan file path: ${planFilePath}`;
     liveTrajectoryTokenBase + runTokenDelta,
     trajectoryTokenDisplayRef.current,
   );
+  const inputVisible = !showExitStats;
+  const inputEnabled =
+    !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
 
   useEffect(() => {
     trajectoryTokenDisplayRef.current = trajectoryTokenDisplay;
@@ -10069,22 +10066,16 @@ Plan file path: ${planFilePath}`;
             {/* Input row - always mounted to preserve state */}
             <Box marginTop={1}>
               <Input
-                visible={
-                  !showExitStats &&
-                  pendingApprovals.length === 0 &&
-                  !anySelectorOpen
-                }
-                streaming={
-                  streaming && !abortControllerRef.current?.signal.aborted
-                }
+                visible={inputVisible}
+                streaming={streaming}
                 tokenCount={trajectoryTokenDisplay}
                 elapsedBaseMs={liveTrajectoryElapsedBaseMs}
-                elapsedMsOverride={streamElapsedMs}
                 thinkingMessage={thinkingMessage}
                 onSubmit={onSubmit}
                 onBashSubmit={handleBashSubmit}
                 bashRunning={bashRunning}
                 onBashInterrupt={handleBashInterrupt}
+                inputEnabled={inputEnabled}
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
                 onExit={handleExit}

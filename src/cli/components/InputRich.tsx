@@ -185,12 +185,12 @@ export function Input({
   streaming,
   tokenCount,
   elapsedBaseMs = 0,
-  elapsedMsOverride,
   thinkingMessage,
   onSubmit,
   onBashSubmit,
   bashRunning = false,
   onBashInterrupt,
+  inputEnabled = true,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -217,12 +217,12 @@ export function Input({
   streaming: boolean;
   tokenCount: number;
   elapsedBaseMs?: number;
-  elapsedMsOverride?: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
   bashRunning?: boolean;
   onBashInterrupt?: () => void;
+  inputEnabled?: boolean;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -257,6 +257,7 @@ export function Input({
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
+  const interactionEnabled = visible && inputEnabled;
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -328,6 +329,12 @@ export function Input({
   const [elapsedMs, setElapsedMs] = useState(0);
   const streamStartRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    if (!interactionEnabled) {
+      setIsAutocompleteActive(false);
+    }
+  }, [interactionEnabled]);
+
   // Terminal width (reactive to window resizing)
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
@@ -342,7 +349,7 @@ export function Input({
   // Handle profile confirmation: Enter confirms, any other key cancels
   // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     if (!onEscapeCancel) return;
 
     // Enter key confirms the action - trigger submit with empty input
@@ -357,7 +364,7 @@ export function Input({
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Debug logging for escape key detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
       // eslint-disable-next-line no-console
@@ -403,7 +410,7 @@ export function Input({
   });
 
   useInput((input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
 
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
@@ -435,7 +442,7 @@ export function Input({
 
   // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Debug logging for shift+tab detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
       // eslint-disable-next-line no-console
@@ -474,7 +481,7 @@ export function Input({
 
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Don't interfere with autocomplete navigation, BUT allow history navigation
     // when we're already browsing history (historyIndex !== -1)
     if (isAutocompleteActive && historyIndex === -1) {
@@ -662,11 +669,6 @@ export function Input({
 
   // Elapsed time tracking
   useEffect(() => {
-    if (elapsedMsOverride !== undefined) {
-      streamStartRef.current = null;
-      setElapsedMs(0);
-      return;
-    }
     if (streaming && visible) {
       // Start tracking when streaming begins
       if (streamStartRef.current === null) {
@@ -682,7 +684,7 @@ export function Input({
     // Reset when streaming stops
     streamStartRef.current = null;
     setElapsedMs(0);
-  }, [streaming, visible, elapsedMsOverride]);
+  }, [streaming, visible]);
 
   const handleSubmit = async () => {
     // Don't submit if autocomplete is active with matches
@@ -843,8 +845,7 @@ export function Input({
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   const estimatedTokens = charsToTokens(tokenCount);
-  const effectiveElapsedMs = elapsedMsOverride ?? elapsedMs;
-  const totalElapsedMs = elapsedBaseMs + effectiveElapsedMs;
+  const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
     streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
@@ -952,7 +953,7 @@ export function Input({
               onSubmit={handleSubmit}
               cursorPosition={cursorPos}
               onCursorMove={setCurrentCursorPosition}
-              focus={!onEscapeCancel}
+              focus={interactionEnabled && !onEscapeCancel}
               onBangAtEmpty={handleBangAtEmpty}
               onBackspaceAtEmpty={handleBackspaceAtEmpty}
               onPasteError={onPasteError}
@@ -968,19 +969,21 @@ export function Input({
           {horizontalLine}
         </Text>
 
-        <InputAssist
-          currentInput={value}
-          cursorPosition={currentCursorPosition}
-          onFileSelect={handleFileSelect}
-          onCommandSelect={handleCommandSelect}
-          onCommandAutocomplete={handleCommandAutocomplete}
-          onAutocompleteActiveChange={setIsAutocompleteActive}
-          agentId={agentId}
-          agentName={agentName}
-          serverUrl={serverUrl}
-          workingDirectory={process.cwd()}
-          conversationId={conversationId}
-        />
+        {interactionEnabled && (
+          <InputAssist
+            currentInput={value}
+            cursorPosition={currentCursorPosition}
+            onFileSelect={handleFileSelect}
+            onCommandSelect={handleCommandSelect}
+            onCommandAutocomplete={handleCommandAutocomplete}
+            onAutocompleteActiveChange={setIsAutocompleteActive}
+            agentId={agentId}
+            agentName={agentName}
+            serverUrl={serverUrl}
+            workingDirectory={process.cwd()}
+            conversationId={conversationId}
+          />
+        )}
 
         <InputFooter
           ctrlCPressed={ctrlCPressed}
