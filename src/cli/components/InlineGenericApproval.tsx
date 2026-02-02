@@ -16,6 +16,7 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  showPreview?: boolean;
 };
 
 // Horizontal line character for Claude Code style
@@ -56,6 +57,7 @@ export const InlineGenericApproval = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
+    showPreview = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -165,13 +167,15 @@ export const InlineGenericApproval = memo(
         : "Type reason · Esc to cancel"
       : "Enter to select · Esc to cancel";
 
+    const optionsMarginTop = showPreview ? 1 : 0;
+
     return (
       <Box flexDirection="column">
         {/* Static tool content - memoized to prevent re-render on keystroke */}
-        {memoizedToolContent}
+        {showPreview && memoizedToolContent}
 
         {/* Options */}
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={optionsMarginTop} flexDirection="column">
           {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>

@@ -67,6 +67,7 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  showPreview?: boolean;
 
   // Special handlers for ExitPlanMode
   onPlanApprove?: (acceptEdits: boolean) => void;
@@ -209,6 +210,7 @@ export const ApprovalSwitch = memo(
     onEnterPlanModeReject,
     precomputedDiff,
     allDiffs,
+    showPreview = true,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -245,6 +247,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            showPreview={showPreview}
           />
         );
       }
@@ -264,6 +267,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            showPreview={showPreview}
           />
         );
       }
@@ -328,6 +332,7 @@ export const ApprovalSwitch = memo(
         isFocused={isFocused}
         approveAlwaysText={approveAlwaysText}
         allowPersistence={allowPersistence}
+        showPreview={showPreview}
       />
     );
   },

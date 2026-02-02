@@ -44,6 +44,7 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  showPreview?: boolean;
 };
 
 // Horizontal line characters for Claude Code style
@@ -158,6 +159,7 @@ export const InlineFileEditApproval = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
+    showPreview = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -429,13 +431,15 @@ export const InlineFileEditApproval = memo(
         : "Type reason · Esc to cancel"
       : "Enter to select · Esc to cancel";
 
+    const optionsMarginTop = showPreview ? 1 : 0;
+
     return (
       <Box flexDirection="column">
         {/* Static diff content - memoized to prevent re-render on keystroke */}
-        {memoizedDiffContent}
+        {showPreview && memoizedDiffContent}
 
         {/* Options */}
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={optionsMarginTop} flexDirection="column">
           {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
