@@ -54,8 +54,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
-    const currentPath = env.PATH || "";
-    env.PATH = `${rgBinDir}${path.delimiter}${currentPath}`;
+    const pathKey = Object.keys(env).find(k => k.toUpperCase() === "PATH") || "PATH";
+    env[pathKey] = `${rgBinDir}${path.delimiter}${env[pathKey] || ""}`;
   }
 
   // Add Letta context for skill scripts
