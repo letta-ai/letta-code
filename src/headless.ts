@@ -24,7 +24,6 @@ import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   ensureMemoryFilesystemBlock,
-  formatMemorySyncSummary,
   syncMemoryFilesystem,
   updateMemoryFilesystemBlock,
 } from "./agent/memoryFilesystem";
@@ -638,16 +637,7 @@ export async function handleHeadlessCommand(
         process.exit(1);
       }
       await updateMemoryFilesystemBlock(agent.id);
-      if (
-        syncResult.updatedBlocks.length > 0 ||
-        syncResult.createdBlocks.length > 0 ||
-        syncResult.deletedBlocks.length > 0 ||
-        syncResult.updatedFiles.length > 0 ||
-        syncResult.createdFiles.length > 0 ||
-        syncResult.deletedFiles.length > 0
-      ) {
-        console.log(formatMemorySyncSummary(syncResult));
-      }
+      // Note: Sync summary intentionally not logged in headless mode to keep output clean
     } catch (error) {
       console.error(
         `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
