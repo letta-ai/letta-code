@@ -497,7 +497,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(parsed.tool_input.command).toBe("echho hello");
     });
 
-    test("PostToolUseFailure hook can provide feedback via stderr", async () => {
+    test("PostToolUseFailure hook can provide feedback via stderr with exit 0", async () => {
       const hook: HookCommand = {
         type: "command",
         command: "echo 'Suggestion: check spelling of command' >&2 && exit 0",
@@ -514,6 +514,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       const result = await executeHookCommand(hook, input, tempDir);
 
+      // Exit 0 = success, stderr should still be captured
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
       expect(result.stderr).toBe("Suggestion: check spelling of command");
     });

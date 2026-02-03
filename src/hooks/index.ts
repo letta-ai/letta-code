@@ -103,8 +103,8 @@ export async function runPostToolUseHooks(
 
 /**
  * Run PostToolUseFailure hooks after a tool has failed
- * These run in parallel since they cannot block
- * Stderr from hooks is fed back to the agent
+ * These run in parallel and cannot block (tool already failed)
+ * Stderr from hooks with exit code 2 is fed back to the agent
  */
 export async function runPostToolUseFailureHooks(
   toolName: string,
@@ -140,7 +140,16 @@ export async function runPostToolUseFailureHooks(
   };
 
   // Run in parallel since PostToolUseFailure cannot block
-  return executeHooksParallel(hooks, input, workingDirectory);
+  // Use standard executeHooksParallel - feedback collected on exit 2
+  const result = await executeHooksParallel(hooks, input, workingDirectory);
+
+  // PostToolUseFailure never actually blocks (tool already failed)
+  return {
+    blocked: false,
+    errored: result.errored,
+    feedback: result.feedback,
+    results: result.results,
+  };
 }
 
 /**
