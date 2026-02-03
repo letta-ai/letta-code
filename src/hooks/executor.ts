@@ -138,13 +138,23 @@ function executeWithLauncher(
       if (!resolved) {
         resolved = true;
         // Log hook completion with command for context
-        const exitLabel =
+        // Show exit code with color: green for 0, red for 2, yellow for errors
+        const exitCode =
           result.exitCode === HookExitCode.ALLOW
-            ? "\x1b[32m✓ allowed\x1b[0m"
+            ? 0
             : result.exitCode === HookExitCode.BLOCK
-              ? "\x1b[31m✗ blocked\x1b[0m"
-              : "\x1b[33m⚠ error\x1b[0m";
-        console.log(`\x1b[90m[hook] ${command}\x1b[0m`);
+              ? 2
+              : 1;
+        const exitColor =
+          result.exitCode === HookExitCode.ALLOW
+            ? "\x1b[32m"
+            : result.exitCode === HookExitCode.BLOCK
+              ? "\x1b[31m"
+              : "\x1b[33m";
+        const exitLabel = result.timedOut
+          ? `${exitColor}timeout\x1b[0m`
+          : `${exitColor}exit ${exitCode}\x1b[0m`;
+        console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
         console.log(
           `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
         );

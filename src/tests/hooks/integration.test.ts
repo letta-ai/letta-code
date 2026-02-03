@@ -9,6 +9,7 @@ import {
   hasHooks,
   runNotificationHooks,
   runPermissionRequestHooks,
+  runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreCompactHooks,
   runPreToolUseHooks,
@@ -272,6 +273,133 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         "Let me check what files are in this directory.",
       );
       expect(parsed.agent_id).toBe("agent-456");
+    });
+  });
+
+  // ============================================================================
+  // PostToolUseFailure Hooks
+  // ============================================================================
+
+  describe("PostToolUseFailure hooks", () => {
+    test("runs after tool failure", async () => {
+      createHooksConfig({
+        PostToolUseFailure: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'hook ran'",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseFailureHooks(
+        "Bash",
+        { command: "echho hello" },
+        "command not found: echho",
+        "tool_error",
+        "tool-789",
+        tempDir,
+      );
+
+      // PostToolUseFailure never blocks
+      expect(result.blocked).toBe(false);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]?.stdout).toBe("hook ran");
+    });
+
+    test("collects stderr feedback on exit 2", async () => {
+      createHooksConfig({
+        PostToolUseFailure: [
+          {
+            matcher: "*",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Try checking spelling' >&2 && exit 2",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseFailureHooks(
+        "Bash",
+        { command: "bad-cmd" },
+        "command not found",
+        "tool_error",
+        undefined,
+        tempDir,
+      );
+
+      // Stderr collected as feedback on exit 2
+      expect(result.feedback).toHaveLength(1);
+      expect(result.feedback[0]).toContain("Try checking spelling");
+    });
+
+    test("receives error details in input", async () => {
+      createHooksConfig({
+        PostToolUseFailure: [
+          {
+            matcher: "*",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseFailureHooks(
+        "Bash",
+        { command: "nonexistent-cmd" },
+        "zsh:1: command not found: nonexistent-cmd",
+        "tool_error",
+        "call-123",
+        tempDir,
+        "agent-456",
+      );
+
+      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
+      expect(parsed.event_type).toBe("PostToolUseFailure");
+      expect(parsed.tool_name).toBe("Bash");
+      expect(parsed.error_message).toBe(
+        "zsh:1: command not found: nonexistent-cmd",
+      );
+      expect(parsed.error_type).toBe("tool_error");
+      expect(parsed.tool_call_id).toBe("call-123");
+      expect(parsed.agent_id).toBe("agent-456");
+    });
+
+    test("never blocks even with exit 2", async () => {
+      createHooksConfig({
+        PostToolUseFailure: [
+          {
+            matcher: "*",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'feedback with exit 2' >&2 && exit 2",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseFailureHooks(
+        "Bash",
+        { command: "bad" },
+        "error",
+        undefined,
+        undefined,
+        tempDir,
+      );
+
+      // PostToolUseFailure should never block - tool already failed
+      expect(result.blocked).toBe(false);
+      // Stderr collected as feedback on exit 2
+      expect(result.feedback).toHaveLength(1);
+      expect(result.feedback[0]).toContain("feedback with exit 2");
     });
   });
 

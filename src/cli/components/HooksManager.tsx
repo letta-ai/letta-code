@@ -56,6 +56,7 @@ type Screen =
 const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "PreToolUse", description: "Before tool execution" },
   { event: "PostToolUse", description: "After tool execution" },
+  { event: "PostToolUseFailure", description: "After tool execution fails" },
   { event: "PermissionRequest", description: "When permission is requested" },
   { event: "UserPromptSubmit", description: "When user submits a prompt" },
   { event: "Notification", description: "When notifications are sent" },

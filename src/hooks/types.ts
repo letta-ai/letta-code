@@ -7,6 +7,7 @@
 export type ToolHookEvent =
   | "PreToolUse" // Runs before tool calls (can block them)
   | "PostToolUse" // Runs after tool calls complete (cannot block)
+  | "PostToolUseFailure" // Runs after tool calls fail (cannot block, feeds stderr back to agent)
   | "PermissionRequest"; // Runs when a permission dialog is shown (can allow or deny)
 
 /**
@@ -83,6 +84,7 @@ export type HooksConfig = {
 export const TOOL_EVENTS: Set<HookEvent> = new Set([
   "PreToolUse",
   "PostToolUse",
+  "PostToolUseFailure",
   "PermissionRequest",
 ]);
 
@@ -184,6 +186,30 @@ export interface PostToolUseHookInput extends HookInputBase {
     status: "success" | "error";
     output?: string;
   };
+  /** Agent ID (for server-side tools like memory) */
+  agent_id?: string;
+  /** Reasoning/thinking content that preceded this tool call */
+  preceding_reasoning?: string;
+  /** Assistant message content that preceded this tool call */
+  preceding_assistant_message?: string;
+}
+
+/**
+ * Input for PostToolUseFailure hooks
+ * Triggered after a tool call fails. Non-blocking, but stderr is fed back to the agent.
+ */
+export interface PostToolUseFailureHookInput extends HookInputBase {
+  event_type: "PostToolUseFailure";
+  /** Name of the tool that failed */
+  tool_name: string;
+  /** Tool input arguments */
+  tool_input: Record<string, unknown>;
+  /** Tool call ID */
+  tool_call_id?: string;
+  /** Error message from the tool failure */
+  error_message: string;
+  /** Error type/name (e.g., "AbortError", "TypeError") */
+  error_type?: string;
   /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
   /** Reasoning/thinking content that preceded this tool call */
@@ -338,6 +364,7 @@ export interface SessionEndHookInput extends HookInputBase {
 export type HookInput =
   | PreToolUseHookInput
   | PostToolUseHookInput
+  | PostToolUseFailureHookInput
   | PermissionRequestHookInput
   | UserPromptSubmitHookInput
   | NotificationHookInput
