@@ -274,6 +274,34 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       );
       expect(parsed.agent_id).toBe("agent-456");
     });
+
+    test("collects stderr feedback on exit 2", async () => {
+      createHooksConfig({
+        PostToolUse: [
+          {
+            matcher: "*",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'PostToolUse feedback' >&2 && exit 2",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runPostToolUseHooks(
+        "Bash",
+        { command: "ls" },
+        { status: "success", output: "file.txt" },
+        undefined,
+        tempDir,
+      );
+
+      // Stderr collected as feedback on exit 2
+      expect(result.feedback).toHaveLength(1);
+      expect(result.feedback[0]).toContain("PostToolUse feedback");
+    });
   });
 
   // ============================================================================

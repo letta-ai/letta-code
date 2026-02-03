@@ -958,25 +958,30 @@ export async function executeTool(
       stderr ? stderr.join("\n") : undefined,
     );
 
-    // Run PostToolUse hooks (async, non-blocking)
+    // Run PostToolUse hooks - exit 2 injects stderr into agent context
     // Note: preceding_reasoning/assistant_message not available here - tracked in accumulator for server tools
-    runPostToolUseHooks(
-      internalName,
-      args as Record<string, unknown>,
-      {
-        status: toolStatus,
-        output: getDisplayableToolReturn(flattenedResponse),
-      },
-      options?.toolCallId,
-      undefined, // workingDirectory
-      undefined, // agentId
-      undefined, // precedingReasoning - not available in tool manager context
-      undefined, // precedingAssistantMessage - not available in tool manager context
-    ).catch(() => {
+    let postToolUseFeedback: string[] = [];
+    try {
+      const postHookResult = await runPostToolUseHooks(
+        internalName,
+        args as Record<string, unknown>,
+        {
+          status: toolStatus,
+          output: getDisplayableToolReturn(flattenedResponse),
+        },
+        options?.toolCallId,
+        undefined, // workingDirectory
+        undefined, // agentId
+        undefined, // precedingReasoning - not available in tool manager context
+        undefined, // precedingAssistantMessage - not available in tool manager context
+      );
+      postToolUseFeedback = postHookResult.feedback;
+    } catch {
       // Silently ignore hook errors - don't affect tool execution
-    });
+    }
 
-    // Run PostToolUseFailure hooks when tool returns error status (async, feeds stderr back to agent)
+    // Run PostToolUseFailure hooks when tool returns error status
+    let postToolUseFailureFeedback: string[] = [];
     if (toolStatus === "error") {
       const errorOutput =
         typeof flattenedResponse === "string"
@@ -994,31 +999,34 @@ export async function executeTool(
           undefined, // precedingReasoning - not available in tool manager context
           undefined, // precedingAssistantMessage - not available in tool manager context
         );
-        // Feed stderr (feedback) back to the agent
-        if (failureHookResult.feedback.length > 0) {
-          const feedbackMessage = `\n\n[PostToolUseFailure hook feedback]:\n${failureHookResult.feedback.join("\n")}`;
-          let finalToolReturn: ToolReturnContent;
-          if (typeof flattenedResponse === "string") {
-            finalToolReturn = flattenedResponse + feedbackMessage;
-          } else if (Array.isArray(flattenedResponse)) {
-            // Append feedback as a new text content block
-            finalToolReturn = [
-              ...flattenedResponse,
-              { type: "text" as const, text: feedbackMessage },
-            ];
-          } else {
-            finalToolReturn = flattenedResponse;
-          }
-          return {
-            toolReturn: finalToolReturn,
-            status: toolStatus,
-            ...(stdout && { stdout }),
-            ...(stderr && { stderr }),
-          };
-        }
+        postToolUseFailureFeedback = failureHookResult.feedback;
       } catch {
         // Silently ignore hook execution errors
       }
+    }
+
+    // Combine feedback from both hook types and inject into tool return
+    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
+    if (allFeedback.length > 0) {
+      const feedbackMessage = `\n\n[Hook feedback]:\n${allFeedback.join("\n")}`;
+      let finalToolReturn: ToolReturnContent;
+      if (typeof flattenedResponse === "string") {
+        finalToolReturn = flattenedResponse + feedbackMessage;
+      } else if (Array.isArray(flattenedResponse)) {
+        // Append feedback as a new text content block
+        finalToolReturn = [
+          ...flattenedResponse,
+          { type: "text" as const, text: feedbackMessage },
+        ];
+      } else {
+        finalToolReturn = flattenedResponse;
+      }
+      return {
+        toolReturn: finalToolReturn,
+        status: toolStatus,
+        ...(stdout && { stdout }),
+        ...(stderr && { stderr }),
+      };
     }
 
     // Return the full response (truncation happens in UI layer only)
@@ -1057,22 +1065,26 @@ export async function executeTool(
       errorMessage,
     );
 
-    // Run PostToolUse hooks for error case (async, non-blocking)
-    runPostToolUseHooks(
-      internalName,
-      args as Record<string, unknown>,
-      { status: "error", output: errorMessage },
-      options?.toolCallId,
-      undefined, // workingDirectory
-      undefined, // agentId
-      undefined, // precedingReasoning - not available in tool manager context
-      undefined, // precedingAssistantMessage - not available in tool manager context
-    ).catch(() => {
+    // Run PostToolUse hooks for error case - exit 2 injects stderr
+    let postToolUseFeedback: string[] = [];
+    try {
+      const postHookResult = await runPostToolUseHooks(
+        internalName,
+        args as Record<string, unknown>,
+        { status: "error", output: errorMessage },
+        options?.toolCallId,
+        undefined, // workingDirectory
+        undefined, // agentId
+        undefined, // precedingReasoning - not available in tool manager context
+        undefined, // precedingAssistantMessage - not available in tool manager context
+      );
+      postToolUseFeedback = postHookResult.feedback;
+    } catch {
       // Silently ignore hook errors
-    });
+    }
 
-    // Run PostToolUseFailure hooks (async, non-blocking, feeds stderr back to agent)
-    let finalErrorMessage = errorMessage;
+    // Run PostToolUseFailure hooks - exit 2 injects stderr
+    let postToolUseFailureFeedback: string[] = [];
     try {
       const failureHookResult = await runPostToolUseFailureHooks(
         internalName,
@@ -1085,13 +1097,17 @@ export async function executeTool(
         undefined, // precedingReasoning - not available in tool manager context
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
-      // Feed stderr (feedback) back to the agent
-      if (failureHookResult.feedback.length > 0) {
-        finalErrorMessage = `${errorMessage}\n\n[PostToolUseFailure hook feedback]:\n${failureHookResult.feedback.join("\n")}`;
-      }
+      postToolUseFailureFeedback = failureHookResult.feedback;
     } catch {
       // Silently ignore hook execution errors
     }
+
+    // Combine feedback from both hook types
+    const allFeedback = [...postToolUseFeedback, ...postToolUseFailureFeedback];
+    const finalErrorMessage =
+      allFeedback.length > 0
+        ? `${errorMessage}\n\n[Hook feedback]:\n${allFeedback.join("\n")}`
+        : errorMessage;
 
     // Don't console.error here - it pollutes the TUI
     // The error message is already returned in toolReturn
