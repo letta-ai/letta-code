@@ -379,6 +379,8 @@ export async function runSetupHooks(
 
 /**
  * Run SessionStart hooks when a session begins
+ * Unlike other hooks, SessionStart collects stdout (not stderr) on exit 2
+ * to inject context into the first user message
  */
 export async function runSessionStartHooks(
   isNewSession: boolean,
@@ -405,7 +407,23 @@ export async function runSessionStartHooks(
     conversation_id: conversationId,
   };
 
-  return executeHooks(hooks, input, workingDirectory);
+  // Run hooks sequentially (SessionStart shouldn't block, but we collect feedback)
+  const result = await executeHooks(hooks, input, workingDirectory);
+
+  // For SessionStart, collect stdout from all hooks regardless of exit code
+  const feedback: string[] = [];
+  for (const hookResult of result.results) {
+    if (hookResult.stdout?.trim()) {
+      feedback.push(hookResult.stdout.trim());
+    }
+  }
+
+  return {
+    blocked: false, // SessionStart never blocks
+    errored: result.errored,
+    feedback,
+    results: result.results,
+  };
 }
 
 /**

@@ -955,6 +955,36 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(parsed.agent_id).toBe("agent-abc");
       expect(parsed.agent_name).toBe("My Agent");
     });
+
+    test("collects stdout as feedback regardless of exit code", async () => {
+      createHooksConfig({
+        SessionStart: [
+          {
+            matcher: "*",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Session context for agent'",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runSessionStartHooks(
+        true,
+        "agent-123",
+        "Test Agent",
+        undefined,
+        tempDir,
+      );
+
+      // SessionStart collects stdout regardless of exit code
+      expect(result.feedback).toHaveLength(1);
+      expect(result.feedback[0]).toContain("Session context for agent");
+      // SessionStart never blocks
+      expect(result.blocked).toBe(false);
+    });
   });
 
   // ============================================================================

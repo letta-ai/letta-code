@@ -1303,9 +1303,12 @@ export default function App({
     syncTrajectoryElapsedBase,
   ]);
 
-  // Run SessionStart hooks when agent becomes available
+  // SessionStart hook feedback to prepend to first user message
+  const sessionStartFeedbackRef = useRef<string[]>([]);
+
+  // Run SessionStart hooks when agent becomes available (not the "loading" placeholder)
   useEffect(() => {
-    if (agentId && !sessionHooksRanRef.current) {
+    if (agentId && agentId !== "loading" && !sessionHooksRanRef.current) {
       sessionHooksRanRef.current = true;
       // Determine if this is a new session or resumed
       const isNewSession = !initialConversationId;
@@ -1314,9 +1317,16 @@ export default function App({
         agentId,
         agentName ?? undefined,
         conversationIdRef.current ?? undefined,
-      ).catch(() => {
-        // Silently ignore hook errors
-      });
+      )
+        .then((result) => {
+          // Store feedback to prepend to first user message
+          if (result.feedback.length > 0) {
+            sessionStartFeedbackRef.current = result.feedback;
+          }
+        })
+        .catch(() => {
+          // Silently ignore hook errors
+        });
     }
   }, [agentId, agentName, initialConversationId]);
 
@@ -7413,6 +7423,14 @@ ${SYSTEM_REMINDER_CLOSE}`;
         hasSentSessionContextRef.current = true;
       }
 
+      // Inject SessionStart hook feedback (stdout on exit 2) into first message only
+      let sessionStartHookFeedback = "";
+      if (sessionStartFeedbackRef.current.length > 0) {
+        sessionStartHookFeedback = `${SYSTEM_REMINDER_OPEN}\n[SessionStart hook context]:\n${sessionStartFeedbackRef.current.join("\n")}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
+        // Clear after injecting so it only happens once
+        sessionStartFeedbackRef.current = [];
+      }
+
       // Build bash command prefix if there are cached commands
       let bashCommandPrefix = "";
       if (bashCommandCacheRef.current.length > 0) {
@@ -7489,9 +7507,10 @@ ${SYSTEM_REMINDER_CLOSE}
         lastNotifiedModeRef.current = currentMode;
       }
 
-      // Combine reminders with content (session context first, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then hook feedback, then memory reminder, then memfs conflicts)
+      // Combine reminders with content (session context first, then session start hook, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then hook feedback, then memory reminder, then memfs conflicts)
       const allReminders =
         sessionContextReminder +
+        sessionStartHookFeedback +
         permissionModeAlert +
         planModeReminder +
         ralphModeReminder +
