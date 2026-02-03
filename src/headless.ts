@@ -609,10 +609,7 @@ export async function handleHeadlessCommand(
   // This prevents "block not found" errors when creating conversations with isolated_block_labels
   // Note: ensureSkillsBlocks already calls blocks.list internally, so no extra API call
   if (!noSkillsFlag && !isSubagent) {
-    const createdBlocks = await ensureSkillsBlocks(agent.id);
-    if (createdBlocks.length > 0) {
-      console.log("Created missing skills blocks for agent compatibility");
-    }
+    await ensureSkillsBlocks(agent.id);
   }
 
   // Apply memfs flag if specified, or enable by default for new agents
