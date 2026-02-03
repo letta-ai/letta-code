@@ -9,6 +9,7 @@ import type {
   HookExecutionResult,
   NotificationHookInput,
   PermissionRequestHookInput,
+  PostToolUseFailureHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
@@ -97,6 +98,48 @@ export async function runPostToolUseHooks(
   };
 
   // Run in parallel since PostToolUse cannot block
+  return executeHooksParallel(hooks, input, workingDirectory);
+}
+
+/**
+ * Run PostToolUseFailure hooks after a tool has failed
+ * These run in parallel since they cannot block
+ * Stderr from hooks is fed back to the agent
+ */
+export async function runPostToolUseFailureHooks(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  errorMessage: string,
+  errorType?: string,
+  toolCallId?: string,
+  workingDirectory: string = process.cwd(),
+  agentId?: string,
+  precedingReasoning?: string,
+  precedingAssistantMessage?: string,
+): Promise<HookExecutionResult> {
+  const hooks = await getHooksForEvent(
+    "PostToolUseFailure",
+    toolName,
+    workingDirectory,
+  );
+  if (hooks.length === 0) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
+  const input: PostToolUseFailureHookInput = {
+    event_type: "PostToolUseFailure",
+    working_directory: workingDirectory,
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_call_id: toolCallId,
+    error_message: errorMessage,
+    error_type: errorType,
+    agent_id: agentId,
+    preceding_reasoning: precedingReasoning,
+    preceding_assistant_message: precedingAssistantMessage,
+  };
+
+  // Run in parallel since PostToolUseFailure cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 
