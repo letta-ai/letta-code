@@ -7,9 +7,11 @@ import {
   type HookEvent,
   type HookMatcher,
   type HooksConfig,
+  isPromptHook,
   isToolEvent,
   type SimpleHookEvent,
   type SimpleHookMatcher,
+  supportsPromptHooks,
   type ToolHookEvent,
 } from "./types";
 
@@ -169,6 +171,34 @@ export function matchesTool(pattern: string, toolName: string): boolean {
 }
 
 /**
+ * Filter hooks, removing prompt hooks from unsupported events with a warning
+ */
+function filterHooksForEvent(
+  hooks: HookCommand[],
+  event: HookEvent,
+): HookCommand[] {
+  const filtered: HookCommand[] = [];
+  const promptHooksSupported = supportsPromptHooks(event);
+
+  for (const hook of hooks) {
+    if (isPromptHook(hook)) {
+      if (!promptHooksSupported) {
+        // Warn about unsupported prompt hook
+        console.warn(
+          `\x1b[33m[hooks] Warning: Prompt hooks are only supported for PreToolUse, PostToolUse, ` +
+            `PermissionRequest, UserPromptSubmit, Stop, and SubagentStop events. ` +
+            `Ignoring prompt hook for ${event} event.\x1b[0m`,
+        );
+        continue;
+      }
+    }
+    filtered.push(hook);
+  }
+
+  return filtered;
+}
+
+/**
  * Get all hooks that match a specific event and tool name
  */
 export function getMatchingHooks(
@@ -191,7 +221,7 @@ export function getMatchingHooks(
         hooks.push(...matcher.hooks);
       }
     }
-    return hooks;
+    return filterHooksForEvent(hooks, event);
   } else {
     // Simple events use SimpleHookMatcher[] - extract hooks from each matcher
     const matchers = config[event as SimpleHookEvent] as
@@ -205,7 +235,7 @@ export function getMatchingHooks(
     for (const matcher of matchers) {
       hooks.push(...matcher.hooks);
     }
-    return hooks;
+    return filterHooksForEvent(hooks, event);
   }
 }
 

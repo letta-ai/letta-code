@@ -12,6 +12,8 @@ import {
   mergeHooksConfigs,
 } from "../../hooks/loader";
 import {
+  type CommandHookConfig,
+  type HookCommand,
   type HookEvent,
   type HooksConfig,
   isToolEvent,
@@ -19,6 +21,16 @@ import {
   type ToolHookEvent,
 } from "../../hooks/types";
 import { settingsManager } from "../../settings-manager";
+
+// Type-safe helper to extract command from a hook (tests only use command hooks)
+function asCommand(
+  hook: HookCommand | undefined,
+): CommandHookConfig | undefined {
+  if (hook && hook.type === "command") {
+    return hook as CommandHookConfig;
+  }
+  return undefined;
+}
 
 describe("Hooks Loader", () => {
   let tempDir: string;
@@ -215,11 +227,11 @@ describe("Hooks Loader", () => {
 
       const bashHooks = getMatchingHooks(config, "PreToolUse", "Bash");
       expect(bashHooks).toHaveLength(1);
-      expect(bashHooks[0]?.command).toBe("bash hook");
+      expect(asCommand(bashHooks[0])?.command).toBe("bash hook");
 
       const editHooks = getMatchingHooks(config, "PreToolUse", "Edit");
       expect(editHooks).toHaveLength(1);
-      expect(editHooks[0]?.command).toBe("edit hook");
+      expect(asCommand(editHooks[0])?.command).toBe("edit hook");
     });
 
     test("returns wildcard hooks for any tool", () => {
@@ -234,7 +246,7 @@ describe("Hooks Loader", () => {
 
       const hooks = getMatchingHooks(config, "PreToolUse", "AnyTool");
       expect(hooks).toHaveLength(1);
-      expect(hooks[0]?.command).toBe("all tools hook");
+      expect(asCommand(hooks[0])?.command).toBe("all tools hook");
     });
 
     test("returns multiple matching hooks", () => {
@@ -315,9 +327,9 @@ describe("Hooks Loader", () => {
 
       const hooks = getMatchingHooks(config, "PreToolUse", "Bash");
       expect(hooks).toHaveLength(3);
-      expect(hooks[0]?.command).toBe("multi tool");
-      expect(hooks[1]?.command).toBe("bash specific");
-      expect(hooks[2]?.command).toBe("wildcard");
+      expect(asCommand(hooks[0])?.command).toBe("multi tool");
+      expect(asCommand(hooks[1])?.command).toBe("bash specific");
+      expect(asCommand(hooks[2])?.command).toBe("wildcard");
     });
   });
 
@@ -496,7 +508,9 @@ describe("Hooks Loader", () => {
 
       const hooks = await loadProjectLocalHooks(tempDir);
       expect(hooks.PreToolUse).toHaveLength(1);
-      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("echo local");
+      expect(asCommand(hooks.PreToolUse?.[0]?.hooks[0])?.command).toBe(
+        "echo local",
+      );
     });
   });
 
@@ -517,8 +531,12 @@ describe("Hooks Loader", () => {
       const merged = mergeHooksConfigs(global, project, projectLocal);
 
       expect(merged.PreToolUse).toHaveLength(2);
-      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local"); // Local first
-      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("project"); // Project second
+      expect(asCommand(merged.PreToolUse?.[0]?.hooks[0])?.command).toBe(
+        "local",
+      ); // Local first
+      expect(asCommand(merged.PreToolUse?.[1]?.hooks[0])?.command).toBe(
+        "project",
+      ); // Project second
     });
 
     test("project-local hooks run before global hooks", () => {
@@ -537,8 +555,12 @@ describe("Hooks Loader", () => {
       const merged = mergeHooksConfigs(global, project, projectLocal);
 
       expect(merged.PreToolUse).toHaveLength(2);
-      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local"); // Local first
-      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("global"); // Global last
+      expect(asCommand(merged.PreToolUse?.[0]?.hooks[0])?.command).toBe(
+        "local",
+      ); // Local first
+      expect(asCommand(merged.PreToolUse?.[1]?.hooks[0])?.command).toBe(
+        "global",
+      ); // Global last
     });
 
     test("all three levels merge correctly", () => {
@@ -577,9 +599,15 @@ describe("Hooks Loader", () => {
 
       // PreToolUse: local -> project -> global
       expect(merged.PreToolUse).toHaveLength(3);
-      expect(merged.PreToolUse?.[0]?.hooks[0]?.command).toBe("local");
-      expect(merged.PreToolUse?.[1]?.hooks[0]?.command).toBe("project");
-      expect(merged.PreToolUse?.[2]?.hooks[0]?.command).toBe("global");
+      expect(asCommand(merged.PreToolUse?.[0]?.hooks[0])?.command).toBe(
+        "local",
+      );
+      expect(asCommand(merged.PreToolUse?.[1]?.hooks[0])?.command).toBe(
+        "project",
+      );
+      expect(asCommand(merged.PreToolUse?.[2]?.hooks[0])?.command).toBe(
+        "global",
+      );
 
       // Others only have one source
       expect(merged.PostToolUse).toHaveLength(1);
@@ -624,8 +652,10 @@ describe("Hooks Loader", () => {
 
       // Local should come before project
       expect(hooks.PreToolUse).toHaveLength(2);
-      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("local");
-      expect(hooks.PreToolUse?.[1]?.hooks[0]?.command).toBe("project");
+      expect(asCommand(hooks.PreToolUse?.[0]?.hooks[0])?.command).toBe("local");
+      expect(asCommand(hooks.PreToolUse?.[1]?.hooks[0])?.command).toBe(
+        "project",
+      );
     });
 
     test("handles missing local settings gracefully", async () => {
@@ -650,7 +680,9 @@ describe("Hooks Loader", () => {
       const hooks = await loadHooks(tempDir);
 
       expect(hooks.PreToolUse).toHaveLength(1);
-      expect(hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe("project");
+      expect(asCommand(hooks.PreToolUse?.[0]?.hooks[0])?.command).toBe(
+        "project",
+      );
     });
   });
 });
