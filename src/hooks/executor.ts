@@ -154,7 +154,7 @@ function executeWithLauncher(
         const exitLabel = result.timedOut
           ? `${exitColor}timeout\x1b[0m`
           : `${exitColor}exit ${exitCode}\x1b[0m`;
-        console.log(`\x1b[90m[hook] ${command}\x1b[0m`);
+        console.log(`\x1b[90m[hook:${input.event_type}] ${command}\x1b[0m`);
         console.log(
           `\x1b[90m  \u23BF ${exitLabel} (${result.durationMs}ms)\x1b[0m`,
         );

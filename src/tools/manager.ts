@@ -997,11 +997,20 @@ export async function executeTool(
         // Feed stderr (feedback) back to the agent
         if (failureHookResult.feedback.length > 0) {
           const feedbackMessage = `\n\n[PostToolUseFailure hook feedback]:\n${failureHookResult.feedback.join("\n")}`;
+          let finalToolReturn: ToolReturnContent;
+          if (typeof flattenedResponse === "string") {
+            finalToolReturn = flattenedResponse + feedbackMessage;
+          } else if (Array.isArray(flattenedResponse)) {
+            // Append feedback as a new text content block
+            finalToolReturn = [
+              ...flattenedResponse,
+              { type: "text" as const, text: feedbackMessage },
+            ];
+          } else {
+            finalToolReturn = flattenedResponse;
+          }
           return {
-            toolReturn:
-              typeof flattenedResponse === "string"
-                ? flattenedResponse + feedbackMessage
-                : flattenedResponse,
+            toolReturn: finalToolReturn,
             status: toolStatus,
             ...(stdout && { stdout }),
             ...(stderr && { stderr }),
