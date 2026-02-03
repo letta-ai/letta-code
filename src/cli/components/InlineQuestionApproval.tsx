@@ -91,7 +91,17 @@ export const InlineQuestionApproval = memo(
 
     useInput(
       (input, key) => {
-        if (!isFocused || !currentQuestion) return;
+        if (!isFocused) return;
+
+        // If the tool call is malformed (e.g. AskUserQuestion with an empty questions
+        // array), we still want a way for the user to escape/cancel so the TUI doesn't
+        // appear to hang with the input footer hidden.
+        if (!currentQuestion) {
+          if ((key.ctrl && input === "c") || key.escape || key.return) {
+            onCancel?.();
+          }
+          return;
+        }
 
         // CTRL-C: cancel
         if (key.ctrl && input === "c") {
@@ -303,7 +313,29 @@ export const InlineQuestionApproval = memo(
       ? "Enter to toggle · Arrow to navigate · Esc to cancel"
       : "Enter to select · Arrow to navigate · Esc to cancel";
 
-    if (!currentQuestion) return null;
+    if (!currentQuestion) {
+      // Render a minimal, cancel-able UI for malformed AskUserQuestion approvals.
+      // This prevents the approval UI from returning null which would leave the user
+      // stuck with the input footer hidden.
+      const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>{solidLine}</Text>
+          <Text bold color={colors.approval.header}>
+            Question (invalid request)
+          </Text>
+          <Box height={1} />
+          <Box paddingLeft={2} flexDirection="column">
+            <Text dimColor>
+              AskUserQuestion was called with no questions. Press Esc to cancel.
+            </Text>
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>Esc to cancel · Enter to cancel</Text>
+          </Box>
+        </Box>
+      );
+    }
 
     return (
       <Box flexDirection="column">
