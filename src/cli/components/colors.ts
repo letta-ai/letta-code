@@ -197,6 +197,12 @@ const _colors = {
   // Footer bar
   footer: {
     agentName: brandColors.primaryAccent,
+    tagLabel: brandColors.textSecondary,
+    tagValue: brandColors.primaryAccentLight,
+    reasoningLow: brandColors.textSecondary,
+    reasoningMed: brandColors.primaryAccentLight,
+    reasoningHigh: brandColors.statusWarning,
+    reasoningXHigh: brandColors.statusError,
   },
 
   // Context window breakdown categories

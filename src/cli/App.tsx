@@ -1216,14 +1216,33 @@ export default function App({
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
+
+  function reasoningEffortSuffix(
+    effort: LlmConfig["reasoning_effort"] | null | undefined,
+  ): string | null {
+    // Only show a suffix when the model supports reasoning_effort and it is enabled.
+    if (!effort || effort === "none") return null;
+    // Keep the footer compact (matches common shorthand used elsewhere in the UI).
+    // Treat "minimal" as the lowest reasoning tier.
+    if (effort === "minimal") return "low";
+    if (effort === "medium") return "med";
+    return effort;
+  }
   const currentModelLabel =
     llmConfig?.model_endpoint_type && llmConfig?.model
       ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
       : (llmConfig?.model ?? null);
-  const currentModelDisplay = currentModelLabel
+  const currentModelBaseDisplay = currentModelLabel
     ? (getModelShortName(currentModelLabel) ??
       currentModelLabel.split("/").pop())
     : null;
+  const currentModelReasoningSuffix = reasoningEffortSuffix(
+    llmConfig?.reasoning_effort,
+  );
+  const currentModelDisplay =
+    currentModelBaseDisplay && currentModelReasoningSuffix
+      ? `${currentModelBaseDisplay}-${currentModelReasoningSuffix}`
+      : currentModelBaseDisplay;
   const currentModelProvider = llmConfig?.provider_name ?? null;
 
   // Billing tier for conditional UI and error context (fetched once on mount)
@@ -10423,6 +10442,8 @@ Plan file path: ${planFilePath}`;
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
+                currentSystemPromptId={currentSystemPromptId}
+                currentToolset={currentToolset}
                 messageQueue={messageQueue}
                 onEnterQueueEditMode={handleEnterQueueEditMode}
                 onEscapeCancel={
