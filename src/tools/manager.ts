@@ -976,6 +976,42 @@ export async function executeTool(
       // Silently ignore hook errors - don't affect tool execution
     });
 
+    // Run PostToolUseFailure hooks when tool returns error status (async, feeds stderr back to agent)
+    if (toolStatus === "error") {
+      const errorOutput =
+        typeof flattenedResponse === "string"
+          ? flattenedResponse
+          : JSON.stringify(flattenedResponse);
+      try {
+        const failureHookResult = await runPostToolUseFailureHooks(
+          internalName,
+          args as Record<string, unknown>,
+          errorOutput,
+          "tool_error", // error type for returned errors
+          options?.toolCallId,
+          undefined, // workingDirectory
+          undefined, // agentId
+          undefined, // precedingReasoning - not available in tool manager context
+          undefined, // precedingAssistantMessage - not available in tool manager context
+        );
+        // Feed stderr (feedback) back to the agent
+        if (failureHookResult.feedback.length > 0) {
+          const feedbackMessage = `\n\n[PostToolUseFailure hook feedback]:\n${failureHookResult.feedback.join("\n")}`;
+          return {
+            toolReturn:
+              typeof flattenedResponse === "string"
+                ? flattenedResponse + feedbackMessage
+                : flattenedResponse,
+            status: toolStatus,
+            ...(stdout && { stdout }),
+            ...(stderr && { stderr }),
+          };
+        }
+      } catch {
+        // Silently ignore hook execution errors
+      }
+    }
+
     // Return the full response (truncation happens in UI layer only)
     return {
       toolReturn: flattenedResponse,
