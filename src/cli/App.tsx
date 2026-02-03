@@ -5863,6 +5863,22 @@ export default function App({
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
 
+            // Re-run SessionStart hooks for new conversation
+            sessionHooksRanRef.current = false;
+            runSessionStartHooks(
+              true, // isNewSession
+              agentId,
+              agentName ?? undefined,
+              conversation.id,
+            )
+              .then((result) => {
+                if (result.feedback.length > 0) {
+                  sessionStartFeedbackRef.current = result.feedback;
+                }
+              })
+              .catch(() => {});
+            sessionHooksRanRef.current = true;
+
             // Update command with success
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
@@ -5931,6 +5947,22 @@ export default function App({
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
+
+            // Re-run SessionStart hooks for new conversation
+            sessionHooksRanRef.current = false;
+            runSessionStartHooks(
+              true, // isNewSession
+              agentId,
+              agentName ?? undefined,
+              conversation.id,
+            )
+              .then((result) => {
+                if (result.feedback.length > 0) {
+                  sessionStartFeedbackRef.current = result.feedback;
+                }
+              })
+              .catch(() => {});
+            sessionHooksRanRef.current = true;
 
             // Update command with success
             buffersRef.current.byId.set(cmdId, {
