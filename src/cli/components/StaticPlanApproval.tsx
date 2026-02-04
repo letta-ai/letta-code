@@ -100,6 +100,17 @@ export const StaticPlanApproval = memo(
         }
         if (key.escape) {
           onKeepPlanning("User cancelled");
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApproveAndAcceptEdits();
+          return;
+        }
+        if (input === "2") {
+          onApprove();
+          return;
         }
       },
       { isActive: isFocused },
