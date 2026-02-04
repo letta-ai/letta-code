@@ -386,8 +386,8 @@ function sendDesktopNotification(
   // Send terminal bell for native notification
   process.stdout.write("\x07");
   // Run Notification hooks (fire-and-forget, don't block)
-  runNotificationHooks(message, level).catch(() => {
-    // Silently ignore hook errors
+  runNotificationHooks(message, level).catch((error) => {
+    debugLog("hooks", "Notification hook error", error);
   });
 }
 

@@ -8,6 +8,7 @@ import {
   runPreToolUseHooks,
 } from "../hooks";
 import { telemetry } from "../telemetry";
+import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -976,8 +977,8 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFeedback = postHookResult.feedback;
-    } catch {
-      // Silently ignore hook errors - don't affect tool execution
+    } catch (error) {
+      debugLog("hooks", "PostToolUse hook error (success path)", error);
     }
 
     // Run PostToolUseFailure hooks when tool returns error status
@@ -1000,8 +1001,12 @@ export async function executeTool(
           undefined, // precedingAssistantMessage - not available in tool manager context
         );
         postToolUseFailureFeedback = failureHookResult.feedback;
-      } catch {
-        // Silently ignore hook execution errors
+      } catch (error) {
+        debugLog(
+          "hooks",
+          "PostToolUseFailure hook error (tool returned error)",
+          error,
+        );
       }
     }
 
@@ -1079,8 +1084,8 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFeedback = postHookResult.feedback;
-    } catch {
-      // Silently ignore hook errors
+    } catch (error) {
+      debugLog("hooks", "PostToolUse hook error (error path)", error);
     }
 
     // Run PostToolUseFailure hooks - exit 2 injects stderr
@@ -1098,8 +1103,12 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch {
-      // Silently ignore hook execution errors
+    } catch (error) {
+      debugLog(
+        "hooks",
+        "PostToolUseFailure hook error (exception path)",
+        error,
+      );
     }
 
     // Combine feedback from both hook types
