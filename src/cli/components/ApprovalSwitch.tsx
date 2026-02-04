@@ -289,16 +289,20 @@ export const ApprovalSwitch = memo(
     }
 
     // 5. AskUserQuestion → InlineQuestionApproval
+    // Guard: only render specialized UI if questions are valid, otherwise fall through
+    // to InlineGenericApproval (matches pattern for Bash/Task with malformed args)
     if (toolName === "AskUserQuestion" && onQuestionSubmit) {
       const questions = getQuestions(approval);
-      return (
-        <InlineQuestionApproval
-          questions={questions}
-          onSubmit={onQuestionSubmit}
-          onCancel={onCancel}
-          isFocused={isFocused}
-        />
-      );
+      if (questions.length > 0) {
+        return (
+          <InlineQuestionApproval
+            questions={questions}
+            onSubmit={onQuestionSubmit}
+            onCancel={onCancel}
+            isFocused={isFocused}
+          />
+        );
+      }
     }
 
     // 6. Task tool → InlineTaskApproval
