@@ -5848,7 +5848,7 @@ export default function App({
         }
 
         // Special handling for /context command - toggle context usage display
-        if (msg.trim() === "/context") {
+        if (trimmed === "/context") {
           const newValue = !showContextUsageEnabled;
 
           // Immediately add command to transcript with "running" phase

@@ -341,8 +341,8 @@ export const commands: Record<string, Command> = {
     },
   },
   "/context": {
-    desc: "Toggle context usage display",
-    hidden: true,
+    desc: "Toggle context usage display in status bar",
+    order: 34,
     handler: () => {
       // Handled specially in App.tsx for live toggling
       return "Toggling context usage display...";
