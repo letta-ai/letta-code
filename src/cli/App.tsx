@@ -6101,18 +6101,21 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /rename command - rename the agent
+        // Special handling for /rename command - rename agent or conversation
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
-          const newName = parts.slice(1).join(" ");
+          const subcommand = parts[1]?.toLowerCase();
 
-          if (!newName) {
+          if (
+            !subcommand ||
+            (subcommand !== "agent" && subcommand !== "convo")
+          ) {
             const cmdId = uid("cmd");
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: "Please provide a new name: /rename <name>",
+              output: "Usage: /rename agent <name> or /rename convo <summary>",
               phase: "finished",
               success: false,
             });
@@ -6121,8 +6124,73 @@ export default function App({
             return { submitted: true };
           }
 
-          // Validate the name before sending to API
-          const validationError = validateAgentName(newName);
+          const newValue = parts.slice(2).join(" ");
+          if (!newValue) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output:
+                subcommand === "convo"
+                  ? "Please provide a summary: /rename convo <summary>"
+                  : "Please provide a name: /rename agent <name>",
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
+          if (subcommand === "convo") {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Renaming conversation to "${newValue}"...`,
+              phase: "running",
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+
+            setCommandRunning(true);
+
+            try {
+              const client = await getClient();
+              await client.conversations.update(conversationId, {
+                summary: newValue,
+              });
+
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Conversation renamed to "${newValue}"`,
+                phase: "finished",
+                success: true,
+              });
+              refreshDerived();
+            } catch (error) {
+              const errorDetails = formatErrorDetails(error, agentId);
+              buffersRef.current.byId.set(cmdId, {
+                kind: "command",
+                id: cmdId,
+                input: msg,
+                output: `Failed: ${errorDetails}`,
+                phase: "finished",
+                success: false,
+              });
+              refreshDerived();
+            } finally {
+              setCommandRunning(false);
+            }
+            return { submitted: true };
+          }
+
+          // Rename agent (default behavior)
+          const validationError = validateAgentName(newValue);
           if (validationError) {
             const cmdId = uid("cmd");
             buffersRef.current.byId.set(cmdId, {
@@ -6143,7 +6211,7 @@ export default function App({
             kind: "command",
             id: cmdId,
             input: msg,
-            output: `Renaming agent to "${newName}"...`,
+            output: `Renaming agent to "${newValue}"...`,
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -6153,14 +6221,14 @@ export default function App({
 
           try {
             const client = await getClient();
-            await client.agents.update(agentId, { name: newName });
-            updateAgentName(newName);
+            await client.agents.update(agentId, { name: newValue });
+            updateAgentName(newValue);
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `Agent renamed to "${newName}"`,
+              output: `Agent renamed to "${newValue}"`,
               phase: "finished",
               success: true,
             });

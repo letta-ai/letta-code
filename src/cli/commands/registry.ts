@@ -120,11 +120,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename the current agent (/rename <name>)",
+    desc: "Rename agent or conversation (/rename agent|convo <name>)",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
-      return "Renaming agent...";
+      return "Renaming...";
     },
   },
   "/description": {
