@@ -1330,36 +1330,35 @@ export default function App({
     }
   }, [agentId, agentName, initialConversationId]);
 
-  // Run SessionEnd hooks on SIGINT (Ctrl+C)
+  // Run SessionEnd hooks helper
+  const runEndHooks = useCallback(async () => {
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    try {
+      await runSessionEndHooks(
+        durationMs,
+        undefined,
+        undefined,
+        agentIdRef.current ?? undefined,
+        conversationIdRef.current ?? undefined,
+      );
+    } catch {
+      // Silently ignore hook errors
+    }
+  }, []);
+
+  // Run SessionEnd hooks on SIGINT (edge case: when Ink isn't consuming input)
   useEffect(() => {
-    const runEndHooks = async () => {
-      const durationMs = Date.now() - sessionStartTimeRef.current;
-      try {
-        const result = await runSessionEndHooks(
-          durationMs,
-          undefined, // messageCount not tracked in SessionStats
-          undefined, // toolCallCount not tracked in SessionStats
-          agentIdRef.current ?? undefined,
-          conversationIdRef.current ?? undefined,
-        );
-        // Print hook stdout via stderr (works with Ink's raw mode)
-        for (const hookResult of result.results) {
-          if (hookResult.stdout.trim()) {
-            process.stderr.write(`${hookResult.stdout.trim()}\n`);
-          }
-        }
-      } catch {
-        // Silently ignore hook errors
-      }
+    const handleSigint = async () => {
+      await runEndHooks();
+      setShowExitStats(true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
     };
 
-    // Register for SIGINT (Ctrl+C) - telemetry will call this before exit
-    const unregister = telemetry.onSigint(runEndHooks);
-
+    const unregister = telemetry.onSigint(handleSigint);
     return () => {
       unregister();
     };
-  }, []);
+  }, [runEndHooks]);
 
   useEffect(() => {
     return () => {
@@ -4326,6 +4325,9 @@ export default function App({
   const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
+    // Run SessionEnd hooks
+    await runEndHooks();
+
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
@@ -4338,7 +4340,7 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, []);
+  }, [runEndHooks]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -5853,6 +5855,9 @@ export default function App({
 
           setCommandRunning(true);
 
+          // Run SessionEnd hooks for current session before starting new one
+          await runEndHooks();
+
           try {
             const client = await getClient();
 
@@ -5936,6 +5941,9 @@ export default function App({
           refreshDerived();
 
           setCommandRunning(true);
+
+          // Run SessionEnd hooks for current session before clearing
+          await runEndHooks();
 
           try {
             const client = await getClient();

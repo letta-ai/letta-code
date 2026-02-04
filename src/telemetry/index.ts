@@ -132,6 +132,7 @@ class TelemetryManager {
 
     // Safety net: Handle Ctrl+C interruption
     // Note: Normal exits via handleExit flush explicitly
+    // Note: This is mostly for edge cases - Ink usually catches Ctrl+C via useInput
     let sigintReceived = false;
     process.on("SIGINT", async () => {
       // Second Ctrl+C forces immediate exit (in case hooks hang)
