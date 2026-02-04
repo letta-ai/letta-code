@@ -100,6 +100,16 @@ function findCursorLine(
 }
 
 /**
+ * Get color for context usage indicator based on percentage used.
+ */
+function getContextColor(totalTokens: number, contextWindow: number): string {
+  const percentage = (totalTokens / contextWindow) * 100;
+  if (percentage < 50) return colors.status.success; // Green
+  if (percentage < 80) return "#FEE19C"; // Yellow (brandColors.statusWarning)
+  return colors.status.error; // Red
+}
+
+/**
  * Memoized footer component to prevent re-renders during high-frequency
  * shimmer/timer updates. Only updates when its specific props change.
  */
@@ -116,6 +126,8 @@ const InputFooter = memo(function InputFooter({
   isByokProvider,
   isAutocompleteActive,
   hideFooter,
+  showContextUsage,
+  contextUsage,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -129,6 +141,8 @@ const InputFooter = memo(function InputFooter({
   isByokProvider: boolean;
   isAutocompleteActive: boolean;
   hideFooter: boolean;
+  showContextUsage?: boolean;
+  contextUsage?: { totalTokens: number; contextWindow: number } | null;
 }) {
   // Hide footer when autocomplete is showing
   if (hideFooter || isAutocompleteActive) {
@@ -161,6 +175,21 @@ const InputFooter = memo(function InputFooter({
         <Text dimColor>Press / for commands</Text>
       )}
       <Text>
+        {/* Context usage indicator (if enabled and data available) */}
+        {showContextUsage && contextUsage && (
+          <>
+            <Text
+              color={getContextColor(
+                contextUsage.totalTokens,
+                contextUsage.contextWindow,
+              )}
+            >
+              {formatCompact(contextUsage.totalTokens)}/
+              {formatCompact(contextUsage.contextWindow)}
+            </Text>
+            <Text dimColor> · </Text>
+          </>
+        )}
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
         <Text dimColor>
           {` [${currentModel ?? "unknown"}`}
@@ -215,6 +244,8 @@ export function Input({
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  showContextUsage = false,
+  contextUsage = null,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -248,6 +279,8 @@ export function Input({
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  showContextUsage?: boolean;
+  contextUsage?: { totalTokens: number; contextWindow: number } | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1015,6 +1048,8 @@ export function Input({
             }
             isAutocompleteActive={isAutocompleteActive}
             hideFooter={hideFooter}
+            showContextUsage={showContextUsage}
+            contextUsage={contextUsage}
           />
         </Box>
       ) : reserveInputSpace ? (

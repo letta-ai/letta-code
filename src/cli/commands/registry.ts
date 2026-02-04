@@ -340,6 +340,14 @@ export const commands: Record<string, Command> = {
       return "Toggling token streaming...";
     },
   },
+  "/context": {
+    desc: "Toggle context usage display",
+    hidden: true,
+    handler: () => {
+      // Handled specially in App.tsx for live toggling
+      return "Toggling context usage display...";
+    },
+  },
   "/compact": {
     desc: "Summarize conversation history (compaction)",
     handler: () => {

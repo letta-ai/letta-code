@@ -60,6 +60,8 @@ export interface Settings {
   deviceId?: string;
   // Release notes tracking
   lastSeenReleaseNotesVersion?: string; // Base version of last seen release notes (e.g., "0.13.0")
+  // UI preferences
+  showContextUsage?: boolean; // Show context usage indicator in status bar (default: false)
   // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
@@ -95,6 +97,7 @@ const DEFAULT_SETTINGS: Settings = {
   sessionContextEnabled: true,
   memoryReminderInterval: 5, // number = prompt memory check every N turns
   globalSharedBlockIds: {},
+  showContextUsage: false, // Show context usage indicator in status bar
 };
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
