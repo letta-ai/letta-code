@@ -58,18 +58,18 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
   );
 
   // Format the args display (message count or fallback)
-  const formatArgs = (): string => {
-    const stats = line.stats;
-    if (
-      stats?.messagesCountBefore !== undefined &&
-      stats?.messagesCountAfter !== undefined
-    ) {
-      return `${stats.messagesCountBefore} → ${stats.messagesCountAfter} messages`;
-    }
-    return "...";
-  };
-
-  const argsDisplay = formatArgs();
+  // Commented out for now - we show a simple "Conversation compacted" message instead
+  // const formatArgs = (): string => {
+  //   const stats = line.stats;
+  //   if (
+  //     stats?.messagesCountBefore !== undefined &&
+  //     stats?.messagesCountAfter !== undefined
+  //   ) {
+  //     return `${stats.messagesCountBefore} → ${stats.messagesCountAfter} messages`;
+  //   }
+  //   return "...";
+  // };
+  // const argsDisplay = formatArgs();
 
   return (
     <Box flexDirection="column">
@@ -82,7 +82,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
           {isRunning ? (
             <CompactingAnimation />
           ) : (
-            <Text bold>Compact({argsDisplay})</Text>
+            <Text bold>Conversation compacted</Text>
           )}
         </Box>
       </Box>
