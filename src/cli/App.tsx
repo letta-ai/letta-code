@@ -8823,7 +8823,7 @@ ${SYSTEM_REMINDER_CLOSE}
             const { getModelContextWindow } = await import(
               "../agent/available-models"
             );
-            const apiContextWindow = getModelContextWindow(modelId);
+            const apiContextWindow = await getModelContextWindow(modelId);
 
             selectedModel = {
               id: modelId,
