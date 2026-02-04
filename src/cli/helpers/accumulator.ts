@@ -7,6 +7,7 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { debugLog } from "../../utils/debug";
 import { extractCompactionSummary } from "./backfill";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
@@ -652,7 +653,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             toolCallId,
             undefined,
             b.agentId,
-          ).catch(() => {});
+          ).catch((error) => {
+            debugLog("hooks", "PreToolUse hook error (accumulator)", error);
+          });
         }
       }
 
@@ -748,7 +751,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               b.agentId,
               precedingReasoning,
               precedingAssistantMessage,
-            ).catch(() => {});
+            ).catch((error) => {
+              debugLog("hooks", "PostToolUse hook error (accumulator)", error);
+            });
 
             b.serverToolCalls.delete(toolCallId);
           }
