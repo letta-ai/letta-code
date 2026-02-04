@@ -1,0 +1,13 @@
+{
+  "name": "mcp-client-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP client scripts for converting-mcps-to-skills",
+  "scripts": {
+    "http": "npx tsx mcp-http.ts",
+    "stdio": "npx tsx mcp-stdio.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0"
+  }
+}
