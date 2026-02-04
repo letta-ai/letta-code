@@ -1989,6 +1989,7 @@ async function runBidirectionalMode(
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
         let numTurns = 0;
+        let lastStopReason: StopReasonType | null = null; // Track for result subtype
 
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
@@ -2008,7 +2009,35 @@ async function runBidirectionalMode(
           const stream = await sendMessageStream(conversationId, currentInput, {
             agentId: agent.id,
           });
-          const streamJsonHook: DrainStreamHook = ({ chunk, shouldOutput }) => {
+          const streamJsonHook: DrainStreamHook = ({
+            chunk,
+            shouldOutput,
+            errorInfo,
+          }) => {
+            // Handle in-stream errors (emit ErrorMessage with full details)
+            if (errorInfo && shouldOutput) {
+              const errorEvent: ErrorMessage = {
+                type: "error",
+                message: errorInfo.message,
+                stop_reason: "error",
+                run_id: errorInfo.run_id,
+                session_id: sessionId,
+                uuid: crypto.randomUUID(),
+                ...(errorInfo.error_type &&
+                  errorInfo.run_id && {
+                    api_error: {
+                      message_type: "error_message",
+                      message: errorInfo.message,
+                      error_type: errorInfo.error_type,
+                      detail: errorInfo.detail,
+                      run_id: errorInfo.run_id,
+                    },
+                  }),
+              };
+              console.log(JSON.stringify(errorEvent));
+              return { shouldAccumulate: true };
+            }
+
             if (!shouldOutput) {
               return { shouldAccumulate: true };
             }
@@ -2049,6 +2078,7 @@ async function runBidirectionalMode(
             streamJsonHook,
           );
           const stopReason = result.stopReason;
+          lastStopReason = stopReason; // Track for result subtype
           const approvals = result.approvals || [];
 
           // Case 1: Turn ended normally - break out of loop
@@ -2245,11 +2275,21 @@ async function runBidirectionalMode(
           lastToolResult?.resultText ||
           "";
 
+        // Determine result subtype based on how the turn ended
+        const isAborted = currentAbortController?.signal.aborted;
+        const isError =
+          lastStopReason &&
+          lastStopReason !== "end_turn" &&
+          lastStopReason !== "requires_approval";
+        const subtype: ResultMessage["subtype"] = isAborted
+          ? "interrupted"
+          : isError
+            ? "error"
+            : "success";
+
         const resultMsg: ResultMessage = {
           type: "result",
-          subtype: currentAbortController?.signal.aborted
-            ? "interrupted"
-            : "success",
+          subtype,
           session_id: sessionId,
           duration_ms: Math.round(durationMs),
           duration_api_ms: 0, // Not tracked in bidirectional mode
@@ -2260,18 +2300,40 @@ async function runBidirectionalMode(
           run_ids: [],
           usage: null,
           uuid: `result-${agent.id}-${Date.now()}`,
+          // Include stop_reason when there's an error for more detail
+          // Note: isError being true guarantees lastStopReason is not null
+          ...(isError && lastStopReason && { stop_reason: lastStopReason }),
         };
         console.log(JSON.stringify(resultMsg));
       } catch (error) {
+        // Use formatErrorDetails for comprehensive error formatting (same as one-shot mode)
+        const errorDetails = formatErrorDetails(error, agent.id);
         const errorMsg: ErrorMessage = {
           type: "error",
-          message:
-            error instanceof Error ? error.message : "Unknown error occurred",
+          message: errorDetails,
           stop_reason: "error",
           session_id: sessionId,
           uuid: crypto.randomUUID(),
         };
         console.log(JSON.stringify(errorMsg));
+
+        // Also emit a result message with subtype: "error" so SDK knows the turn failed
+        const errorResultMsg: ResultMessage = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: 0,
+          duration_api_ms: 0,
+          num_turns: 0,
+          result: null,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          run_ids: [],
+          usage: null,
+          uuid: `result-error-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        console.log(JSON.stringify(errorResultMsg));
       } finally {
         currentAbortController = null;
       }
