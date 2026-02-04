@@ -742,6 +742,7 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
+  showContextUsage = false,
   agentProvenance = null,
   releaseNotes = null,
 }: {
