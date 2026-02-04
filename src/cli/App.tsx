@@ -1330,20 +1330,20 @@ export default function App({
     }
   }, [agentId, agentName, initialConversationId]);
 
-  // Run SessionEnd hooks on unmount
-  useEffect(() => {
-    return () => {
-      const durationMs = Date.now() - sessionStartTimeRef.current;
-      runSessionEndHooks(
+  // Run SessionEnd hooks helper
+  const runEndHooks = useCallback(async () => {
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    try {
+      await runSessionEndHooks(
         durationMs,
-        undefined, // messageCount not tracked in SessionStats
-        undefined, // toolCallCount not tracked in SessionStats
+        undefined,
+        undefined,
         agentIdRef.current ?? undefined,
         conversationIdRef.current ?? undefined,
-      ).catch(() => {
-        // Silently ignore hook errors
-      });
-    };
+      );
+    } catch {
+      // Silently ignore hook errors
+    }
   }, []);
 
   useEffect(() => {
@@ -4311,6 +4311,9 @@ export default function App({
   const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
+    // Run SessionEnd hooks
+    await runEndHooks();
+
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
@@ -4323,7 +4326,7 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, []);
+  }, [runEndHooks]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -5838,6 +5841,9 @@ export default function App({
 
           setCommandRunning(true);
 
+          // Run SessionEnd hooks for current session before starting new one
+          await runEndHooks();
+
           try {
             const client = await getClient();
 
@@ -5921,6 +5927,9 @@ export default function App({
           refreshDerived();
 
           setCommandRunning(true);
+
+          // Run SessionEnd hooks for current session before clearing
+          await runEndHooks();
 
           try {
             const client = await getClient();
