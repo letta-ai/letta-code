@@ -193,6 +193,14 @@ export const commands: Record<string, Command> = {
       return "Fetching usage statistics...";
     },
   },
+  "/context": {
+    desc: "Show context window usage",
+    order: 33.5,
+    handler: () => {
+      // Handled specially in App.tsx to display context usage
+      return "Fetching context usage...";
+    },
+  },
   "/feedback": {
     desc: "Send feedback to the Letta team",
     order: 34,
