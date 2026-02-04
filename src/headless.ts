@@ -2306,8 +2306,8 @@ async function runBidirectionalMode(
           run_ids: [],
           usage: null,
           uuid: `result-${agent.id}-${Date.now()}`,
-          // Include stop_reason when there's an error for more detail
-          ...(isError && {
+          // Include stop_reason only when subtype is "error" (not "interrupted")
+          ...(subtype === "error" && {
             stop_reason:
               lastStopReason && lastStopReason !== "end_turn"
                 ? lastStopReason
