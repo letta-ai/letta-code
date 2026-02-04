@@ -742,7 +742,6 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
-  showContextUsage = false,
   agentProvenance = null,
   releaseNotes = null,
 }: {
@@ -761,7 +760,6 @@ export default function App({
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
-  showContextUsage?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
 }) {
@@ -1222,17 +1220,6 @@ export default function App({
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
-
-  // Context usage display preference (can be toggled at runtime)
-  const [showContextUsageEnabled, setShowContextUsageEnabled] = useState(
-    showContextUsage ?? false,
-  );
-
-  // Current context usage for display in status bar
-  const [currentContextUsage, setCurrentContextUsage] = useState<{
-    totalTokens: number;
-    contextWindow: number;
-  } | null>(null);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -3188,14 +3175,6 @@ export default function App({
             tokenDelta,
           });
           syncTrajectoryTokenBase();
-
-          // Update context usage for display
-          if (llmConfigRef.current?.context_window) {
-            setCurrentContextUsage({
-              totalTokens: buffersRef.current.usage.totalTokens,
-              contextWindow: llmConfigRef.current.context_window,
-            });
-          }
 
           const wasInterrupted = !!buffersRef.current.interrupted;
           const wasAborted = !!signal?.aborted;
@@ -5824,61 +5803,6 @@ export default function App({
               id: cmdId,
               input: msg,
               output: `Token streaming ${newValue ? "enabled" : "disabled"}`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
-          } catch (error) {
-            // Mark command as failed
-            const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
-          } finally {
-            // Unlock input
-            setCommandRunning(false);
-          }
-          return { submitted: true };
-        }
-
-        // Special handling for /context command - toggle context usage display
-        if (trimmed === "/context") {
-          const newValue = !showContextUsageEnabled;
-
-          // Immediately add command to transcript with "running" phase
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `${newValue ? "Showing" : "Hiding"} context usage...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          // Lock input during async operation
-          setCommandRunning(true);
-
-          try {
-            setShowContextUsageEnabled(newValue);
-
-            // Save to settings
-            const { settingsManager } = await import("../settings-manager");
-            settingsManager.updateSettings({ showContextUsage: newValue });
-
-            // Update the same command with final result
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Context usage ${newValue ? "enabled" : "disabled"}`,
               phase: "finished",
               success: true,
             });
@@ -10507,8 +10431,6 @@ Plan file path: ${planFilePath}`;
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
-                showContextUsage={showContextUsageEnabled}
-                contextUsage={currentContextUsage}
               />
             </Box>
 

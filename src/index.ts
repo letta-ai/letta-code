@@ -1992,7 +1992,6 @@ async function main(): Promise<void> {
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
-        showContextUsage: settings.showContextUsage ?? false,
         agentProvenance,
         releaseNotes,
       });
@@ -2009,7 +2008,6 @@ async function main(): Promise<void> {
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
-      showContextUsage: settings.showContextUsage ?? false,
       agentProvenance,
       releaseNotes,
     });
