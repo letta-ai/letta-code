@@ -1990,6 +1990,7 @@ async function runBidirectionalMode(
         const startTime = performance.now();
         let numTurns = 0;
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
+        let sawStreamError = false; // Track if we emitted an error during streaming
 
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
@@ -2016,6 +2017,7 @@ async function runBidirectionalMode(
           }) => {
             // Handle in-stream errors (emit ErrorMessage with full details)
             if (errorInfo && shouldOutput) {
+              sawStreamError = true; // Track that we saw an error (affects result subtype)
               const errorEvent: ErrorMessage = {
                 type: "error",
                 message: errorInfo.message,
@@ -2097,7 +2099,9 @@ async function runBidirectionalMode(
           // Case 3: Requires approval - process approvals and continue
           if (stopReason === "requires_approval") {
             if (approvals.length === 0) {
-              // No approvals to process - break
+              // Anomalous state: requires_approval but no approvals
+              // Treat as error rather than false-positive success
+              lastStopReason = "error";
               break;
             }
 
@@ -2277,10 +2281,12 @@ async function runBidirectionalMode(
 
         // Determine result subtype based on how the turn ended
         const isAborted = currentAbortController?.signal.aborted;
+        // isError if: (1) stop reason indicates error, OR (2) we emitted an error during streaming
         const isError =
-          lastStopReason &&
-          lastStopReason !== "end_turn" &&
-          lastStopReason !== "requires_approval";
+          sawStreamError ||
+          (lastStopReason &&
+            lastStopReason !== "end_turn" &&
+            lastStopReason !== "requires_approval");
         const subtype: ResultMessage["subtype"] = isAborted
           ? "interrupted"
           : isError
@@ -2301,8 +2307,12 @@ async function runBidirectionalMode(
           usage: null,
           uuid: `result-${agent.id}-${Date.now()}`,
           // Include stop_reason when there's an error for more detail
-          // Note: isError being true guarantees lastStopReason is not null
-          ...(isError && lastStopReason && { stop_reason: lastStopReason }),
+          ...(isError && {
+            stop_reason:
+              lastStopReason && lastStopReason !== "end_turn"
+                ? lastStopReason
+                : "error", // Use "error" if sawStreamError but lastStopReason was end_turn
+          }),
         };
         console.log(JSON.stringify(resultMsg));
       } catch (error) {
