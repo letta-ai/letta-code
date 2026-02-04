@@ -1346,20 +1346,6 @@ export default function App({
     }
   }, []);
 
-  // Run SessionEnd hooks on SIGINT (edge case: when Ink isn't consuming input)
-  useEffect(() => {
-    const handleSigint = async () => {
-      await runEndHooks();
-      setShowExitStats(true);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    };
-
-    const unregister = telemetry.onSigint(handleSigint);
-    return () => {
-      unregister();
-    };
-  }, [runEndHooks]);
-
   useEffect(() => {
     return () => {
       if (queueAppendTimeoutRef.current) {
