@@ -631,12 +631,16 @@ export async function handleHeadlessCommand(
   }
 
   // Apply memfs flag if specified, or enable by default for new agents
+  // In headless mode, also enable for --agent since users expect full functionality
   if (memfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (isNewlyCreatedAgent && !isSubagent) {
     // Enable memfs by default for newly created agents (but not subagents)
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (specifiedAgentId && !isSubagent) {
+    // Enable memfs by default when using --agent in headless mode
     settingsManager.setMemfsEnabled(agent.id, true);
   }
 
