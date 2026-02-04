@@ -65,6 +65,7 @@ class TelemetryManager {
   private toolCallCount = 0;
   private sessionEndTracked = false;
   private flushInterval: NodeJS.Timeout | null = null;
+  private sigintCleanupCallbacks: Array<() => void> = [];
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -133,6 +134,14 @@ class TelemetryManager {
     // Note: Normal exits via handleExit flush explicitly
     process.on("SIGINT", () => {
       try {
+        // Run registered cleanup callbacks (e.g., SessionEnd hooks)
+        for (const callback of this.sigintCleanupCallbacks) {
+          try {
+            callback();
+          } catch {
+            // Silently ignore - don't prevent other callbacks or exit
+          }
+        }
         this.trackSessionEnd(undefined, "sigint");
         // Fire and forget - try to flush but don't wait (might not complete)
         this.flush().catch(() => {
@@ -220,6 +229,20 @@ class TelemetryManager {
     },
   ) {
     this.sessionStatsGetter = getter;
+  }
+
+  /**
+   * Register a cleanup callback to run on SIGINT (Ctrl+C)
+   * Returns an unregister function
+   */
+  onSigint(callback: () => void): () => void {
+    this.sigintCleanupCallbacks.push(callback);
+    return () => {
+      const index = this.sigintCleanupCallbacks.indexOf(callback);
+      if (index !== -1) {
+        this.sigintCleanupCallbacks.splice(index, 1);
+      }
+    };
   }
 
   /**

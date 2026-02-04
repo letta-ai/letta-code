@@ -1330,9 +1330,9 @@ export default function App({
     }
   }, [agentId, agentName, initialConversationId]);
 
-  // Run SessionEnd hooks on unmount
+  // Run SessionEnd hooks on unmount AND on SIGINT (Ctrl+C)
   useEffect(() => {
-    return () => {
+    const runEndHooks = () => {
       const durationMs = Date.now() - sessionStartTimeRef.current;
       runSessionEndHooks(
         durationMs,
@@ -1343,6 +1343,15 @@ export default function App({
       ).catch(() => {
         // Silently ignore hook errors
       });
+    };
+
+    // Register for SIGINT (Ctrl+C) - telemetry will call this before exit
+    const unregister = telemetry.onSigint(runEndHooks);
+
+    // Also run on normal unmount
+    return () => {
+      unregister();
+      runEndHooks();
     };
   }, []);
 
