@@ -263,3 +263,65 @@ test("Tool pattern: case sensitivity", () => {
   expect(matchesToolPattern("WebFetch", "webfetch")).toBe(false);
   expect(matchesToolPattern("WebFetch", "WebFetch")).toBe(true);
 });
+
+// ============================================================================
+// Windows Path Normalization Tests (Issue #790)
+// These test that backslash paths work correctly for glob matching
+// ============================================================================
+
+test("File pattern: Windows-style backslashes in pattern", () => {
+  // Pattern with backslashes should match forward-slash paths
+  expect(
+    matchesFilePattern(
+      "Edit(.skills/obsidian-mcp/scripts/foo.js)",
+      "Edit(.skills\\obsidian-mcp\\scripts/**)",
+      "/project",
+    ),
+  ).toBe(true);
+});
+
+test("File pattern: Windows-style backslashes in query", () => {
+  // Query with backslashes should match forward-slash patterns
+  expect(
+    matchesFilePattern(
+      "Edit(.skills\\obsidian-mcp\\scripts\\foo.js)",
+      "Edit(.skills/obsidian-mcp/scripts/**)",
+      "/project",
+    ),
+  ).toBe(true);
+});
+
+test("File pattern: Windows-style backslashes in both", () => {
+  // Both using backslashes should still match
+  expect(
+    matchesFilePattern(
+      "Edit(.skills\\obsidian-mcp\\scripts\\foo.js)",
+      "Edit(.skills\\obsidian-mcp\\scripts\\**)",
+      "/project",
+    ),
+  ).toBe(true);
+});
+
+test("File pattern: Edit(**) matches any path with backslashes", () => {
+  // The ** glob should match everything, even with Windows paths
+  // Note: minimatch requires dot:true to match dot-prefixed paths with **
+  // so we test with a non-dot path here
+  expect(
+    matchesFilePattern(
+      "Edit(skills\\obsidian-mcp\\scripts\\foo.js)",
+      "Edit(**)",
+      "D:\\Coding\\Project",
+    ),
+  ).toBe(true);
+});
+
+test("File pattern: Windows absolute path in working directory", () => {
+  // Windows-style working directory should work
+  expect(
+    matchesFilePattern(
+      "Edit(src/file.ts)",
+      "Edit(src/**)",
+      "D:\\Coding\\Project",
+    ),
+  ).toBe(true);
+});

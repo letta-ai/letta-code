@@ -5,6 +5,17 @@ import { resolve } from "node:path";
 import { minimatch } from "minimatch";
 
 /**
+ * Normalize path separators to forward slashes for consistent glob matching.
+ * This is needed because:
+ * - Windows uses backslashes in paths
+ * - minimatch expects forward slashes for glob patterns
+ * - User settings may contain escaped backslashes (e.g., ".skills\\dir\\**")
+ */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
  * Check if a file path matches a permission pattern.
  *
  * Patterns follow Claude Code's glob syntax:
@@ -30,7 +41,8 @@ export function matchesFilePattern(
     return false;
   }
   const queryTool = queryMatch[1];
-  const filePath = queryMatch[2];
+  // Normalize path separators for cross-platform compatibility
+  const filePath = normalizePath(queryMatch[2]);
 
   // Extract tool name and glob pattern from permission rule
   // Format: "ToolName(pattern)"
@@ -39,7 +51,8 @@ export function matchesFilePattern(
     return false;
   }
   const patternTool = patternMatch[1];
-  let globPattern = patternMatch[2];
+  // Normalize path separators for cross-platform compatibility
+  let globPattern = normalizePath(patternMatch[2]);
 
   // Tool names must match
   if (queryTool !== patternTool) {
@@ -62,8 +75,8 @@ export function matchesFilePattern(
     globPattern = globPattern.slice(1); // Remove one slash to make it absolute
   }
 
-  // Resolve file path to absolute
-  const absoluteFilePath = resolve(workingDirectory, filePath);
+  // Resolve file path to absolute and normalize separators
+  const absoluteFilePath = normalizePath(resolve(workingDirectory, filePath));
 
   // If pattern is absolute, compare directly
   if (globPattern.startsWith("/")) {
@@ -73,8 +86,9 @@ export function matchesFilePattern(
   // If pattern is relative, compare against both:
   // 1. Relative path from working directory
   // 2. Absolute path (for patterns that might match absolute paths)
+  const normalizedWorkingDir = normalizePath(workingDirectory);
   const relativeFilePath = filePath.startsWith("/")
-    ? absoluteFilePath.replace(`${workingDirectory}/`, "")
+    ? absoluteFilePath.replace(`${normalizedWorkingDir}/`, "")
     : filePath;
 
   return (
