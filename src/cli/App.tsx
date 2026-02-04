@@ -1330,30 +1330,74 @@ export default function App({
     }
   }, [agentId, agentName, initialConversationId]);
 
-  // Run SessionEnd hooks on unmount AND on SIGINT (Ctrl+C)
-  useEffect(() => {
-    const runEndHooks = () => {
-      const durationMs = Date.now() - sessionStartTimeRef.current;
-      runSessionEndHooks(
+  // State for SessionEnd hook output to display on exit
+  const [sessionEndHookOutput, setSessionEndHookOutput] = useState<string[]>(
+    [],
+  );
+  const sessionEndHooksRunRef = useRef(false);
+
+  // Run SessionEnd hooks and return output
+  const runEndHooksAndGetOutput = useCallback(async () => {
+    if (sessionEndHooksRunRef.current) return [];
+    sessionEndHooksRunRef.current = true;
+
+    const durationMs = Date.now() - sessionStartTimeRef.current;
+    try {
+      const result = await runSessionEndHooks(
         durationMs,
         undefined, // messageCount not tracked in SessionStats
         undefined, // toolCallCount not tracked in SessionStats
         agentIdRef.current ?? undefined,
         conversationIdRef.current ?? undefined,
-      ).catch(() => {
-        // Silently ignore hook errors
-      });
+      );
+      // Collect stdout from all hook results (not just feedback which is only for errors)
+      const output: string[] = [];
+      for (const hookResult of result.results) {
+        if (hookResult.stdout.trim()) {
+          output.push(hookResult.stdout.trim());
+        }
+      }
+      return output;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // Handle SIGINT (Ctrl+C) - trigger exit flow with stats display
+  useEffect(() => {
+    let sigintReceived = false;
+
+    const handleSigint = async () => {
+      // Second Ctrl+C forces immediate exit
+      if (sigintReceived) {
+        process.exit(1);
+      }
+      sigintReceived = true;
+
+      // Run SessionEnd hooks and capture output
+      const hookOutput = await runEndHooksAndGetOutput();
+      setSessionEndHookOutput(hookOutput);
+
+      // Show exit stats (triggers render)
+      setShowExitStats(true);
+
+      // Track telemetry
+      const stats = sessionStatsRef.current.getSnapshot();
+      telemetry.trackSessionEnd(stats, "sigint");
+
+      // Wait for render, then exit
+      setTimeout(() => {
+        process.exit(0);
+      }, 100);
     };
 
-    // Register for SIGINT (Ctrl+C) - telemetry will call this before exit
-    const unregister = telemetry.onSigint(runEndHooks);
+    // Register with telemetry's SIGINT handler
+    const unregister = telemetry.onSigint(handleSigint);
 
-    // Also run on normal unmount
     return () => {
       unregister();
-      runEndHooks();
     };
-  }, []);
+  }, [runEndHooksAndGetOutput]);
 
   useEffect(() => {
     return () => {
@@ -4320,6 +4364,10 @@ export default function App({
   const handleExit = useCallback(async () => {
     saveLastAgentBeforeExit();
 
+    // Run SessionEnd hooks and capture output
+    const hookOutput = await runEndHooksAndGetOutput();
+    setSessionEndHookOutput(hookOutput);
+
     // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
@@ -4332,7 +4380,7 @@ export default function App({
     setTimeout(() => {
       process.exit(0);
     }, 100);
-  }, []);
+  }, [runEndHooksAndGetOutput]);
 
   // Handler when user presses UP/ESC to load queue into input for editing
   const handleEnterQueueEditMode = useCallback(() => {
@@ -10285,6 +10333,17 @@ Plan file path: ${planFilePath}`;
                         {formatCompact(stats.usage.completionTokens)} output
                       </Text>
                     </Box>
+                    {/* SessionEnd hook output */}
+                    {sessionEndHookOutput.length > 0 && (
+                      <>
+                        <Box height={1} />
+                        {sessionEndHookOutput.map((line, i) => (
+                          <Text key={`hook-${i}-${line.slice(0, 20)}`} dimColor>
+                            {line}
+                          </Text>
+                        ))}
+                      </>
+                    )}
                     {/* Resume commands (no alien) */}
                     <Box height={1} />
                     <Text dimColor>Resume this agent with:</Text>

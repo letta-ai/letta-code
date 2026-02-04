@@ -65,7 +65,7 @@ class TelemetryManager {
   private toolCallCount = 0;
   private sessionEndTracked = false;
   private flushInterval: NodeJS.Timeout | null = null;
-  private sigintCleanupCallbacks: Array<() => void> = [];
+  private sigintCleanupCallbacks: Array<() => void | Promise<void>> = [];
   private readonly FLUSH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_BATCH_SIZE = 100;
   private sessionStatsGetter?: () => {
@@ -132,16 +132,31 @@ class TelemetryManager {
 
     // Safety net: Handle Ctrl+C interruption
     // Note: Normal exits via handleExit flush explicitly
-    process.on("SIGINT", () => {
+    let sigintReceived = false;
+    process.on("SIGINT", async () => {
+      // Second Ctrl+C forces immediate exit (in case hooks hang)
+      if (sigintReceived) {
+        process.exit(1);
+      }
+      sigintReceived = true;
+
       try {
         // Run registered cleanup callbacks (e.g., SessionEnd hooks)
-        for (const callback of this.sigintCleanupCallbacks) {
-          try {
-            callback();
-          } catch {
-            // Silently ignore - don't prevent other callbacks or exit
-          }
-        }
+        // Use timeout to prevent hooks from blocking exit forever
+        const CLEANUP_TIMEOUT_MS = 10000;
+        const callbackPromises = this.sigintCleanupCallbacks.map(
+          async (callback) => {
+            try {
+              await callback();
+            } catch {
+              // Silently ignore - don't prevent other callbacks or exit
+            }
+          },
+        );
+        await Promise.race([
+          Promise.all(callbackPromises),
+          new Promise((resolve) => setTimeout(resolve, CLEANUP_TIMEOUT_MS)),
+        ]);
         this.trackSessionEnd(undefined, "sigint");
         // Fire and forget - try to flush but don't wait (might not complete)
         this.flush().catch(() => {
@@ -235,7 +250,7 @@ class TelemetryManager {
    * Register a cleanup callback to run on SIGINT (Ctrl+C)
    * Returns an unregister function
    */
-  onSigint(callback: () => void): () => void {
+  onSigint(callback: () => void | Promise<void>): () => void {
     this.sigintCleanupCallbacks.push(callback);
     return () => {
       const index = this.sigintCleanupCallbacks.indexOf(callback);
