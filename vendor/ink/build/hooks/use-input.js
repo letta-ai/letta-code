@@ -60,18 +60,32 @@ const useInput = (inputHandler, options = {}) => {
             // or with event type: ESC [ keycode ; modifier : event u
             // parseKeypress doesn't handle this, so we parse it ourselves as a fallback
             if (!keypress.name && typeof data === 'string') {
+                let keycode = null;
+                let modifier = 0;
+                let event = 1;
+
                 // Match CSI u: ESC [ keycode ; modifier u  OR  ESC [ keycode ; modifier : event u
                 const csiUMatch = data.match(/^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?u$/);
                 if (csiUMatch) {
-                    const keycode = parseInt(csiUMatch[1], 10);
-                    const modifier = parseInt(csiUMatch[2] || '1', 10) - 1;
-                    const event = csiUMatch[3] ? parseInt(csiUMatch[3], 10) : 1;
-                    
+                    keycode = parseInt(csiUMatch[1], 10);
+                    modifier = parseInt(csiUMatch[2] || '1', 10) - 1;
+                    event = csiUMatch[3] ? parseInt(csiUMatch[3], 10) : 1;
+                } else {
+                    // modifyOtherKeys format: CSI 27 ; modifier ; key ~
+                    // Treat it like CSI u (key + 'u')
+                    const modifyOtherKeysMatch = data.match(/^\x1b\[27;(\d+);(\d+)~$/);
+                    if (modifyOtherKeysMatch) {
+                        modifier = parseInt(modifyOtherKeysMatch[1], 10) - 1;
+                        keycode = parseInt(modifyOtherKeysMatch[2], 10);
+                    }
+                }
+
+                if (keycode !== null) {
                     // Ignore key release events (event=3)
                     if (event === 3) {
                         return;
                     }
-                    
+
                     // Map keycodes to names
                     const csiUKeyMap = {
                         9: 'tab',
@@ -79,16 +93,16 @@ const useInput = (inputHandler, options = {}) => {
                         27: 'escape',
                         127: 'backspace',
                     };
-                    
+
                     let name = csiUKeyMap[keycode] || '';
-                    
+
                     // Handle letter keycodes (a-z: 97-122, A-Z: 65-90)
                     if (!name && keycode >= 97 && keycode <= 122) {
                         name = String.fromCharCode(keycode); // lowercase letter
                     } else if (!name && keycode >= 65 && keycode <= 90) {
                         name = String.fromCharCode(keycode + 32); // convert to lowercase
                     }
-                    
+
                     if (name) {
                         keypress = {
                             name,
@@ -110,7 +124,7 @@ const useInput = (inputHandler, options = {}) => {
                 rightArrow: keypress.name === 'right',
                 pageDown: keypress.name === 'pagedown',
                 pageUp: keypress.name === 'pageup',
-                return: keypress.name === 'return',
+                return: keypress.name === 'return' || keypress.name === 'enter',
                 escape: keypress.name === 'escape',
                 ctrl: keypress.ctrl,
                 shift: keypress.shift,
@@ -160,5 +174,3 @@ const useInput = (inputHandler, options = {}) => {
 };
 
 export default useInput;
-
-
