@@ -1,6 +1,10 @@
 # Skill Templates for MCP Servers
 
-Use these templates when creating dedicated skills for MCP servers.
+When to create a dedicated skill:
+- **One-off use**: No skill needed - just use `converting-mcps-to-skills` scripts directly
+- **Repeated use**: Create a self-contained skill with customized scripts
+
+Skills should be self-contained per the [Agent Skills spec](https://agentskills.io/specification).
 
 ## Naming Rules (from Agent Skills spec)
 
@@ -11,75 +15,11 @@ The `name` field must:
 - Not contain consecutive hyphens (`--`)
 - Match the parent directory name exactly
 
-Examples: `using-obsidian-mcp`, `mcp-filesystem`, `github-mcp`
+Examples: `using-github-mcp`, `mcp-filesystem`, `slack-mcp`
 
-## Simple Skill Template (Documentation Only)
+## Skill Template
 
-Use this when:
-- The MCP server has straightforward tools
-- Usage patterns are simple
-- No convenience wrappers needed
-
-Keep SKILL.md under 500 lines. Move detailed docs to `references/`.
-
-```markdown
----
-name: using-<server-name>
-description: <What the server does>. Use when <trigger conditions>.
-# Optional fields:
-# license: MIT
-# compatibility: Requires network access to <service>
-# metadata:
-#   author: <author>
-#   version: "1.0"
----
-
-# Using <Server Name>
-
-<Brief description of what this MCP server provides.>
-
-## Prerequisites
-
-- <Server requirements, e.g., "Server running at http://localhost:3001/mcp">
-- <Auth requirements if any>
-
-## Quick Start
-
-```bash
-# Set up (if auth required)
-export <ENV_VAR>="your-key"
-
-# List available tools
-npx tsx ~/.letta/skills/converting-mcps-to-skills/scripts/mcp-<transport>.ts <url-or-command> list-tools
-
-# Common operations
-npx tsx ... call <tool> '{"action":"..."}'
-```
-
-## Available Tools
-
-<List the tools with brief descriptions and example calls>
-
-### <tool-name>
-<Description>
-
-```bash
-call <tool> '{"param": "value"}'
-```
-
-## Environment Variables
-
-- `<VAR_NAME>` - <Description>
-```
-
----
-
-## Rich Skill Template (With Convenience Scripts)
-
-Use this when:
-- The MCP server will be used frequently
-- You want simpler command-line interface
-- Server has complex auth or configuration
+Use this template when creating a self-contained skill for an MCP server.
 
 ### Directory Structure
 
@@ -87,7 +27,7 @@ Use this when:
 using-<server-name>/
 ├── SKILL.md
 └── scripts/
-    └── <server>.ts    # Convenience wrapper
+    └── <server>.ts    # Customized client (copied from converting-mcps-to-skills)
 ```
 
 ### SKILL.md Template
@@ -96,7 +36,9 @@ using-<server-name>/
 ---
 name: using-<server-name>
 description: <What the server does>. Use when <trigger conditions>.
-# Optional: license, compatibility, metadata (see simple template)
+# Optional fields:
+# license: MIT
+# compatibility: Requires network access to <service>
 ---
 
 # Using <Server Name>
@@ -117,12 +59,12 @@ export <SERVER>_API_KEY="your-key"
 npx tsx <skill-path>/scripts/<server>.ts list-tools
 
 # Call a tool
-npx tsx <skill-path>/scripts/<server>.ts <tool> '{"action":"..."}'
+npx tsx <skill-path>/scripts/<server>.ts call <tool> '{"arg":"value"}'
 ```
 
-## Commands
+## Available Tools
 
-<Document the convenience wrapper commands>
+<Document tools with examples>
 
 ## Environment Variables
 
@@ -130,42 +72,46 @@ npx tsx <skill-path>/scripts/<server>.ts <tool> '{"action":"..."}'
 - `<SERVER>_URL` - Override server URL (default: <default-url>)
 ```
 
-### Convenience Wrapper Template (scripts/<server>.ts)
+### Script Template (scripts/<server>.ts)
+
+Copy the HTTP client from `converting-mcps-to-skills/scripts/mcp-http.ts` (or `mcp-stdio.ts` for stdio servers) and customize:
+
+1. Set `DEFAULT_URL` to this server's URL
+2. Rename the API key env var (e.g., `GITHUB_MCP_KEY` instead of generic)
+3. Optionally simplify the CLI for common operations
+
+The copied code is self-contained - no external dependencies for HTTP transport.
 
 ```typescript
 #!/usr/bin/env npx tsx
 /**
- * <Server Name> CLI - Convenience wrapper for <server> MCP server
- * 
- * Usage:
- *   npx tsx <server>.ts list-tools
- *   npx tsx <server>.ts <tool> '{"action":"..."}'
+ * <Server Name> CLI - Self-contained MCP client
  */
 
-// Configuration
-const DEFAULT_URL = "<default-server-url>";
+// Customize these for your server
+const DEFAULT_URL = "<server-url>";
 const API_KEY = process.env.<SERVER>_API_KEY;
-const SERVER_URL = process.env.<SERVER>_URL || DEFAULT_URL;
 
-// Import the parent skill's HTTP client
-// For HTTP servers, you can inline the client code or import it
-// For stdio, import from the parent skill
-
-// ... implementation similar to obsidian-mcp.ts ...
-// Key differences:
-// - Bake in the server URL/command as defaults
-// - Simplify the CLI interface for this specific server
-// - Add server-specific convenience commands if needed
+// Copy the rest of mcp-http.ts here and adjust as needed
+// ...
 ```
 
----
+## Example: Self-Contained Filesystem Skill
 
-## Example: Simple Skill for Filesystem Server
+A complete example of a self-contained skill for the MCP filesystem server:
 
+```
+using-mcp-filesystem/
+├── SKILL.md
+└── scripts/
+    └── filesystem.ts    # Copied and customized from mcp-stdio.ts
+```
+
+**SKILL.md:**
 ```markdown
 ---
 name: using-mcp-filesystem
-description: Access local filesystem via MCP filesystem server. Use when user wants to read, write, or search files via MCP.
+description: Access local filesystem via MCP. Use when user wants to read, write, or search files via MCP protocol.
 ---
 
 # Using MCP Filesystem Server
@@ -175,18 +121,8 @@ Access local files via the official MCP filesystem server.
 ## Quick Start
 
 ```bash
-# Start by listing available tools
-npx tsx ~/.letta/skills/converting-mcps-to-skills/scripts/mcp-stdio.ts \
-  "npx -y @modelcontextprotocol/server-filesystem ." list-tools
-
-# Read a file
-npx tsx ... call read_file '{"path":"./README.md"}'
-
-# List directory
-npx tsx ... call list_directory '{"path":"."}'
-
-# Search files
-npx tsx ... call search_files '{"path":".","pattern":"*.ts"}'
+npx tsx <skill-path>/scripts/filesystem.ts list-tools
+npx tsx <skill-path>/scripts/filesystem.ts call read_file '{"path":"./README.md"}'
 ```
 
 ## Available Tools
@@ -198,14 +134,8 @@ npx tsx ... call search_files '{"path":".","pattern":"*.ts"}'
 - `get_file_info` - Get file metadata
 ```
 
----
-
-## Example: Rich Skill for Obsidian
-
-See `~/.letta/skills/using-obsidian-mcp-plugin/` for a complete example of a rich skill with a convenience wrapper script.
-
-Key features of the rich skill:
-- Custom `obsidian-mcp.ts` script with defaults baked in
-- Simplified CLI: just `call vault '{"action":"list"}'` 
-- Environment variables for auth: `OBSIDIAN_MCP_KEY`
-- Comprehensive documentation of all tools
+**scripts/filesystem.ts:**
+Copy `converting-mcps-to-skills/scripts/mcp-stdio.ts` and set the default command to:
+```typescript
+const DEFAULT_COMMAND = "npx -y @modelcontextprotocol/server-filesystem .";
+```
