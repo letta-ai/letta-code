@@ -72,6 +72,7 @@ const AgentRow = memo(
     const contentWidth = Math.max(0, columns - gutterWidth);
 
     const isRunning = agent.status === "pending" || agent.status === "running";
+    const shouldDim = isRunning && !agent.isBackground;
     const stats = formatStats(
       agent.toolCalls.length,
       agent.totalTokens,
@@ -94,7 +95,9 @@ const AgentRow = memo(
                 {"   "}
                 {treeChar}{" "}
               </Text>
-              <Text bold>{agent.description}</Text>
+              <Text bold={!shouldDim} dimColor={shouldDim}>
+                {agent.description}
+              </Text>
               <Text dimColor>
                 {" · "}
                 {agent.type.toLowerCase()}
@@ -133,7 +136,9 @@ const AgentRow = memo(
               {"   "}
               {treeChar}{" "}
             </Text>
-            <Text bold>{agent.description}</Text>
+            <Text bold={!shouldDim} dimColor={shouldDim}>
+              {agent.description}
+            </Text>
             <Text dimColor>
               {" · "}
               {agent.type.toLowerCase()}
@@ -245,16 +250,16 @@ interface GroupHeaderProps {
 
 const GroupHeader = memo(
   ({ count, allCompleted, hasErrors, expanded }: GroupHeaderProps) => {
-    const statusText = allCompleted
-      ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
-      : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
-
     const hint = expanded ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
 
-    // Use error color for dot if any subagent errored
     const dotColor = hasErrors
       ? colors.subagent.error
       : colors.subagent.completed;
+    const runningDotColor = hasErrors
+      ? colors.subagent.error
+      : colors.tool.pending;
+    const label = allCompleted ? "Ran" : "Running";
+    const suffix = count !== 1 ? "agents" : "agent";
 
     return (
       <Box flexDirection="row">
@@ -262,10 +267,13 @@ const GroupHeader = memo(
           <Text color={dotColor}>●</Text>
         ) : (
           // BlinkDot now gets shouldAnimate from AnimationContext
-          <BlinkDot color={colors.subagent.header} />
+          <BlinkDot color={runningDotColor} />
         )}
-        <Text color={colors.subagent.header}> {statusText} </Text>
-        <Text color={colors.subagent.hint}>{hint}</Text>
+        <Text>
+          {" "}
+          {label} <Text bold>{count}</Text> {suffix}
+        </Text>
+        <Text color={colors.subagent.hint}> {hint}</Text>
       </Box>
     );
   },
