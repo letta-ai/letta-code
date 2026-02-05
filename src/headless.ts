@@ -512,8 +512,10 @@ export async function handleHeadlessCommand(
 
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
+      const { getAgentSkillsDir } = await import("./agent/skills");
+      const skillsDir = getAgentSkillsDir(agent.id);
       console.log(
-        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}`,
+        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}`,
       );
     }
   }
