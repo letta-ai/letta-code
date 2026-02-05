@@ -217,7 +217,7 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
-  // Most recent total tokens from usage_statistics (prompt + completion = current context size after turn)
+  // Most recent context_tokens from usage_statistics (estimate of tokens in context window)
   lastContextTokens: number;
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
@@ -768,9 +768,6 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
     case "usage_statistics": {
       // Accumulate usage statistics from the stream
       // These messages arrive after stop_reason in the stream
-      console.log(
-        `[usage_statistics] prompt=${chunk.prompt_tokens}, completion=${chunk.completion_tokens}, total=${chunk.total_tokens}, step=${chunk.step_count}`,
-      );
       if (chunk.prompt_tokens !== undefined) {
         b.usage.promptTokens += chunk.prompt_tokens;
       }
@@ -780,10 +777,10 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
       }
-      // Track most recent prompt_tokens as current context size
-      // (prompt_tokens = actual tokens sent to model in this call)
-      if (chunk.prompt_tokens !== undefined) {
-        b.lastContextTokens = chunk.prompt_tokens;
+      // Use context_tokens from SDK (estimate of tokens in context window)
+      const usageChunk = chunk as typeof chunk & { context_tokens?: number };
+      if (usageChunk.context_tokens !== undefined) {
+        b.lastContextTokens = usageChunk.context_tokens;
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
