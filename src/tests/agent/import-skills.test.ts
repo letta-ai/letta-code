@@ -190,26 +190,29 @@ describe("skills extraction from .af files", () => {
     expect(extracted).toEqual([]);
   });
 
-  test("fetches skill from remote source_url (integration)", async () => {
-    const afContent = {
-      agents: [],
-      blocks: [],
-      sources: [],
-      tools: [],
-      mcp_servers: [],
-      skills: [
-        {
-          name: "imessage",
-          source_url: "letta-ai/skills/main/tools/imessage",
-        },
-      ],
-    };
+  test.skipIf(process.env.CI === "true")(
+    "fetches skill from remote source_url (integration)",
+    async () => {
+      const afContent = {
+        agents: [],
+        blocks: [],
+        sources: [],
+        tools: [],
+        mcp_servers: [],
+        skills: [
+          {
+            name: "imessage",
+            source_url: "letta-ai/skills/main/tools/imessage",
+          },
+        ],
+      };
 
-    writeFileSync(afPath, JSON.stringify(afContent, null, 2));
+      writeFileSync(afPath, JSON.stringify(afContent, null, 2));
 
-    const extracted = await extractSkillsFromAf(afPath, skillsDir);
+      const extracted = await extractSkillsFromAf(afPath, skillsDir);
 
-    expect(extracted).toEqual(["imessage"]);
-    expect(existsSync(join(skillsDir, "imessage", "SKILL.md"))).toBe(true);
-  });
+      expect(extracted).toEqual(["imessage"]);
+      expect(existsSync(join(skillsDir, "imessage", "SKILL.md"))).toBe(true);
+    },
+  );
 });
