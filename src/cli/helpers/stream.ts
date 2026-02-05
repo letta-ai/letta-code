@@ -13,6 +13,7 @@ import {
   markIncompleteToolsAsCancelled,
   onChunk,
 } from "./accumulator";
+import type { ContextTracker } from "./contextTracker";
 import type { ErrorInfo } from "./streamProcessor";
 import { StreamProcessor } from "./streamProcessor";
 
@@ -60,6 +61,7 @@ export async function drainStream(
   abortSignal?: AbortSignal,
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
+  contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
   const startTime = performance.now();
 
@@ -191,7 +193,7 @@ export async function drainStream(
       }
 
       if (shouldAccumulate) {
-        onChunk(buffers, chunk);
+        onChunk(buffers, chunk, contextTracker);
         queueMicrotask(refresh);
       }
 
@@ -334,6 +336,7 @@ export async function drainStreamWithResume(
   abortSignal?: AbortSignal,
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
+  contextTracker?: ContextTracker,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
 
@@ -345,6 +348,7 @@ export async function drainStreamWithResume(
     abortSignal,
     onFirstMessage,
     onChunkProcessed,
+    contextTracker,
   );
 
   // If stream ended without proper stop_reason and we have resume info, try once to reconnect
@@ -392,6 +396,7 @@ export async function drainStreamWithResume(
         abortSignal,
         undefined,
         onChunkProcessed,
+        contextTracker,
       );
 
       // Use the resume result (should have proper stop_reason now)

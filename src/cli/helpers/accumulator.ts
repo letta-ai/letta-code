@@ -9,6 +9,8 @@ import { INTERRUPTED_BY_USER } from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { debugLog } from "../../utils/debug";
 import { extractCompactionSummary } from "./backfill";
+import type { ContextTracker } from "./contextTracker";
+import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -159,6 +161,7 @@ export type Line =
       phase?: "running" | "finished";
       success?: boolean;
       dimOutput?: boolean;
+      preformatted?: boolean;
     }
   | {
       kind: "bash_command";
@@ -217,8 +220,6 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
-  // Most recent context_tokens from usage_statistics (estimate of tokens in context window)
-  lastContextTokens: number;
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
@@ -248,7 +249,6 @@ export function createBuffers(agentId?: string): Buffers {
       reasoningTokens: 0,
       stepCount: 0,
     },
-    lastContextTokens: 0,
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
@@ -464,7 +464,11 @@ function trySplitContent(
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+export function onChunk(
+  b: Buffers,
+  chunk: LettaStreamingResponse,
+  ctx?: ContextTracker,
+) {
   // Skip processing if stream was interrupted mid-turn. handleInterrupt already
   // rendered the cancellation state, so we should ignore any buffered chunks
   // that arrive before drainStream exits.
@@ -800,9 +804,26 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         b.usage.totalTokens += chunk.total_tokens;
       }
       // Use context_tokens from SDK (estimate of tokens in context window)
-      const usageChunk = chunk as typeof chunk & { context_tokens?: number };
-      if (usageChunk.context_tokens !== undefined) {
-        b.lastContextTokens = usageChunk.context_tokens;
+      if (ctx) {
+        const usageChunk = chunk as typeof chunk & { context_tokens?: number };
+        if (usageChunk.context_tokens !== undefined) {
+          ctx.lastContextTokens = usageChunk.context_tokens;
+          // Track history for time-series display
+          const compacted = ctx.pendingCompaction;
+          if (compacted) ctx.pendingCompaction = false;
+          ctx.contextTokensHistory.push({
+            timestamp: Date.now(),
+            tokens: usageChunk.context_tokens,
+            turnId: ctx.currentTurnId,
+            ...(compacted ? { compacted: true } : {}),
+          });
+          // Cap history length to avoid unbounded growth
+          if (ctx.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
+            ctx.contextTokensHistory = ctx.contextTokensHistory.slice(
+              -MAX_CONTEXT_HISTORY,
+            );
+          }
+        }
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
@@ -854,6 +875,14 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             break;
           }
         }
+
+        // Flag so the next usage_statistics entry is marked as post-compaction.
+        // Set here (not in event_message) because summary_message arrives after
+        // compaction completes, guaranteeing the next usage_statistics has the
+        // reduced token count.
+        if (ctx) {
+          ctx.pendingCompaction = true;
+        }
         break;
       }
 
@@ -871,13 +900,18 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Handle otid transition (mark previous line as finished)
         handleOtidTransition(b, id);
 
+        const eventType = eventChunk.event_type || "unknown";
         ensure(b, id, () => ({
           kind: "event",
           id,
-          eventType: eventChunk.event_type || "unknown",
+          eventType,
           eventData: eventChunk.event_data || {},
           phase: "running",
         }));
+
+        // Note: pendingCompaction is set in summary_message (not here) because
+        // usage_statistics for the step that triggered compaction can arrive after
+        // this event_message, and we want to mark the first POST-compaction entry.
         break;
       }
 
