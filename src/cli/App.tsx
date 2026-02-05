@@ -6711,7 +6711,17 @@ export default function App({
 
           try {
             const client = await getClient();
-            const fileContent = await client.agents.exportFile(agentId);
+
+            // Pass conversation_id if we're in a specific conversation (not default)
+            const exportParams: { conversation_id?: string } = {};
+            if (conversationId !== "default") {
+              exportParams.conversation_id = conversationId;
+            }
+
+            const fileContent = await client.agents.exportFile(
+              agentId,
+              exportParams,
+            );
             const fileName = `${agentId}.af`;
             writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
 
