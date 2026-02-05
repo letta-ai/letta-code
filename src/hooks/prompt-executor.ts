@@ -1,6 +1,8 @@
 // src/hooks/prompt-executor.ts
 // Executes prompt-based hooks by sending hook input to an LLM for evaluation
 
+import { getClient } from "../agent/client";
+import { getCurrentAgentId } from "../agent/context";
 import {
   HookExitCode,
   type HookInput,
@@ -100,10 +102,56 @@ function responseToHookResult(
 }
 
 /**
+ * Extract agent_id from hook input, falling back to the global agent context.
+ */
+function getAgentId(input: HookInput): string | undefined {
+  // 1. Check hook input directly (most hook event types include agent_id)
+  if ("agent_id" in input && input.agent_id) {
+    return input.agent_id;
+  }
+  // 2. Fall back to the global agent context (set during session)
+  try {
+    return getCurrentAgentId();
+  } catch {
+    // Context not available
+  }
+  // 3. Last resort: env var (set by shell env for subprocesses)
+  return process.env.LETTA_AGENT_ID;
+}
+
+/**
+ * JSON schema for structured prompt hook responses.
+ * Forces the LLM to return {ok: boolean, reason?: string} via tool calling.
+ */
+const PROMPT_HOOK_RESPONSE_SCHEMA = {
+  properties: {
+    ok: {
+      type: "boolean",
+      description: "true to allow the action, false to block it",
+    },
+    reason: {
+      type: "string",
+      description:
+        "Explanation for the decision. Required when ok is false.",
+    },
+  },
+  required: ["ok"],
+};
+
+/** Response shape from POST /v1/agents/{agent_id}/generate */
+interface GenerateResponse {
+  content: string;
+  model: string;
+  usage: {
+    completion_tokens: number;
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+
+/**
  * Execute a prompt-based hook by sending the hook input to an LLM
- *
- * NOTE: This is a placeholder implementation. When the direct LLM call endpoint
- * is available, this will be updated to make actual API calls.
+ * via the POST /v1/agents/{agent_id}/generate endpoint.
  */
 export async function executePromptHook(
   hook: PromptHookConfig,
@@ -113,13 +161,22 @@ export async function executePromptHook(
   const startTime = Date.now();
 
   try {
+    const agentId = getAgentId(input);
+    if (!agentId) {
+      throw new Error(
+        "Prompt hooks require an agent_id. Ensure the hook event provides an agent_id " +
+          "or set the LETTA_AGENT_ID environment variable.",
+      );
+    }
+
     // Build the user prompt with $ARGUMENTS replaced
     const userPrompt = buildPrompt(hook.prompt, input);
     const model = hook.model || DEFAULT_PROMPT_MODEL;
     const timeout = hook.timeout ?? DEFAULT_PROMPT_TIMEOUT_MS;
 
-    // Call the LLM for hook evaluation
-    const llmResponse = await callLLMForHookEvaluation(
+    // Call the generate endpoint
+    const llmResponse = await callGenerateEndpoint(
+      agentId,
       PROMPT_HOOK_SYSTEM,
       userPrompt,
       model,
@@ -163,35 +220,31 @@ export async function executePromptHook(
 }
 
 /**
- * PLACEHOLDER: Call LLM for hook evaluation
- *
- * This function is a placeholder that will be replaced with a direct LLM call
- * endpoint. Currently, it throws an error to indicate the placeholder status.
- *
- * Future implementation will look something like:
- * ```
- * const client = await getClient();
- * const response = await client.llm.complete({
- *   model,
- *   messages: [
- *     { role: "system", content: systemPrompt },
- *     { role: "user", content: userPrompt },
- *   ],
- * });
- * return response.content;
- * ```
+ * Call the POST /v1/agents/{agent_id}/generate endpoint for hook evaluation.
+ * Uses the Letta SDK client's raw post() method since the SDK doesn't have
+ * a typed generate() method yet.
  */
-async function callLLMForHookEvaluation(
-  _systemPrompt: string,
-  _userPrompt: string,
-  _model: string,
-  _timeout: number,
+async function callGenerateEndpoint(
+  agentId: string,
+  systemPrompt: string,
+  userPrompt: string,
+  model: string,
+  timeout: number,
 ): Promise<string> {
-  // TODO: Implement direct LLM call when endpoint is available
-  // For now, throw an error indicating this is a placeholder
-  throw new Error(
-    "Prompt hooks are not yet fully implemented. " +
-      "Waiting for direct LLM call endpoint that doesn't require an agent ID. " +
-      "This placeholder will be replaced with a direct API call.",
+  const client = await getClient();
+
+  const response = await client.post<GenerateResponse>(
+    `/v1/agents/${agentId}/generate`,
+    {
+      body: {
+        prompt: userPrompt,
+        system_prompt: systemPrompt,
+        override_model: model,
+        response_schema: PROMPT_HOOK_RESPONSE_SCHEMA,
+      },
+      timeout,
+    },
   );
+
+  return response.content;
 }
