@@ -1,9 +1,34 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { executePromptHook } from "../../hooks/prompt-executor";
-import { HookExitCode, type PreToolUseHookInput, type StopHookInput } from "../../hooks/types";
+import {
+  HookExitCode,
+  type PreToolUseHookInput,
+  type StopHookInput,
+} from "../../hooks/types";
+
+interface GenerateOpts {
+  body: {
+    prompt: string;
+    system_prompt: string;
+    override_model?: string;
+    response_schema?: Record<string, unknown>;
+  };
+  timeout?: number;
+}
 
 // Mock getClient to avoid real API calls
-const mockPost = mock(() => Promise.resolve({ content: '{"ok": true}', model: "test-model", usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 } }));
+const mockPost = mock(
+  (_path: string, _opts: GenerateOpts) =>
+    Promise.resolve({
+      content: '{"ok": true}',
+      model: "test-model",
+      usage: {
+        completion_tokens: 10,
+        prompt_tokens: 50,
+        total_tokens: 60,
+      },
+    }) as Promise<Record<string, unknown>>,
+);
 const mockGetClient = mock(() => Promise.resolve({ post: mockPost }));
 
 // Mock getCurrentAgentId
@@ -17,6 +42,14 @@ mock.module("../../agent/context", () => ({
   getCurrentAgentId: mockGetCurrentAgentId,
 }));
 
+/** Helper to get the first call's [path, opts] from mockPost */
+function firstPostCall(): [string, GenerateOpts] {
+  const calls = mockPost.mock.calls;
+  const call = calls[0];
+  if (!call) throw new Error("mockPost was not called");
+  return call;
+}
+
 describe("Prompt Hook Executor", () => {
   beforeEach(() => {
     mockPost.mockClear();
@@ -27,7 +60,11 @@ describe("Prompt Hook Executor", () => {
     mockPost.mockResolvedValue({
       content: '{"ok": true}',
       model: "anthropic/claude-3-5-haiku-20241022",
-      usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 },
+      usage: {
+        completion_tokens: 10,
+        prompt_tokens: 50,
+        total_tokens: 60,
+      },
     });
   });
 
@@ -58,20 +95,27 @@ describe("Prompt Hook Executor", () => {
       expect(mockPost).toHaveBeenCalledTimes(1);
 
       // Verify the correct path and body were sent
-      const [path, opts] = mockPost.mock.calls[0]!;
+      const [path, opts] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-abc-123/generate");
       expect(opts.body.prompt).toContain("Check if this tool call is safe");
       expect(opts.body.system_prompt).toBeTruthy();
       expect(opts.body.override_model).toBeUndefined();
       expect(opts.body.response_schema).toBeDefined();
-      expect(opts.body.response_schema.properties.ok.type).toBe("boolean");
+      const schema = opts.body.response_schema as {
+        properties: { ok: { type: string } };
+      };
+      expect(schema.properties.ok.type).toBe("boolean");
     });
 
     test("returns BLOCK when ok is false", async () => {
       mockPost.mockResolvedValue({
         content: '{"ok": false, "reason": "Dangerous command detected"}',
         model: "anthropic/claude-3-5-haiku-20241022",
-        usage: { completion_tokens: 15, prompt_tokens: 50, total_tokens: 65 },
+        usage: {
+          completion_tokens: 15,
+          prompt_tokens: 50,
+          total_tokens: 65,
+        },
       });
 
       const hook = {
@@ -108,7 +152,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [, opts] = mockPost.mock.calls[0]!;
+      const [, opts] = firstPostCall();
       expect(opts.body.override_model).toBe("openai/gpt-4o");
     });
 
@@ -128,7 +172,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [, opts] = mockPost.mock.calls[0]!;
+      const [, opts] = firstPostCall();
       expect(opts.timeout).toBe(5000);
     });
 
@@ -147,7 +191,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [, opts] = mockPost.mock.calls[0]!;
+      const [, opts] = firstPostCall();
       // $ARGUMENTS should have been replaced with JSON
       expect(opts.body.prompt).not.toContain("$ARGUMENTS");
       expect(opts.body.prompt).toContain('"event_type": "PreToolUse"');
@@ -169,7 +213,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [, opts] = mockPost.mock.calls[0]!;
+      const [, opts] = firstPostCall();
       expect(opts.body.prompt).toContain("Is this tool call safe?");
       expect(opts.body.prompt).toContain("Hook input:");
       expect(opts.body.prompt).toContain('"tool_name": "Bash"');
@@ -190,7 +234,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [path] = mockPost.mock.calls[0]!;
+      const [path] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-from-context/generate");
     });
 
@@ -212,7 +256,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [path] = mockPost.mock.calls[0]!;
+      const [path] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-from-env/generate");
     });
 
@@ -264,7 +308,11 @@ describe("Prompt Hook Executor", () => {
       mockPost.mockResolvedValue({
         content: "This is not valid JSON at all",
         model: "anthropic/claude-3-5-haiku-20241022",
-        usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 },
+        usage: {
+          completion_tokens: 10,
+          prompt_tokens: 50,
+          total_tokens: 60,
+        },
       });
 
       const hook = {
@@ -289,7 +337,11 @@ describe("Prompt Hook Executor", () => {
       mockPost.mockResolvedValue({
         content: '```json\n{"ok": true}\n```',
         model: "anthropic/claude-3-5-haiku-20241022",
-        usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 },
+        usage: {
+          completion_tokens: 10,
+          prompt_tokens: 50,
+          total_tokens: 60,
+        },
       });
 
       const hook = {
@@ -313,7 +365,11 @@ describe("Prompt Hook Executor", () => {
       mockPost.mockResolvedValue({
         content: '{"ok": "yes", "reason": "looks fine"}',
         model: "anthropic/claude-3-5-haiku-20241022",
-        usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 },
+        usage: {
+          completion_tokens: 10,
+          prompt_tokens: 50,
+          total_tokens: 60,
+        },
       });
 
       const hook = {
@@ -349,7 +405,7 @@ describe("Prompt Hook Executor", () => {
 
       await executePromptHook(hook, input);
 
-      const [, opts] = mockPost.mock.calls[0]!;
+      const [, opts] = firstPostCall();
       expect(opts.body.response_schema).toEqual({
         properties: {
           ok: {
@@ -358,7 +414,8 @@ describe("Prompt Hook Executor", () => {
           },
           reason: {
             type: "string",
-            description: "Explanation for the decision. Required when ok is false.",
+            description:
+              "Explanation for the decision. Required when ok is false.",
           },
         },
         required: ["ok"],

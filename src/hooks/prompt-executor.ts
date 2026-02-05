@@ -140,8 +140,7 @@ const PROMPT_HOOK_RESPONSE_SCHEMA = {
     },
     reason: {
       type: "string",
-      description:
-        "Explanation for the decision. Required when ok is false.",
+      description: "Explanation for the decision. Required when ok is false.",
     },
   },
   required: ["ok"],
