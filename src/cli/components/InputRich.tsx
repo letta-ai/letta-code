@@ -24,7 +24,7 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provide
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
-import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -237,7 +237,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
-  messageQueue?: string[];
+  messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
   ralphActive?: boolean;
@@ -550,8 +550,8 @@ export function Input({
           setAtStartBoundary(false);
           // Clear the queue and load into input as one multi-line message
           const queueText = messageQueue
-            .map((msg) => extractTaskNotificationsForDisplay(msg).cleanedText)
-            .map((msg) => msg.trim())
+            .filter((item) => item.kind === "user")
+            .map((item) => item.text.trim())
             .filter((msg) => msg.length > 0)
             .join("\n");
           if (!queueText) {

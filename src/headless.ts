@@ -1020,7 +1020,11 @@ export async function handleHeadlessCommand(
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
   const { hasLoadedSkills } = await import("./agent/context");
-  let messageContent = "";
+  const contentParts: MessageCreate["content"] = [];
+  const pushPart = (text: string) => {
+    if (!text) return;
+    contentParts.push({ type: "text", text });
+  };
 
   if (fromAgentId) {
     const senderAgentId = fromAgentId;
@@ -1032,29 +1036,29 @@ If you need to share detailed information, include it in your response text.
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
-    messageContent += systemReminder;
+    pushPart(systemReminder);
   }
 
   // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {
     const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
-    messageContent += PLAN_MODE_REMINDER;
+    pushPart(PLAN_MODE_REMINDER);
   }
 
   // Add skill unload reminder if skills are loaded (using cached flag)
   if (hasLoadedSkills()) {
     const { SKILL_UNLOAD_REMINDER } = await import("./agent/promptAssets");
-    messageContent += SKILL_UNLOAD_REMINDER;
+    pushPart(SKILL_UNLOAD_REMINDER);
   }
 
   // Add user prompt
-  messageContent += prompt;
+  pushPart(prompt);
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
-      content: [{ type: "text", text: messageContent }],
+      content: contentParts,
     },
   ];
 

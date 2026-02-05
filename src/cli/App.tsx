@@ -174,13 +174,21 @@ import {
   buildMemoryReminder,
   parseMemoryPreference,
 } from "./helpers/memoryReminder";
-import { setMessageQueueAdder } from "./helpers/messageQueueBridge";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "./helpers/messageQueueBridge";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
   resolvePlaceholders,
 } from "./helpers/pasteRegistry";
 import { generatePlanFilePath } from "./helpers/planName";
+import {
+  buildQueuedContentParts,
+  buildQueuedUserText,
+  getQueuedNotificationSummaries,
+} from "./helpers/queuedMessageParts";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
@@ -1403,18 +1411,21 @@ export default function App({
   const conversationBusyRetriesRef = useRef(0);
 
   // Message queue state for queueing messages during streaming
-  const [messageQueue, setMessageQueue] = useState<string[]>([]);
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
 
-  const messageQueueRef = useRef<string[]>([]); // For synchronous access
+  const messageQueueRef = useRef<QueuedMessage[]>([]); // For synchronous access
   useEffect(() => {
     messageQueueRef.current = messageQueue;
   }, [messageQueue]);
+
+  // Override content parts for queued submissions (to preserve part boundaries)
+  const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
   // Set up message queue bridge for background tasks
   // This allows non-React code (Task.ts) to add notifications to messageQueue
   useEffect(() => {
     // Provide a queue adder that adds to messageQueue and bumps dequeueEpoch
-    setMessageQueueAdder((message: string) => {
+    setMessageQueueAdder((message: QueuedMessage) => {
       setMessageQueue((q) => [...q, message]);
       setDequeueEpoch((e) => e + 1);
     });
@@ -1422,7 +1433,7 @@ export default function App({
   }, []);
 
   const waitingForQueueCancelRef = useRef(false);
-  const queueSnapshotRef = useRef<string[]>([]);
+  const queueSnapshotRef = useRef<QueuedMessage[]>([]);
   const [restoreQueueOnCancel, setRestoreQueueOnCancel] = useState(false);
   const restoreQueueOnCancelRef = useRef(restoreQueueOnCancel);
   useEffect(() => {
@@ -1480,27 +1491,15 @@ export default function App({
   );
 
   // Consume queued messages for appending to tool results (clears queue + timeout)
-  const consumeQueuedMessages = useCallback((): {
-    messages: string[];
-    notifications: string[];
-  } | null => {
+  const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     if (messageQueueRef.current.length === 0) return null;
     if (queueAppendTimeoutRef.current) {
       clearTimeout(queueAppendTimeoutRef.current);
       queueAppendTimeoutRef.current = null;
     }
-    const notifications: string[] = [];
-    const messages: string[] = [];
-    for (const msg of messageQueueRef.current) {
-      const parsed = extractTaskNotificationsForDisplay(msg);
-      notifications.push(...parsed.notifications);
-      const trimmed = parsed.cleanedText.trim();
-      if (trimmed) {
-        messages.push(trimmed);
-      }
-    }
+    const messages = [...messageQueueRef.current];
     setMessageQueue([]);
-    return { messages, notifications };
+    return messages;
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -3766,39 +3765,47 @@ export default function App({
                 }
 
                 // Append queued messages if any (from 15s append mode)
-                const queuedMessagesToAppend = consumeQueuedMessages();
-                const hadNotifications = appendTaskNotificationEvents(
-                  queuedMessagesToAppend?.notifications ?? [],
-                );
-                const queuedMessages = queuedMessagesToAppend?.messages ?? [];
-                if (queuedMessages.length) {
-                  for (const msg of queuedMessages) {
-                    const userId = uid("user");
-                    buffersRef.current.byId.set(userId, {
-                      kind: "user",
-                      id: userId,
-                      text: msg,
-                    });
-                    buffersRef.current.order.push(userId);
-                  }
+                const queuedItemsToAppend = consumeQueuedMessages();
+                const queuedNotifications = queuedItemsToAppend
+                  ? getQueuedNotificationSummaries(queuedItemsToAppend)
+                  : [];
+                const hadNotifications =
+                  appendTaskNotificationEvents(queuedNotifications);
+                const queuedUserText = queuedItemsToAppend
+                  ? buildQueuedUserText(queuedItemsToAppend)
+                  : "";
+
+                if (queuedUserText) {
+                  const userId = uid("user");
+                  buffersRef.current.byId.set(userId, {
+                    kind: "user",
+                    id: userId,
+                    text: queuedUserText,
+                  });
+                  buffersRef.current.order.push(userId);
+                }
+
+                if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
+                  const queuedContentParts =
+                    buildQueuedContentParts(queuedItemsToAppend);
                   setThinkingMessage(getRandomThinkingVerb());
                   refreshDerived();
                   toolResultsInFlightRef.current = true;
                   await processConversation(
                     [
                       { type: "approval", approvals: allResults },
-                      ...queuedMessages.map((msg) => ({
-                        type: "message" as const,
-                        role: "user" as const,
-                        content: msg as unknown as MessageCreate["content"],
-                      })),
+                      {
+                        type: "message",
+                        role: "user",
+                        content: queuedContentParts,
+                      },
                     ],
                     { allowReentry: true },
                   );
                   toolResultsInFlightRef.current = false;
                   return;
                 }
-                if (hadNotifications) {
+                if (hadNotifications || queuedUserText.length > 0) {
                   refreshDerived();
                 }
 
@@ -5249,6 +5256,10 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
+      const overrideContentParts = overrideContentPartsRef.current;
+      if (overrideContentParts) {
+        overrideContentPartsRef.current = null;
+      }
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
@@ -5365,7 +5376,10 @@ export default function App({
 
       if (isAgentBusy() && !shouldBypassQueue) {
         setMessageQueue((prev) => {
-          const newQueue = [...prev, msg];
+          const newQueue: QueuedMessage[] = [
+            ...prev,
+            { kind: "user", text: msg },
+          ];
 
           const isSlashCommand = msg.startsWith("/");
 
@@ -7586,7 +7600,8 @@ ${SYSTEM_REMINDER_CLOSE}`;
       }
 
       // Build message content from display value (handles placeholders for text/images)
-      const contentParts = buildMessageContentFromDisplay(msg);
+      const contentParts =
+        overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
       // Prepend plan mode reminder if in plan mode
       const planModeReminder = getPlanModeReminder();
@@ -8394,7 +8409,10 @@ ${SYSTEM_REMINDER_CLOSE}
       // Concatenate all queued messages into one (better UX when user types multiple
       // messages quickly - they get combined into one context for the agent)
       // Task notifications are already in the queue as XML strings
-      const concatenatedMessage = messageQueue.join("\n");
+      const concatenatedMessage = messageQueue
+        .map((item) => item.text)
+        .join("\n");
+      const queuedContentParts = buildQueuedContentParts(messageQueue);
 
       debugLog(
         "queue",
@@ -8407,6 +8425,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Submit the concatenated message using the normal submit flow
       // This ensures all setup (reminders, UI updates, etc.) happens correctly
+      overrideContentPartsRef.current = queuedContentParts;
       onSubmitRef.current(concatenatedMessage);
     } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
@@ -8610,29 +8629,31 @@ ${SYSTEM_REMINDER_CLOSE}
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
-          const queuedMessagesToAppend = consumeQueuedMessages();
-          const hadNotifications = appendTaskNotificationEvents(
-            queuedMessagesToAppend?.notifications ?? [],
-          );
+          const queuedItemsToAppend = consumeQueuedMessages();
+          const queuedNotifications = queuedItemsToAppend
+            ? getQueuedNotificationSummaries(queuedItemsToAppend)
+            : [];
+          const hadNotifications =
+            appendTaskNotificationEvents(queuedNotifications);
           const input: Array<MessageCreate | ApprovalCreate> = [
             { type: "approval", approvals: allResults as ApprovalResult[] },
           ];
-          const queuedMessages = queuedMessagesToAppend?.messages ?? [];
-          if (queuedMessages.length) {
-            for (const msg of queuedMessages) {
+          if (queuedItemsToAppend && queuedItemsToAppend.length > 0) {
+            const queuedUserText = buildQueuedUserText(queuedItemsToAppend);
+            if (queuedUserText) {
               const userId = uid("user");
               buffersRef.current.byId.set(userId, {
                 kind: "user",
                 id: userId,
-                text: msg,
+                text: queuedUserText,
               });
               buffersRef.current.order.push(userId);
-              input.push({
-                type: "message",
-                role: "user",
-                content: msg as unknown as MessageCreate["content"],
-              });
             }
+            input.push({
+              type: "message",
+              role: "user",
+              content: buildQueuedContentParts(queuedItemsToAppend),
+            });
             refreshDerived();
           } else if (hadNotifications) {
             refreshDerived();

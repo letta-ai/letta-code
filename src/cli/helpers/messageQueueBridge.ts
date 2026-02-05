@@ -8,10 +8,15 @@
  * into messageQueue, where the existing dequeue logic handles auto-firing.
  */
 
-type QueueAdder = (message: string) => void;
+export type QueuedMessage = {
+  kind: "user" | "task_notification";
+  text: string;
+};
+
+type QueueAdder = (message: QueuedMessage) => void;
 
 let queueAdder: QueueAdder | null = null;
-const pendingMessages: string[] = [];
+const pendingMessages: QueuedMessage[] = [];
 const MAX_PENDING_MESSAGES = 10;
 
 /**
@@ -32,7 +37,7 @@ export function setMessageQueueAdder(fn: QueueAdder | null): void {
  * Called from Task.ts when a background task completes.
  * If queue adder not set (App not mounted), message is dropped.
  */
-export function addToMessageQueue(message: string): void {
+export function addToMessageQueue(message: QueuedMessage): void {
   if (queueAdder) {
     queueAdder(message);
     return;

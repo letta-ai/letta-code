@@ -3,6 +3,7 @@ import {
   addToMessageQueue,
   clearPendingMessages,
   isQueueBridgeConnected,
+  type QueuedMessage,
   setMessageQueueAdder,
 } from "../../cli/helpers/messageQueueBridge";
 import {
@@ -173,38 +174,43 @@ describe("messageQueueBridge", () => {
   });
 
   test("addToMessageQueue calls the adder when set", () => {
-    const messages: string[] = [];
+    const messages: QueuedMessage[] = [];
     setMessageQueueAdder((msg) => messages.push(msg));
 
-    addToMessageQueue("test message 1");
-    addToMessageQueue("test message 2");
+    addToMessageQueue({ kind: "user", text: "test message 1" });
+    addToMessageQueue({ kind: "user", text: "test message 2" });
 
-    expect(messages).toEqual(["test message 1", "test message 2"]);
+    expect(messages).toEqual([
+      { kind: "user", text: "test message 1" },
+      { kind: "user", text: "test message 2" },
+    ]);
   });
 
   test("addToMessageQueue does nothing when adder not set", () => {
     // Should not throw
-    expect(() => addToMessageQueue("test message")).not.toThrow();
+    expect(() =>
+      addToMessageQueue({ kind: "user", text: "test message" }),
+    ).not.toThrow();
   });
 
   test("addToMessageQueue buffers until adder is set", () => {
-    const messages: string[] = [];
+    const messages: QueuedMessage[] = [];
 
-    addToMessageQueue("early message");
+    addToMessageQueue({ kind: "user", text: "early message" });
     setMessageQueueAdder((msg) => messages.push(msg));
 
-    expect(messages).toEqual(["early message"]);
+    expect(messages).toEqual([{ kind: "user", text: "early message" }]);
   });
 
   test("setMessageQueueAdder can be cleared", () => {
-    const messages: string[] = [];
+    const messages: QueuedMessage[] = [];
     setMessageQueueAdder((msg) => messages.push(msg));
 
-    addToMessageQueue("message 1");
+    addToMessageQueue({ kind: "user", text: "message 1" });
     setMessageQueueAdder(null);
-    addToMessageQueue("message 2"); // Should be dropped
+    addToMessageQueue({ kind: "user", text: "message 2" }); // Should be dropped
 
-    expect(messages).toEqual(["message 1"]);
+    expect(messages).toEqual([{ kind: "user", text: "message 1" }]);
     expect(isQueueBridgeConnected()).toBe(false);
   });
 });

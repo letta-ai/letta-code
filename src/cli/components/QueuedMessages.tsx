@@ -1,16 +1,17 @@
 import { Box } from "ink";
 import { memo } from "react";
-import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import { Text } from "./Text";
 
 interface QueuedMessagesProps {
-  messages: string[];
+  messages: QueuedMessage[];
 }
 
 export const QueuedMessages = memo(({ messages }: QueuedMessagesProps) => {
   const maxDisplay = 5;
   const displayMessages = messages
-    .map((msg) => extractTaskNotificationsForDisplay(msg).cleanedText.trim())
+    .filter((msg) => msg.kind === "user")
+    .map((msg) => msg.text.trim())
     .filter((msg) => msg.length > 0);
 
   if (displayMessages.length === 0) {

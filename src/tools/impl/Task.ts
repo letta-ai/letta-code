@@ -238,7 +238,7 @@ export async function task(args: TaskArgs): Promise<string> {
             durationMs,
           },
         });
-        addToMessageQueue(notificationXml);
+        addToMessageQueue({ kind: "task_notification", text: notificationXml });
 
         // Run SubagentStop hooks (fire-and-forget)
         runSubagentStopHooks(
@@ -280,7 +280,7 @@ export async function task(args: TaskArgs): Promise<string> {
             durationMs,
           },
         });
-        addToMessageQueue(notificationXml);
+        addToMessageQueue({ kind: "task_notification", text: notificationXml });
 
         // Run SubagentStop hooks for error case
         runSubagentStopHooks(
