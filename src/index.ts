@@ -12,6 +12,7 @@ import {
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
+import { clearLoadedSkillsForConversation } from "./agent/loadedSkills";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
@@ -1855,6 +1856,7 @@ async function main(): Promise<void> {
             isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
+          clearLoadedSkillsForConversation(conversation.id, client);
         } else {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
