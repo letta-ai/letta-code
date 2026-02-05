@@ -5628,9 +5628,9 @@ export default function App({
 
           let output: string;
 
-          // No data available yet (session start or after model switch)
+          // No data available yet (session start, after model/conversation switch)
           if (usedTokens === 0) {
-            output = `Context data not available yet · ${model}\nRun a turn to see context usage.`;
+            output = `Context data not available yet. Run a turn to see context usage.`;
           } else {
             const percentage =
               contextWindow > 0
@@ -5927,6 +5927,9 @@ export default function App({
               conversationId: conversation.id,
             });
 
+            // Reset context tokens for new conversation
+            buffersRef.current.lastContextTokens = 0;
+
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
 
@@ -6014,6 +6017,9 @@ export default function App({
               agentId,
               conversationId: conversation.id,
             });
+
+            // Reset context tokens for new conversation
+            buffersRef.current.lastContextTokens = 0;
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -6457,6 +6463,7 @@ export default function App({
                 buffersRef.current.byId.clear();
                 buffersRef.current.order = [];
                 buffersRef.current.tokenCount = 0;
+                buffersRef.current.lastContextTokens = 0;
                 emittedIdsRef.current.clear();
                 resetDeferredToolCallCommits();
                 setStaticItems([]);
@@ -9164,6 +9171,9 @@ ${SYSTEM_REMINDER_CLOSE}
                   conversationId: action.conversationId,
                 });
 
+                // Reset context tokens for new conversation
+                buffersRef.current.lastContextTokens = 0;
+
                 buffersRef.current.byId.set(cmdId, {
                   kind: "command",
                   id: cmdId,
@@ -10672,6 +10682,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
+                      buffersRef.current.lastContextTokens = 0;
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
@@ -10838,6 +10849,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef.current.byId.clear();
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
+                    buffersRef.current.lastContextTokens = 0;
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -10965,6 +10977,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
+                      buffersRef.current.lastContextTokens = 0;
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
