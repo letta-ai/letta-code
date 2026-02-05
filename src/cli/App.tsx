@@ -5644,13 +5644,7 @@ export default function App({
             );
             const emptySegments = totalSegments - filledSegments;
 
-            // Color based on usage: green <50%, yellow 50-80%, red >80%
-            const barColor =
-              percentage < 50
-                ? hexToFgAnsi(brandColors.statusSuccess)
-                : percentage < 80
-                  ? hexToFgAnsi("#FEE19C") // statusWarning (missing # in brandColors)
-                  : hexToFgAnsi(brandColors.statusError);
+            const barColor = hexToFgAnsi(brandColors.primaryAccent);
             const reset = "\x1b[0m";
 
             const filledBar = barColor + "▰".repeat(filledSegments) + reset;
