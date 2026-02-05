@@ -67,16 +67,28 @@ function parsePromptResponse(response: string): PromptHookResponse {
     jsonStr = jsonMatch[1] || jsonStr;
   }
 
-  // Try to find JSON object in the response
-  const objectMatch = jsonStr.match(/\{[\s\S]*\}/);
+  // Try to find JSON object in the response (non-greedy to avoid spanning multiple objects)
+  const objectMatch = jsonStr.match(/\{[\s\S]*?\}/);
   if (objectMatch) {
     jsonStr = objectMatch[0];
   }
 
   try {
     const parsed = JSON.parse(jsonStr);
+
+    // Validate the response structure - ok must be a boolean
+    if (typeof parsed?.ok !== "boolean") {
+      throw new Error(
+        `Invalid prompt hook response: "ok" must be a boolean, got ${typeof parsed?.ok}`,
+      );
+    }
+
     return parsed as PromptHookResponse;
-  } catch {
+  } catch (e) {
+    // Re-throw validation errors as-is
+    if (e instanceof Error && e.message.startsWith("Invalid prompt hook")) {
+      throw e;
+    }
     // If parsing fails, treat as error
     throw new Error(`Failed to parse LLM response as JSON: ${response}`);
   }

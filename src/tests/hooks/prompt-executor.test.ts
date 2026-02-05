@@ -309,6 +309,31 @@ describe("Prompt Hook Executor", () => {
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
     });
 
+    test("returns ERROR when ok is not a boolean", async () => {
+      mockPost.mockResolvedValue({
+        content: '{"ok": "yes", "reason": "looks fine"}',
+        model: "anthropic/claude-3-5-haiku-20241022",
+        usage: { completion_tokens: 10, prompt_tokens: 50, total_tokens: 60 },
+      });
+
+      const hook = {
+        type: "prompt" as const,
+        prompt: "Check this",
+      };
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: "/tmp",
+        tool_name: "Bash",
+        tool_input: { command: "ls" },
+        agent_id: "agent-abc-123",
+      };
+
+      const result = await executePromptHook(hook, input);
+
+      expect(result.exitCode).toBe(HookExitCode.ERROR);
+      expect(result.error).toContain('"ok" must be a boolean');
+    });
+
     test("sends response_schema for structured output", async () => {
       const hook = {
         type: "prompt" as const,
