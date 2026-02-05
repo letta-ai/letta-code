@@ -217,6 +217,8 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
+  // Most recent context_tokens from usage_statistics (estimate of tokens in context window)
+  lastContextTokens: number;
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
@@ -244,6 +246,7 @@ export function createBuffers(agentId?: string): Buffers {
       reasoningTokens: 0,
       stepCount: 0,
     },
+    lastContextTokens: 0,
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
@@ -773,6 +776,11 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       }
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
+      }
+      // Use context_tokens from SDK (estimate of tokens in context window)
+      const usageChunk = chunk as typeof chunk & { context_tokens?: number };
+      if (usageChunk.context_tokens !== undefined) {
+        b.lastContextTokens = usageChunk.context_tokens;
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
