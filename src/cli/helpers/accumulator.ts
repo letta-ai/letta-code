@@ -9,13 +9,14 @@ import { INTERRUPTED_BY_USER } from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
 import { debugLog } from "../../utils/debug";
 import { extractCompactionSummary } from "./backfill";
+import type { ContextTracker } from "./contextTracker";
+import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
 const MAX_BUFFER_SIZE = 100_000; // 100KB
-const MAX_CONTEXT_HISTORY = 1000; // Cap context token history (~25KB)
 
 /**
  * A line of streaming output with its source (stdout or stderr).
@@ -160,6 +161,7 @@ export type Line =
       phase?: "running" | "finished";
       success?: boolean;
       dimOutput?: boolean;
+      preformatted?: boolean;
     }
   | {
       kind: "bash_command";
@@ -218,19 +220,6 @@ export type Buffers = {
     reasoningTokens: number;
     stepCount: number;
   };
-  // Most recent context_tokens from usage_statistics (estimate of tokens in context window)
-  lastContextTokens: number;
-  // History of context_tokens values for time-series display
-  contextTokensHistory: Array<{
-    timestamp: number;
-    tokens: number;
-    turnId: number;
-    compacted?: boolean;
-  }>;
-  // Counter incremented once per user turn (before each stream drain)
-  currentTurnId: number;
-  // Set when a compaction event is seen; consumed by the next usage_statistics push
-  pendingCompaction: boolean;
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
@@ -260,10 +249,6 @@ export function createBuffers(agentId?: string): Buffers {
       reasoningTokens: 0,
       stepCount: 0,
     },
-    lastContextTokens: 0,
-    contextTokensHistory: [],
-    currentTurnId: 0,
-    pendingCompaction: false,
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
@@ -479,7 +464,11 @@ function trySplitContent(
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+export function onChunk(
+  b: Buffers,
+  chunk: LettaStreamingResponse,
+  ctx?: ContextTracker,
+) {
   // Skip processing if stream was interrupted mid-turn. handleInterrupt already
   // rendered the cancellation state, so we should ignore any buffered chunks
   // that arrive before drainStream exits.
@@ -815,23 +804,25 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         b.usage.totalTokens += chunk.total_tokens;
       }
       // Use context_tokens from SDK (estimate of tokens in context window)
-      const usageChunk = chunk as typeof chunk & { context_tokens?: number };
-      if (usageChunk.context_tokens !== undefined) {
-        b.lastContextTokens = usageChunk.context_tokens;
-        // Track history for time-series display
-        const compacted = b.pendingCompaction;
-        if (compacted) b.pendingCompaction = false;
-        b.contextTokensHistory.push({
-          timestamp: Date.now(),
-          tokens: usageChunk.context_tokens,
-          turnId: b.currentTurnId,
-          ...(compacted ? { compacted: true } : {}),
-        });
-        // Cap history length to avoid unbounded growth
-        if (b.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
-          b.contextTokensHistory = b.contextTokensHistory.slice(
-            -MAX_CONTEXT_HISTORY,
-          );
+      if (ctx) {
+        const usageChunk = chunk as typeof chunk & { context_tokens?: number };
+        if (usageChunk.context_tokens !== undefined) {
+          ctx.lastContextTokens = usageChunk.context_tokens;
+          // Track history for time-series display
+          const compacted = ctx.pendingCompaction;
+          if (compacted) ctx.pendingCompaction = false;
+          ctx.contextTokensHistory.push({
+            timestamp: Date.now(),
+            tokens: usageChunk.context_tokens,
+            turnId: ctx.currentTurnId,
+            ...(compacted ? { compacted: true } : {}),
+          });
+          // Cap history length to avoid unbounded growth
+          if (ctx.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
+            ctx.contextTokensHistory = ctx.contextTokensHistory.slice(
+              -MAX_CONTEXT_HISTORY,
+            );
+          }
         }
       }
       if (chunk.step_count !== undefined) {
@@ -884,6 +875,14 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             break;
           }
         }
+
+        // Flag so the next usage_statistics entry is marked as post-compaction.
+        // Set here (not in event_message) because summary_message arrives after
+        // compaction completes, guaranteeing the next usage_statistics has the
+        // reduced token count.
+        if (ctx) {
+          ctx.pendingCompaction = true;
+        }
         break;
       }
 
@@ -910,10 +909,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           phase: "running",
         }));
 
-        // Flag so the next usage_statistics entry is marked as post-compaction
-        if (eventType === "compaction") {
-          b.pendingCompaction = true;
-        }
+        // Note: pendingCompaction is set in summary_message (not here) because
+        // usage_statistics for the step that triggered compaction can arrive after
+        // this event_message, and we want to mark the first POST-compaction entry.
         break;
       }
 

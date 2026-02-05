@@ -1,12 +1,11 @@
 import { brandColors, hexToFgAnsi } from "../components/colors";
+import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { formatCompact } from "./format";
 
 interface ContextChartOptions {
   usedTokens: number;
   contextWindow: number;
   model: string;
-  /** Total step count (may exceed history.length if capped) */
-  totalSteps: number;
   history: Array<{
     timestamp: number;
     tokens: number;
@@ -20,7 +19,7 @@ interface ContextChartOptions {
  * Returns the fully formatted string (with ANSI color codes).
  */
 export function renderContextUsage(opts: ContextChartOptions): string {
-  const { usedTokens, contextWindow, model, history, totalSteps } = opts;
+  const { usedTokens, contextWindow, model, history } = opts;
 
   if (usedTokens === 0) {
     return "Context data not available yet. Run a turn to see context usage.";
@@ -48,9 +47,7 @@ export function renderContextUsage(opts: ContextChartOptions): string {
 
   // --- Braille area chart ---
   if (history.length > 1) {
-    output +=
-      "\n\n" +
-      renderBrailleChart(history, contextWindow, termWidth, totalSteps);
+    output += `\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
   }
 
   return output;
@@ -84,7 +81,6 @@ function renderBrailleChart(
   }>,
   contextWindow: number,
   termWidth: number,
-  totalSteps: number,
 ): string {
   const reset = "\x1b[0m";
   const chartHeight = 6; // rows of braille characters (4 dots each = 24 vertical resolution)
@@ -181,19 +177,20 @@ function renderBrailleChart(
   const yLabels: string[] = [];
   for (let row = 0; row < chartHeight; row++) {
     if (row === 0) {
-      yLabels.push(formatCompact(max).padStart(labelWidth - 1) + " ");
+      yLabels.push(`${formatCompact(max).padStart(labelWidth - 1)} `);
     } else if (row === chartHeight - 1) {
-      yLabels.push(formatCompact(min).padStart(labelWidth - 1) + " ");
+      yLabels.push(`${formatCompact(min).padStart(labelWidth - 1)} `);
     } else if (row === Math.floor(chartHeight / 2)) {
       const mid = min + range / 2;
-      yLabels.push(formatCompact(mid).padStart(labelWidth - 1) + " ");
+      yLabels.push(`${formatCompact(mid).padStart(labelWidth - 1)} `);
     } else {
       yLabels.push(" ".repeat(labelWidth));
     }
   }
 
   // Default color when not alternating (brand color = middle of palette)
-  const defaultColor = CHART_PALETTE[Math.floor(CHART_PALETTE.length / 2)]!;
+  const defaultColor: string =
+    CHART_PALETTE[Math.floor(CHART_PALETTE.length / 2)] ?? "\x1b[36m";
   const white = "\x1b[97m";
 
   // Pre-compute braille codes per (charRow, charCol)
@@ -208,32 +205,38 @@ function renderBrailleChart(
           const gridRow = charRow * 4 + dotRow;
           const gridCol = charCol * 2 + dotCol;
           const gridRowData = dots[gridRow];
-          if (gridRowData && gridRowData[gridCol]) {
+          if (gridRowData?.[gridCol]) {
             const dotBitsRow = dotBits[dotRow];
             if (dotBitsRow) code += dotBitsRow[dotCol] ?? 0;
           }
         }
       }
-      brailleCodes[charRow]![charCol] = code;
+      if (!brailleCodes[charRow]) {
+        brailleCodes[charRow] = new Array<number>(
+          Math.ceil(termWidth / 2),
+        ).fill(0x2800);
+      }
+      // brailleCodes[charRow] initialized above if missing
+      (brailleCodes[charRow] as number[])[charCol] = code;
     }
   }
 
-  // For compacted columns, find where to place ↧:
-  // - If topmost braille is full (0x28FF), ↧ goes in a marker row above
-  // - Otherwise, ↧ replaces the topmost braille char in that column
+  // For compacted columns, find where to place ⤓:
+  // - If topmost braille is full (0x28FF), ⤓ goes in a marker row above
+  // - Otherwise, ⤓ replaces the topmost braille char in that column
   const FULL_BRAILLE = 0x28ff;
   let needsMarkerRow = false;
-  // Track which compacted columns have ↧ placed inline (replacing top braille)
-  const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ↧ is placed
+  // Track which compacted columns have ⤓ placed inline (replacing top braille)
+  const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ⤓ is placed
 
   for (const col of compactedCols) {
-    if (brailleCodes[0]![col] === FULL_BRAILLE) {
+    if (brailleCodes[0]?.[col] === FULL_BRAILLE) {
       needsMarkerRow = true;
     } else {
       // Find topmost non-empty row to replace, or use row 0
       let targetRow = 0;
       for (let r = 0; r < chartHeight; r++) {
-        if (brailleCodes[r]![col] !== 0x2800) {
+        if (brailleCodes[r]?.[col] !== 0x2800) {
           targetRow = r;
           break;
         }
@@ -249,12 +252,15 @@ function renderBrailleChart(
     let markerRow = " ".repeat(labelWidth);
     let markerCurrentColor = "";
     for (let charCol = 0; charCol < chartWidth; charCol++) {
-      if (compactedCols.has(charCol) && brailleCodes[0]![charCol] === FULL_BRAILLE) {
+      if (
+        compactedCols.has(charCol) &&
+        brailleCodes[0]?.[charCol] === FULL_BRAILLE
+      ) {
         if (markerCurrentColor !== white) {
           markerRow += white;
           markerCurrentColor = white;
         }
-        markerRow += "↧";
+        markerRow += "⤓";
       } else {
         markerRow += " ";
       }
@@ -269,22 +275,22 @@ function renderBrailleChart(
     // Build chart portion with per-column coloring
     let currentColor = "";
     for (let charCol = 0; charCol < chartWidth; charCol++) {
-      // Check if this cell should be a ↧ marker
+      // Check if this cell should be a ⤓ marker
       if (inlineMarkerRow.get(charCol) === charRow) {
         if (currentColor !== white) {
           rowStr += white;
           currentColor = white;
         }
-        rowStr += "↧";
+        rowStr += "⤓";
         continue;
       }
 
-      const brailleCode = brailleCodes[charRow]![charCol]!;
+      const brailleCode = brailleCodes[charRow]?.[charCol] ?? 0x2800;
 
       // Determine color for this column
       const targetColor =
         colColors && charCol < colColors.length
-          ? (CHART_PALETTE[colColors[charCol]!] ?? defaultColor)
+          ? (CHART_PALETTE[colColors[charCol] ?? 0] ?? defaultColor)
           : defaultColor;
 
       // Only emit escape code when color changes
@@ -302,6 +308,8 @@ function renderBrailleChart(
 
   const chartOutput = chartLines.join("\n");
   const stepsLabel =
-    totalSteps > steps ? `last ${steps} of ${totalSteps} steps` : `${steps} steps`;
+    steps >= MAX_CONTEXT_HISTORY
+      ? `last ${MAX_CONTEXT_HISTORY} steps`
+      : `${steps} steps`;
   return `${chartOutput}\n${"─".repeat(labelWidth + chartWidth)} ${stepsLabel}`;
 }
