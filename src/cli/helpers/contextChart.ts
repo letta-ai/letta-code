@@ -221,13 +221,13 @@ function renderBrailleChart(
     }
   }
 
-  // For compacted columns, find where to place ⤓:
-  // - If topmost braille is full (0x28FF), ⤓ goes in a marker row above
-  // - Otherwise, ⤓ replaces the topmost braille char in that column
+  // For compacted columns, find where to place ↓:
+  // - If topmost braille is full (0x28FF), ↓ goes in a marker row above
+  // - Otherwise, ↓ replaces the topmost braille char in that column
   const FULL_BRAILLE = 0x28ff;
   let needsMarkerRow = false;
-  // Track which compacted columns have ⤓ placed inline (replacing top braille)
-  const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ⤓ is placed
+  // Track which compacted columns have ↓ placed inline (replacing top braille)
+  const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ↓ is placed
 
   for (const col of compactedCols) {
     if (brailleCodes[0]?.[col] === FULL_BRAILLE) {
@@ -260,7 +260,7 @@ function renderBrailleChart(
           markerRow += white;
           markerCurrentColor = white;
         }
-        markerRow += "⤓";
+        markerRow += "↓";
       } else {
         markerRow += " ";
       }
@@ -275,13 +275,13 @@ function renderBrailleChart(
     // Build chart portion with per-column coloring
     let currentColor = "";
     for (let charCol = 0; charCol < chartWidth; charCol++) {
-      // Check if this cell should be a ⤓ marker
+      // Check if this cell should be a ↓ marker
       if (inlineMarkerRow.get(charCol) === charRow) {
         if (currentColor !== white) {
           rowStr += white;
           currentColor = white;
         }
-        rowStr += "⤓";
+        rowStr += "↓";
         continue;
       }
 
