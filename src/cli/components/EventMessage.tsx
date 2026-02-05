@@ -34,6 +34,20 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
   const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2);
 
+  if (line.eventType === "task_notification") {
+    const summary = line.summary || "Agent task completed";
+    return (
+      <Box flexDirection="row">
+        <Box width={2} flexShrink={0}>
+          <Text color={colors.tool.completed}>●</Text>
+        </Box>
+        <Box flexGrow={1} width={rightWidth}>
+          <Text bold>{summary}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   // Only handle compaction events for now
   if (line.eventType !== "compaction") {
     return (

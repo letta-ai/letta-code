@@ -433,6 +433,7 @@ function buildSubagentArgs(
   existingAgentId?: string,
   existingConversationId?: string,
   preloadedSkillsContent?: string,
+  maxTurns?: number,
 ): string[] {
   const args: string[] = [];
   const isDeployingExisting = Boolean(
@@ -519,6 +520,11 @@ function buildSubagentArgs(
     args.push("--block-value", `loaded_skills=${preloadedSkillsContent}`);
   }
 
+  // Add max turns limit if specified
+  if (maxTurns !== undefined && maxTurns > 0) {
+    args.push("--max-turns", String(maxTurns));
+  }
+
   return args;
 }
 
@@ -536,6 +542,7 @@ async function executeSubagent(
   signal?: AbortSignal,
   existingAgentId?: string,
   existingConversationId?: string,
+  maxTurns?: number,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -570,6 +577,7 @@ async function executeSubagent(
       existingAgentId,
       existingConversationId,
       preloadedSkillsContent,
+      maxTurns,
     );
 
     // Spawn Letta Code in headless mode.
@@ -678,6 +686,9 @@ async function executeSubagent(
             subagentId,
             true, // Mark as retry to prevent infinite loops
             signal,
+            undefined, // existingAgentId
+            undefined, // existingConversationId
+            maxTurns,
           );
         }
       }
@@ -788,6 +799,7 @@ export async function spawnSubagent(
   signal?: AbortSignal,
   existingAgentId?: string,
   existingConversationId?: string,
+  maxTurns?: number,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -847,6 +859,7 @@ export async function spawnSubagent(
     signal,
     existingAgentId,
     existingConversationId,
+    maxTurns,
   );
 
   return result;

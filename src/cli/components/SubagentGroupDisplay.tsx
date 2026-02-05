@@ -111,8 +111,12 @@ const AgentRow = memo(
             <Text dimColor>{"   "}</Text>
             {agent.status === "error" ? (
               <Text color={colors.subagent.error}>Error</Text>
+            ) : isComplete ? (
+              <Text dimColor>Done</Text>
+            ) : agent.isBackground ? (
+              <Text dimColor>Running in the background</Text>
             ) : (
-              <Text dimColor>{isComplete ? "Done" : "Running..."}</Text>
+              <Text dimColor>Running...</Text>
             )}
           </Box>
         </Box>
@@ -196,6 +200,14 @@ const AgentRow = memo(
                   {agent.error}
                 </Text>
               </Box>
+            </>
+          ) : agent.isBackground ? (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   Running in the background"}</Text>
             </>
           ) : lastTool ? (
             <>

@@ -10,6 +10,7 @@ import {
   parsePatchInput,
   parsePatchOperations,
 } from "../helpers/formatArgsDisplay.js";
+import { getSubagentByToolCallId } from "../helpers/subagentState.js";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -112,6 +113,13 @@ export const ToolCallMessage = memo(
     //   and liveItems handles pending approvals via InlineGenericApproval)
     if (isTaskTool(rawName)) {
       const isFinished = line.phase === "finished";
+      const subagent = line.toolCallId
+        ? getSubagentByToolCallId(line.toolCallId)
+        : undefined;
+      if (subagent) {
+        // Task tool calls with subagent data are handled by SubagentGroupDisplay/Static
+        return null;
+      }
       if (!isFinished) {
         // Not finished - SubagentGroupDisplay or approval UI handles this
         return null;

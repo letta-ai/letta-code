@@ -29,6 +29,7 @@ export interface SubagentState {
   model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
+  isBackground?: boolean; // True if running in background (fire-and-forget)
 }
 
 interface SubagentStore {
@@ -106,6 +107,7 @@ export function registerSubagent(
   type: string,
   description: string,
   toolCallId?: string,
+  isBackground?: boolean,
 ): void {
   // Capitalize type for display (explore -> Explore)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -121,6 +123,7 @@ export function registerSubagent(
     durationMs: 0,
     startTime: Date.now(),
     toolCallId,
+    isBackground,
   };
 
   store.agents.set(id, agent);

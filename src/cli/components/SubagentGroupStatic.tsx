@@ -28,12 +28,13 @@ export interface StaticSubagent {
   id: string;
   type: string;
   description: string;
-  status: "completed" | "error";
+  status: "completed" | "error" | "running";
   toolCount: number;
   totalTokens: number;
   agentURL: string | null;
   error?: string;
   model?: string;
+  isBackground?: boolean;
 }
 
 interface SubagentGroupStaticProps {
@@ -91,7 +92,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
       {/* Status line */}
       <Box flexDirection="row">
-        {agent.status === "completed" ? (
+        {agent.status === "completed" && !agent.isBackground ? (
           <>
             <Text color={colors.subagent.treeChar}>
               {"   "}
@@ -99,7 +100,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
             </Text>
             <Text dimColor>{"   Done"}</Text>
           </>
-        ) : (
+        ) : agent.status === "error" ? (
           <>
             <Box width={gutterWidth} flexShrink={0}>
               <Text>
@@ -115,6 +116,14 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
                 {agent.error}
               </Text>
             </Box>
+          </>
+        ) : (
+          <>
+            <Text color={colors.subagent.treeChar}>
+              {"   "}
+              {continueChar}
+            </Text>
+            <Text dimColor>{"   Running in the background"}</Text>
           </>
         )}
       </Box>
