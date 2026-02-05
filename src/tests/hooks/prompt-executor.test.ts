@@ -62,7 +62,7 @@ describe("Prompt Hook Executor", () => {
       expect(path).toBe("/v1/agents/agent-abc-123/generate");
       expect(opts.body.prompt).toContain("Check if this tool call is safe");
       expect(opts.body.system_prompt).toBeTruthy();
-      expect(opts.body.override_model).toBe("anthropic/claude-3-5-haiku-20241022");
+      expect(opts.body.override_model).toBeUndefined();
       expect(opts.body.response_schema).toBeDefined();
       expect(opts.body.response_schema.properties.ok.type).toBe("boolean");
     });

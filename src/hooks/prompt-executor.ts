@@ -15,9 +15,6 @@ import {
 /** Default timeout for prompt hook execution (30 seconds) */
 const DEFAULT_PROMPT_TIMEOUT_MS = 30000;
 
-/** Default model for prompt hooks (fast model) */
-const DEFAULT_PROMPT_MODEL = "anthropic/claude-3-5-haiku-20241022";
-
 /**
  * System prompt for the LLM to evaluate hooks.
  * Instructs the model to return a JSON decision per Claude Code spec.
@@ -183,15 +180,14 @@ export async function executePromptHook(
 
     // Build the user prompt with $ARGUMENTS replaced
     const userPrompt = buildPrompt(hook.prompt, input);
-    const model = hook.model || DEFAULT_PROMPT_MODEL;
     const timeout = hook.timeout ?? DEFAULT_PROMPT_TIMEOUT_MS;
 
-    // Call the generate endpoint
+    // Call the generate endpoint (uses agent's model unless hook overrides)
     const llmResponse = await callGenerateEndpoint(
       agentId,
       PROMPT_HOOK_SYSTEM,
       userPrompt,
-      model,
+      hook.model,
       timeout,
     );
 
@@ -240,7 +236,7 @@ async function callGenerateEndpoint(
   agentId: string,
   systemPrompt: string,
   userPrompt: string,
-  model: string,
+  overrideModel: string | undefined,
   timeout: number,
 ): Promise<string> {
   const client = await getClient();
@@ -251,7 +247,7 @@ async function callGenerateEndpoint(
       body: {
         prompt: userPrompt,
         system_prompt: systemPrompt,
-        override_model: model,
+        ...(overrideModel && { override_model: overrideModel }),
         response_schema: PROMPT_HOOK_RESPONSE_SCHEMA,
       },
       timeout,
