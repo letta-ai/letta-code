@@ -1,0 +1,307 @@
+import { brandColors, hexToFgAnsi } from "../components/colors";
+import { formatCompact } from "./format";
+
+interface ContextChartOptions {
+  usedTokens: number;
+  contextWindow: number;
+  model: string;
+  /** Total step count (may exceed history.length if capped) */
+  totalSteps: number;
+  history: Array<{
+    timestamp: number;
+    tokens: number;
+    turnId: number;
+    compacted?: boolean;
+  }>;
+}
+
+/**
+ * Renders the /context command output: a usage bar + optional braille area chart.
+ * Returns the fully formatted string (with ANSI color codes).
+ */
+export function renderContextUsage(opts: ContextChartOptions): string {
+  const { usedTokens, contextWindow, model, history, totalSteps } = opts;
+
+  if (usedTokens === 0) {
+    return "Context data not available yet. Run a turn to see context usage.";
+  }
+
+  const barColor = hexToFgAnsi(brandColors.primaryAccent);
+  const reset = "\x1b[0m";
+  const termWidth = process.stdout?.columns ?? 80;
+
+  // --- Usage bar (static 10 segments) ---
+  const percentage =
+    contextWindow > 0
+      ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
+      : 0;
+  const totalSegments = 10;
+  const filledSegments = Math.round((percentage / 100) * totalSegments);
+  const filledBar = barColor + "▰".repeat(filledSegments) + reset;
+  const emptyBar = "▱".repeat(totalSegments - filledSegments);
+  const bar = filledBar + emptyBar;
+
+  let output =
+    contextWindow > 0
+      ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
+      : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
+
+  // --- Braille area chart ---
+  if (history.length > 1) {
+    output +=
+      "\n\n" +
+      renderBrailleChart(history, contextWindow, termWidth, totalSteps);
+  }
+
+  return output;
+}
+
+// White-to-purple spectrum with brand color (#8C8CF9) in the middle.
+// Ordered lightest → brand → darkest, then bounced for smooth cycling.
+const CHART_PALETTE = [
+  "#E8E8FE", // near-white lavender
+  "#CDCDFB", // light lavender
+  "#B0B0FA", // soft purple
+  "#8C8CF9", // brand primaryAccent (middle)
+  "#7272E0", // medium purple
+  "#5B5BC8", // deep purple
+  "#4545B0", // dark purple
+].map(hexToFgAnsi);
+
+// Bounce sequence: 0→1→2→3→4→5→6→5→4→3→2→1→ (period = 12)
+function bounceIndex(turnId: number): number {
+  const period = (CHART_PALETTE.length - 1) * 2; // 12
+  const pos = ((turnId % period) + period) % period;
+  return pos < CHART_PALETTE.length ? pos : period - pos;
+}
+
+function renderBrailleChart(
+  history: Array<{
+    timestamp: number;
+    tokens: number;
+    turnId: number;
+    compacted?: boolean;
+  }>,
+  contextWindow: number,
+  termWidth: number,
+  totalSteps: number,
+): string {
+  const reset = "\x1b[0m";
+  const chartHeight = 6; // rows of braille characters (4 dots each = 24 vertical resolution)
+  const labelWidth = 5; // e.g. "100k "
+  const steps = history.length;
+
+  // Chart starts at ~25% of terminal, grows 1 char column per step,
+  // caps at ~80% of terminal — then interpolates to fit all steps.
+  const minChartWidth = Math.max(1, Math.floor(termWidth * 0.25) - labelWidth);
+  const maxChartWidth = Math.max(
+    minChartWidth,
+    Math.floor(termWidth * 0.8) - labelWidth,
+  );
+
+  const allValues = history.map((h) => h.tokens);
+  let chartWidth: number;
+  let values: number[]; // one value per character column
+  // Color index per character column (null = use default single color)
+  let colColors: number[] | null;
+  // Set of character-column indices where compaction occurred
+  const compactedCols = new Set<number>();
+
+  if (steps <= maxChartWidth) {
+    // Each step gets its own character column; pad to at least minChartWidth
+    chartWidth = Math.max(steps, minChartWidth);
+    values = allValues.slice(); // 1:1 mapping
+
+    // Assign color per turn using bounce pattern through the palette
+    // turnId is incremented once per user turn, so all steps within a turn share the same color
+    colColors = history.map((h) => bounceIndex(h.turnId));
+
+    // Track compaction columns (1:1 mapping)
+    history.forEach((h, i) => {
+      if (h.compacted) compactedCols.add(i);
+    });
+  } else {
+    // Interpolate to fit all steps into maxChartWidth columns — no color alternation
+    chartWidth = maxChartWidth;
+    values = [];
+    for (let i = 0; i < chartWidth; i++) {
+      const t = (i / (chartWidth - 1)) * (allValues.length - 1);
+      const idx = Math.floor(t);
+      const frac = t - idx;
+      const v1 = allValues[idx] ?? 0;
+      const v2 = allValues[Math.min(idx + 1, allValues.length - 1)] ?? v1;
+      values.push(v1 + frac * (v2 - v1));
+
+      // Mark column if any source entry in its range was compacted
+      const idxEnd = Math.min(idx + 1, history.length - 1);
+      if (history[idx]?.compacted || history[idxEnd]?.compacted) {
+        compactedCols.add(i);
+      }
+    }
+    colColors = null;
+  }
+
+  const dotsHeight = chartHeight * 4;
+  const dotsWidth = chartWidth * 2;
+
+  // Use context window as y-axis ceiling so the chart shows absolute scale
+  const max = contextWindow > 0 ? contextWindow : Math.max(...values);
+  const min = 0;
+  const range = max - min || 1;
+
+  // Create dot grid (row 0 is top)
+  const dots: boolean[][] = Array.from({ length: dotsHeight }, () =>
+    Array(dotsWidth).fill(false),
+  );
+
+  // Plot as filled area chart — each value fills both dot columns in its char column
+  for (let charIdx = 0; charIdx < values.length; charIdx++) {
+    const val = values[charIdx] ?? 0;
+    const normalized = (val - min) / range;
+    const y = Math.floor((1 - normalized) * (dotsHeight - 1));
+
+    for (let dotCol = 0; dotCol < 2; dotCol++) {
+      const x = charIdx * 2 + dotCol;
+      for (let fillY = y; fillY < dotsHeight; fillY++) {
+        const fillRow = dots[fillY];
+        if (fillRow) fillRow[x] = true;
+      }
+    }
+  }
+
+  // Convert dot grid to braille characters
+  const dotBits = [
+    [0x01, 0x08], // row 0: dots 1, 4
+    [0x02, 0x10], // row 1: dots 2, 5
+    [0x04, 0x20], // row 2: dots 3, 6
+    [0x40, 0x80], // row 3: dots 7, 8
+  ];
+
+  // Generate y-axis labels (top, middle, bottom)
+  const yLabels: string[] = [];
+  for (let row = 0; row < chartHeight; row++) {
+    if (row === 0) {
+      yLabels.push(formatCompact(max).padStart(labelWidth - 1) + " ");
+    } else if (row === chartHeight - 1) {
+      yLabels.push(formatCompact(min).padStart(labelWidth - 1) + " ");
+    } else if (row === Math.floor(chartHeight / 2)) {
+      const mid = min + range / 2;
+      yLabels.push(formatCompact(mid).padStart(labelWidth - 1) + " ");
+    } else {
+      yLabels.push(" ".repeat(labelWidth));
+    }
+  }
+
+  // Default color when not alternating (brand color = middle of palette)
+  const defaultColor = CHART_PALETTE[Math.floor(CHART_PALETTE.length / 2)]!;
+  const white = "\x1b[97m";
+
+  // Pre-compute braille codes per (charRow, charCol)
+  const brailleCodes: number[][] = Array.from({ length: chartHeight }, () =>
+    Array(chartWidth).fill(0x2800),
+  );
+  for (let charRow = 0; charRow < chartHeight; charRow++) {
+    for (let charCol = 0; charCol < chartWidth; charCol++) {
+      let code = 0x2800;
+      for (let dotRow = 0; dotRow < 4; dotRow++) {
+        for (let dotCol = 0; dotCol < 2; dotCol++) {
+          const gridRow = charRow * 4 + dotRow;
+          const gridCol = charCol * 2 + dotCol;
+          const gridRowData = dots[gridRow];
+          if (gridRowData && gridRowData[gridCol]) {
+            const dotBitsRow = dotBits[dotRow];
+            if (dotBitsRow) code += dotBitsRow[dotCol] ?? 0;
+          }
+        }
+      }
+      brailleCodes[charRow]![charCol] = code;
+    }
+  }
+
+  // For compacted columns, find where to place ↧:
+  // - If topmost braille is full (0x28FF), ↧ goes in a marker row above
+  // - Otherwise, ↧ replaces the topmost braille char in that column
+  const FULL_BRAILLE = 0x28ff;
+  let needsMarkerRow = false;
+  // Track which compacted columns have ↧ placed inline (replacing top braille)
+  const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ↧ is placed
+
+  for (const col of compactedCols) {
+    if (brailleCodes[0]![col] === FULL_BRAILLE) {
+      needsMarkerRow = true;
+    } else {
+      // Find topmost non-empty row to replace, or use row 0
+      let targetRow = 0;
+      for (let r = 0; r < chartHeight; r++) {
+        if (brailleCodes[r]![col] !== 0x2800) {
+          targetRow = r;
+          break;
+        }
+      }
+      inlineMarkerRow.set(col, targetRow);
+    }
+  }
+
+  const chartLines: string[] = [];
+
+  // Optional marker row above the chart for compaction columns with full top braille
+  if (needsMarkerRow) {
+    let markerRow = " ".repeat(labelWidth);
+    let markerCurrentColor = "";
+    for (let charCol = 0; charCol < chartWidth; charCol++) {
+      if (compactedCols.has(charCol) && brailleCodes[0]![charCol] === FULL_BRAILLE) {
+        if (markerCurrentColor !== white) {
+          markerRow += white;
+          markerCurrentColor = white;
+        }
+        markerRow += "↧";
+      } else {
+        markerRow += " ";
+      }
+    }
+    markerRow += reset;
+    chartLines.push(markerRow);
+  }
+
+  for (let charRow = 0; charRow < chartHeight; charRow++) {
+    let rowStr = yLabels[charRow] ?? "";
+
+    // Build chart portion with per-column coloring
+    let currentColor = "";
+    for (let charCol = 0; charCol < chartWidth; charCol++) {
+      // Check if this cell should be a ↧ marker
+      if (inlineMarkerRow.get(charCol) === charRow) {
+        if (currentColor !== white) {
+          rowStr += white;
+          currentColor = white;
+        }
+        rowStr += "↧";
+        continue;
+      }
+
+      const brailleCode = brailleCodes[charRow]![charCol]!;
+
+      // Determine color for this column
+      const targetColor =
+        colColors && charCol < colColors.length
+          ? (CHART_PALETTE[colColors[charCol]!] ?? defaultColor)
+          : defaultColor;
+
+      // Only emit escape code when color changes
+      if (targetColor !== currentColor) {
+        rowStr += targetColor;
+        currentColor = targetColor;
+      }
+
+      rowStr += String.fromCharCode(brailleCode);
+    }
+
+    rowStr += reset;
+    chartLines.push(rowStr);
+  }
+
+  const chartOutput = chartLines.join("\n");
+  const stepsLabel =
+    totalSteps > steps ? `last ${steps} of ${totalSteps} steps` : `${steps} steps`;
+  return `${chartOutput}\n${"─".repeat(labelWidth + chartWidth)} ${stepsLabel}`;
+}

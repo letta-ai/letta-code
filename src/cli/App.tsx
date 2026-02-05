@@ -114,7 +114,7 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
 import { ConversationSelector } from "./components/ConversationSelector";
-import { brandColors, colors, hexToFgAnsi } from "./components/colors";
+import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { EventMessage } from "./components/EventMessage";
@@ -161,6 +161,7 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
+import { renderContextUsage } from "./helpers/contextChart";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
@@ -3250,6 +3251,15 @@ export default function App({
           trajectoryRunTokenStartRef.current = runTokenStart;
           sessionStatsRef.current.startTrajectory();
 
+          // Only bump turn counter for actual user messages, not approval continuations.
+          // This ensures all LLM steps within one user turn share the same color in /context chart.
+          const hasUserMessage = currentInput.some(
+            (item) => item.type === "message",
+          );
+          if (hasUserMessage) {
+            buffersRef.current.currentTurnId++;
+          }
+
           const {
             stopReason,
             approval,
@@ -4813,6 +4823,7 @@ export default function App({
 
         // Reset context token tracking for new agent
         buffersRef.current.lastContextTokens = 0;
+        buffersRef.current.contextTokensHistory = [];
 
         // Build success message
         const agentLabel = agent.name || targetAgentId;
@@ -4923,6 +4934,7 @@ export default function App({
 
         // Reset context token tracking for new agent
         buffersRef.current.lastContextTokens = 0;
+        buffersRef.current.contextTokensHistory = [];
 
         // Build success message with hints
         const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
@@ -5770,37 +5782,15 @@ export default function App({
 
           // Use most recent total tokens from usage_statistics as context size (after turn)
           const usedTokens = buffersRef.current.lastContextTokens;
+          const history = buffersRef.current.contextTokensHistory;
 
-          let output: string;
-
-          // No data available yet (session start, after model/conversation switch)
-          if (usedTokens === 0) {
-            output = `Context data not available yet. Run a turn to see context usage.`;
-          } else {
-            const percentage =
-              contextWindow > 0
-                ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
-                : 0;
-
-            // Build visual bar (10 segments like ▰▰▰▰▰▰▱▱▱▱)
-            const totalSegments = 10;
-            const filledSegments = Math.round(
-              (percentage / 100) * totalSegments,
-            );
-            const emptySegments = totalSegments - filledSegments;
-
-            const barColor = hexToFgAnsi(brandColors.primaryAccent);
-            const reset = "\x1b[0m";
-
-            const filledBar = barColor + "▰".repeat(filledSegments) + reset;
-            const emptyBar = "▱".repeat(emptySegments);
-            const bar = filledBar + emptyBar;
-
-            output =
-              contextWindow > 0
-                ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
-                : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
-          }
+          const output = renderContextUsage({
+            usedTokens,
+            contextWindow,
+            model,
+            totalSteps: buffersRef.current.usage.stepCount,
+            history,
+          });
 
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
@@ -6074,6 +6064,7 @@ export default function App({
 
             // Reset context tokens for new conversation
             buffersRef.current.lastContextTokens = 0;
+            buffersRef.current.contextTokensHistory = [];
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -6165,6 +6156,7 @@ export default function App({
 
             // Reset context tokens for new conversation
             buffersRef.current.lastContextTokens = 0;
+            buffersRef.current.contextTokensHistory = [];
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -6609,6 +6601,7 @@ export default function App({
                 buffersRef.current.order = [];
                 buffersRef.current.tokenCount = 0;
                 buffersRef.current.lastContextTokens = 0;
+                buffersRef.current.contextTokensHistory = [];
                 emittedIdsRef.current.clear();
                 resetDeferredToolCallCommits();
                 setStaticItems([]);
@@ -9212,6 +9205,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
           // Reset context token tracking since different models have different tokenizers
           buffersRef.current.lastContextTokens = 0;
+          buffersRef.current.contextTokensHistory = [];
 
           // After switching models, only switch toolset if it actually changes
           const { isOpenAIModel, isGeminiModel } = await import(
@@ -9353,6 +9347,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
                 // Reset context tokens for new conversation
                 buffersRef.current.lastContextTokens = 0;
+                buffersRef.current.contextTokensHistory = [];
 
                 buffersRef.current.byId.set(cmdId, {
                   kind: "command",
@@ -10863,6 +10858,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
                       buffersRef.current.lastContextTokens = 0;
+                      buffersRef.current.contextTokensHistory = [];
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
@@ -11030,6 +11026,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
                     buffersRef.current.lastContextTokens = 0;
+                    buffersRef.current.contextTokensHistory = [];
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -11158,6 +11155,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
                       buffersRef.current.lastContextTokens = 0;
+                      buffersRef.current.contextTokensHistory = [];
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);

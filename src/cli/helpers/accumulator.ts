@@ -15,6 +15,7 @@ import { isShellTool } from "./toolNameMapping";
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
 const MAX_BUFFER_SIZE = 100_000; // 100KB
+const MAX_CONTEXT_HISTORY = 1000; // Cap context token history (~25KB)
 
 /**
  * A line of streaming output with its source (stdout or stderr).
@@ -219,6 +220,17 @@ export type Buffers = {
   };
   // Most recent context_tokens from usage_statistics (estimate of tokens in context window)
   lastContextTokens: number;
+  // History of context_tokens values for time-series display
+  contextTokensHistory: Array<{
+    timestamp: number;
+    tokens: number;
+    turnId: number;
+    compacted?: boolean;
+  }>;
+  // Counter incremented once per user turn (before each stream drain)
+  currentTurnId: number;
+  // Set when a compaction event is seen; consumed by the next usage_statistics push
+  pendingCompaction: boolean;
   // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
   splitCounters: Map<string, number>; // tracks split count per original otid
@@ -249,6 +261,9 @@ export function createBuffers(agentId?: string): Buffers {
       stepCount: 0,
     },
     lastContextTokens: 0,
+    contextTokensHistory: [],
+    currentTurnId: 0,
+    pendingCompaction: false,
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
@@ -803,6 +818,21 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       const usageChunk = chunk as typeof chunk & { context_tokens?: number };
       if (usageChunk.context_tokens !== undefined) {
         b.lastContextTokens = usageChunk.context_tokens;
+        // Track history for time-series display
+        const compacted = b.pendingCompaction;
+        if (compacted) b.pendingCompaction = false;
+        b.contextTokensHistory.push({
+          timestamp: Date.now(),
+          tokens: usageChunk.context_tokens,
+          turnId: b.currentTurnId,
+          ...(compacted ? { compacted: true } : {}),
+        });
+        // Cap history length to avoid unbounded growth
+        if (b.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
+          b.contextTokensHistory = b.contextTokensHistory.slice(
+            -MAX_CONTEXT_HISTORY,
+          );
+        }
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
@@ -871,13 +901,19 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Handle otid transition (mark previous line as finished)
         handleOtidTransition(b, id);
 
+        const eventType = eventChunk.event_type || "unknown";
         ensure(b, id, () => ({
           kind: "event",
           id,
-          eventType: eventChunk.event_type || "unknown",
+          eventType,
           eventData: eventChunk.event_data || {},
           phase: "running",
         }));
+
+        // Flag so the next usage_statistics entry is marked as post-compaction
+        if (eventType === "compaction") {
+          b.pendingCompaction = true;
+        }
         break;
       }
 
