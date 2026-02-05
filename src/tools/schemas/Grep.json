@@ -28,6 +28,10 @@
     },
     "-C": {
       "type": "number",
+      "description": "Alias for context."
+    },
+    "context": {
+      "type": "number",
       "description": "Number of lines to show before and after each match (rg -C). Requires output_mode: \"content\", ignored otherwise."
     },
     "-n": {
@@ -44,7 +48,7 @@
     },
     "head_limit": {
       "type": "number",
-      "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 100 (0 = unlimited)."
+      "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 0 (unlimited)."
     },
     "offset": {
       "type": "number",

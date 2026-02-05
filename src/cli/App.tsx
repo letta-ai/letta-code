@@ -174,6 +174,7 @@ import {
   buildMemoryReminder,
   parseMemoryPreference,
 } from "./helpers/memoryReminder";
+import { setMessageQueueAdder } from "./helpers/messageQueueBridge";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -231,6 +232,19 @@ const EAGER_CANCEL = true;
 
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
+
+function stripTaskNotifications(message: string): {
+  stripped: string;
+  hadNotifications: boolean;
+} {
+  if (!message.includes("<task-notification>")) {
+    return { stripped: message, hadNotifications: false };
+  }
+  const pattern =
+    /<task-notification>[\s\S]*?<\/task-notification>(?:\s*Full transcript available at:[^\n]*\n?)?/g;
+  const stripped = message.replace(pattern, "").trim();
+  return { stripped, hadNotifications: true };
+}
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 2.5s -> 5s -> 10s
@@ -1394,6 +1408,17 @@ export default function App({
   useEffect(() => {
     messageQueueRef.current = messageQueue;
   }, [messageQueue]);
+
+  // Set up message queue bridge for background tasks
+  // This allows non-React code (Task.ts) to add notifications to messageQueue
+  useEffect(() => {
+    // Provide a queue adder that adds to messageQueue and bumps dequeueEpoch
+    setMessageQueueAdder((message: string) => {
+      setMessageQueue((q) => [...q, message]);
+      setDequeueEpoch((e) => e + 1);
+    });
+    return () => setMessageQueueAdder(null);
+  }, []);
 
   const waitingForQueueCancelRef = useRef(false);
   const queueSnapshotRef = useRef<string[]>([]);
@@ -5171,6 +5196,10 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
+      const { stripped: msgForHooks, hadNotifications } =
+        stripTaskNotifications(msg);
+      const userTextForInput = msgForHooks.trim();
+      const isSystemOnly = hadNotifications && userTextForInput.length === 0;
 
       // Handle profile load confirmation (Enter to continue)
       if (profileConfirmPending && !msg) {
@@ -5204,14 +5233,16 @@ export default function App({
       if (!msg) return { submitted: false };
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
-      const isCommand = msg.startsWith("/");
-      const hookResult = await runUserPromptSubmitHooks(
-        msg,
-        isCommand,
-        agentId,
-        conversationIdRef.current,
-      );
-      if (hookResult.blocked) {
+      const isCommand = userTextForInput.startsWith("/");
+      const hookResult = isSystemOnly
+        ? { blocked: false, feedback: [] as string[] }
+        : await runUserPromptSubmitHooks(
+            userTextForInput,
+            isCommand,
+            agentId,
+            conversationIdRef.current,
+          );
+      if (!isSystemOnly && hookResult.blocked) {
         // Show feedback from hook in the transcript
         const feedbackId = uid("status");
         const feedback = hookResult.feedback.join("\n") || "Blocked by hook";
@@ -5238,7 +5269,13 @@ export default function App({
       const submissionGeneration = conversationGenerationRef.current;
 
       // Track user input (agent_id automatically added from telemetry.currentAgentId)
-      telemetry.trackUserInput(msg, "user", currentModelId || "unknown");
+      if (!isSystemOnly && userTextForInput.length > 0) {
+        telemetry.trackUserInput(
+          userTextForInput,
+          "user",
+          currentModelId || "unknown",
+        );
+      }
 
       // Block submission if waiting for explicit user action (approvals)
       // In this case, input is hidden anyway, so this shouldn't happen
@@ -5269,7 +5306,8 @@ export default function App({
       // so users can browse/view while the agent is working.
       // Changes made in these overlays will be queued until end_turn.
       const shouldBypassQueue =
-        isInteractiveCommand(msg) || isNonStateCommand(msg);
+        isInteractiveCommand(userTextForInput) ||
+        isNonStateCommand(userTextForInput);
 
       if (isAgentBusy() && !shouldBypassQueue) {
         setMessageQueue((prev) => {
@@ -7616,7 +7654,8 @@ ${SYSTEM_REMINDER_CLOSE}
         lastNotifiedModeRef.current = currentMode;
       }
 
-      // Combine reminders with content (session context first, then session start hook, then permission mode, then plan mode, then ralph mode, then skill unload, then bash commands, then hook feedback, then memory reminder, then memfs conflicts)
+      // Combine reminders with content (session context, session start hook, permission mode, plan mode, ralph mode, skill unload, bash commands, hook feedback, memory reminder, memfs conflicts)
+      // Note: Task notifications now come through messageQueue directly (added by messageQueueBridge)
       const allReminders =
         sessionContextReminder +
         sessionStartHookFeedback +
@@ -8265,14 +8304,18 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [onSubmit]);
 
   // Process queued messages when streaming ends
+  // Task notifications are now added directly to messageQueue via messageQueueBridge
   useEffect(() => {
     // Reference dequeueEpoch to satisfy exhaustive-deps - it's used to force
     // re-runs when userCancelledRef is reset (refs aren't in deps)
+    // Also triggers when task notifications are added to queue
     void dequeueEpoch;
+
+    const hasAnythingQueued = messageQueue.length > 0;
 
     if (
       !streaming &&
-      messageQueue.length > 0 &&
+      hasAnythingQueued &&
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
@@ -8282,7 +8325,9 @@ ${SYSTEM_REMINDER_CLOSE}
     ) {
       // Concatenate all queued messages into one (better UX when user types multiple
       // messages quickly - they get combined into one context for the agent)
+      // Task notifications are already in the queue as XML strings
       const concatenatedMessage = messageQueue.join("\n");
+
       debugLog(
         "queue",
         `Dequeuing ${messageQueue.length} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
@@ -8295,7 +8340,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Submit the concatenated message using the normal submit flow
       // This ensures all setup (reminders, UI updates, etc.) happens correctly
       onSubmitRef.current(concatenatedMessage);
-    } else if (messageQueue.length > 0) {
+    } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
         "queue",
@@ -8309,7 +8354,7 @@ ${SYSTEM_REMINDER_CLOSE}
     commandRunning,
     isExecutingTool,
     anySelectorOpen,
-    dequeueEpoch, // Triggered when userCancelledRef is reset while messages are queued
+    dequeueEpoch, // Triggered when userCancelledRef is reset OR task notifications added
   ]);
 
   // Helper to send all approval results when done

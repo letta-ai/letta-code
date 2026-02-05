@@ -124,6 +124,7 @@ export async function handleHeadlessCommand(
       "no-skills": { type: "boolean" },
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "max-turns": { type: "string" }, // Maximum number of agentic turns
     },
     strict: false,
     allowPositionals: true,
@@ -262,6 +263,20 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const maxTurnsRaw = values["max-turns"] as string | undefined;
+
+  // Parse and validate max-turns if provided
+  let maxTurns: number | undefined;
+  if (maxTurnsRaw !== undefined) {
+    const parsed = parseInt(maxTurnsRaw, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      console.error(
+        `Error: --max-turns must be a positive integer, got: ${maxTurnsRaw}`,
+      );
+      process.exit(1);
+    }
+    maxTurns = parsed;
+  }
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
   if (specifiedConversationId?.startsWith("agent-")) {
@@ -1047,12 +1062,35 @@ ${SYSTEM_REMINDER_CLOSE}
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
   let conversationBusyRetries = 0;
-
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
+  // Helper to check max turns limit using server-side step count from buffers
+  const checkMaxTurns = () => {
+    if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
+      if (outputFormat === "stream-json") {
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+          stop_reason: "max_steps",
+          session_id: sessionId,
+          uuid: `error-max-turns-${crypto.randomUUID()}`,
+        };
+        console.log(JSON.stringify(errorMsg));
+      } else {
+        console.error(
+          `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+        );
+      }
+      process.exit(1);
+    }
+  };
+
   try {
     while (true) {
+      // Check max turns limit before starting a new turn (uses server-side step count)
+      checkMaxTurns();
+
       // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       try {
@@ -1283,6 +1321,10 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // Check max turns after each turn (server may have taken multiple steps)
+      checkMaxTurns();
+
       if (approvalPendingRecovery) {
         await resolveAllPendingApprovals();
         continue;
