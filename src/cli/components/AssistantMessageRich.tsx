@@ -35,6 +35,9 @@ export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   const contentWidth = Math.max(0, columns - 2);
 
   const normalizedText = normalize(line.text);
+  if (!normalizedText.trim()) {
+    return null;
+  }
 
   return (
     <Box flexDirection="row">
