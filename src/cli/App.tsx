@@ -6712,24 +6712,76 @@ export default function App({
           try {
             const client = await getClient();
 
-            // Pass conversation_id if we're in a specific conversation (not default)
+            // Build export parameters (include conversation_id if in specific conversation)
             const exportParams: { conversation_id?: string } = {};
             if (conversationId !== "default") {
               exportParams.conversation_id = conversationId;
             }
 
-            const fileContent = await client.agents.exportFile(
-              agentId,
-              exportParams,
-            );
-            const fileName = `${agentId}.af`;
+            // Package skills from agent/project/global directories
+            const { packageSkills } = await import("../agent/export");
+            const skills = await packageSkills(agentId);
+
+            // Export agent with skills
+            let fileContent: unknown;
+            if (skills.length > 0) {
+              // Use raw fetch with auth from settings
+              const { settingsManager } = await import("../settings-manager");
+              const { getServerUrl } = await import("../agent/client");
+              const settings =
+                await settingsManager.getSettingsWithSecureTokens();
+              const apiKey =
+                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+              const baseUrl = getServerUrl();
+
+              const body: Record<string, unknown> = {
+                ...exportParams,
+                skills,
+              };
+
+              const response = await fetch(
+                `${baseUrl}/v1/agents/${agentId}/export`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(body),
+                },
+              );
+
+              if (!response.ok) {
+                throw new Error(`Export failed: ${response.statusText}`);
+              }
+
+              fileContent = await response.json();
+            } else {
+              // No skills to include, use SDK
+              fileContent = await client.agents.exportFile(
+                agentId,
+                exportParams,
+              );
+            }
+
+            // Generate filename
+            const fileName = exportParams.conversation_id
+              ? `${exportParams.conversation_id}.af`
+              : `${agentId}.af`;
+
             writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
+
+            // Build success message
+            let summary = `AgentFile downloaded to ${fileName}`;
+            if (skills.length > 0) {
+              summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
+            }
 
             buffersRef.current.byId.set(cmdId, {
               kind: "command",
               id: cmdId,
               input: msg,
-              output: `AgentFile downloaded to ${fileName}`,
+              output: summary,
               phase: "finished",
               success: true,
             });

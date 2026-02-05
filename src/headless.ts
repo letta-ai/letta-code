@@ -490,9 +490,17 @@ export async function handleHeadlessCommand(
       filePath: fromAfFile,
       modelOverride: model,
       stripMessages: true,
+      stripSkills: false,
     });
     agent = result.agent;
     isNewlyCreatedAgent = true;
+
+    // Display extracted skills summary
+    if (result.skills && result.skills.length > 0) {
+      console.log(
+        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}`,
+      );
+    }
   }
 
   // Priority 2: Try to use --agent specified ID
