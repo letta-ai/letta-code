@@ -33,6 +33,10 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function unescapeXml(str: string): string {
+  return str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -66,6 +70,40 @@ export function formatTaskNotification(notification: TaskNotification): string {
 <result>${escapedResult}</result>${usageBlock}
 </task-notification>
 Full transcript available at: ${notification.outputFile}`;
+}
+
+export function extractTaskNotificationsForDisplay(message: string): {
+  notifications: string[];
+  cleanedText: string;
+} {
+  if (!message.includes("<task-notification>")) {
+    return { notifications: [], cleanedText: message };
+  }
+
+  const notificationRegex =
+    /<task-notification>[\s\S]*?(?:<\/task-notification>|$)(?:\s*Full transcript available at:[^\n]*\n?)?/g;
+  const notifications: string[] = [];
+
+  let match: RegExpExecArray | null = notificationRegex.exec(message);
+  while (match !== null) {
+    const xml = match[0];
+    const summaryMatch = xml.match(/<summary>([\s\S]*?)<\/summary>/);
+    const statusMatch = xml.match(/<status>([\s\S]*?)<\/status>/);
+    const status = statusMatch?.[1]?.trim();
+    let summary = summaryMatch?.[1]?.trim() || "";
+    summary = unescapeXml(summary);
+    const display = summary || `Agent task ${status || "completed"}`;
+    notifications.push(display);
+    match = notificationRegex.exec(message);
+  }
+
+  const cleanedText = message
+    .replace(notificationRegex, "")
+    .replace(/^\s*Full transcript available at:[^\n]*\n?/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { notifications, cleanedText };
 }
 
 /**

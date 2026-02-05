@@ -44,7 +44,7 @@ export async function getTaskOutput(
  */
 async function getProcessOutput(
   task_id: string,
-  proc: (typeof backgroundProcesses extends Map<string, infer V> ? V : never),
+  proc: typeof backgroundProcesses extends Map<string, infer V> ? V : never,
   block: boolean,
   timeout: number,
   filter?: string,
@@ -105,7 +105,7 @@ async function getProcessOutput(
  */
 async function getBackgroundTaskOutput(
   task_id: string,
-  task: (typeof backgroundTasks extends Map<string, infer V> ? V : never),
+  task: typeof backgroundTasks extends Map<string, infer V> ? V : never,
   block: boolean,
   timeout: number,
   filter?: string,
@@ -135,7 +135,9 @@ async function getBackgroundTaskOutput(
 
   let text = currentTask.output.join("\n");
   if (currentTask.error) {
-    text = text ? `${text}\n[error] ${currentTask.error}` : `[error] ${currentTask.error}`;
+    text = text
+      ? `${text}\n[error] ${currentTask.error}`
+      : `[error] ${currentTask.error}`;
   }
 
   if (filter) {

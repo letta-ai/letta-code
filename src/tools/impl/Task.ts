@@ -11,21 +11,21 @@ import {
   getAllSubagentConfigs,
 } from "../../agent/subagents";
 import { spawnSubagent } from "../../agent/subagents/manager";
+import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import {
   completeSubagent,
   generateSubagentId,
-  registerSubagent,
   getSnapshot as getSubagentSnapshot,
+  registerSubagent,
 } from "../../cli/helpers/subagentState.js";
-import { addToMessageQueue } from "../../cli/helpers/messageQueueBridge.js";
 import { formatTaskNotification } from "../../cli/helpers/taskNotifications.js";
 import { runSubagentStopHooks } from "../../hooks";
 import {
   appendToOutputFile,
+  type BackgroundTask,
   backgroundTasks,
   createBackgroundOutputFile,
   getNextTaskId,
-  type BackgroundTask,
 } from "./process_manager.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -120,10 +120,17 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Register subagent with state store for UI display
   const subagentId = generateSubagentId();
-  registerSubagent(subagentId, subagent_type, description, toolCallId);
+  const isBackground = args.run_in_background ?? false;
+  registerSubagent(
+    subagentId,
+    subagent_type,
+    description,
+    toolCallId,
+    isBackground,
+  );
 
   // Handle background execution
-  if (args.run_in_background) {
+  if (isBackground) {
     const taskId = getNextTaskId();
     const outputFile = createBackgroundOutputFile(taskId);
 
@@ -204,10 +211,7 @@ export async function task(args: TaskArgs): Promise<string> {
         const toolUses = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
         )?.toolCalls.length;
-        const durationMs = Math.max(
-          0,
-          Date.now() - bgTask.startTime.getTime(),
-        );
+        const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
 
         // Build and truncate the result (same as foreground path)
         const fullResult = result.success
@@ -262,10 +266,7 @@ export async function task(args: TaskArgs): Promise<string> {
         const toolUses = subagentSnapshot.agents.find(
           (agent) => agent.id === subagentId,
         )?.toolCalls.length;
-        const durationMs = Math.max(
-          0,
-          Date.now() - bgTask.startTime.getTime(),
-        );
+        const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
 
         // Format and queue notification for auto-firing when idle
         const notificationXml = formatTaskNotification({

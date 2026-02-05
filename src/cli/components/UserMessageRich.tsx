@@ -1,6 +1,7 @@
 import { memo } from "react";
 import stringWidth from "string-width";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
 import { Text } from "./Text";
@@ -97,46 +98,6 @@ function splitSystemReminderBlocks(
   return blocks;
 }
 
-function unescapeXml(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-}
-
-function extractTaskNotifications(blockText: string): {
-  notifications: string[];
-  cleanedText: string;
-} {
-  if (!blockText.includes("<task-notification>")) {
-    return { notifications: [], cleanedText: blockText };
-  }
-  const notificationRegex =
-    /<task-notification>[\s\S]*?<\/task-notification>(?:\s*Full transcript available at:[^\n]*\n?)?/g;
-
-  const notifications: string[] = [];
-  for (
-    let match = notificationRegex.exec(blockText);
-    match !== null;
-    match = notificationRegex.exec(blockText)
-  ) {
-    const xml = match[0];
-    const summaryMatch = xml.match(/<summary>([\s\S]*?)<\/summary>/);
-    const statusMatch = xml.match(/<status>([\s\S]*?)<\/status>/);
-    const status = statusMatch?.[1]?.trim();
-    let summary = summaryMatch?.[1]?.trim() || "";
-    summary = unescapeXml(summary);
-    const display = summary || `Task ${status || "completed"}`;
-    notifications.push(`● ${display}`);
-  }
-
-  const cleanedText = blockText
-    .replace(notificationRegex, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return { notifications, cleanedText };
-}
-
 /**
  * Render a block of text with "> " prefix (first line) and "  " continuation.
  * If highlighted, applies background and foreground colors. Otherwise plain text.
@@ -196,6 +157,11 @@ function renderBlock(
 export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(1, columns - 2);
+  const cleanedText = extractTaskNotificationsForDisplay(line.text).cleanedText;
+  const displayText = cleanedText.trim();
+  if (!displayText) {
+    return null;
+  }
 
   // Build combined ANSI code for background + optional foreground
   const { background, text: textColor } = colors.userMessage;
@@ -204,43 +170,23 @@ export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const colorAnsi = bgAnsi + fgAnsi;
 
   // Split into system-reminder blocks and user content blocks
-  const blocks = splitSystemReminderBlocks(line.text);
+  const blocks = splitSystemReminderBlocks(displayText);
 
   const allLines: string[] = [];
 
   for (const block of blocks) {
     if (!block.text.trim()) continue;
-
-    const { notifications, cleanedText } = extractTaskNotifications(block.text);
-    if (notifications.length > 0) {
-      if (allLines.length > 0) {
-        allLines.push("");
-      }
-      for (const notification of notifications) {
-        const notificationLines = renderBlock(
-          notification,
-          contentWidth,
-          columns,
-          false,
-          colorAnsi,
-        );
-        allLines.push(...notificationLines);
-      }
+    if (allLines.length > 0) {
+      allLines.push("");
     }
-
-    if (cleanedText) {
-      if (allLines.length > 0) {
-        allLines.push("");
-      }
-      const blockLines = renderBlock(
-        cleanedText,
-        contentWidth,
-        columns,
-        !block.isSystemReminder,
-        colorAnsi,
-      );
-      allLines.push(...blockLines);
-    }
+    const blockLines = renderBlock(
+      block.text,
+      contentWidth,
+      columns,
+      !block.isSystemReminder,
+      colorAnsi,
+    );
+    allLines.push(...blockLines);
   }
 
   return <Text>{allLines.join("\n")}</Text>;

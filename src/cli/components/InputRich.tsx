@@ -24,6 +24,7 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provide
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
+import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
@@ -548,7 +549,14 @@ export function Input({
         ) {
           setAtStartBoundary(false);
           // Clear the queue and load into input as one multi-line message
-          const queueText = messageQueue.join("\n");
+          const queueText = messageQueue
+            .map((msg) => extractTaskNotificationsForDisplay(msg).cleanedText)
+            .map((msg) => msg.trim())
+            .filter((msg) => msg.length > 0)
+            .join("\n");
+          if (!queueText) {
+            return;
+          }
           setValue(queueText);
           // Signal to App.tsx to clear the queue
           if (onEnterQueueEditMode) {

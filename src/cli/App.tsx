@@ -192,10 +192,13 @@ import {
 import {
   clearCompletedSubagents,
   clearSubagentsByIds,
+  getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  hasActiveSubagents,
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
+import { extractTaskNotificationsForDisplay } from "./helpers/taskNotifications";
 import {
   getRandomPastTenseVerb,
   getRandomThinkingVerb,
@@ -232,19 +235,6 @@ const EAGER_CANCEL = true;
 
 // Maximum retries for transient LLM API errors (matches headless.ts)
 const LLM_API_ERROR_MAX_RETRIES = 3;
-
-function stripTaskNotifications(message: string): {
-  stripped: string;
-  hadNotifications: boolean;
-} {
-  if (!message.includes("<task-notification>")) {
-    return { stripped: message, hadNotifications: false };
-  }
-  const pattern =
-    /<task-notification>[\s\S]*?<\/task-notification>(?:\s*Full transcript available at:[^\n]*\n?)?/g;
-  const stripped = message.replace(pattern, "").trim();
-  return { stripped, hadNotifications: true };
-}
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 const CONVERSATION_BUSY_MAX_RETRIES = 3; // 2.5s -> 5s -> 10s
@@ -703,6 +693,17 @@ function stripSystemReminders(text: string): string {
     .trim();
 }
 
+function buildTextParts(
+  ...parts: Array<string | undefined | null>
+): Array<{ type: "text"; text: string }> {
+  const out: Array<{ type: "text"; text: string }> = [];
+  for (const part of parts) {
+    if (!part) continue;
+    out.push({ type: "text", text: part });
+  }
+  return out;
+}
+
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
@@ -722,7 +723,7 @@ type StaticItem =
         id: string;
         type: string;
         description: string;
-        status: "completed" | "error";
+        status: "completed" | "error" | "running";
         toolCount: number;
         totalTokens: number;
         agentURL: string | null;
@@ -1458,16 +1459,48 @@ export default function App({
     );
   }, [isExecutingTool]);
 
+  const appendTaskNotificationEvents = useCallback(
+    (summaries: string[]): boolean => {
+      if (summaries.length === 0) return false;
+      for (const summary of summaries) {
+        const eventId = uid("event");
+        buffersRef.current.byId.set(eventId, {
+          kind: "event",
+          id: eventId,
+          eventType: "task_notification",
+          eventData: {},
+          phase: "finished",
+          summary,
+        });
+        buffersRef.current.order.push(eventId);
+      }
+      return true;
+    },
+    [],
+  );
+
   // Consume queued messages for appending to tool results (clears queue + timeout)
-  const consumeQueuedMessages = useCallback((): string[] | null => {
+  const consumeQueuedMessages = useCallback((): {
+    messages: string[];
+    notifications: string[];
+  } | null => {
     if (messageQueueRef.current.length === 0) return null;
     if (queueAppendTimeoutRef.current) {
       clearTimeout(queueAppendTimeoutRef.current);
       queueAppendTimeoutRef.current = null;
     }
-    const messages = [...messageQueueRef.current];
+    const notifications: string[] = [];
+    const messages: string[] = [];
+    for (const msg of messageQueueRef.current) {
+      const parsed = extractTaskNotificationsForDisplay(msg);
+      notifications.push(...parsed.notifications);
+      const trimmed = parsed.cleanedText.trim();
+      if (trimmed) {
+        messages.push(trimmed);
+      }
+    }
     setMessageQueue([]);
-    return messages;
+    return { messages, notifications };
   }, []);
 
   // Helper to wrap async handlers that need to close overlay and lock input
@@ -1676,6 +1709,15 @@ export default function App({
         // Handle Task tool_calls specially - track position but don't add individually
         // (unless there's no subagent data, in which case commit as regular tool call)
         if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
+          if (hasInProgress && ln.toolCallId) {
+            const subagent = getSubagentByToolCallId(ln.toolCallId);
+            if (subagent) {
+              if (firstTaskIndex === -1) {
+                firstTaskIndex = newlyCommitted.length;
+              }
+              continue;
+            }
+          }
           // Check if this specific Task tool has subagent data (will be grouped)
           const hasSubagentData = finishedTaskToolCalls.some(
             (tc) => tc.lineId === id,
@@ -2885,8 +2927,11 @@ export default function App({
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
-        // Clear completed subagents from the UI when starting a new turn
-        clearCompletedSubagents();
+        // Clear completed subagents from the UI when starting a new turn,
+        // but only if no subagents are still running.
+        if (!hasActiveSubagents()) {
+          clearCompletedSubagents();
+        }
 
         while (true) {
           // Capture the signal BEFORE any async operations
@@ -3722,8 +3767,12 @@ export default function App({
 
                 // Append queued messages if any (from 15s append mode)
                 const queuedMessagesToAppend = consumeQueuedMessages();
-                if (queuedMessagesToAppend?.length) {
-                  for (const msg of queuedMessagesToAppend) {
+                const hadNotifications = appendTaskNotificationEvents(
+                  queuedMessagesToAppend?.notifications ?? [],
+                );
+                const queuedMessages = queuedMessagesToAppend?.messages ?? [];
+                if (queuedMessages.length) {
+                  for (const msg of queuedMessages) {
                     const userId = uid("user");
                     buffersRef.current.byId.set(userId, {
                       kind: "user",
@@ -3738,7 +3787,7 @@ export default function App({
                   await processConversation(
                     [
                       { type: "approval", approvals: allResults },
-                      ...queuedMessagesToAppend.map((msg) => ({
+                      ...queuedMessages.map((msg) => ({
                         type: "message" as const,
                         role: "user" as const,
                         content: msg as unknown as MessageCreate["content"],
@@ -3748,6 +3797,9 @@ export default function App({
                   );
                   toolResultsInFlightRef.current = false;
                   return;
+                }
+                if (hadNotifications) {
+                  refreshDerived();
                 }
 
                 // Cancel mode - queue results and let dequeue effect handle
@@ -4324,6 +4376,7 @@ export default function App({
       needsEagerApprovalCheck,
       queueApprovalResults,
       consumeQueuedMessages,
+      appendTaskNotificationEvents,
       maybeSyncMemoryFilesystemAfterTurn,
       openTrajectorySegment,
       syncTrajectoryTokenBase,
@@ -5196,10 +5249,11 @@ export default function App({
   const onSubmit = useCallback(
     async (message?: string): Promise<{ submitted: boolean }> => {
       const msg = message?.trim() ?? "";
-      const { stripped: msgForHooks, hadNotifications } =
-        stripTaskNotifications(msg);
-      const userTextForInput = msgForHooks.trim();
-      const isSystemOnly = hadNotifications && userTextForInput.length === 0;
+      const { notifications: taskNotifications, cleanedText } =
+        extractTaskNotificationsForDisplay(msg);
+      const userTextForInput = cleanedText.trim();
+      const isSystemOnly =
+        taskNotifications.length > 0 && userTextForInput.length === 0;
 
       // Handle profile load confirmation (Enter to continue)
       if (profileConfirmPending && !msg) {
@@ -5783,7 +5837,7 @@ export default function App({
               {
                 type: "message",
                 role: "user",
-                content: `${systemMsg}\n\n${prompt}`,
+                content: buildTextParts(systemMsg, prompt),
               },
             ]);
           } else {
@@ -7143,7 +7197,7 @@ export default function App({
               {
                 type: "message",
                 role: "user",
-                content: skillMessage,
+                content: buildTextParts(skillMessage),
               },
             ]);
           } catch (error) {
@@ -7201,9 +7255,12 @@ export default function App({
             );
 
             // Build system-reminder content for memory request
-            const rememberMessage = userText
-              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}${userText}`
+            const rememberReminder = userText
+              ? `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n${SYSTEM_REMINDER_CLOSE}`
               : `${SYSTEM_REMINDER_OPEN}\n${REMEMBER_PROMPT}\n\nThe user did not specify what to remember. Look at the recent conversation context to identify what they likely want you to remember, or ask them to clarify.\n${SYSTEM_REMINDER_CLOSE}`;
+            const rememberParts = userText
+              ? buildTextParts(rememberReminder, userText)
+              : buildTextParts(rememberReminder);
 
             // Mark command as finished before sending message
             buffersRef.current.byId.set(cmdId, {
@@ -7223,7 +7280,7 @@ export default function App({
               {
                 type: "message",
                 role: "user",
-                content: rememberMessage,
+                content: rememberParts,
               },
             ]);
           } catch (error) {
@@ -7396,7 +7453,7 @@ ${SYSTEM_REMINDER_CLOSE}`;
               {
                 type: "message",
                 role: "user",
-                content: initMessage,
+                content: buildTextParts(initMessage),
               },
             ]);
           } catch (error) {
@@ -7479,7 +7536,9 @@ ${SYSTEM_REMINDER_CLOSE}`;
               {
                 type: "message",
                 role: "user",
-                content: `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
+                content: buildTextParts(
+                  `${SYSTEM_REMINDER_OPEN}\n${prompt}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
               },
             ]);
           } catch (error) {
@@ -7654,34 +7713,42 @@ ${SYSTEM_REMINDER_CLOSE}
         lastNotifiedModeRef.current = currentMode;
       }
 
-      // Combine reminders with content (session context, session start hook, permission mode, plan mode, ralph mode, skill unload, bash commands, hook feedback, memory reminder, memfs conflicts)
+      // Combine reminders with content as separate text parts.
+      // This preserves each reminder boundary in the API payload.
       // Note: Task notifications now come through messageQueue directly (added by messageQueueBridge)
-      const allReminders =
-        sessionContextReminder +
-        sessionStartHookFeedback +
-        permissionModeAlert +
-        planModeReminder +
-        ralphModeReminder +
-        skillUnloadReminder +
-        bashCommandPrefix +
-        userPromptSubmitHookFeedback +
-        memoryReminderContent +
-        memfsConflictReminder;
+      const reminderParts: Array<{ type: "text"; text: string }> = [];
+      const pushReminder = (text: string) => {
+        if (!text) return;
+        reminderParts.push({ type: "text", text });
+      };
+      pushReminder(sessionContextReminder);
+      pushReminder(sessionStartHookFeedback);
+      pushReminder(permissionModeAlert);
+      pushReminder(planModeReminder);
+      pushReminder(ralphModeReminder);
+      pushReminder(skillUnloadReminder);
+      pushReminder(bashCommandPrefix);
+      pushReminder(userPromptSubmitHookFeedback);
+      pushReminder(memoryReminderContent);
+      pushReminder(memfsConflictReminder);
       const messageContent =
-        allReminders && typeof contentParts === "string"
-          ? allReminders + contentParts
-          : Array.isArray(contentParts) && allReminders
-            ? [{ type: "text" as const, text: allReminders }, ...contentParts]
-            : contentParts;
+        reminderParts.length > 0
+          ? [...reminderParts, ...contentParts]
+          : contentParts;
+
+      // Append task notifications (if any) as event lines before the user message
+      appendTaskNotificationEvents(taskNotifications);
 
       // Append the user message to transcript IMMEDIATELY (optimistic update)
       const userId = uid("user");
-      buffersRef.current.byId.set(userId, {
-        kind: "user",
-        id: userId,
-        text: msg,
-      });
-      buffersRef.current.order.push(userId);
+      if (userTextForInput) {
+        buffersRef.current.byId.set(userId, {
+          kind: "user",
+          id: userId,
+          text: userTextForInput,
+        });
+        buffersRef.current.order.push(userId);
+      }
 
       // Reset token counter for this turn (only count the agent's response)
       buffersRef.current.tokenCount = 0;
@@ -8295,6 +8362,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingRalphConfig,
       openTrajectorySegment,
       resetTrajectoryBases,
+      appendTaskNotificationEvents,
     ],
   );
 
@@ -8543,11 +8611,15 @@ ${SYSTEM_REMINDER_CLOSE}
           queueSnapshotRef.current = [];
         } else {
           const queuedMessagesToAppend = consumeQueuedMessages();
+          const hadNotifications = appendTaskNotificationEvents(
+            queuedMessagesToAppend?.notifications ?? [],
+          );
           const input: Array<MessageCreate | ApprovalCreate> = [
             { type: "approval", approvals: allResults as ApprovalResult[] },
           ];
-          if (queuedMessagesToAppend?.length) {
-            for (const msg of queuedMessagesToAppend) {
+          const queuedMessages = queuedMessagesToAppend?.messages ?? [];
+          if (queuedMessages.length) {
+            for (const msg of queuedMessages) {
               const userId = uid("user");
               buffersRef.current.byId.set(userId, {
                 kind: "user",
@@ -8561,6 +8633,8 @@ ${SYSTEM_REMINDER_CLOSE}
                 content: msg as unknown as MessageCreate["content"],
               });
             }
+            refreshDerived();
+          } else if (hadNotifications) {
             refreshDerived();
           }
           toolResultsInFlightRef.current = true;
@@ -8594,6 +8668,7 @@ ${SYSTEM_REMINDER_CLOSE}
       updateStreamingOutput,
       queueApprovalResults,
       consumeQueuedMessages,
+      appendTaskNotificationEvents,
       syncTrajectoryElapsedBase,
       closeTrajectorySegment,
       openTrajectorySegment,
