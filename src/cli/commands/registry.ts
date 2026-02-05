@@ -120,11 +120,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename the current agent (/rename <name>)",
+    desc: "Rename agent or conversation (/rename agent|convo <name>)",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
-      return "Renaming agent...";
+      return "Renaming...";
     },
   },
   "/description": {
@@ -191,6 +191,14 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to display usage stats
       return "Fetching usage statistics...";
+    },
+  },
+  "/context": {
+    desc: "Show context window usage",
+    order: 33.5,
+    handler: () => {
+      // Handled specially in App.tsx to display context usage
+      return "Fetching context usage...";
     },
   },
   "/feedback": {

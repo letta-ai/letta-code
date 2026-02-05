@@ -114,6 +114,17 @@ export const InlineBashApproval = memo(
         if (key.escape) {
           // Cancel (queue denial, return to input)
           onCancel?.();
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApprove();
+          return;
+        }
+        if (input === "2" && allowPersistence) {
+          onApproveAlways("project");
+          return;
         }
       },
       { isActive: isFocused },

@@ -24,7 +24,6 @@ import { createAgent } from "./agent/create";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   ensureMemoryFilesystemBlock,
-  formatMemorySyncSummary,
   syncMemoryFilesystem,
   updateMemoryFilesystemBlock,
 } from "./agent/memoryFilesystem";
@@ -125,6 +124,7 @@ export async function handleHeadlessCommand(
       "no-skills": { type: "boolean" },
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "max-turns": { type: "string" }, // Maximum number of agentic turns
     },
     strict: false,
     allowPositionals: true,
@@ -135,7 +135,6 @@ export async function handleHeadlessCommand(
     const { toolFilter } = await import("./tools/filter");
     toolFilter.setEnabledTools(values.tools as string);
   }
-
   // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue = values["permission-mode"] as string | undefined;
   const yoloMode = values.yolo as boolean | undefined;
@@ -176,6 +175,25 @@ export async function handleHeadlessCommand(
   // Check for input-format early - if stream-json, we don't need a prompt
   const inputFormat = values["input-format"] as string | undefined;
   const isBidirectionalMode = inputFormat === "stream-json";
+
+  // If headless output is being piped and the downstream closes early (e.g.
+  // `| head`), Node will throw EPIPE on stdout writes. Treat this as a normal
+  // termination rather than crashing with a stack trace.
+  //
+  // Note: this must be registered before any `console.log` in headless mode.
+  process.stdout.on("error", (err: unknown) => {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+
+    if (code === "EPIPE") {
+      process.exit(0);
+    }
+
+    // Re-throw unknown stdout errors so they surface during tests/debugging.
+    throw err;
+  });
 
   // Get prompt from either positional args or stdin (unless in bidirectional mode)
   let prompt = positionals.slice(2).join(" ");
@@ -245,6 +263,20 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const maxTurnsRaw = values["max-turns"] as string | undefined;
+
+  // Parse and validate max-turns if provided
+  let maxTurns: number | undefined;
+  if (maxTurnsRaw !== undefined) {
+    const parsed = parseInt(maxTurnsRaw, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      console.error(
+        `Error: --max-turns must be a positive integer, got: ${maxTurnsRaw}`,
+      );
+      process.exit(1);
+    }
+    maxTurns = parsed;
+  }
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
   if (specifiedConversationId?.startsWith("agent-")) {
@@ -473,9 +505,17 @@ export async function handleHeadlessCommand(
       filePath: fromAfFile,
       modelOverride: model,
       stripMessages: true,
+      stripSkills: false,
     });
     agent = result.agent;
     isNewlyCreatedAgent = true;
+
+    // Display extracted skills summary
+    if (result.skills && result.skills.length > 0) {
+      console.log(
+        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}`,
+      );
+    }
   }
 
   // Priority 2: Try to use --agent specified ID
@@ -610,19 +650,20 @@ export async function handleHeadlessCommand(
   // This prevents "block not found" errors when creating conversations with isolated_block_labels
   // Note: ensureSkillsBlocks already calls blocks.list internally, so no extra API call
   if (!noSkillsFlag && !isSubagent) {
-    const createdBlocks = await ensureSkillsBlocks(agent.id);
-    if (createdBlocks.length > 0) {
-      console.log("Created missing skills blocks for agent compatibility");
-    }
+    await ensureSkillsBlocks(agent.id);
   }
 
   // Apply memfs flag if specified, or enable by default for new agents
+  // In headless mode, also enable for --agent since users expect full functionality
   if (memfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (isNewlyCreatedAgent && !isSubagent) {
     // Enable memfs by default for newly created agents (but not subagents)
+    settingsManager.setMemfsEnabled(agent.id, true);
+  } else if (specifiedAgentId && !isSubagent) {
+    // Enable memfs by default when using --agent in headless mode
     settingsManager.setMemfsEnabled(agent.id, true);
   }
 
@@ -638,16 +679,7 @@ export async function handleHeadlessCommand(
         process.exit(1);
       }
       await updateMemoryFilesystemBlock(agent.id);
-      if (
-        syncResult.updatedBlocks.length > 0 ||
-        syncResult.createdBlocks.length > 0 ||
-        syncResult.deletedBlocks.length > 0 ||
-        syncResult.updatedFiles.length > 0 ||
-        syncResult.createdFiles.length > 0 ||
-        syncResult.deletedFiles.length > 0
-      ) {
-        console.log(formatMemorySyncSummary(syncResult));
-      }
+      // Note: Sync summary intentionally not logged in headless mode to keep output clean
     } catch (error) {
       console.error(
         `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -996,7 +1028,11 @@ export async function handleHeadlessCommand(
   // Build message content with reminders (plan mode first, then skill unload)
   const { permissionMode } = await import("./permissions/mode");
   const { hasLoadedSkills } = await import("./agent/context");
-  let messageContent = "";
+  const contentParts: MessageCreate["content"] = [];
+  const pushPart = (text: string) => {
+    if (!text) return;
+    contentParts.push({ type: "text", text });
+  };
 
   if (fromAgentId) {
     const senderAgentId = fromAgentId;
@@ -1008,29 +1044,29 @@ If you need to share detailed information, include it in your response text.
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
-    messageContent += systemReminder;
+    pushPart(systemReminder);
   }
 
   // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {
     const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
-    messageContent += PLAN_MODE_REMINDER;
+    pushPart(PLAN_MODE_REMINDER);
   }
 
   // Add skill unload reminder if skills are loaded (using cached flag)
   if (hasLoadedSkills()) {
     const { SKILL_UNLOAD_REMINDER } = await import("./agent/promptAssets");
-    messageContent += SKILL_UNLOAD_REMINDER;
+    pushPart(SKILL_UNLOAD_REMINDER);
   }
 
   // Add user prompt
-  messageContent += prompt;
+  pushPart(prompt);
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
       role: "user",
-      content: [{ type: "text", text: messageContent }],
+      content: contentParts,
     },
   ];
 
@@ -1038,12 +1074,35 @@ ${SYSTEM_REMINDER_CLOSE}
   let lastKnownRunId: string | null = null;
   let llmApiErrorRetries = 0;
   let conversationBusyRetries = 0;
-
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
 
+  // Helper to check max turns limit using server-side step count from buffers
+  const checkMaxTurns = () => {
+    if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
+      if (outputFormat === "stream-json") {
+        const errorMsg: ErrorMessage = {
+          type: "error",
+          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+          stop_reason: "max_steps",
+          session_id: sessionId,
+          uuid: `error-max-turns-${crypto.randomUUID()}`,
+        };
+        console.log(JSON.stringify(errorMsg));
+      } else {
+        console.error(
+          `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
+        );
+      }
+      process.exit(1);
+    }
+  };
+
   try {
     while (true) {
+      // Check max turns limit before starting a new turn (uses server-side step count)
+      checkMaxTurns();
+
       // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       try {
@@ -1274,6 +1333,10 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // Check max turns after each turn (server may have taken multiple steps)
+      checkMaxTurns();
+
       if (approvalPendingRecovery) {
         await resolveAllPendingApprovals();
         continue;
@@ -1980,6 +2043,8 @@ async function runBidirectionalMode(
         const buffers = createBuffers(agent.id);
         const startTime = performance.now();
         let numTurns = 0;
+        let lastStopReason: StopReasonType | null = null; // Track for result subtype
+        let sawStreamError = false; // Track if we emitted an error during streaming
 
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
@@ -1999,7 +2064,36 @@ async function runBidirectionalMode(
           const stream = await sendMessageStream(conversationId, currentInput, {
             agentId: agent.id,
           });
-          const streamJsonHook: DrainStreamHook = ({ chunk, shouldOutput }) => {
+          const streamJsonHook: DrainStreamHook = ({
+            chunk,
+            shouldOutput,
+            errorInfo,
+          }) => {
+            // Handle in-stream errors (emit ErrorMessage with full details)
+            if (errorInfo && shouldOutput) {
+              sawStreamError = true; // Track that we saw an error (affects result subtype)
+              const errorEvent: ErrorMessage = {
+                type: "error",
+                message: errorInfo.message,
+                stop_reason: "error",
+                run_id: errorInfo.run_id,
+                session_id: sessionId,
+                uuid: crypto.randomUUID(),
+                ...(errorInfo.error_type &&
+                  errorInfo.run_id && {
+                    api_error: {
+                      message_type: "error_message",
+                      message: errorInfo.message,
+                      error_type: errorInfo.error_type,
+                      detail: errorInfo.detail,
+                      run_id: errorInfo.run_id,
+                    },
+                  }),
+              };
+              console.log(JSON.stringify(errorEvent));
+              return { shouldAccumulate: true };
+            }
+
             if (!shouldOutput) {
               return { shouldAccumulate: true };
             }
@@ -2040,6 +2134,7 @@ async function runBidirectionalMode(
             streamJsonHook,
           );
           const stopReason = result.stopReason;
+          lastStopReason = stopReason; // Track for result subtype
           const approvals = result.approvals || [];
 
           // Case 1: Turn ended normally - break out of loop
@@ -2058,7 +2153,9 @@ async function runBidirectionalMode(
           // Case 3: Requires approval - process approvals and continue
           if (stopReason === "requires_approval") {
             if (approvals.length === 0) {
-              // No approvals to process - break
+              // Anomalous state: requires_approval but no approvals
+              // Treat as error rather than false-positive success
+              lastStopReason = "error";
               break;
             }
 
@@ -2236,11 +2333,23 @@ async function runBidirectionalMode(
           lastToolResult?.resultText ||
           "";
 
+        // Determine result subtype based on how the turn ended
+        const isAborted = currentAbortController?.signal.aborted;
+        // isError if: (1) stop reason indicates error, OR (2) we emitted an error during streaming
+        const isError =
+          sawStreamError ||
+          (lastStopReason &&
+            lastStopReason !== "end_turn" &&
+            lastStopReason !== "requires_approval");
+        const subtype: ResultMessage["subtype"] = isAborted
+          ? "interrupted"
+          : isError
+            ? "error"
+            : "success";
+
         const resultMsg: ResultMessage = {
           type: "result",
-          subtype: currentAbortController?.signal.aborted
-            ? "interrupted"
-            : "success",
+          subtype,
           session_id: sessionId,
           duration_ms: Math.round(durationMs),
           duration_api_ms: 0, // Not tracked in bidirectional mode
@@ -2251,18 +2360,44 @@ async function runBidirectionalMode(
           run_ids: [],
           usage: null,
           uuid: `result-${agent.id}-${Date.now()}`,
+          // Include stop_reason only when subtype is "error" (not "interrupted")
+          ...(subtype === "error" && {
+            stop_reason:
+              lastStopReason && lastStopReason !== "end_turn"
+                ? lastStopReason
+                : "error", // Use "error" if sawStreamError but lastStopReason was end_turn
+          }),
         };
         console.log(JSON.stringify(resultMsg));
       } catch (error) {
+        // Use formatErrorDetails for comprehensive error formatting (same as one-shot mode)
+        const errorDetails = formatErrorDetails(error, agent.id);
         const errorMsg: ErrorMessage = {
           type: "error",
-          message:
-            error instanceof Error ? error.message : "Unknown error occurred",
+          message: errorDetails,
           stop_reason: "error",
           session_id: sessionId,
           uuid: crypto.randomUUID(),
         };
         console.log(JSON.stringify(errorMsg));
+
+        // Also emit a result message with subtype: "error" so SDK knows the turn failed
+        const errorResultMsg: ResultMessage = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: 0,
+          duration_api_ms: 0,
+          num_turns: 0,
+          result: null,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          run_ids: [],
+          usage: null,
+          uuid: `result-error-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        console.log(JSON.stringify(errorResultMsg));
       } finally {
         currentAbortController = null;
       }

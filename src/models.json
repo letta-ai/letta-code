@@ -25,9 +25,21 @@
   },
   {
     "id": "opus",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Anthropic's best model with adaptive thinking",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "enable_reasoner": true
+    }
+  },
+  {
+    "id": "opus-4.5",
     "handle": "anthropic/claude-opus-4-5-20251101",
     "label": "Opus 4.5",
-    "description": "Anthropic's best model",
+    "description": "Anthropic's (legacy) best model",
     "isFeatured": true,
     "updateArgs": {
       "context_window": 180000,

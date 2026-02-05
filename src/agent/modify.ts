@@ -9,6 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -164,7 +165,10 @@ export async function updateAgentLLMConfig(
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  const contextWindow = updateArgs?.context_window as number | undefined;
+  // First try updateArgs, then fall back to API-cached context window for BYOK models
+  const contextWindow =
+    (updateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
   await client.agents.update(agentId, {

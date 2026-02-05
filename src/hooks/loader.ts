@@ -2,6 +2,7 @@
 // Loads and matches hooks from settings-manager
 
 import { settingsManager } from "../settings-manager";
+import { debugLog } from "../utils/debug";
 import {
   type HookCommand,
   type HookEvent,
@@ -29,8 +30,9 @@ export function clearHooksCache(): void {
 export function loadGlobalHooks(): HooksConfig {
   try {
     return settingsManager.getSettings().hooks || {};
-  } catch {
+  } catch (error) {
     // Settings not initialized yet
+    debugLog("hooks", "loadGlobalHooks: Settings not initialized yet", error);
     return {};
   }
 }
@@ -50,8 +52,9 @@ export async function loadProjectHooks(
       await settingsManager.loadProjectSettings(workingDirectory);
     }
     return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
-  } catch {
+  } catch (error) {
     // Settings not available
+    debugLog("hooks", "loadProjectHooks: Settings not available", error);
     return {};
   }
 }
@@ -73,8 +76,9 @@ export async function loadProjectLocalHooks(
     return (
       settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {}
     );
-  } catch {
+  } catch (error) {
     // Settings not available
+    debugLog("hooks", "loadProjectLocalHooks: Settings not available", error);
     return {};
   }
 }
@@ -164,8 +168,13 @@ export function matchesTool(pattern: string, toolName: string): boolean {
   try {
     const regex = new RegExp(`^(?:${pattern})$`);
     return regex.test(toolName);
-  } catch {
+  } catch (error) {
     // Invalid regex, fall back to exact match
+    debugLog(
+      "hooks",
+      `matchesTool: Invalid regex pattern "${pattern}", falling back to exact match`,
+      error,
+    );
     return pattern === toolName;
   }
 }
@@ -300,8 +309,13 @@ export function areHooksDisabled(
       if (projectDisabled === true) {
         return true;
       }
-    } catch {
+    } catch (error) {
       // Project settings not loaded, skip
+      debugLog(
+        "hooks",
+        "areHooksDisabled: Project settings not loaded, skipping",
+        error,
+      );
     }
 
     // Check project-local settings
@@ -312,12 +326,22 @@ export function areHooksDisabled(
       if (localDisabled === true) {
         return true;
       }
-    } catch {
+    } catch (error) {
       // Local project settings not loaded, skip
+      debugLog(
+        "hooks",
+        "areHooksDisabled: Local project settings not loaded, skipping",
+        error,
+      );
     }
 
     return false;
-  } catch {
+  } catch (error) {
+    debugLog(
+      "hooks",
+      "areHooksDisabled: Failed to check hooks disabled status",
+      error,
+    );
     return false;
   }
 }

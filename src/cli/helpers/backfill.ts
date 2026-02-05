@@ -7,6 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 import type { Buffers } from "./accumulator";
+import { extractTaskNotificationsForDisplay } from "./taskNotifications";
 
 /**
  * Extract displayable text from tool return content.
@@ -178,9 +179,28 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       // user message - content parts may include text and image parts
       case "user_message": {
         const rawText = renderUserContentParts(msg.content);
+        const { notifications, cleanedText } =
+          extractTaskNotificationsForDisplay(rawText);
+
+        if (notifications.length > 0) {
+          let notifIndex = 0;
+          for (const summary of notifications) {
+            const notifId = `${lineId}-task-${notifIndex++}`;
+            const exists = buffers.byId.has(notifId);
+            buffers.byId.set(notifId, {
+              kind: "event",
+              id: notifId,
+              eventType: "task_notification",
+              eventData: {},
+              phase: "finished",
+              summary,
+            });
+            if (!exists) buffers.order.push(notifId);
+          }
+        }
 
         // Check if this is a compaction summary message (old format embedded in user_message)
-        const compactionSummary = extractCompactionSummary(rawText);
+        const compactionSummary = extractCompactionSummary(cleanedText);
         if (compactionSummary) {
           // Render as a finished compaction event
           const exists = buffers.byId.has(lineId);
@@ -196,13 +216,15 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           break;
         }
 
-        const exists = buffers.byId.has(lineId);
-        buffers.byId.set(lineId, {
-          kind: "user",
-          id: lineId,
-          text: rawText,
-        });
-        if (!exists) buffers.order.push(lineId);
+        if (cleanedText) {
+          const exists = buffers.byId.has(lineId);
+          buffers.byId.set(lineId, {
+            kind: "user",
+            id: lineId,
+            text: cleanedText,
+          });
+          if (!exists) buffers.order.push(lineId);
+        }
         break;
       }
 

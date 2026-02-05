@@ -248,7 +248,7 @@ class SettingsManager {
             this.settings = updatedSettings;
             await this.persistSettings();
 
-            console.log("Successfully migrated tokens to secrets");
+            debugWarn("settings", "Successfully migrated tokens to secrets");
           } catch (error) {
             console.warn("Failed to migrate tokens to secrets:", error);
             console.warn("Tokens will remain in settings file for persistence");

@@ -5,12 +5,12 @@ import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
 
 // Helper function to normalize text - copied from old codebase
+// NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s
     .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\n+|\n+$/g, "");
+    .replace(/^\n+/g, ""); // Only trim leading newlines, preserve trailing ones
 
 type AssistantLine = {
   kind: "assistant";
@@ -35,6 +35,9 @@ export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   const contentWidth = Math.max(0, columns - 2);
 
   const normalizedText = normalize(line.text);
+  if (!normalizedText.trim()) {
+    return null;
+  }
 
   return (
     <Box flexDirection="row">
