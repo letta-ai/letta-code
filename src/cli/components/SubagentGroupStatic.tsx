@@ -56,7 +56,9 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const gutterWidth = 8; // indent (3) + continueChar (2) + status indent (3)
   const contentWidth = Math.max(0, columns - gutterWidth);
 
-  const stats = formatStats(agent.toolCount, agent.totalTokens);
+  const isRunning = agent.status === "running";
+  const shouldDim = isRunning && !agent.isBackground;
+  const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
 
   return (
     <Box flexDirection="column">
@@ -67,7 +69,9 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
             {"   "}
             {treeChar}{" "}
           </Text>
-          <Text bold>{agent.description}</Text>
+          <Text bold={!shouldDim} dimColor={shouldDim}>
+            {agent.description}
+          </Text>
           <Text dimColor>
             {" · "}
             {agent.type.toLowerCase()}
@@ -143,20 +147,27 @@ export const SubagentGroupStatic = memo(
       return null;
     }
 
-    const statusText = `Ran ${agents.length} subagent${agents.length !== 1 ? "s" : ""}`;
     const hasErrors = agents.some((a) => a.status === "error");
+    const hasRunning = agents.some((a) => a.status === "running");
+    const label = hasRunning ? "Running" : "Ran";
+    const suffix = agents.length !== 1 ? "agents" : "agent";
 
     // Use error color for dot if any subagent errored
     const dotColor = hasErrors
       ? colors.subagent.error
-      : colors.subagent.completed;
+      : hasRunning
+        ? colors.tool.pending
+        : colors.subagent.completed;
 
     return (
       <Box flexDirection="column">
         {/* Header */}
         <Box flexDirection="row">
           <Text color={dotColor}>●</Text>
-          <Text color={colors.subagent.header}> {statusText}</Text>
+          <Text>
+            {" "}
+            {label} <Text bold>{agents.length}</Text> {suffix}
+          </Text>
         </Box>
 
         {/* Agent rows */}
