@@ -14,6 +14,7 @@ type CommandLine = {
   phase?: "running" | "finished";
   success?: boolean;
   dimOutput?: boolean;
+  preformatted?: boolean;
 };
 
 /**
@@ -65,7 +66,11 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
             <Text>{"  ⎿  "}</Text>
           </Box>
           <Box flexGrow={1} width={Math.max(0, columns - 5)}>
-            <MarkdownDisplay text={line.output} dimColor={line.dimOutput} />
+            {line.preformatted ? (
+              <Text>{line.output}</Text>
+            ) : (
+              <MarkdownDisplay text={line.output} dimColor={line.dimOutput} />
+            )}
           </Box>
         </Box>
       )}
