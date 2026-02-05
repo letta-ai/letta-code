@@ -358,6 +358,21 @@ export async function executeHooksParallel(
     const hook = hooks[i];
     if (!result || !hook) continue;
 
+    // For exit 0, try to parse JSON for additionalContext (matching Claude Code behavior)
+    if (result.exitCode === HookExitCode.ALLOW && result.stdout?.trim()) {
+      try {
+        const json = JSON.parse(result.stdout.trim());
+        const additionalContext =
+          json?.hookSpecificOutput?.additionalContext ||
+          json?.additionalContext;
+        if (additionalContext) {
+          feedback.push(additionalContext);
+        }
+      } catch {
+        // Not JSON, ignore
+      }
+    }
+
     // Format: [command]: {stderr} per spec
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
