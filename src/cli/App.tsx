@@ -40,6 +40,7 @@ import { getClient } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { getLettaCodeHeaders } from "../agent/http-headers";
+import { clearLoadedSkillsForConversation } from "../agent/loadedSkills";
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   checkMemoryFilesystemStatus,
@@ -6061,6 +6062,7 @@ export default function App({
 
             // Update conversationId state
             setConversationId(conversation.id);
+            clearLoadedSkillsForConversation(conversation.id, client);
 
             // Save the new session to settings
             settingsManager.setLocalLastSession(
@@ -11068,6 +11070,7 @@ Plan file path: ${planFilePath}`;
                       isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
                     setConversationId(conversation.id);
+                    clearLoadedSkillsForConversation(conversation.id, client);
                     settingsManager.setLocalLastSession(
                       { agentId, conversationId: conversation.id },
                       process.cwd(),
