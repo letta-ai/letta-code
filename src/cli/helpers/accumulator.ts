@@ -768,6 +768,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
     case "usage_statistics": {
       // Accumulate usage statistics from the stream
       // These messages arrive after stop_reason in the stream
+      console.log(
+        `[usage_statistics] prompt=${chunk.prompt_tokens}, completion=${chunk.completion_tokens}, total=${chunk.total_tokens}, step=${chunk.step_count}`,
+      );
       if (chunk.prompt_tokens !== undefined) {
         b.usage.promptTokens += chunk.prompt_tokens;
       }
@@ -776,8 +779,11 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       }
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
-        // Track most recent total tokens as current context size (after turn completes)
-        b.lastContextTokens = chunk.total_tokens;
+      }
+      // Track most recent prompt_tokens as current context size
+      // (prompt_tokens = actual tokens sent to model in this call)
+      if (chunk.prompt_tokens !== undefined) {
+        b.lastContextTokens = chunk.prompt_tokens;
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
