@@ -5653,8 +5653,8 @@ export default function App({
 
             output =
               contextWindow > 0
-                ? `${bar} ${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
-                : `${model} · ${formatCompact(usedTokens)} tokens used (context window unknown)`;
+                ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
+                : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
           }
 
           buffersRef.current.byId.set(cmdId, {
