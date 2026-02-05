@@ -104,7 +104,12 @@ export const ToolCallMessage = memo(
 
     // Parse and format the tool call
     const rawName = line.name ?? "?";
-    const argsText = line.argsText ?? "...";
+    const argsText =
+      typeof line.argsText === "string"
+        ? line.argsText
+        : line.argsText == null
+          ? ""
+          : JSON.stringify(line.argsText);
 
     // Task tool rendering decision:
     // - Cancelled/rejected: render as error tool call (won't appear in SubagentGroupDisplay)
@@ -165,16 +170,35 @@ export const ToolCallMessage = memo(
     // - Phase "running"/"finished" or stream done: args complete, show formatted
     let args = "";
     if (!isQuestionTool(rawName)) {
-      // Args are complete once running, finished, or stream is done
+      const parseArgs = (): {
+        formatted: ReturnType<typeof formatArgsDisplay> | null;
+        parseable: boolean;
+      } => {
+        if (!argsText.trim()) {
+          return { formatted: null, parseable: true };
+        }
+        try {
+          const formatted = formatArgsDisplay(argsText, rawName);
+          return { formatted, parseable: true };
+        } catch {
+          return { formatted: null, parseable: false };
+        }
+      };
+
+      // Args are complete once running/finished, stream done, or JSON is parseable.
+      const { formatted, parseable } = parseArgs();
       const argsComplete =
-        line.phase === "running" || line.phase === "finished" || !isStreaming;
+        parseable ||
+        line.phase === "running" ||
+        line.phase === "finished" ||
+        !isStreaming;
 
       if (!argsComplete) {
         args = "(…)";
       } else {
-        const formatted = formatArgsDisplay(argsText, rawName);
+        const formattedArgs = formatted ?? formatArgsDisplay(argsText, rawName);
         // Normalize newlines to spaces to prevent forced line breaks
-        const normalizedDisplay = formatted.display.replace(/\n/g, " ");
+        const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");
         // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
         const argsBoxWidth = rightWidth - displayName.length;
         const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
@@ -206,7 +230,8 @@ export const ToolCallMessage = memo(
           return undefined;
       }
     })();
-    const dotShouldAnimate = line.phase === "ready" || line.phase === "running";
+    const dotShouldAnimate =
+      line.phase === "running" || (line.phase === "ready" && !isStreaming);
 
     // Format result for display
     const getResultElement = () => {

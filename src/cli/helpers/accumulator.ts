@@ -224,6 +224,8 @@ export type Buffers = {
   splitCounters: Map<string, number>; // tracks split count per original otid
   // Track server-side tool calls for hook triggering (toolCallId -> info)
   serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Track if this run has pending approvals (used to gate server tool phases)
+  approvalsPending: boolean;
   // Agent ID for passing to hooks (needed for server-side tools like memory)
   agentId?: string;
 };
@@ -250,6 +252,7 @@ export function createBuffers(agentId?: string): Buffers {
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
+    approvalsPending: false,
     agentId,
   };
 }
@@ -587,8 +590,10 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         b.toolCallIdToLineId.set(toolCallId, id);
       }
 
-      // Tool calls should be "ready" (blinking) while pending execution
-      const desiredPhase = "ready";
+      // Tool calls start in "streaming" (static grey) while args stream in.
+      // Approval requests move to "ready" (blinking), server tools move to
+      // "running" once args are complete.
+      const desiredPhase = "streaming";
       let line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
@@ -612,7 +617,23 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         chunk.message_type === "approval_request_message" &&
         line.phase !== "finished"
       ) {
-        b.byId.set(id, { ...line, phase: "ready" });
+        b.approvalsPending = true;
+        line = { ...line, phase: "ready" };
+        b.byId.set(id, line);
+
+        // Downgrade any server tools to streaming while approvals are pending.
+        for (const [toolCallId] of b.serverToolCalls) {
+          const serverLineId = b.toolCallIdToLineId.get(toolCallId);
+          if (!serverLineId) continue;
+          const serverLine = b.byId.get(serverLineId);
+          if (
+            serverLine &&
+            serverLine.kind === "tool_call" &&
+            serverLine.phase === "running"
+          ) {
+            b.byId.set(serverLineId, { ...serverLine, phase: "streaming" });
+          }
+        }
       }
 
       // if argsText is not empty, add it to the line (immutable update)
@@ -622,6 +643,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           ...line,
           argsText: (line.argsText || "") + argsText,
         };
+        line = updatedLine;
         b.byId.set(id, updatedLine);
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;

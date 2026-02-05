@@ -2742,6 +2742,45 @@ export default function App({
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: { allowReentry?: boolean; submissionGeneration?: number },
     ): Promise<void> => {
+      // Reset per-run approval tracking used by streaming UI.
+      buffersRef.current.approvalsPending = false;
+      if (buffersRef.current.serverToolCalls.size > 0) {
+        let didPromote = false;
+        for (const [toolCallId, toolInfo] of buffersRef.current
+          .serverToolCalls) {
+          const lineId = buffersRef.current.toolCallIdToLineId.get(toolCallId);
+          if (!lineId) continue;
+          const line = buffersRef.current.byId.get(lineId);
+          if (!line || line.kind !== "tool_call" || line.phase === "finished") {
+            continue;
+          }
+          const argsCandidate = toolInfo.toolArgs ?? "";
+          const trimmed = argsCandidate.trim();
+          let argsComplete = false;
+          if (trimmed.length === 0) {
+            argsComplete = true;
+          } else {
+            try {
+              JSON.parse(argsCandidate);
+              argsComplete = true;
+            } catch {
+              // Args still incomplete.
+            }
+          }
+          if (argsComplete && line.phase !== "running") {
+            const nextLine = {
+              ...line,
+              phase: "running" as const,
+              argsText: line.argsText ?? argsCandidate,
+            };
+            buffersRef.current.byId.set(lineId, nextLine);
+            didPromote = true;
+          }
+        }
+        if (didPromote) {
+          refreshDerived();
+        }
+      }
       // Helper function for Ralph Wiggum mode continuation
       // Defined here to have access to buffersRef, processConversation via closure
       const handleRalphContinuation = () => {
@@ -8737,7 +8776,7 @@ ${SYSTEM_REMINDER_CLOSE}
             refreshDerived();
           }
           toolResultsInFlightRef.current = true;
-          await processConversation(input);
+          await processConversation(input, { allowReentry: true });
           toolResultsInFlightRef.current = false;
 
           // Clear any stale queued results from previous interrupts.
