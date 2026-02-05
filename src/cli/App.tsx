@@ -1370,14 +1370,6 @@ export default function App({
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (queueAppendTimeoutRef.current) {
-        clearTimeout(queueAppendTimeoutRef.current);
-      }
-    };
-  }, []);
-
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
@@ -1441,8 +1433,6 @@ export default function App({
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
 
-  const queueAppendTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 15s append mode timeout
-
   // Cache last sent input - cleared on successful completion, remains if interrupted
   const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
     null,
@@ -1491,13 +1481,9 @@ export default function App({
     [],
   );
 
-  // Consume queued messages for appending to tool results (clears queue + timeout)
+  // Consume queued messages for appending to tool results (clears queue)
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     if (messageQueueRef.current.length === 0) return null;
-    if (queueAppendTimeoutRef.current) {
-      clearTimeout(queueAppendTimeoutRef.current);
-      queueAppendTimeoutRef.current = null;
-    }
     const messages = [...messageQueueRef.current];
     setMessageQueue([]);
     return messages;
@@ -5427,50 +5413,7 @@ export default function App({
             { kind: "user", text: msg },
           ];
 
-          const isSlashCommand = msg.startsWith("/");
-
-          // Regular messages: use append mode (wait 15s for tools, then append to API call)
-          if (
-            !isSlashCommand &&
-            streamingRef.current &&
-            !waitingForQueueCancelRef.current &&
-            !queueAppendTimeoutRef.current
-          ) {
-            queueAppendTimeoutRef.current = setTimeout(() => {
-              if (messageQueueRef.current.length === 0) {
-                queueAppendTimeoutRef.current = null;
-                return;
-              }
-              queueAppendTimeoutRef.current = null;
-
-              // 15s expired - fall back to cancel
-              waitingForQueueCancelRef.current = true;
-              queueSnapshotRef.current = [...messageQueueRef.current];
-              if (toolAbortControllerRef.current) {
-                toolAbortControllerRef.current.abort();
-              }
-              getClient()
-                .then((client) => {
-                  if (conversationIdRef.current === "default") {
-                    return client.agents.messages.cancel(agentIdRef.current);
-                  }
-                  return client.conversations.cancel(conversationIdRef.current);
-                })
-                .catch(() => {
-                  waitingForQueueCancelRef.current = false;
-                });
-              setTimeout(() => {
-                if (
-                  waitingForQueueCancelRef.current &&
-                  abortControllerRef.current
-                ) {
-                  abortControllerRef.current.abort();
-                  waitingForQueueCancelRef.current = false;
-                  queueSnapshotRef.current = [];
-                }
-              }, 3000);
-            }, 15000);
-          }
+          // Regular messages: queue and wait for tool completion
 
           return newQueue;
         });
