@@ -1465,6 +1465,7 @@ async function main(): Promise<void> {
             filePath: fromAfFile,
             modelOverride: model,
             stripMessages: true,
+            stripSkills: false,
           });
           agent = result.agent;
           isNewlyCreatedAgent = true;
@@ -1472,6 +1473,13 @@ async function main(): Promise<void> {
             isNew: true,
             blocks: [],
           });
+
+          // Display extracted skills summary
+          if (result.skills && result.skills.length > 0) {
+            console.log(
+              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}\n`,
+            );
+          }
         }
 
         // Priority 2: Try to use --agent specified ID
