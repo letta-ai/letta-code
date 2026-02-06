@@ -165,7 +165,10 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
-import { renderContextUsage } from "./helpers/contextChart";
+import {
+  type ContextWindowOverview,
+  renderContextUsage,
+} from "./helpers/contextChart";
 import {
   createContextTracker,
   resetContextHistory,
@@ -3329,7 +3332,7 @@ export default function App({
           sessionStatsRef.current.startTrajectory();
 
           // Only bump turn counter for actual user messages, not approval continuations.
-          // This ensures all LLM steps within one user turn share the same color in /context chart.
+          // This ensures all LLM steps within one user "turn" are counted as one.
           const hasUserMessage = currentInput.some(
             (item) => item.type === "message",
           );
@@ -5843,6 +5846,7 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
+          // Show immediately with single-color bar
           const output = renderContextUsage({
             usedTokens,
             contextWindow,
@@ -5856,6 +5860,65 @@ export default function App({
             success: true,
             preformatted: true,
           });
+
+          // Async: fetch breakdown from API and re-render with color-coded bar
+          (async () => {
+            try {
+              console.error(
+                "[context-debug] Starting async breakdown fetch...",
+              );
+              const { getServerUrl } = await import("../agent/client");
+              const settings =
+                await settingsManager.getSettingsWithSecureTokens();
+              const apiKey =
+                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+              const baseUrl = getServerUrl();
+              const url = `${baseUrl}/v1/agents/${agentIdRef.current}/context`;
+
+              console.error(`[context-debug] Fetching: ${url}`);
+              console.error(`[context-debug] Has API key: ${!!apiKey}`);
+
+              const res = await fetch(url, {
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                },
+              });
+
+              console.error(`[context-debug] Response status: ${res.status}`);
+              if (!res.ok) {
+                const body = await res.text();
+                console.error(`[context-debug] Error body: ${body}`);
+                return;
+              }
+
+              const overview = (await res.json()) as ContextWindowOverview;
+              console.error(
+                "[context-debug] Got overview:",
+                JSON.stringify(overview).slice(0, 200),
+              );
+
+              const updatedOutput = renderContextUsage({
+                usedTokens,
+                contextWindow,
+                model,
+                history,
+                breakdown: overview,
+              });
+
+              console.error(
+                "[context-debug] Re-rendering with breakdown via cmd.update()",
+              );
+              cmd.update({
+                output: updatedOutput,
+                phase: "finished",
+                success: true,
+                preformatted: true,
+              });
+              console.error("[context-debug] Done! cmd.update() called.");
+            } catch (err) {
+              console.error("[context-debug] Caught error:", err);
+            }
+          })();
 
           return { submitted: true };
         }
