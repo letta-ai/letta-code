@@ -1,7 +1,7 @@
 import type { MutableRefObject } from "react";
 import type { Buffers, Line } from "../helpers/accumulator";
 
-export type CommandPhase = "running" | "finished";
+export type CommandPhase = "running" | "waiting" | "finished";
 
 export type CommandUpdate = {
   output: string;

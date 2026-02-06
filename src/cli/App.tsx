@@ -1127,6 +1127,7 @@ export default function App({
   const pendingOverlayCommandRef = useRef<{
     overlay: ActiveOverlay;
     command: CommandHandle;
+    openingOutput: string;
     dismissOutput: string;
   } | null>(null);
   const [memorySyncConflicts, setMemorySyncConflicts] = useState<
@@ -2034,6 +2035,7 @@ export default function App({
       pendingOverlayCommandRef.current = {
         overlay,
         command,
+        openingOutput,
         dismissOutput,
       };
       return command;
@@ -2049,6 +2051,18 @@ export default function App({
     pendingOverlayCommandRef.current = null;
     return pending.command;
   }, []);
+
+  useEffect(() => {
+    const pending = pendingOverlayCommandRef.current;
+    if (!pending || pending.overlay !== activeOverlay) {
+      return;
+    }
+    pending.command.update({
+      output: pending.openingOutput,
+      phase: "waiting",
+      dimOutput: true,
+    });
+  }, [activeOverlay]);
 
   useEffect(() => {
     if (deferredCommitAt === null) return;

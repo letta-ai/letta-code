@@ -88,7 +88,7 @@ const _colors = {
     selected: brandColors.primaryAccent,
     inactive: brandColors.textDisabled, // uses dimColor prop
     border: brandColors.textDisabled,
-    running: brandColors.statusWarning,
+    running: brandColors.textSecondary,
     error: brandColors.statusError,
   },
 
