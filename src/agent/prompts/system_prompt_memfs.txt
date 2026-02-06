@@ -1,65 +1,45 @@
 
-## Memory Filesystem (memFS)
-
-Your memory blocks are mirrored as Markdown files on disk at:
-`~/.letta/agents/<agent-id>/memory/`
-
-This provides:
-- **Persistent storage**: memory edits survive restarts and can be version-controlled
-- **Two-way sync**: edits in files sync to memory blocks, and edits in blocks sync to files
-- **Visibility**: a `memory_filesystem` block shows the current on-disk tree
+## Memory Filesystem
+Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/`. This provides full version control, sync with the server, and branching for parallel edits.
 
 ### Structure
-
 ```
-~/.letta/agents/<agent-id>/memory/
-├── system/              # Attached system blocks (in system prompt)
-│   ├── persona/         # Namespaced blocks (e.g. persona/git_safety.md)
-│   ├── human.md
-│   └── ...
-├── <label>.md           # Detached blocks live at the memory root (NOT in system prompt)
-└── .sync-state.json     # Internal sync state (do not edit)
+~/.letta/agents/<agent-id>/
+├── memory/
+│   └── system/       # Blocks in your system prompt
+│       ├── persona/
+│       ├── human/
+│       └── ...
+└── metadata/
+    └── blocks.json   # Block descriptions and limits
 ```
 
+### How It Works
+1. Each `.md` file in `memory/system/` maps to a memory block label (e.g., `memory/system/persona/soul.md` → label `system/persona/soul`)
+2. Files contain raw block content (no frontmatter)
+3. Changes pushed to git sync to the API within seconds
+4. API changes sync to git automatically
+5. The `memory_filesystem` block auto-updates with the current tree view
 
-### Label mapping
-
-- A file path maps to a block label by stripping the `.md` extension and using `/` as the separator.
-  - Example: `system/persona/git_safety.md` → label `persona/git_safety`
-  - Example: `human_notes.md` → label `human_notes`
-
-### Sync behavior
-
-- **Startup**: automatic sync when the CLI starts
-- **After memory edits**: automatic sync after using memory tools
-- **Manual**: `/memfs sync` triggers an interactive sync inside the CLI UI
-
-### Git-like memFS commands (inspect/resolve)
-
-When you need to inspect status, view diffs, or resolve conflicts non-interactively, use the CLI subcommands:
-
+### Syncing
 ```bash
-letta memfs status [--agent <id>]
-letta memfs diff [--agent <id>]
-letta memfs resolve --resolutions '<JSON>' [--agent <id>]
+cd ~/.letta/agents/<agent-id>
+
+# See what changed
+git status
+
+# Commit and push your changes
+git add memory/
+git commit -m "memory: <describe changes>"
+git push
+
+# Get latest from server
+git pull
 ```
 
-- Requires agent id via `--agent`/`--agent-id` or `LETTA_AGENT_ID`
-- Output is **JSON only**
-- `letta memfs diff` writes a Markdown diff file and returns its `diffPath` in JSON
+The system will remind you when your memory has uncommitted changes. Sync when convenient.
 
-### Conflicts
-
-A **conflict** occurs when **both** the file and the corresponding block were modified since the last sync.
-
-- Non-conflicting changes (only one side changed) are auto-resolved on the next sync
-- If conflicts are detected, you will receive a system reminder with conflicting labels
-- Use `letta memfs diff` to review both versions, then resolve each label to either:
-  - `"file"` (keep the on-disk Markdown file)
-  - `"block"` (keep the in-API block value)
-
-### Read-only blocks
-
-Some blocks are read-only in the API (e.g., certain system-managed blocks). For read-only blocks:
-- Sync is **API → file** only
-- File edits for those blocks are ignored
+### History
+```bash
+git -C ~/.letta/agents/<agent-id> log --oneline
+```

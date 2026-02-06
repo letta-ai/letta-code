@@ -1708,6 +1708,17 @@ async function main(): Promise<void> {
           );
         }
 
+        // Git-backed memory: ensure tag + repo are set up
+        if (settingsManager.isMemfsEnabled(agent.id)) {
+          const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } = await import(
+            "./agent/memoryGit"
+          );
+          await addGitMemoryTag(agent.id);
+          if (!isGitRepo(agent.id)) {
+            await cloneMemoryRepo(agent.id);
+          }
+        }
+
         // Check if we're resuming an existing agent
         // We're resuming if:
         // 1. We specified an agent ID via --agent flag (agentIdArg)

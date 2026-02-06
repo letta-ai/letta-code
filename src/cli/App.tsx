@@ -43,15 +43,9 @@ import { getLettaCodeHeaders } from "../agent/http-headers";
 
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
-  checkMemoryFilesystemStatus,
   detachMemoryFilesystemBlock,
-  ensureMemoryFilesystemBlock,
   ensureMemoryFilesystemDirs,
-  formatMemorySyncSummary,
   getMemoryFilesystemRoot,
-  type MemorySyncConflict,
-  type MemorySyncResolution,
-  syncMemoryFilesystem,
   updateMemoryFilesystemBlock,
 } from "../agent/memoryFilesystem";
 import { sendMessageStream } from "../agent/message";
@@ -125,7 +119,6 @@ import { EventMessage } from "./components/EventMessage";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { HelpDialog } from "./components/HelpDialog";
 import { HooksManager } from "./components/HooksManager";
-import { InlineQuestionApproval } from "./components/InlineQuestionApproval";
 import { Input } from "./components/InputRich";
 import { McpConnectFlow } from "./components/McpConnectFlow";
 import { McpSelector } from "./components/McpSelector";
@@ -1137,20 +1130,16 @@ export default function App({
     openingOutput: string;
     dismissOutput: string;
   } | null>(null);
-  const [memorySyncConflicts, setMemorySyncConflicts] = useState<
-    MemorySyncConflict[] | null
-  >(null);
-  const memorySyncProcessedToolCallsRef = useRef<Set<string>>(new Set());
-  const memorySyncCommandIdRef = useRef<string | null>(null);
-  const memorySyncCommandInputRef = useRef<string>("/memfs sync");
-  const memorySyncInFlightRef = useRef(false);
   const memoryFilesystemInitializedRef = useRef(false);
-  const pendingMemfsConflictsRef = useRef<MemorySyncConflict[] | null>(null);
-  const memfsDirtyRef = useRef(false);
   const memfsWatcherRef = useRef<ReturnType<
     typeof import("node:fs").watch
   > | null>(null);
-  const memfsConflictCheckInFlightRef = useRef(false);
+  const memfsGitCheckInFlightRef = useRef(false);
+  const pendingGitReminderRef = useRef<{
+    dirty: boolean;
+    aheadOfRemote: boolean;
+    summary: string;
+  } | null>(null);
   const [feedbackPrefill, setFeedbackPrefill] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [modelSelectorOptions, setModelSelectorOptions] = useState<{
@@ -2606,156 +2595,32 @@ export default function App({
     [refreshDerived],
   );
 
-  const runMemoryFilesystemSync = useCallback(
-    async (source: "startup" | "auto" | "command", commandId?: string) => {
-      if (!agentId || agentId === "loading") {
-        return;
-      }
-      if (memorySyncInFlightRef.current) {
-        // If called from a command while another sync is in flight, update the UI
-        if (source === "command" && commandId) {
-          updateMemorySyncCommand(
-            commandId,
-            "Sync already in progress — try again in a moment",
-            false,
-          );
-        }
-        return;
-      }
-
-      memorySyncInFlightRef.current = true;
-
-      try {
-        await ensureMemoryFilesystemBlock(agentId);
-        const result = await syncMemoryFilesystem(agentId);
-
-        if (result.conflicts.length > 0) {
-          if (source === "command") {
-            // User explicitly ran /memfs sync — show the interactive overlay
-            memorySyncCommandIdRef.current = commandId ?? null;
-            setMemorySyncConflicts(result.conflicts);
-            setActiveOverlay("memfs-sync");
-
-            if (commandId) {
-              updateMemorySyncCommand(
-                commandId,
-                `Memory sync paused — resolve ${result.conflicts.length} conflict${
-                  result.conflicts.length === 1 ? "" : "s"
-                } to continue.`,
-                false,
-                "/memfs sync",
-                true, // keepRunning - don't commit until conflicts resolved
-              );
-            }
-          } else {
-            // Auto or startup sync — queue conflicts for agent-driven resolution
-            debugLog(
-              "memfs",
-              `${source} sync found ${result.conflicts.length} conflict(s), queuing for agent`,
-            );
-            pendingMemfsConflictsRef.current = result.conflicts;
-          }
-          return;
-        }
-
-        await updateMemoryFilesystemBlock(agentId);
-
-        if (commandId) {
-          updateMemorySyncCommand(
-            commandId,
-            formatMemorySyncSummary(result),
-            true,
-          );
-        }
-      } catch (error) {
-        const errorText = formatErrorDetails(error, agentId);
-        if (commandId) {
-          updateMemorySyncCommand(commandId, `Failed: ${errorText}`, false);
-        } else if (source !== "startup") {
-          appendError(`Memory sync failed: ${errorText}`);
-        } else {
-          console.error(`Memory sync failed: ${errorText}`);
-        }
-      } finally {
-        memorySyncInFlightRef.current = false;
-      }
-    },
-    [agentId, appendError, updateMemorySyncCommand],
-  );
-
-  const maybeSyncMemoryFilesystemAfterTurn = useCallback(async () => {
-    // Only auto-sync if memfs is enabled for this agent
+  const maybeCheckMemoryGitStatus = useCallback(async () => {
+    // Only check if memfs is enabled for this agent
     if (!agentId || agentId === "loading") return;
     if (!settingsManager.isMemfsEnabled(agentId)) return;
 
-    // Check for memory tool calls that need syncing (legacy path — memory tools
-    // are detached when memfs is enabled, but kept for backwards compatibility)
-    const newToolCallIds: string[] = [];
-    for (const line of buffersRef.current.byId.values()) {
-      if (line.kind !== "tool_call") continue;
-      if (!line.toolCallId || !line.name) continue;
-      if (!isMemoryTool(line.name)) continue;
-      if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId))
-        continue;
-      newToolCallIds.push(line.toolCallId);
-    }
-
-    if (newToolCallIds.length > 0) {
-      for (const id of newToolCallIds) {
-        memorySyncProcessedToolCallsRef.current.add(id);
-      }
-      await runMemoryFilesystemSync("auto");
-    }
-
-    // Agent-driven conflict detection (fire-and-forget, non-blocking).
-    // Check when: (a) fs.watch detected a file change, or (b) every N turns
-    // to catch block-only changes (e.g. user manually editing blocks via the API).
-    const isDirty = memfsDirtyRef.current;
+    // Git-backed memory: check status periodically (fire-and-forget).
+    // Runs every N turns to detect uncommitted changes or unpushed commits.
     const isIntervalTurn =
       turnCountRef.current > 0 &&
       turnCountRef.current % MEMFS_CONFLICT_CHECK_INTERVAL === 0;
 
-    if ((isDirty || isIntervalTurn) && !memfsConflictCheckInFlightRef.current) {
-      memfsDirtyRef.current = false;
-      memfsConflictCheckInFlightRef.current = true;
+    if (isIntervalTurn && !memfsGitCheckInFlightRef.current) {
+      memfsGitCheckInFlightRef.current = true;
 
-      // Fire-and-forget — don't await, don't block the turn
-      debugLog(
-        "memfs",
-        `Conflict check triggered (dirty=${isDirty}, interval=${isIntervalTurn}, turn=${turnCountRef.current})`,
-      );
-      checkMemoryFilesystemStatus(agentId)
-        .then(async (status) => {
-          if (status.conflicts.length > 0) {
-            debugLog(
-              "memfs",
-              `Found ${status.conflicts.length} conflict(s): ${status.conflicts.map((c) => c.label).join(", ")}`,
-            );
-            pendingMemfsConflictsRef.current = status.conflicts;
-          } else if (
-            status.newFiles.length > 0 ||
-            status.pendingFromFile.length > 0 ||
-            status.locationMismatches.length > 0
-          ) {
-            // New files, file changes, or location mismatches detected - auto-sync
-            debugLog(
-              "memfs",
-              `Auto-syncing: ${status.newFiles.length} new, ${status.pendingFromFile.length} changed, ${status.locationMismatches.length} location mismatches`,
-            );
-            pendingMemfsConflictsRef.current = null;
-            await runMemoryFilesystemSync("auto");
-          } else {
-            pendingMemfsConflictsRef.current = null;
-          }
+      import("../agent/memoryGit")
+        .then(({ getMemoryGitStatus }) => getMemoryGitStatus(agentId))
+        .then((status) => {
+          pendingGitReminderRef.current =
+            status.dirty || status.aheadOfRemote ? status : null;
         })
-        .catch((err) => {
-          debugWarn("memfs", "Conflict check failed", err);
-        })
+        .catch(() => {})
         .finally(() => {
-          memfsConflictCheckInFlightRef.current = false;
+          memfsGitCheckInFlightRef.current = false;
         });
     }
-  }, [agentId, runMemoryFilesystemSync]);
+  }, [agentId]);
 
   useEffect(() => {
     if (loadingState !== "ready") {
@@ -2773,8 +2638,30 @@ export default function App({
     }
 
     memoryFilesystemInitializedRef.current = true;
-    runMemoryFilesystemSync("startup");
-  }, [agentId, loadingState, runMemoryFilesystemSync]);
+
+    // Git-backed memory: clone or pull on startup
+    (async () => {
+      try {
+        const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
+          "../agent/memoryGit"
+        );
+        if (!isGitRepo(agentId)) {
+          await cloneMemoryRepo(agentId);
+        } else {
+          await pullMemory(agentId);
+        }
+        const { updateMemoryFilesystemBlock } = await import(
+          "../agent/memoryFilesystem"
+        );
+        await updateMemoryFilesystemBlock(agentId);
+      } catch (err) {
+        debugWarn(
+          "memfs-git",
+          `Startup sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    })();
+  }, [agentId, loadingState]);
 
   // Set up fs.watch on the memory directory to detect external file edits.
   // When a change is detected, set a dirty flag — the actual conflict check
@@ -2793,7 +2680,8 @@ export default function App({
         if (!existsSync(memRoot)) return;
 
         watcher = watch(memRoot, { recursive: true }, () => {
-          memfsDirtyRef.current = true;
+          // Git-backed memory: no auto-sync on file changes.
+          // Agent handles commit/push. Status checked on interval.
         });
         memfsWatcherRef.current = watcher;
         debugLog("memfs", `Watching memory directory: ${memRoot}`);
@@ -2824,113 +2712,8 @@ export default function App({
     };
   }, [agentId]);
 
-  const handleMemorySyncConflictSubmit = useCallback(
-    async (answers: Record<string, string>) => {
-      if (!agentId || agentId === "loading" || !memorySyncConflicts) {
-        return;
-      }
-
-      const commandId = memorySyncCommandIdRef.current;
-      const commandInput = memorySyncCommandInputRef.current;
-      memorySyncCommandIdRef.current = null;
-      memorySyncCommandInputRef.current = "/memfs sync";
-
-      const resolutions: MemorySyncResolution[] = memorySyncConflicts.map(
-        (conflict) => {
-          const answer = answers[`Conflict for ${conflict.label}`];
-          return {
-            label: conflict.label,
-            resolution: answer === "Use file version" ? "file" : "block",
-          };
-        },
-      );
-
-      setMemorySyncConflicts(null);
-      setActiveOverlay(null);
-
-      if (memorySyncInFlightRef.current) {
-        return;
-      }
-
-      memorySyncInFlightRef.current = true;
-
-      try {
-        const result = await syncMemoryFilesystem(agentId, {
-          resolutions,
-        });
-
-        if (result.conflicts.length > 0) {
-          setMemorySyncConflicts(result.conflicts);
-          setActiveOverlay("memfs-sync");
-          if (commandId) {
-            updateMemorySyncCommand(
-              commandId,
-              `Memory sync paused — resolve ${result.conflicts.length} conflict${
-                result.conflicts.length === 1 ? "" : "s"
-              } to continue.`,
-              false,
-              commandInput,
-              true, // keepRunning - don't commit until all conflicts resolved
-            );
-          }
-          return;
-        }
-
-        await updateMemoryFilesystemBlock(agentId);
-
-        // Format resolution summary (align with formatMemorySyncSummary which uses "⎿  " prefix)
-        const resolutionSummary = resolutions
-          .map(
-            (r) =>
-              `⎿  ${r.label}: used ${r.resolution === "file" ? "file" : "block"} version`,
-          )
-          .join("\n");
-
-        if (commandId) {
-          updateMemorySyncCommand(
-            commandId,
-            `${formatMemorySyncSummary(result)}\nConflicts resolved:\n${resolutionSummary}`,
-            true,
-            commandInput,
-          );
-        }
-      } catch (error) {
-        const errorText = formatErrorDetails(error, agentId);
-        if (commandId) {
-          updateMemorySyncCommand(
-            commandId,
-            `Failed: ${errorText}`,
-            false,
-            commandInput,
-          );
-        } else {
-          appendError(`Memory sync failed: ${errorText}`);
-        }
-      } finally {
-        memorySyncInFlightRef.current = false;
-      }
-    },
-    [agentId, appendError, memorySyncConflicts, updateMemorySyncCommand],
-  );
-
-  const handleMemorySyncConflictCancel = useCallback(() => {
-    const commandId = memorySyncCommandIdRef.current;
-    const commandInput = memorySyncCommandInputRef.current;
-    memorySyncCommandIdRef.current = null;
-    memorySyncCommandInputRef.current = "/memfs sync";
-    memorySyncInFlightRef.current = false;
-    setMemorySyncConflicts(null);
-    setActiveOverlay(null);
-
-    if (commandId) {
-      updateMemorySyncCommand(
-        commandId,
-        "Memory sync cancelled.",
-        false,
-        commandInput,
-      );
-    }
-  }, [updateMemorySyncCommand]);
+  // Note: Old memFS conflict resolution overlay (handleMemorySyncConflictSubmit/Cancel)
+  // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
   // Core streaming function - iterative loop that processes conversation turns
   const processConversation = useCallback(
@@ -3709,7 +3492,7 @@ export default function App({
               queueSnapshotRef.current = [];
             }
 
-            await maybeSyncMemoryFilesystemAfterTurn();
+            await maybeCheckMemoryGitStatus();
 
             // === RALPH WIGGUM CONTINUATION CHECK ===
             // Check if ralph mode is active and should auto-continue
@@ -4702,7 +4485,7 @@ export default function App({
       queueApprovalResults,
       consumeQueuedMessages,
       appendTaskNotificationEvents,
-      maybeSyncMemoryFilesystemAfterTurn,
+      maybeCheckMemoryGitStatus,
       openTrajectorySegment,
       syncTrajectoryTokenBase,
       syncTrajectoryElapsedBase,
@@ -7118,33 +6901,21 @@ export default function App({
               );
               await updateAgentSystemPromptMemfs(agentId, true);
 
-              // 4. Run initial sync (creates files from blocks)
-              await ensureMemoryFilesystemBlock(agentId);
-              const result = await syncMemoryFilesystem(agentId);
-
-              if (result.conflicts.length > 0) {
-                // Handle conflicts - show overlay (keep running so it stays in liveItems)
-                memorySyncCommandIdRef.current = cmdId;
-                memorySyncCommandInputRef.current = msg;
-                setMemorySyncConflicts(result.conflicts);
-                setActiveOverlay("memfs-sync");
-                updateMemorySyncCommand(
-                  cmdId,
-                  `Memory filesystem enabled with ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} to resolve.`,
-                  false,
-                  msg,
-                  true, // keepRunning - don't commit until conflict resolved
-                );
-              } else {
-                await updateMemoryFilesystemBlock(agentId);
-                const memoryDir = getMemoryFilesystemRoot(agentId);
-                updateMemorySyncCommand(
-                  cmdId,
-                  `Memory filesystem enabled.\nPath: ${memoryDir}\n${formatMemorySyncSummary(result)}`,
-                  true,
-                  msg,
-                );
+              // 4. Add git-memory-enabled tag and clone repo
+              const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } =
+                await import("../agent/memoryGit");
+              await addGitMemoryTag(agentId);
+              if (!isGitRepo(agentId)) {
+                await cloneMemoryRepo(agentId);
               }
+              await updateMemoryFilesystemBlock(agentId);
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              updateMemorySyncCommand(
+                cmdId,
+                `Memory filesystem enabled (git-backed).\nPath: ${memoryDir}`,
+                true,
+                msg,
+              );
             } catch (error) {
               const errorText =
                 error instanceof Error ? error.message : String(error);
@@ -7172,7 +6943,7 @@ export default function App({
 
             updateMemorySyncCommand(
               cmdId,
-              "Syncing memory filesystem...",
+              "Pulling latest memory from server...",
               true,
               msg,
               true,
@@ -7181,10 +6952,11 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              await runMemoryFilesystemSync("command", cmdId);
+              const { pullMemory } = await import("../agent/memoryGit");
+              const result = await pullMemory(agentId);
+              await updateMemoryFilesystemBlock(agentId);
+              updateMemorySyncCommand(cmdId, result.summary, true, msg);
             } catch (error) {
-              // runMemoryFilesystemSync has its own error handling, but catch any
-              // unexpected errors that slip through
               const errorText =
                 error instanceof Error ? error.message : String(error);
               updateMemorySyncCommand(cmdId, `Failed: ${errorText}`, false);
@@ -7258,41 +7030,21 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              // 1. Run final sync to ensure blocks are up-to-date
-              const result = await syncMemoryFilesystem(agentId);
-
-              if (result.conflicts.length > 0) {
-                // Handle conflicts - show overlay (keep running so it stays in liveItems)
-                memorySyncCommandIdRef.current = cmdId;
-                memorySyncCommandInputRef.current = msg;
-                setMemorySyncConflicts(result.conflicts);
-                setActiveOverlay("memfs-sync");
-                updateMemorySyncCommand(
-                  cmdId,
-                  `Cannot disable: resolve ${result.conflicts.length} conflict${result.conflicts.length === 1 ? "" : "s"} first.`,
-                  false,
-                  msg,
-                  true, // keepRunning - don't commit until conflict resolved
-                );
-                return { submitted: true };
-              }
-
-              // 2. Re-attach memory tool
+              // 1. Re-attach memory tool
               const { reattachMemoryTool } = await import("../tools/toolset");
-              // Use current model or default to Claude
               const modelId = currentModelId || "anthropic/claude-sonnet-4";
               await reattachMemoryTool(agentId, modelId);
 
-              // 3. Detach memory_filesystem block
+              // 2. Detach memory_filesystem block
               await detachMemoryFilesystemBlock(agentId);
 
-              // 4. Update system prompt to remove memfs section
+              // 3. Update system prompt to remove memfs section
               const { updateAgentSystemPromptMemfs } = await import(
                 "../agent/modify"
               );
               await updateAgentSystemPromptMemfs(agentId, false);
 
-              // 5. Update settings
+              // 4. Update settings
               settingsManager.setMemfsEnabled(agentId, false);
 
               updateMemorySyncCommand(
@@ -7766,43 +7518,26 @@ ${SYSTEM_REMINDER_CLOSE}
       // Increment turn count for next iteration
       turnCountRef.current += 1;
 
-      // Build memfs conflict reminder if conflicts were detected after the last turn
-      let memfsConflictReminder = "";
-      if (
-        pendingMemfsConflictsRef.current &&
-        pendingMemfsConflictsRef.current.length > 0
-      ) {
-        const conflicts = pendingMemfsConflictsRef.current;
-        const conflictRows = conflicts
-          .map((c) => `| ${c.label} | Both file and block modified |`)
-          .join("\n");
-        memfsConflictReminder = `${SYSTEM_REMINDER_OPEN}
-## Memory Filesystem: Sync Conflicts Detected
+      // Build git memory sync reminder if uncommitted changes or unpushed commits
+      let memoryGitReminder = "";
+      const gitStatus = pendingGitReminderRef.current;
+      if (gitStatus) {
+        memoryGitReminder = `${SYSTEM_REMINDER_OPEN}
+MEMORY SYNC: Your memory directory has uncommitted changes or is ahead of the remote.
 
-${conflicts.length} memory block${conflicts.length === 1 ? "" : "s"} ha${conflicts.length === 1 ? "s" : "ve"} conflicts (both the file and the in-memory block were modified since last sync):
+${gitStatus.summary}
 
-| Block | Status |
-|-------|--------|
-${conflictRows}
-
-To see the full diff for each conflict, run:
+To sync:
 \`\`\`bash
-letta memfs diff --agent $LETTA_AGENT_ID
+cd ~/.letta/agents/${agentId}
+git add memory/
+git commit -m "memory: <describe changes>"
+git push
 \`\`\`
-
-The diff will be written to a file for review. After reviewing, resolve all conflicts at once:
-\`\`\`bash
-letta memfs resolve --agent $LETTA_AGENT_ID --resolutions '<JSON array of {label, resolution}>'
-\`\`\`
-
-Resolution options: \`"file"\` (overwrite block with file) or \`"block"\` (overwrite file with block).
-You MUST resolve all conflicts. They will not be synced automatically until resolved.
-
-For more context, load the \`syncing-memory-filesystem\` skill.
 ${SYSTEM_REMINDER_CLOSE}
 `;
-        // Clear after injecting so it doesn't repeat on subsequent turns
-        pendingMemfsConflictsRef.current = null;
+        // Clear after injecting so it doesn't repeat
+        pendingGitReminderRef.current = null;
       }
 
       // Build permission mode change alert if mode changed since last notification
@@ -7871,7 +7606,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryReminderContent);
-      pushReminder(memfsConflictReminder);
+      pushReminder(memoryGitReminder);
       const messageContent =
         reminderParts.length > 0
           ? [...reminderParts, ...contentParts]
@@ -11196,29 +10931,8 @@ Plan file path: ${planFilePath}`;
                 />
               ))}
 
-            {/* Memory Sync Conflict Resolver */}
-            {activeOverlay === "memfs-sync" && memorySyncConflicts && (
-              <InlineQuestionApproval
-                questions={memorySyncConflicts.map((conflict) => ({
-                  header: "Memory sync",
-                  question: `Conflict for ${conflict.label}`,
-                  options: [
-                    {
-                      label: "Use file version",
-                      description: "Overwrite memory block with file contents",
-                    },
-                    {
-                      label: "Use block version",
-                      description: "Overwrite file with memory block contents",
-                    },
-                  ],
-                  multiSelect: false,
-                  allowOther: false, // Only file or block - no custom option
-                }))}
-                onSubmit={handleMemorySyncConflictSubmit}
-                onCancel={handleMemorySyncConflictCancel}
-              />
-            )}
+            {/* Memory sync conflict overlay removed - git-backed memory
+                uses standard git merge conflicts resolved by the agent */}
 
             {/* MCP Server Selector - conditionally mounted as overlay */}
             {activeOverlay === "mcp" && (

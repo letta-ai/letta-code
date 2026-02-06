@@ -3,10 +3,7 @@ import { join, relative } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useMemo, useState } from "react";
-import {
-  getMemoryFilesystemRoot,
-  MEMORY_FS_STATE_FILE,
-} from "../../agent/memoryFilesystem";
+import { getMemoryFilesystemRoot } from "../../agent/memoryFilesystem";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -51,9 +48,7 @@ function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
     }
 
     // Filter out hidden files and state file
-    const filtered = entries.filter(
-      (name) => !name.startsWith(".") && name !== MEMORY_FS_STATE_FILE,
-    );
+    const filtered = entries.filter((name) => !name.startsWith("."));
 
     // Sort: directories first, "system" always first among dirs, then alphabetically
     const sorted = filtered.sort((a, b) => {
