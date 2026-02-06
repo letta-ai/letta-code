@@ -13,71 +13,74 @@ Agents with the `git-memory-enabled` tag have their memory blocks stored in git 
 - Bidirectional sync: API <-> Git (webhook-triggered, ~2-3s delay)
 - Structure: `memory/system/*.md` for system blocks
 
-## What the CLI Harness Does
+## What the CLI Harness Does Automatically
 
-The Letta Code CLI automatically handles initial setup. Understanding this lets you self-repair or replicate the behavior manually if needed.
+The Letta Code CLI handles initial setup when you run `/memfs enable`:
 
-### On `/memfs enable`:
-1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo and add `system/` prefix to block labels)
-2. Clones the repo from `$LETTA_BASE_URL/v1/git/<agent-id>/state.git` into `~/.letta/agents/<agent-id>/`
-3. Configures a **local credential helper** in `.git/config` so plain `git push`/`git pull` work without auth prefixes
-4. Updates the `memory_filesystem` block with the directory tree
+1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
+2. Clones the repo into `~/.letta/agents/<agent-id>/`
+3. Configures a **local** credential helper in `.git/config` (so `git push`/`git pull` work without auth ceremony)
+4. On subsequent startups: pulls latest changes and reconfigures credentials (self-healing)
+5. During sessions: periodically checks `git status` and reminds you to commit/push if dirty
 
-### On startup (when memfs is already enabled):
-1. If no `.git/` directory exists, clones the repo (same as enable)
-2. If `.git/` exists, runs `git pull` (fast-forward, falls back to rebase)
-3. Re-configures the credential helper (self-healing if config was lost)
-4. Updates the `memory_filesystem` block
+If any of these steps fail, you can replicate them manually using the sections below.
 
-### During a session:
-- Periodically checks `git status` and `git rev-list @{u}..HEAD`
-- If there are uncommitted changes or unpushed commits, injects a system reminder prompting you to commit and push
+## Authentication
 
-### Manual replication:
-If the harness setup fails or you need to do it yourself:
+The harness configures a per-repo credential helper during clone. To verify or reconfigure:
+
+```bash
+cd ~/.letta/agents/<agent-id>
+
+# Check if configured
+git config --get credential.$LETTA_BASE_URL.helper
+
+# Reconfigure (e.g. after API key rotation)
+git config credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+```
+
+For cloning a *different* agent's repo (e.g. during memory migration), set up a global helper:
+
+```bash
+git config --global credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+```
+
+## Clone Agent Memory
+
+```bash
+# Clone agent's memory repo
+git clone "$LETTA_BASE_URL/v1/git/<agent-id>/state.git" ~/my-agent-memory
+
+# View memory blocks
+ls ~/my-agent-memory/memory/system/
+cat ~/my-agent-memory/memory/system/human.md
+```
+
+## Enabling Git Memory (Manual)
+
+If the harness `/memfs enable` failed, you can replicate it:
 
 ```bash
 AGENT_ID="<your-agent-id>"
 AGENT_DIR=~/.letta/agents/$AGENT_ID
 
-# 1. Add the git-memory-enabled tag (triggers backend to create git repo)
+# 1. Add git-memory-enabled tag (IMPORTANT: preserve existing tags!)
+# First GET the agent to read current tags, then PATCH with the new tag appended.
+# The harness code does: tags = [...existingTags, "git-memory-enabled"]
 curl -X PATCH "$LETTA_BASE_URL/v1/agents/$AGENT_ID" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"tags": ["git-memory-enabled"]}'
-# NOTE: This adds the system/ prefix to block labels and creates the repo.
-# If the agent already has other tags, include them in the array to avoid removing them.
+  -d '{"tags": ["origin:letta-code", "git-memory-enabled"]}'
 
 # 2. Clone the repo
 git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$AGENT_DIR"
 
-# 3. Configure local credential helper (so git push/pull just work)
+# 3. Configure local credential helper
 cd "$AGENT_DIR"
-git config credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
-
-# 4. Verify
-git pull   # should work without auth prompts
-git status
-```
-
-## Authentication
-
-The harness configures a **per-repo credential helper** during clone. This stores the API key in `.git/config` so you can run plain git commands:
-
-```bash
-cd ~/.letta/agents/<agent-id>
-git pull    # just works
-git push    # just works
-```
-
-To check if credentials are configured:
-```bash
-git config --get credential.$LETTA_BASE_URL.helper
-```
-
-To manually reconfigure (e.g. after API key rotation):
-```bash
-git config credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+git config credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
 
 ## Bidirectional Sync
@@ -108,8 +111,6 @@ git push
 
 # 3. API automatically reflects changes (webhook-triggered, ~2-3s delay)
 ```
-
-Changes pushed to git are automatically synced to the API within 2-3 seconds.
 
 ## Conflict Resolution
 
@@ -175,11 +176,8 @@ git push
 │   └── config.json              # Repo metadata
 └── memory/
     └── system/                  # System blocks (attached to agent)
-        ├── human/
-        │   ├── personal_info.md
-        │   └── prefs.md
-        └── persona/
-            └── soul.md
+        ├── human.md
+        └── persona.md
 ```
 
 **System blocks** (`memory/system/`) are attached to the agent and appear in the agent's system prompt.
@@ -193,19 +191,20 @@ git push
 ## Troubleshooting
 
 **Clone fails with "Authentication failed":**
-- Check local credential helper: `git config --get credential.$LETTA_BASE_URL.helper`
-- Reconfigure: see "Manual replication" section above
+- Check credential helper: `git config --get credential.$LETTA_BASE_URL.helper`
+- Reconfigure: see Authentication section above
+- Verify the endpoint is reachable: `curl -u letta:$LETTA_API_KEY $LETTA_BASE_URL/v1/git/<agent-id>/state.git/info/refs?service=git-upload-pack`
 
 **Push/pull doesn't update API:**
 - Wait 2-3 seconds for webhook processing
 - Verify agent has `git-memory-enabled` tag
 - Check if you have write access to the agent
 
-**Harness setup failed (no .git/ after enable):**
+**Harness setup failed (no .git/ after /memfs enable):**
 - Check debug logs (`LETTA_DEBUG=1`)
-- Try manual replication steps above
-- Verify the git endpoint is reachable: `curl -u letta:$LETTA_API_KEY $LETTA_BASE_URL/v1/git/<agent-id>/state.git/info/refs?service=git-upload-pack`
+- Follow "Enabling Git Memory (Manual)" steps above
 
-**Credential helper not working after restart:**
-- The harness reconfigures on every pull (self-healing)
-- To manually fix: `git config credential.$LETTA_BASE_URL.helper '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'`
+**Can't see changes immediately:**
+- Bidirectional sync has a 2-3 second delay for webhook processing
+- Use `git pull` to get latest API changes
+- Use `git fetch` to check remote without merging
