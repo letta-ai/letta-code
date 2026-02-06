@@ -96,6 +96,7 @@ import {
   handleMcpAdd,
   handleMcpUsage,
   type McpCommandContext,
+  setActiveCommandId as setActiveMcpCommandId,
 } from "./commands/mcp";
 import {
   addCommandResult,
@@ -105,8 +106,10 @@ import {
   handleProfileUsage,
   handleUnpin,
   type ProfileCommandContext,
+  setActiveCommandId as setActiveProfileCommandId,
   validateProfileLoad,
 } from "./commands/profile";
+import { type CommandHandle, createCommandRunner } from "./commands/runner";
 import { AgentSelector } from "./components/AgentSelector";
 // ApprovalDialog removed - all approvals now render inline
 import { ApprovalPreview } from "./components/ApprovalPreview";
@@ -1116,6 +1119,11 @@ export default function App({
     | "connect"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  const pendingOverlayCommandRef = useRef<{
+    overlay: ActiveOverlay;
+    command: CommandHandle;
+    dismissOutput: string;
+  } | null>(null);
   const [memorySyncConflicts, setMemorySyncConflicts] = useState<
     MemorySyncConflict[] | null
   >(null);
@@ -1137,18 +1145,27 @@ export default function App({
     forceRefresh?: boolean;
   }>({});
   const closeOverlay = useCallback(() => {
+    const pending = pendingOverlayCommandRef.current;
+    if (pending && pending.overlay === activeOverlay) {
+      pending.command.finish(pending.dismissOutput, true);
+      pendingOverlayCommandRef.current = null;
+    }
     setActiveOverlay(null);
     setFeedbackPrefill("");
     setSearchQuery("");
     setModelSelectorOptions({});
-  }, []);
+  }, [activeOverlay]);
 
   // Queued overlay action - executed after end_turn when user makes a selection
   // while agent is busy (streaming/executing tools)
   type QueuedOverlayAction =
-    | { type: "switch_agent"; agentId: string }
-    | { type: "switch_model"; modelId: string }
-    | { type: "switch_conversation"; conversationId: string }
+    | { type: "switch_agent"; agentId: string; commandId?: string }
+    | { type: "switch_model"; modelId: string; commandId?: string }
+    | {
+        type: "switch_conversation";
+        conversationId: string;
+        commandId?: string;
+      }
     | {
         type: "switch_toolset";
         toolsetId:
@@ -1158,8 +1175,9 @@ export default function App({
           | "gemini"
           | "gemini_snake"
           | "none";
+        commandId?: string;
       }
-    | { type: "switch_system"; promptId: string }
+    | { type: "switch_system"; promptId: string; commandId?: string }
     | null;
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
@@ -2000,6 +2018,43 @@ export default function App({
     setLines(newLines);
     commitEligibleLines(b);
   }, [commitEligibleLines]);
+
+  const commandRunner = useMemo(
+    () =>
+      createCommandRunner({
+        buffersRef,
+        refreshDerived,
+        createId: uid,
+      }),
+    [refreshDerived],
+  );
+
+  const startOverlayCommand = useCallback(
+    (
+      overlay: ActiveOverlay,
+      input: string,
+      openingOutput: string,
+      dismissOutput: string,
+    ) => {
+      const command = commandRunner.start(input, openingOutput);
+      pendingOverlayCommandRef.current = {
+        overlay,
+        command,
+        dismissOutput,
+      };
+      return command;
+    },
+    [commandRunner],
+  );
+
+  const consumeOverlayCommand = useCallback((overlay: ActiveOverlay) => {
+    const pending = pendingOverlayCommandRef.current;
+    if (!pending || pending.overlay !== overlay) {
+      return null;
+    }
+    pendingOverlayCommandRef.current = null;
+    return pending.command;
+  }, []);
 
   useEffect(() => {
     if (deferredCommitAt === null) return;
@@ -4712,64 +4767,57 @@ export default function App({
   const handleAgentSelect = useCallback(
     async (
       targetAgentId: string,
-      opts?: { profileName?: string; conversationId?: string },
+      opts?: {
+        profileName?: string;
+        conversationId?: string;
+        commandId?: string;
+      },
     ) => {
+      const overlayCommand = opts?.commandId
+        ? commandRunner.getHandle(opts.commandId, "/agents")
+        : consumeOverlayCommand("resume");
+
       // Close selector immediately
       setActiveOverlay(null);
 
       // Skip if already on this agent (no async work needed, queue can proceed)
       if (targetAgentId === agentId) {
         const label = agentName || targetAgentId.slice(0, 12);
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: "/agents",
-          output: `Already on "${label}"`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/agents", `Already on "${label}"`);
+        cmd.finish(`Already on "${label}"`, true);
         return;
       }
 
       // If agent is busy, queue the switch for after end_turn
       if (isAgentBusy()) {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/agents",
+            "Agent switch queued – will switch after current task completes",
+          );
+        cmd.update({
+          output:
+            "Agent switch queued – will switch after current task completes",
+          phase: "running",
+        });
         setQueuedOverlayAction({
           type: "switch_agent",
           agentId: targetAgentId,
+          commandId: cmd.id,
         });
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: "/agents",
-          output: `Agent switch queued – will switch after current task completes`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
         return;
       }
 
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
 
-      const inputCmd = "/agents";
-      const cmdId = uid("cmd");
-
       // Show loading indicator while switching
-      buffersRef.current.byId.set(cmdId, {
-        kind: "command",
-        id: cmdId,
-        input: inputCmd,
-        output: "Switching agent...",
-        phase: "running",
-      });
-      buffersRef.current.order.push(cmdId);
-      refreshDerived();
+      const cmd =
+        overlayCommand ?? commandRunner.start("/agents", "Switching agent...");
+      cmd.update({ output: "Switching agent...", phase: "running" });
 
       try {
         const client = await getClient();
@@ -4829,43 +4877,35 @@ export default function App({
               `⎿  Type /resume to browse all conversations`,
               `⎿  Type /new to start a new conversation`,
             ].join("\n");
-        const successItem: StaticItem = {
-          kind: "command",
-          id: uid("cmd"),
-          input: inputCmd,
-          output: successOutput,
-          phase: "finished",
-          success: true,
-        };
+        cmd.finish(successOutput, true);
 
         // Add separator for visual spacing, then success message
         const separator = {
           kind: "separator" as const,
           id: uid("sep"),
         };
+        const successItem: StaticItem = {
+          kind: "command",
+          id: cmd.id,
+          input: cmd.input,
+          output: successOutput,
+          phase: "finished",
+          success: true,
+        };
         setStaticItems([separator, successItem]);
         setLines(toLines(buffersRef.current));
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
-        const errorCmdId = uid("cmd");
-        buffersRef.current.byId.set(errorCmdId, {
-          kind: "command",
-          id: errorCmdId,
-          input: inputCmd,
-          output: `Failed: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        buffersRef.current.order.push(errorCmdId);
-        refreshDerived();
+        cmd.fail(`Failed: ${errorDetails}`);
       } finally {
         setCommandRunning(false);
       }
     },
     [
-      refreshDerived,
       agentId,
       agentName,
+      commandRunner,
+      consumeOverlayCommand,
       setCommandRunning,
       isAgentBusy,
       resetDeferredToolCallCommits,
@@ -4883,18 +4923,7 @@ export default function App({
       setCommandRunning(true);
 
       const inputCmd = "/new";
-      const cmdId = uid("cmd");
-
-      // Show "Creating..." status while we wait
-      buffersRef.current.byId.set(cmdId, {
-        kind: "command",
-        id: cmdId,
-        input: inputCmd,
-        output: `Creating agent "${name}"...`,
-        phase: "running",
-      });
-      buffersRef.current.order.push(cmdId);
-      refreshDerived();
+      const cmd = commandRunner.start(inputCmd, `Creating agent "${name}"...`);
 
       try {
         // Create the new agent
@@ -4902,6 +4931,23 @@ export default function App({
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
+
+        // Build success message with hints
+        const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
+        const successOutput = [
+          `Created **${agent.name || agent.id}** (use /pin to save)`,
+          `⎿  ${agentUrl}`,
+          `⎿  Tip: use /init to initialize your agent's memory system!`,
+        ].join("\n");
+        cmd.finish(successOutput, true);
+        const successItem: StaticItem = {
+          kind: "command",
+          id: cmd.id,
+          input: cmd.input,
+          output: successOutput,
+          phase: "finished",
+          success: true,
+        };
 
         // Clear current transcript and static items
         buffersRef.current.byId.clear();
@@ -4925,25 +4971,9 @@ export default function App({
         // Reset context token tracking for new agent
         buffersRef.current.lastContextTokens = 0;
 
-        // Build success message with hints
-        const agentUrl = `https://app.letta.com/projects/default-project/agents/${agent.id}`;
-        const successOutput = [
-          `Created **${agent.name || agent.id}** (use /pin to save)`,
-          `⎿  ${agentUrl}`,
-          `⎿  Tip: use /init to initialize your agent's memory system!`,
-        ].join("\n");
-
         const separator = {
           kind: "separator" as const,
           id: uid("sep"),
-        };
-        const successItem: StaticItem = {
-          kind: "command",
-          id: uid("cmd"),
-          input: inputCmd,
-          output: successOutput,
-          phase: "finished",
-          success: true,
         };
 
         setStaticItems([separator, successItem]);
@@ -4951,22 +4981,14 @@ export default function App({
         setLines(toLines(buffersRef.current));
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: inputCmd,
-          output: `Failed to create agent: ${errorDetails}`,
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
+        cmd.fail(`Failed to create agent: ${errorDetails}`);
       } finally {
         setCommandRunning(false);
       }
     },
     [
-      refreshDerived,
       agentId,
+      commandRunner,
       setCommandRunning,
       resetDeferredToolCallCommits,
       resetTrajectoryBases,
@@ -5316,27 +5338,21 @@ export default function App({
       if (profileConfirmPending && !msg) {
         // User pressed Enter with empty input - proceed with loading
         const { name, agentId: targetAgentId, cmdId } = profileConfirmPending;
-        buffersRef.current.byId.delete(cmdId);
-        const orderIdx = buffersRef.current.order.indexOf(cmdId);
-        if (orderIdx !== -1) buffersRef.current.order.splice(orderIdx, 1);
-        refreshDerived();
+        const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
+        cmd.update({ output: "Loading profile...", phase: "running" });
         setProfileConfirmPending(null);
-        await handleAgentSelect(targetAgentId, { profileName: name });
+        await handleAgentSelect(targetAgentId, {
+          profileName: name,
+          commandId: cmdId,
+        });
         return { submitted: true };
       }
 
       // Cancel profile confirmation if user types something else
       if (profileConfirmPending && msg) {
-        const { cmdId } = profileConfirmPending;
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/profile load ${profileConfirmPending.name}`,
-          output: "Cancelled",
-          phase: "finished",
-          success: false,
-        });
-        refreshDerived();
+        const { cmdId, name } = profileConfirmPending;
+        const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
+        cmd.fail("Cancelled");
         setProfileConfirmPending(null);
         // Continue processing the new message
       }
@@ -5529,6 +5545,12 @@ export default function App({
 
         // Special handling for /model command - opens selector
         if (trimmed === "/model") {
+          startOverlayCommand(
+            "model",
+            "/model",
+            "Opening model selector...",
+            "Models dialog dismissed",
+          );
           setModelSelectorOptions({}); // Clear any filters from previous connection
           setActiveOverlay("model");
           return { submitted: true };
@@ -5536,6 +5558,12 @@ export default function App({
 
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
+          startOverlayCommand(
+            "toolset",
+            "/toolset",
+            "Opening toolset selector...",
+            "Toolset dialog dismissed",
+          );
           setActiveOverlay("toolset");
           return { submitted: true };
         }
@@ -5543,7 +5571,7 @@ export default function App({
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
           const adeUrl = `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
-          const cmdId = uid("cmd");
+          const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
           import("open")
@@ -5553,33 +5581,42 @@ export default function App({
             });
 
           // Always show the URL in case browser doesn't open
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: "/ade",
-            output: `Opening ADE...\n→ ${adeUrl}`,
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          cmd.finish(`Opening ADE...\n→ ${adeUrl}`, true);
           return { submitted: true };
         }
 
         // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
+          startOverlayCommand(
+            "system",
+            "/system",
+            "Opening system prompt selector...",
+            "System prompt dialog dismissed",
+          );
           setActiveOverlay("system");
           return { submitted: true };
         }
 
         // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
+          startOverlayCommand(
+            "subagent",
+            "/subagents",
+            "Opening subagent manager...",
+            "Subagent manager dismissed",
+          );
           setActiveOverlay("subagent");
           return { submitted: true };
         }
 
         // Special handling for /memory command - opens memory viewer
         if (trimmed === "/memory") {
+          startOverlayCommand(
+            "memory",
+            "/memory",
+            "Opening memory viewer...",
+            "Memory viewer dismissed",
+          );
           setActiveOverlay("memory");
           return { submitted: true };
         }
@@ -5598,6 +5635,12 @@ export default function App({
 
           // /mcp - open MCP server selector
           if (!firstWord) {
+            startOverlayCommand(
+              "mcp",
+              "/mcp",
+              "Opening MCP server manager...",
+              "MCP dialog dismissed",
+            );
             setActiveOverlay("mcp");
             return { submitted: true };
           }
@@ -5606,86 +5649,142 @@ export default function App({
           if (firstWord === "add") {
             // Pass the full command string after "add" to preserve quotes
             const afterAdd = afterMcp.slice(firstWord.length).trim();
-            await handleMcpAdd(mcpCtx, msg, afterAdd);
+            const cmd = commandRunner.start(msg, "Adding MCP server...");
+            setActiveMcpCommandId(cmd.id);
+            try {
+              await handleMcpAdd(mcpCtx, msg, afterAdd);
+            } finally {
+              setActiveMcpCommandId(null);
+            }
             return { submitted: true };
           }
 
           // /mcp connect - interactive TUI for connecting with OAuth
           if (firstWord === "connect") {
+            startOverlayCommand(
+              "mcp-connect",
+              "/mcp connect",
+              "Opening MCP connect flow...",
+              "MCP connect dismissed",
+            );
             setActiveOverlay("mcp-connect");
             return { submitted: true };
           }
 
           // Unknown subcommand
-          handleMcpUsage(mcpCtx, msg);
+          {
+            const cmd = commandRunner.start(msg, "Checking MCP usage...");
+            setActiveMcpCommandId(cmd.id);
+            try {
+              handleMcpUsage(mcpCtx, msg);
+            } finally {
+              setActiveMcpCommandId(null);
+            }
+          }
           return { submitted: true };
         }
 
         // Special handling for /connect command - opens provider selector
         if (msg.trim() === "/connect") {
+          startOverlayCommand(
+            "connect",
+            "/connect",
+            "Opening provider selector...",
+            "Connect dialog dismissed",
+          );
           setActiveOverlay("connect");
           return { submitted: true };
         }
 
         // /connect codex - direct OAuth flow (kept for backwards compatibility)
         if (msg.trim().startsWith("/connect codex")) {
-          const { handleConnect } = await import("./commands/connect");
-          await handleConnect(
-            {
-              buffersRef,
-              refreshDerived,
-              setCommandRunning,
-              onCodexConnected: () => {
-                setModelSelectorOptions({
-                  filterProvider: "chatgpt-plus-pro",
-                  forceRefresh: true,
-                });
-                setActiveOverlay("model");
+          const cmd = commandRunner.start(msg, "Starting connection...");
+          const {
+            handleConnect,
+            setActiveCommandId: setActiveConnectCommandId,
+          } = await import("./commands/connect");
+          setActiveConnectCommandId(cmd.id);
+          try {
+            await handleConnect(
+              {
+                buffersRef,
+                refreshDerived,
+                setCommandRunning,
+                onCodexConnected: () => {
+                  setModelSelectorOptions({
+                    filterProvider: "chatgpt-plus-pro",
+                    forceRefresh: true,
+                  });
+                  startOverlayCommand(
+                    "model",
+                    "/model",
+                    "Opening model selector...",
+                    "Models dialog dismissed",
+                  );
+                  setActiveOverlay("model");
+                },
               },
-            },
-            msg,
-          );
+              msg,
+            );
+          } finally {
+            setActiveConnectCommandId(null);
+          }
           return { submitted: true };
         }
 
         // Special handling for /disconnect command - remove OAuth connection
         if (msg.trim().startsWith("/disconnect")) {
-          const { handleDisconnect } = await import("./commands/connect");
-          await handleDisconnect(
-            {
-              buffersRef,
-              refreshDerived,
-              setCommandRunning,
-            },
-            msg,
-          );
+          const cmd = commandRunner.start(msg, "Disconnecting...");
+          const {
+            handleDisconnect,
+            setActiveCommandId: setActiveConnectCommandId,
+          } = await import("./commands/connect");
+          setActiveConnectCommandId(cmd.id);
+          try {
+            await handleDisconnect(
+              {
+                buffersRef,
+                refreshDerived,
+                setCommandRunning,
+              },
+              msg,
+            );
+          } finally {
+            setActiveConnectCommandId(null);
+          }
           return { submitted: true };
         }
 
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
+          startOverlayCommand(
+            "help",
+            "/help",
+            "Opening help...",
+            "Help dialog dismissed",
+          );
           setActiveOverlay("help");
           return { submitted: true };
         }
 
         // Special handling for /hooks command - opens hooks manager
         if (trimmed === "/hooks") {
+          startOverlayCommand(
+            "hooks",
+            "/hooks",
+            "Opening hooks manager...",
+            "Hooks manager dismissed",
+          );
           setActiveOverlay("hooks");
           return { submitted: true };
         }
 
         // Special handling for /usage command - show session stats
         if (trimmed === "/usage") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: trimmed,
-            output: "Fetching usage statistics...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            trimmed,
+            "Fetching usage statistics...",
+          );
 
           // Fetch balance and display stats asynchronously
           (async () => {
@@ -5736,26 +5835,11 @@ export default function App({
                 balance,
               });
 
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: trimmed,
-                output,
-                phase: "finished",
-                success: true,
-                dimOutput: true,
-              });
-              refreshDerived();
+              cmd.finish(output, true, true);
             } catch (error) {
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: trimmed,
-                output: `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
-                phase: "finished",
-                success: false,
-              });
-              refreshDerived();
+              cmd.fail(
+                `Error fetching usage: ${error instanceof Error ? error.message : String(error)}`,
+              );
             }
           })();
 
@@ -5764,7 +5848,10 @@ export default function App({
 
         // Special handling for /context command - show context window usage
         if (trimmed === "/context") {
-          const cmdId = uid("cmd");
+          const cmd = commandRunner.start(
+            trimmed,
+            "Calculating context usage...",
+          );
 
           const contextWindow = llmConfigRef.current?.context_window ?? 0;
           const model = llmConfigRef.current?.model ?? "unknown";
@@ -5803,49 +5890,22 @@ export default function App({
                 : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
           }
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: trimmed,
-            output,
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          cmd.finish(output, true);
 
           return { submitted: true };
         }
 
         // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: trimmed,
-            output: "See ya!",
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(trimmed, "See ya!");
+          cmd.finish("See ya!", true);
           handleExit();
           return { submitted: true };
         }
 
         // Special handling for /logout command - clear credentials and exit
         if (trimmed === "/logout") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Logging out...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(msg.trim(), "Logging out...");
 
           setCommandRunning(true);
 
@@ -5863,16 +5923,10 @@ export default function App({
             // Clear all credentials including secrets
             await settingsManager.logout();
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output:
-                "✓ Logged out successfully. Run 'letta' to re-authenticate.",
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(
+              "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              true,
+            );
 
             saveLastAgentBeforeExit();
 
@@ -5894,15 +5948,7 @@ export default function App({
                 "\n\nTip: Use /clear instead to clear the current message buffer.";
             }
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorOutput}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorOutput}`);
           } finally {
             setCommandRunning(false);
           }
@@ -5915,7 +5961,7 @@ export default function App({
           const { prompt, completionPromise, maxIterations } =
             parseRalphArgs(trimmed);
 
-          const cmdId = uid("cmd");
+          const cmd = commandRunner.start(trimmed, "Activating ralph mode...");
 
           if (prompt) {
             // Inline prompt - activate immediately and send
@@ -5935,16 +5981,10 @@ export default function App({
               ? `"${ralphState.completionPromise.slice(0, 50)}${ralphState.completionPromise.length > 50 ? "..." : ""}"`
               : "(none)";
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: trimmed,
-              output: `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode activated (iter 1/${maxIterations || "∞"})\nPromise: ${promiseDisplay}`,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(
+              `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode activated (iter 1/${maxIterations || "∞"})\nPromise: ${promiseDisplay}`,
+              true,
+            );
 
             // Send the prompt with ralph reminder prepended
             const systemMsg = buildRalphFirstTurnReminder(ralphState);
@@ -5964,16 +6004,10 @@ export default function App({
               40,
             );
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: trimmed,
-              output: `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode ready (waiting for task)\nMax iterations: ${maxIterations || "unlimited"}\nPromise: ${completionPromise === null ? "(none)" : (completionPromise ?? `"${defaultPromisePreview}..." (default)`)}\n\nType your task to begin the loop.`,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(
+              `🔄 ${isYolo ? "yolo-ralph" : "ralph"} mode ready (waiting for task)\nMax iterations: ${maxIterations || "unlimited"}\nPromise: ${completionPromise === null ? "(none)" : (completionPromise ?? `"${defaultPromisePreview}..." (default)`)}\n\nType your task to begin the loop.`,
+              true,
+            );
           }
           return { submitted: true };
         }
@@ -5983,16 +6017,10 @@ export default function App({
           const newValue = !tokenStreamingEnabled;
 
           // Immediately add command to transcript with "running" phase and loading message
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `${newValue ? "Enabling" : "Disabling"} token streaming...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            msg.trim(),
+            `${newValue ? "Enabling" : "Disabling"} token streaming...`,
+          );
 
           // Lock input during async operation
           setCommandRunning(true);
@@ -6005,27 +6033,14 @@ export default function App({
             settingsManager.updateSettings({ tokenStreaming: newValue });
 
             // Update the same command with final result
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Token streaming ${newValue ? "enabled" : "disabled"}`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(
+              `Token streaming ${newValue ? "enabled" : "disabled"}`,
+              true,
+            );
           } catch (error) {
             // Mark command as failed
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             // Unlock input
             setCommandRunning(false);
@@ -6035,16 +6050,10 @@ export default function App({
 
         // Special handling for /new command - start new conversation
         if (msg.trim() === "/new") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Starting new conversation...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Starting new conversation...",
+          );
 
           setCommandRunning(true);
 
@@ -6097,27 +6106,13 @@ export default function App({
             sessionHooksRanRef.current = true;
 
             // Update command with success
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Started new conversation (use /resume to change convos)",
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(
+              "Started new conversation (use /resume to change convos)",
+              true,
+            );
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6126,16 +6121,10 @@ export default function App({
 
         // Special handling for /clear command - reset all agent messages (destructive)
         if (msg.trim() === "/clear") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Clearing in-context messages...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Clearing in-context messages...",
+          );
 
           setCommandRunning(true);
 
@@ -6188,28 +6177,13 @@ export default function App({
             sessionHooksRanRef.current = true;
 
             // Update command with success
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output:
-                "Agent's in-context messages cleared & moved to conversation history",
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(
+              "Agent's in-context messages cleared & moved to conversation history",
+              true,
+            );
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6218,16 +6192,10 @@ export default function App({
 
         // Special handling for /compact command - summarize conversation history
         if (msg.trim() === "/compact") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Compacting conversation history...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Compacting conversation history...",
+          );
 
           setCommandRunning(true);
 
@@ -6242,15 +6210,7 @@ export default function App({
             if (preCompactResult.blocked) {
               const feedback =
                 preCompactResult.feedback.join("\n") || "Blocked by hook";
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Compact blocked: ${feedback}`,
-                phase: "finished",
-                success: false,
-              });
-              refreshDerived();
+              cmd.fail(`Compact blocked: ${feedback}`);
               setCommandRunning(false);
               return { submitted: true };
             }
@@ -6273,15 +6233,7 @@ export default function App({
             ];
 
             // Update command with success
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: outputLines.join("\n"),
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(outputLines.join("\n"), true);
           } catch (error) {
             let errorOutput: string;
 
@@ -6309,15 +6261,7 @@ export default function App({
               errorOutput = formatErrorDetails(error, agentId);
             }
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorOutput}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorOutput}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6328,55 +6272,31 @@ export default function App({
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
           const subcommand = parts[1]?.toLowerCase();
+          const cmd = commandRunner.start(msg.trim(), "Processing rename...");
 
           if (
             !subcommand ||
             (subcommand !== "agent" && subcommand !== "convo")
           ) {
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Usage: /rename agent <name> or /rename convo <summary>",
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.fail("Usage: /rename agent <name> or /rename convo <summary>");
             return { submitted: true };
           }
 
           const newValue = parts.slice(2).join(" ");
           if (!newValue) {
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output:
-                subcommand === "convo"
-                  ? "Please provide a summary: /rename convo <summary>"
-                  : "Please provide a name: /rename agent <name>",
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.fail(
+              subcommand === "convo"
+                ? "Please provide a summary: /rename convo <summary>"
+                : "Please provide a name: /rename agent <name>",
+            );
             return { submitted: true };
           }
 
           if (subcommand === "convo") {
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
+            cmd.update({
               output: `Renaming conversation to "${newValue}"...`,
               phase: "running",
             });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
 
             setCommandRunning(true);
 
@@ -6386,26 +6306,10 @@ export default function App({
                 summary: newValue,
               });
 
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Conversation renamed to "${newValue}"`,
-                phase: "finished",
-                success: true,
-              });
-              refreshDerived();
+              cmd.finish(`Conversation renamed to "${newValue}"`, true);
             } catch (error) {
               const errorDetails = formatErrorDetails(error, agentId);
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output: `Failed: ${errorDetails}`,
-                phase: "finished",
-                success: false,
-              });
-              refreshDerived();
+              cmd.fail(`Failed: ${errorDetails}`);
             } finally {
               setCommandRunning(false);
             }
@@ -6415,30 +6319,14 @@ export default function App({
           // Rename agent (default behavior)
           const validationError = validateAgentName(newValue);
           if (validationError) {
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: validationError,
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.fail(validationError);
             return { submitted: true };
           }
 
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
+          cmd.update({
             output: `Renaming agent to "${newValue}"...`,
             phase: "running",
           });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
 
           setCommandRunning(true);
 
@@ -6447,26 +6335,10 @@ export default function App({
             await client.agents.update(agentId, { name: newValue });
             updateAgentName(newValue);
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Agent renamed to "${newValue}"`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(`Agent renamed to "${newValue}"`, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6477,32 +6349,17 @@ export default function App({
         if (msg.trim().startsWith("/description")) {
           const parts = msg.trim().split(/\s+/);
           const newDescription = parts.slice(1).join(" ");
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Updating description...",
+          );
 
           if (!newDescription) {
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Please provide a description: /description <text>",
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.fail("Please provide a description: /description <text>");
             return { submitted: true };
           }
 
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Updating description...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          cmd.update({ output: "Updating description...", phase: "running" });
 
           setCommandRunning(true);
 
@@ -6512,26 +6369,10 @@ export default function App({
               description: newDescription,
             });
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Description updated to "${newDescription}"`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(`Description updated to "${newDescription}"`, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6545,6 +6386,12 @@ export default function App({
           msg.trim() === "/pinned" ||
           msg.trim() === "/profiles"
         ) {
+          startOverlayCommand(
+            "resume",
+            "/agents",
+            "Opening agent browser...",
+            "Agent browser dismissed",
+          );
           setActiveOverlay("resume");
           return { submitted: true };
         }
@@ -6555,34 +6402,18 @@ export default function App({
           const targetConvId = parts[1]; // Optional conversation ID
 
           if (targetConvId) {
+            const cmd = commandRunner.start(
+              msg.trim(),
+              "Switching conversation...",
+            );
             // Direct switch to specified conversation
             if (targetConvId === conversationId) {
-              const cmdId = uid("cmd");
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg.trim(),
-                output: "Already on this conversation",
-                phase: "finished",
-                success: true,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
+              cmd.finish("Already on this conversation", true);
               return { submitted: true };
             }
 
             // Lock input and show loading
             setCommandRunning(true);
-            const cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg.trim(),
-              output: "Switching conversation...",
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
 
             try {
               // Validate conversation exists BEFORE updating state
@@ -6606,17 +6437,6 @@ export default function App({
                   conversationId: targetConvId,
                 });
 
-                // Clear current transcript and static items
-                buffersRef.current.byId.clear();
-                buffersRef.current.order = [];
-                buffersRef.current.tokenCount = 0;
-                buffersRef.current.lastContextTokens = 0;
-                emittedIdsRef.current.clear();
-                resetDeferredToolCallCommits();
-                setStaticItems([]);
-                setStaticRenderEpoch((e) => e + 1);
-                resetTrajectoryBases();
-
                 // Build success message
                 const currentAgentName = agentState.name || "Unnamed Agent";
                 const successLines =
@@ -6632,14 +6452,26 @@ export default function App({
                         `⎿  Conversation: ${targetConvId} (empty)`,
                       ];
                 const successOutput = successLines.join("\n");
+                cmd.finish(successOutput, true);
                 const successItem: StaticItem = {
                   kind: "command",
-                  id: uid("cmd"),
-                  input: msg.trim(),
+                  id: cmd.id,
+                  input: cmd.input,
                   output: successOutput,
                   phase: "finished",
                   success: true,
                 };
+
+                // Clear current transcript and static items
+                buffersRef.current.byId.clear();
+                buffersRef.current.order = [];
+                buffersRef.current.tokenCount = 0;
+                buffersRef.current.lastContextTokens = 0;
+                emittedIdsRef.current.clear();
+                resetDeferredToolCallCommits();
+                setStaticItems([]);
+                setStaticRenderEpoch((e) => e + 1);
+                resetTrajectoryBases();
 
                 // Backfill message history
                 if (resumeData.messageHistory.length > 0) {
@@ -6713,15 +6545,7 @@ export default function App({
               } else if (error instanceof Error) {
                 errorMsg = error.message;
               }
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg.trim(),
-                output: `Failed to switch conversation: ${errorMsg}`,
-                phase: "finished",
-                success: false,
-              });
-              refreshDerived();
+              cmd.fail(`Failed to switch conversation: ${errorMsg}`);
             } finally {
               setCommandRunning(false);
             }
@@ -6729,6 +6553,12 @@ export default function App({
           }
 
           // No conversation ID provided - show selector
+          startOverlayCommand(
+            "conversations",
+            "/resume",
+            "Opening conversation selector...",
+            "Conversation selector dismissed",
+          );
           setActiveOverlay("conversations");
           return { submitted: true };
         }
@@ -6739,6 +6569,12 @@ export default function App({
           const [, ...rest] = trimmed.split(/\s+/);
           const query = rest.join(" ").trim();
           setSearchQuery(query);
+          startOverlayCommand(
+            "search",
+            "/search",
+            "Opening message search...",
+            "Message search dismissed",
+          );
           setActiveOverlay("search");
           return { submitted: true };
         }
@@ -6760,13 +6596,27 @@ export default function App({
 
           // /profile - open agent browser (now points to /agents)
           if (!subcommand) {
+            startOverlayCommand(
+              "resume",
+              "/profile",
+              "Opening agent browser...",
+              "Agent browser dismissed",
+            );
             setActiveOverlay("resume");
             return { submitted: true };
           }
 
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Running profile command...",
+          );
+          setActiveProfileCommandId(cmd.id);
+          const clearProfileCommandId = () => setActiveProfileCommandId(null);
+
           // /profile save <name>
           if (subcommand === "save") {
             await handleProfileSave(profileCtx, msg, profileName);
+            clearProfileCommandId();
             return { submitted: true };
           }
 
@@ -6778,6 +6628,7 @@ export default function App({
               profileName,
             );
             if (validation.errorMessage) {
+              clearProfileCommandId();
               return { submitted: true };
             }
 
@@ -6796,6 +6647,7 @@ export default function App({
                 agentId: validation.targetAgentId,
                 cmdId,
               });
+              clearProfileCommandId();
               return { submitted: true };
             }
 
@@ -6803,19 +6655,23 @@ export default function App({
             if (validation.targetAgentId) {
               await handleAgentSelect(validation.targetAgentId, {
                 profileName,
+                commandId: cmd.id,
               });
             }
+            clearProfileCommandId();
             return { submitted: true };
           }
 
           // /profile delete <name>
           if (subcommand === "delete") {
             handleProfileDelete(profileCtx, msg, profileName);
+            clearProfileCommandId();
             return { submitted: true };
           }
 
           // Unknown subcommand
           handleProfileUsage(profileCtx, msg);
+          clearProfileCommandId();
           return { submitted: true };
         }
 
@@ -6840,6 +6696,12 @@ export default function App({
           // If no name provided, show the pin dialog
           if (!hasNameArg) {
             setPinDialogLocal(isLocal);
+            startOverlayCommand(
+              "pin",
+              "/pin",
+              "Opening pin dialog...",
+              "Pin dialog dismissed",
+            );
             setActiveOverlay("pin");
             return { submitted: true };
           }
@@ -6853,7 +6715,15 @@ export default function App({
             setCommandRunning,
             updateAgentName,
           };
-          await handlePin(profileCtx, msg, argsStr);
+          {
+            const cmd = commandRunner.start(msg.trim(), "Pinning agent...");
+            setActiveProfileCommandId(cmd.id);
+            try {
+              await handlePin(profileCtx, msg, argsStr);
+            } finally {
+              setActiveProfileCommandId(null);
+            }
+          }
           return { submitted: true };
         }
 
@@ -6868,7 +6738,15 @@ export default function App({
             updateAgentName,
           };
           const argsStr = msg.trim().slice(6).trim();
-          handleUnpin(profileCtx, msg, argsStr);
+          {
+            const cmd = commandRunner.start(msg.trim(), "Unpinning agent...");
+            setActiveProfileCommandId(cmd.id);
+            try {
+              handleUnpin(profileCtx, msg, argsStr);
+            } finally {
+              setActiveProfileCommandId(null);
+            }
+          }
           return { submitted: true };
         }
 
@@ -6877,7 +6755,10 @@ export default function App({
           const { backgroundProcesses } = await import(
             "../tools/impl/process_manager"
           );
-          const cmdId = uid("cmd");
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Checking background processes...",
+          );
 
           let output: string;
           if (backgroundProcesses.size === 0) {
@@ -6896,31 +6777,16 @@ export default function App({
             output = lines.join("\n");
           }
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output,
-            phase: "finished",
-            success: true,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          cmd.finish(output, true);
           return { submitted: true };
         }
 
         // Special handling for /download command - download agent file
         if (msg.trim() === "/download") {
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Downloading agent file...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Downloading agent file...",
+          );
 
           setCommandRunning(true);
 
@@ -6992,26 +6858,10 @@ export default function App({
               summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
             }
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: summary,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(summary, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -7021,7 +6871,11 @@ export default function App({
         // Special handling for /memfs command - manage filesystem-backed memory
         if (trimmed.startsWith("/memfs")) {
           const [, subcommand] = trimmed.split(/\s+/);
-          const cmdId = uid("cmd");
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Processing memfs command...",
+          );
+          const cmdId = cmd.id;
 
           if (!subcommand || subcommand === "help") {
             const output = [
@@ -7032,16 +6886,7 @@ export default function App({
               "- /memfs sync    — sync blocks and files now",
               "- /memfs reset   — move local memfs to /tmp and recreate dirs",
             ].join("\n");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(output, true);
             return { submitted: true };
           }
 
@@ -7056,29 +6901,18 @@ export default function App({
               output =
                 "Memory filesystem is disabled. Run `/memfs enable` to enable.";
             }
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output,
-              phase: "finished",
-              success: true,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            cmd.finish(output, true);
             return { submitted: true };
           }
 
           if (subcommand === "enable") {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Enabling memory filesystem...",
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            updateMemorySyncCommand(
+              cmdId,
+              "Enabling memory filesystem...",
+              true,
+              msg,
+              true,
+            );
             setCommandRunning(true);
 
             try {
@@ -7141,29 +6975,19 @@ export default function App({
           if (subcommand === "sync") {
             // Check if memfs is enabled for this agent
             if (!settingsManager.isMemfsEnabled(agentId)) {
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: msg,
-                output:
-                  "Memory filesystem is disabled. Run `/memfs enable` first.",
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              refreshDerived();
+              cmd.fail(
+                "Memory filesystem is disabled. Run `/memfs enable` first.",
+              );
               return { submitted: true };
             }
 
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Syncing memory filesystem...",
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            updateMemorySyncCommand(
+              cmdId,
+              "Syncing memory filesystem...",
+              true,
+              msg,
+              true,
+            );
 
             setCommandRunning(true);
 
@@ -7183,15 +7007,13 @@ export default function App({
           }
 
           if (subcommand === "reset") {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Resetting memory filesystem...",
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            updateMemorySyncCommand(
+              cmdId,
+              "Resetting memory filesystem...",
+              true,
+              msg,
+              true,
+            );
             setCommandRunning(true);
 
             try {
@@ -7237,15 +7059,13 @@ export default function App({
           }
 
           if (subcommand === "disable") {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: "Disabling memory filesystem...",
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
+            updateMemorySyncCommand(
+              cmdId,
+              "Disabling memory filesystem...",
+              true,
+              msg,
+              true,
+            );
             setCommandRunning(true);
 
             try {
@@ -7309,29 +7129,14 @@ export default function App({
           }
 
           // Unknown subcommand
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, /memfs disable, /memfs sync, or /memfs reset.`,
-            phase: "finished",
-            success: false,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          cmd.fail(
+            `Unknown subcommand: ${subcommand}. Use /memfs, /memfs enable, /memfs disable, /memfs sync, or /memfs reset.`,
+          );
           return { submitted: true };
         }
 
         // Special handling for /skill command - enter skill creation mode
         if (trimmed.startsWith("/skill")) {
-          // Check for pending approvals before sending
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            return { submitted: false }; // Keep /skill in input box, user handles approval first
-          }
-
-          const cmdId = uid("cmd");
-
           // Extract optional description after `/skill`
           const [, ...rest] = trimmed.split(/\s+/);
           const description = rest.join(" ").trim();
@@ -7340,15 +7145,16 @@ export default function App({
             ? `Starting skill creation for: ${description}`
             : "Starting skill creation. I’ll load the creating-skills skill and ask a few questions about the skill you want to build...";
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: initialOutput,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(msg, initialOutput);
+
+          // Check for pending approvals before sending
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /skill.",
+            );
+            return { submitted: false }; // Keep /skill in input box, user handles approval first
+          }
 
           setCommandRunning(true);
 
@@ -7366,16 +7172,10 @@ export default function App({
             const skillMessage = `${SYSTEM_REMINDER_OPEN}\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n${SYSTEM_REMINDER_CLOSE}`;
 
             // Mark command as finished before sending message
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output:
-                "Entered skill creation mode. Answer the assistant’s questions to design your new skill.",
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(
+              "Entered skill creation mode. Answer the assistant’s questions to design your new skill.",
+              true,
+            );
 
             // Process conversation with the skill-creation prompt
             await processConversation([
@@ -7387,15 +7187,7 @@ export default function App({
             ]);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -7405,14 +7197,6 @@ export default function App({
 
         // Special handling for /remember command - remember something from conversation
         if (trimmed.startsWith("/remember")) {
-          // Check for pending approvals before sending (mirrors regular message flow)
-          const approvalCheck = await checkPendingApprovalsForSlashCommand();
-          if (approvalCheck.blocked) {
-            return { submitted: false }; // Keep /remember in input box, user handles approval first
-          }
-
-          const cmdId = uid("cmd");
-
           // Extract optional description after `/remember`
           const [, ...rest] = trimmed.split(/\s+/);
           const userText = rest.join(" ").trim();
@@ -7421,15 +7205,16 @@ export default function App({
             ? "Storing to memory..."
             : "Processing memory request...";
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: initialOutput,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          const cmd = commandRunner.start(msg, initialOutput);
+
+          // Check for pending approvals before sending (mirrors regular message flow)
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /remember.",
+            );
+            return { submitted: false }; // Keep /remember in input box, user handles approval first
+          }
 
           setCommandRunning(true);
 
@@ -7448,17 +7233,12 @@ export default function App({
               : buildTextParts(rememberReminder);
 
             // Mark command as finished before sending message
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: userText
+            cmd.finish(
+              userText
                 ? "Storing to memory..."
                 : "Processing memory request from conversation context...",
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+              true,
+            );
 
             // Process conversation with the remember prompt
             await processConversation([
@@ -7470,15 +7250,7 @@ export default function App({
             ]);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -7494,37 +7266,27 @@ export default function App({
           permissionMode.setMode("plan");
           setUiPermissionMode("plan");
 
-          // Add status message to transcript
-          const statusId = uid("status");
-          buffersRef.current.byId.set(statusId, {
-            kind: "status",
-            id: statusId,
-            lines: [`Plan mode enabled. Plan file: ${planPath}`],
-          });
-          buffersRef.current.order.push(statusId);
-          refreshDerived();
+          const cmd = commandRunner.start(
+            "/plan",
+            `Plan mode enabled. Plan file: ${planPath}`,
+          );
+          cmd.finish(`Plan mode enabled. Plan file: ${planPath}`, true);
 
           return { submitted: true };
         }
 
         // Special handling for /init command - initialize agent memory
         if (trimmed === "/init") {
+          const cmd = commandRunner.start(msg, "Gathering project context...");
+
           // Check for pending approvals before sending
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /init.",
+            );
             return { submitted: false }; // Keep /init in input box, user handles approval first
           }
-
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: "Gathering project context...",
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
 
           setCommandRunning(true);
 
@@ -7588,16 +7350,10 @@ ${recentCommits}
             }
 
             // Mark command as finished before sending message
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output:
-                "Assimilating project context and defragmenting memories...",
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish(
+              "Assimilating project context and defragmenting memories...",
+              true,
+            );
 
             // Send trigger message instructing agent to load the initializing-memory skill
             // Only include memfs path if memfs is enabled for this agent
@@ -7643,15 +7399,7 @@ ${SYSTEM_REMINDER_CLOSE}`;
             ]);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -7661,6 +7409,12 @@ ${SYSTEM_REMINDER_CLOSE}`;
         if (trimmed.startsWith("/feedback")) {
           const maybeMsg = msg.slice("/feedback".length).trim();
           setFeedbackPrefill(maybeMsg);
+          startOverlayCommand(
+            "feedback",
+            "/feedback",
+            "Opening feedback dialog...",
+            "Feedback dialog dismissed",
+          );
           setActiveOverlay("feedback");
           return { submitted: true };
         }
@@ -7669,17 +7423,23 @@ ${SYSTEM_REMINDER_CLOSE}`;
         // Check BEFORE falling through to executeCommand()
         const { findCustomCommand, substituteArguments, expandBashCommands } =
           await import("./commands/custom.js");
-        const commandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
-        const matchedCustom = await findCustomCommand(commandName);
+        const customCommandName = trimmed.split(/\s+/)[0]?.slice(1) || ""; // e.g., "review" from "/review arg"
+        const matchedCustom = await findCustomCommand(customCommandName);
 
         if (matchedCustom) {
+          const cmd = commandRunner.start(
+            trimmed,
+            `Running /${matchedCustom.id}...`,
+          );
+
           // Check for pending approvals before sending
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
+            cmd.fail(
+              `Pending approval(s). Resolve approvals before running /${matchedCustom.id}.`,
+            );
             return { submitted: false }; // Keep custom command in input box, user handles approval first
           }
-
-          const cmdId = uid("cmd");
 
           // Extract arguments (everything after command name)
           const args = trimmed.slice(`/${matchedCustom.id}`.length).trim();
@@ -7689,30 +7449,12 @@ ${SYSTEM_REMINDER_CLOSE}`;
           prompt = await expandBashCommands(prompt);
 
           // Show command in transcript (running phase for visual feedback)
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: trimmed,
-            output: `Running /${matchedCustom.id}...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
           setCommandRunning(true);
 
           try {
             // Mark command as finished BEFORE sending to agent
             // (matches /remember pattern - command succeeded in triggering agent)
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: trimmed,
-              output: `Running custom command...`,
-              phase: "finished",
-              success: true,
-            });
-            refreshDerived();
+            cmd.finish("Running custom command...", true);
 
             // Send prompt to agent
             // NOTE: Unlike /remember, we DON'T append args separately because
@@ -7729,15 +7471,7 @@ ${SYSTEM_REMINDER_CLOSE}`;
           } catch (error) {
             // Only catch errors from processConversation setup, not agent execution
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: trimmed,
-              output: `Failed to run command: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed to run command: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -7747,25 +7481,27 @@ ${SYSTEM_REMINDER_CLOSE}`;
         // === END custom command handling ===
 
         // Check if this is a known command before treating it as a slash command
-        const { executeCommand } = await import("./commands/registry");
+        const { commands, executeCommand } = await import(
+          "./commands/registry"
+        );
+        const registryCommandName = trimmed.split(/\s+/)[0] ?? "";
+        const isRegistryCommand = Boolean(commands[registryCommandName]);
+        const registryCmd = isRegistryCommand
+          ? commandRunner.start(msg, `Running ${registryCommandName}...`)
+          : null;
         const result = await executeCommand(aliasedMsg);
 
         // If command not found, fall through to send as regular message to agent
         if (result.notFound) {
+          if (registryCmd) {
+            registryCmd.fail(`Unknown command: ${registryCommandName}`);
+          }
           // Don't treat as command - continue to regular message handling below
         } else {
           // Known command - show in transcript and handle result
-          const cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: msg,
-            output: result.output,
-            phase: "finished",
-            success: result.success,
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          if (registryCmd) {
+            registryCmd.finish(result.output, result.success);
+          }
           return { submitted: true }; // Don't send commands to Letta agent
         }
       }
@@ -8534,6 +8270,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agentName,
       agentDescription,
       agentLastRunAt,
+      commandRunner,
       handleExit,
       isExecutingTool,
       queuedApprovalResults,
@@ -8541,6 +8278,7 @@ ${SYSTEM_REMINDER_CLOSE}
       pendingApprovals,
       profileConfirmPending,
       handleAgentSelect,
+      startOverlayCommand,
       tokenStreamingEnabled,
       isAgentBusy,
       setStreaming,
@@ -8938,21 +8676,24 @@ ${SYSTEM_REMINDER_CLOSE}
       const rule = approvalContext.recommendedRule;
       const actualScope = scope || approvalContext.defaultScope;
 
+      const cmd = commandRunner.start(
+        "/approve-always",
+        "Adding permission...",
+      );
+
       // Save the permission rule
-      await savePermissionRule(rule, "allow", actualScope);
+      try {
+        await savePermissionRule(rule, "allow", actualScope);
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        cmd.fail(`Failed to add permission: ${errorDetails}`);
+        return;
+      }
 
       // Show confirmation in transcript
       const scopeText =
         actualScope === "session" ? " (session only)" : " (project)";
-      const cmdId = uid("cmd");
-      buffersRef.current.byId.set(cmdId, {
-        kind: "command",
-        id: cmdId,
-        input: "/approve-always",
-        output: `Added permission: ${rule}${scopeText}`,
-      });
-      buffersRef.current.order.push(cmdId);
-      refreshDerived();
+      cmd.finish(`Added permission: ${rule}${scopeText}`, true);
 
       // Re-check remaining approvals against the newly saved permission
       // This allows subsequent approvals that match the new rule to be auto-allowed
@@ -9087,6 +8828,8 @@ ${SYSTEM_REMINDER_CLOSE}
       await handleApproveCurrent(diffs);
     },
     [
+      agentId,
+      commandRunner,
       approvalResults,
       approvalContexts,
       pendingApprovals,
@@ -9177,97 +8920,92 @@ ${SYSTEM_REMINDER_CLOSE}
   }, [pendingApprovals, refreshDerived, queueApprovalResults]);
 
   const handleModelSelect = useCallback(
-    async (modelId: string) => {
-      // If agent is busy, queue the model switch for after end_turn
-      if (isAgentBusy()) {
-        setActiveOverlay(null);
-        setQueuedOverlayAction({ type: "switch_model", modelId });
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/model ${modelId}`,
-          output: `Model switch queued – will switch after current task completes`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
-        return;
-      }
+    async (modelId: string, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/model")
+        : consumeOverlayCommand("model");
 
-      await withCommandLock(async () => {
-        // Declare cmdId outside try block so it's accessible in catch
-        let cmdId: string | null = null;
+      let selectedModel: {
+        id: string;
+        handle?: string;
+        label: string;
+        updateArgs?: { context_window?: number };
+      } | null = null;
 
-        try {
-          // Find the selected model from models.json first (for loading message)
-          const { models } = await import("../agent/model");
-          let selectedModel = models.find((m) => m.id === modelId);
+      try {
+        const { models } = await import("../agent/model");
+        selectedModel = models.find((m) => m.id === modelId) ?? null;
 
-          // If not found in static list, it might be a BYOK model where id === handle
-          if (!selectedModel && modelId.includes("/")) {
-            // Treat it as a BYOK model - the modelId is actually the handle
-            // Look up the context window from the API-cached model info
-            const { getModelContextWindow } = await import(
-              "../agent/available-models"
+        if (!selectedModel && modelId.includes("/")) {
+          const { getModelContextWindow } = await import(
+            "../agent/available-models"
+          );
+          const apiContextWindow = await getModelContextWindow(modelId);
+
+          selectedModel = {
+            id: modelId,
+            handle: modelId,
+            label: modelId.split("/").pop() ?? modelId,
+            description: "Custom model",
+            updateArgs: apiContextWindow
+              ? { context_window: apiContextWindow }
+              : undefined,
+          } as unknown as (typeof models)[number];
+        }
+
+        if (!selectedModel) {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start("/model", `Model not found: ${modelId}`);
+          cmd.fail(`Model not found: ${modelId}`);
+          return;
+        }
+        const model = selectedModel;
+        const modelHandle = model.handle ?? model.id;
+
+        if (isAgentBusy()) {
+          setActiveOverlay(null);
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/model",
+              `Model switch queued – will switch after current task completes`,
             );
-            const apiContextWindow = await getModelContextWindow(modelId);
-
-            selectedModel = {
-              id: modelId,
-              handle: modelId,
-              label: modelId.split("/").pop() ?? modelId,
-              description: "Custom model",
-              updateArgs: apiContextWindow
-                ? { context_window: apiContextWindow }
-                : undefined,
-            } as unknown as (typeof models)[number];
-          }
-
-          if (!selectedModel) {
-            // Create a failed command in the transcript
-            cmdId = uid("cmd");
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/model ${modelId}`,
-              output: `Model not found: ${modelId}`,
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
-            return;
-          }
-
-          // Immediately add command to transcript with "running" phase and loading message
-          cmdId = uid("cmd");
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/model ${modelId}`,
-            output: `Switching model to ${selectedModel.label}...`,
+          cmd.update({
+            output: `Model switch queued – will switch after current task completes`,
             phase: "running",
           });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
+          setQueuedOverlayAction({
+            type: "switch_model",
+            modelId,
+            commandId: cmd.id,
+          });
+          return;
+        }
 
-          // Update the agent with new model and config args
+        await withCommandLock(async () => {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/model",
+              `Switching model to ${model.label}...`,
+            );
+          cmd.update({
+            output: `Switching model to ${model.label}...`,
+            phase: "running",
+          });
+
           const { updateAgentLLMConfig } = await import("../agent/modify");
-
           const updatedConfig = await updateAgentLLMConfig(
             agentId,
-            selectedModel.handle,
-            selectedModel.updateArgs,
+            modelHandle,
+            model.updateArgs,
           );
           setLlmConfig(updatedConfig);
           setCurrentModelId(modelId);
 
-          // Reset context token tracking since different models have different tokenizers
           buffersRef.current.lastContextTokens = 0;
 
-          // After switching models, only switch toolset if it actually changes
           const { isOpenAIModel, isGeminiModel } = await import(
             "../tools/manager"
           );
@@ -9277,9 +9015,9 @@ ${SYSTEM_REMINDER_CLOSE}
             | "default"
             | "gemini"
             | "gemini_snake"
-            | "none" = isOpenAIModel(selectedModel.handle ?? "")
+            | "none" = isOpenAIModel(modelHandle)
             ? "codex"
-            : isGeminiModel(selectedModel.handle ?? "")
+            : isGeminiModel(modelHandle)
               ? "gemini"
               : "default";
 
@@ -9293,49 +9031,195 @@ ${SYSTEM_REMINDER_CLOSE}
             | null = null;
           if (currentToolset !== targetToolset) {
             const { switchToolsetForModel } = await import("../tools/toolset");
-            toolsetName = await switchToolsetForModel(
-              selectedModel.handle ?? "",
-              agentId,
-            );
+            toolsetName = await switchToolsetForModel(modelHandle, agentId);
             setCurrentToolset(toolsetName);
           }
 
-          // Update the same command with final result (include toolset info only if changed)
           const autoToolsetLine = toolsetName
             ? `Automatically switched toolset to ${toolsetName}. Use /toolset to change back if desired.\nConsider switching to a different system prompt using /system to match.`
             : null;
           const outputLines = [
-            `Switched to ${selectedModel.label}`,
+            `Switched to ${model.label}`,
             ...(autoToolsetLine ? [autoToolsetLine] : []),
           ].join("\n");
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/model ${modelId}`,
-            output: outputLines,
-            phase: "finished",
-            success: true,
+          cmd.finish(outputLines, true);
+        });
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/model", "Failed to switch model.");
+        cmd.fail(`Failed to switch model: ${errorDetails}`);
+      }
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      currentToolset,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
+  const handleSystemPromptSelect = useCallback(
+    async (promptId: string, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/system")
+        : consumeOverlayCommand("system");
+
+      let selectedPrompt:
+        | { id: string; label: string; content: string }
+        | undefined;
+
+      try {
+        const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
+        selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
+
+        if (!selectedPrompt) {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/system",
+              `System prompt not found: ${promptId}`,
+            );
+          cmd.fail(`System prompt not found: ${promptId}`);
+          return;
+        }
+        const prompt = selectedPrompt;
+
+        if (isAgentBusy()) {
+          setActiveOverlay(null);
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/system",
+              "System prompt switch queued – will switch after current task completes",
+            );
+          cmd.update({
+            output:
+              "System prompt switch queued – will switch after current task completes",
+            phase: "running",
           });
-          refreshDerived();
-        } catch (error) {
-          // Mark command as failed (only if cmdId was created)
-          const errorDetails = formatErrorDetails(error, agentId);
-          if (cmdId) {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/model ${modelId}`,
-              output: `Failed to switch model: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+          setQueuedOverlayAction({
+            type: "switch_system",
+            promptId,
+            commandId: cmd.id,
+          });
+          return;
+        }
+
+        await withCommandLock(async () => {
+          const cmd =
+            overlayCommand ??
+            commandRunner.start(
+              "/system",
+              `Switching system prompt to ${prompt.label}...`,
+            );
+          cmd.update({
+            output: `Switching system prompt to ${prompt.label}...`,
+            phase: "running",
+          });
+
+          const { updateAgentSystemPromptRaw } = await import(
+            "../agent/modify"
+          );
+          const result = await updateAgentSystemPromptRaw(
+            agentId,
+            prompt.content,
+          );
+
+          if (result.success) {
+            setCurrentSystemPromptId(promptId);
+            cmd.finish(`Switched system prompt to ${prompt.label}`, true);
+          } else {
+            cmd.fail(result.message);
           }
+        });
+      } catch (error) {
+        const errorDetails = formatErrorDetails(error, agentId);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/system", "Failed to switch system prompt.");
+        cmd.fail(`Failed to switch system prompt: ${errorDetails}`);
+      }
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
+  const handleToolsetSelect = useCallback(
+    async (
+      toolsetId:
+        | "codex"
+        | "codex_snake"
+        | "default"
+        | "gemini"
+        | "gemini_snake"
+        | "none",
+      commandId?: string | null,
+    ) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/toolset")
+        : consumeOverlayCommand("toolset");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/toolset",
+            "Toolset switch queued – will switch after current task completes",
+          );
+        cmd.update({
+          output:
+            "Toolset switch queued – will switch after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "switch_toolset",
+          toolsetId,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/toolset",
+            `Switching toolset to ${toolsetId}...`,
+          );
+        cmd.update({
+          output: `Switching toolset to ${toolsetId}...`,
+          phase: "running",
+        });
+
+        try {
+          const { forceToolsetSwitch } = await import("../tools/toolset");
+          await forceToolsetSwitch(toolsetId, agentId);
+          setCurrentToolset(toolsetId);
+          cmd.finish(`Switched toolset to ${toolsetId}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to switch toolset: ${errorDetails}`);
         }
       });
     },
-    [agentId, refreshDerived, currentToolset, withCommandLock, isAgentBusy],
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
   );
 
   // Process queued overlay actions when streaming ends
@@ -9355,37 +9239,28 @@ ${SYSTEM_REMINDER_CLOSE}
       // Process the queued action
       if (action.type === "switch_agent") {
         // Call handleAgentSelect - it will see isAgentBusy() as false now
-        handleAgentSelect(action.agentId);
+        handleAgentSelect(action.agentId, { commandId: action.commandId });
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
-        handleModelSelect(action.modelId);
+        handleModelSelect(action.modelId, action.commandId);
       } else if (action.type === "switch_conversation") {
-        // For conversation switch, we need to handle it inline since the handler
-        // is defined in JSX. We'll dispatch a synthetic event or handle directly.
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: "/resume",
-          output: `Processing queued conversation switch...`,
+        const cmd = action.commandId
+          ? commandRunner.getHandle(action.commandId, "/resume")
+          : commandRunner.start(
+              "/resume",
+              "Processing queued conversation switch...",
+            );
+        cmd.update({
+          output: "Processing queued conversation switch...",
           phase: "running",
         });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
 
         // Execute the conversation switch asynchronously
         (async () => {
           setCommandRunning(true);
           try {
             if (action.conversationId === conversationId) {
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: "/resume",
-                output: "Already on this conversation",
-                phase: "finished",
-                success: true,
-              });
+              cmd.finish("Already on this conversation", true);
             } else {
               const client = await getClient();
               if (agentState) {
@@ -9408,132 +9283,25 @@ ${SYSTEM_REMINDER_CLOSE}
                 // Reset context tokens for new conversation
                 buffersRef.current.lastContextTokens = 0;
 
-                buffersRef.current.byId.set(cmdId, {
-                  kind: "command",
-                  id: cmdId,
-                  input: "/resume",
-                  output: `Switched to conversation (${resumeData.messageHistory.length} messages)`,
-                  phase: "finished",
-                  success: true,
-                });
+                cmd.finish(
+                  `Switched to conversation (${resumeData.messageHistory.length} messages)`,
+                  true,
+                );
               }
             }
           } catch (error) {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: "/resume",
-              output: `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
-              phase: "finished",
-              success: false,
-            });
+            cmd.fail(
+              `Failed to switch conversation: ${error instanceof Error ? error.message : String(error)}`,
+            );
           } finally {
             setCommandRunning(false);
             refreshDerived();
           }
         })();
       } else if (action.type === "switch_toolset") {
-        // Execute toolset switch inline (handler defined later, can't call directly)
-        (async () => {
-          setCommandRunning(true);
-          const cmdId = uid("cmd");
-          try {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/toolset ${action.toolsetId}`,
-              output: `Switching toolset to ${action.toolsetId}...`,
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
-
-            const { forceToolsetSwitch } = await import("../tools/toolset");
-            await forceToolsetSwitch(action.toolsetId, agentId);
-            setCurrentToolset(action.toolsetId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/toolset ${action.toolsetId}`,
-              output: `Switched toolset to ${action.toolsetId}`,
-              phase: "finished",
-              success: true,
-            });
-          } catch (error) {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/toolset ${action.toolsetId}`,
-              output: `Failed to switch toolset: ${error instanceof Error ? error.message : String(error)}`,
-              phase: "finished",
-              success: false,
-            });
-          } finally {
-            setCommandRunning(false);
-            refreshDerived();
-          }
-        })();
+        handleToolsetSelect(action.toolsetId, action.commandId);
       } else if (action.type === "switch_system") {
-        // Execute system prompt switch inline (handler defined later, can't call directly)
-        (async () => {
-          setCommandRunning(true);
-          const cmdId = uid("cmd");
-          try {
-            const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
-            const selectedPrompt = SYSTEM_PROMPTS.find(
-              (p) => p.id === action.promptId,
-            );
-
-            if (!selectedPrompt) {
-              buffersRef.current.byId.set(cmdId, {
-                kind: "command",
-                id: cmdId,
-                input: `/system ${action.promptId}`,
-                output: `System prompt not found: ${action.promptId}`,
-                phase: "finished",
-                success: false,
-              });
-              buffersRef.current.order.push(cmdId);
-              return;
-            }
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${action.promptId}`,
-              output: `Switching system prompt to ${selectedPrompt.label}...`,
-              phase: "running",
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
-
-            const { updateAgentSystemPrompt } = await import("../agent/modify");
-            await updateAgentSystemPrompt(agentId, selectedPrompt.content);
-            setCurrentSystemPromptId(action.promptId);
-
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${action.promptId}`,
-              output: `Switched system prompt to ${selectedPrompt.label}`,
-              phase: "finished",
-              success: true,
-            });
-          } catch (error) {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${action.promptId}`,
-              output: `Failed to switch system prompt: ${error instanceof Error ? error.message : String(error)}`,
-              phase: "finished",
-              success: false,
-            });
-          } finally {
-            setCommandRunning(false);
-            refreshDerived();
-          }
-        })();
+        handleSystemPromptSelect(action.promptId, action.commandId);
       }
     }
   }, [
@@ -9544,187 +9312,16 @@ ${SYSTEM_REMINDER_CLOSE}
     queuedOverlayAction,
     handleAgentSelect,
     handleModelSelect,
+    handleToolsetSelect,
+    handleSystemPromptSelect,
     agentId,
     agentState,
     conversationId,
     refreshDerived,
     setCommandRunning,
+    commandRunner.getHandle,
+    commandRunner.start,
   ]);
-
-  const handleSystemPromptSelect = useCallback(
-    async (promptId: string) => {
-      // If agent is busy, queue the system prompt switch for after end_turn
-      if (isAgentBusy()) {
-        setActiveOverlay(null);
-        setQueuedOverlayAction({ type: "switch_system", promptId });
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/system ${promptId}`,
-          output: `System prompt switch queued – will switch after current task completes`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
-        return;
-      }
-
-      await withCommandLock(async () => {
-        const cmdId = uid("cmd");
-
-        try {
-          // Find the selected prompt
-          const { SYSTEM_PROMPTS } = await import("../agent/promptAssets");
-          const selectedPrompt = SYSTEM_PROMPTS.find((p) => p.id === promptId);
-
-          if (!selectedPrompt) {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${promptId}`,
-              output: `System prompt not found: ${promptId}`,
-              phase: "finished",
-              success: false,
-            });
-            buffersRef.current.order.push(cmdId);
-            refreshDerived();
-            return;
-          }
-
-          // Immediately add command to transcript with "running" phase
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/system ${promptId}`,
-            output: `Switching system prompt to ${selectedPrompt.label}...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          // Update the agent's system prompt
-          const { updateAgentSystemPromptRaw } = await import(
-            "../agent/modify"
-          );
-          const result = await updateAgentSystemPromptRaw(
-            agentId,
-            selectedPrompt.content,
-          );
-
-          if (result.success) {
-            setCurrentSystemPromptId(promptId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${promptId}`,
-              output: `Switched system prompt to ${selectedPrompt.label}`,
-              phase: "finished",
-              success: true,
-            });
-          } else {
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: `/system ${promptId}`,
-              output: result.message,
-              phase: "finished",
-              success: false,
-            });
-          }
-          refreshDerived();
-        } catch (error) {
-          const errorDetails = formatErrorDetails(error, agentId);
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/system ${promptId}`,
-            output: `Failed to switch system prompt: ${errorDetails}`,
-            phase: "finished",
-            success: false,
-          });
-          refreshDerived();
-        }
-      });
-    },
-    [agentId, refreshDerived, withCommandLock, isAgentBusy],
-  );
-
-  const handleToolsetSelect = useCallback(
-    async (
-      toolsetId:
-        | "codex"
-        | "codex_snake"
-        | "default"
-        | "gemini"
-        | "gemini_snake"
-        | "none",
-    ) => {
-      // If agent is busy, queue the toolset switch for after end_turn
-      if (isAgentBusy()) {
-        setActiveOverlay(null);
-        setQueuedOverlayAction({ type: "switch_toolset", toolsetId });
-        const cmdId = uid("cmd");
-        buffersRef.current.byId.set(cmdId, {
-          kind: "command",
-          id: cmdId,
-          input: `/toolset ${toolsetId}`,
-          output: `Toolset switch queued – will switch after current task completes`,
-          phase: "finished",
-          success: true,
-        });
-        buffersRef.current.order.push(cmdId);
-        refreshDerived();
-        return;
-      }
-
-      await withCommandLock(async () => {
-        const cmdId = uid("cmd");
-
-        try {
-          // Immediately add command to transcript with "running" phase
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/toolset ${toolsetId}`,
-            output: `Switching toolset to ${toolsetId}...`,
-            phase: "running",
-          });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
-
-          // Force switch to the selected toolset
-          const { forceToolsetSwitch } = await import("../tools/toolset");
-          await forceToolsetSwitch(toolsetId, agentId);
-          setCurrentToolset(toolsetId);
-
-          // Update the command with final result
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/toolset ${toolsetId}`,
-            output: `Switched toolset to ${toolsetId}`,
-            phase: "finished",
-            success: true,
-          });
-          refreshDerived();
-        } catch (error) {
-          const errorDetails = formatErrorDetails(error, agentId);
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: `/toolset ${toolsetId}`,
-            output: `Failed to switch toolset: ${errorDetails}`,
-            phase: "finished",
-            success: false,
-          });
-          refreshDerived();
-        }
-      });
-    },
-    [agentId, refreshDerived, withCommandLock, isAgentBusy],
-  );
 
   // Handle escape when profile confirmation is pending
   const handleFeedbackSubmit = useCallback(
@@ -9732,21 +9329,18 @@ ${SYSTEM_REMINDER_CLOSE}
       closeOverlay();
 
       await withCommandLock(async () => {
-        const cmdId = uid("cmd");
+        const overlayCommand = consumeOverlayCommand("feedback");
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/feedback", "Sending feedback...");
 
         try {
           const resolvedMessage = resolvePlaceholders(message);
 
-          // Immediately add command to transcript with "running" phase
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: "/feedback",
+          cmd.update({
             output: "Sending feedback...",
             phase: "running",
           });
-          buffersRef.current.order.push(cmdId);
-          refreshDerived();
 
           const settings = settingsManager.getSettings();
           const apiKey =
@@ -9811,27 +9405,13 @@ ${SYSTEM_REMINDER_CLOSE}
             );
           }
 
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: "/feedback",
-            output:
-              "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
-            phase: "finished",
-            success: true,
-          });
-          refreshDerived();
+          cmd.finish(
+            "Feedback submitted! To chat with the Letta dev team live, join our Discord (https://discord.gg/letta).",
+            true,
+          );
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
-          buffersRef.current.byId.set(cmdId, {
-            kind: "command",
-            id: cmdId,
-            input: "/feedback",
-            output: `Failed to send feedback: ${errorDetails}`,
-            phase: "finished",
-            success: false,
-          });
-          refreshDerived();
+          cmd.fail(`Failed to send feedback: ${errorDetails}`);
         }
       });
     },
@@ -9841,7 +9421,8 @@ ${SYSTEM_REMINDER_CLOSE}
       agentDescription,
       currentModelId,
       billingTier,
-      refreshDerived,
+      commandRunner,
+      consumeOverlayCommand,
       withCommandLock,
       closeOverlay,
     ],
@@ -9850,18 +9431,11 @@ ${SYSTEM_REMINDER_CLOSE}
   const handleProfileEscapeCancel = useCallback(() => {
     if (profileConfirmPending) {
       const { cmdId, name } = profileConfirmPending;
-      buffersRef.current.byId.set(cmdId, {
-        kind: "command",
-        id: cmdId,
-        input: `/profile load ${name}`,
-        output: "Cancelled",
-        phase: "finished",
-        success: false,
-      });
-      refreshDerived();
+      const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
+      cmd.fail("Cancelled");
       setProfileConfirmPending(null);
     }
-  }, [profileConfirmPending, refreshDerived]);
+  }, [commandRunner, profileConfirmPending]);
 
   // Track permission mode changes for UI updates
   const [uiPermissionMode, setUiPermissionMode] = useState(
@@ -10767,24 +10341,42 @@ Plan file path: ${planFilePath}`;
               <ProviderSelector
                 onCancel={closeOverlay}
                 onStartOAuth={async () => {
+                  const overlayCommand = consumeOverlayCommand("connect");
                   // Close selector and start OAuth flow
                   closeOverlay();
-                  const { handleConnect } = await import("./commands/connect");
-                  await handleConnect(
-                    {
-                      buffersRef,
-                      refreshDerived,
-                      setCommandRunning,
-                      onCodexConnected: () => {
-                        setModelSelectorOptions({
-                          filterProvider: "chatgpt-plus-pro",
-                          forceRefresh: true,
-                        });
-                        setActiveOverlay("model");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start("/connect", "Starting connection...");
+                  const {
+                    handleConnect,
+                    setActiveCommandId: setActiveConnectCommandId,
+                  } = await import("./commands/connect");
+                  setActiveConnectCommandId(cmd.id);
+                  try {
+                    await handleConnect(
+                      {
+                        buffersRef,
+                        refreshDerived,
+                        setCommandRunning,
+                        onCodexConnected: () => {
+                          setModelSelectorOptions({
+                            filterProvider: "chatgpt-plus-pro",
+                            forceRefresh: true,
+                          });
+                          startOverlayCommand(
+                            "model",
+                            "/model",
+                            "Opening model selector...",
+                            "Models dialog dismissed",
+                          );
+                          setActiveOverlay("model");
+                        },
                       },
-                    },
-                    "/connect codex",
-                  );
+                      "/connect codex",
+                    );
+                  } finally {
+                    setActiveConnectCommandId(null);
+                  }
                 }}
               />
             )}
@@ -10817,8 +10409,11 @@ Plan file path: ${planFilePath}`;
               <AgentSelector
                 currentAgentId={agentId}
                 onSelect={async (id) => {
+                  const overlayCommand = consumeOverlayCommand("resume");
                   closeOverlay();
-                  await handleAgentSelect(id);
+                  await handleAgentSelect(id, {
+                    commandId: overlayCommand?.id,
+                  });
                 }}
                 onCancel={closeOverlay}
                 onCreateNewAgent={() => {
@@ -10835,41 +10430,39 @@ Plan file path: ${planFilePath}`;
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
                 onSelect={async (convId) => {
+                  const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
 
                   // Skip if already on this conversation
                   if (convId === conversationId) {
-                    const cmdId = uid("cmd");
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/resume",
-                      output: "Already on this conversation",
-                      phase: "finished",
-                      success: true,
-                    });
-                    buffersRef.current.order.push(cmdId);
-                    refreshDerived();
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/resume",
+                        "Already on this conversation",
+                      );
+                    cmd.finish("Already on this conversation", true);
                     return;
                   }
 
                   // If agent is busy, queue the switch for after end_turn
                   if (isAgentBusy()) {
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/resume",
+                        "Conversation switch queued – will switch after current task completes",
+                      );
+                    cmd.update({
+                      output:
+                        "Conversation switch queued – will switch after current task completes",
+                      phase: "running",
+                    });
                     setQueuedOverlayAction({
                       type: "switch_conversation",
                       conversationId: convId,
+                      commandId: cmd.id,
                     });
-                    const cmdId = uid("cmd");
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/resume",
-                      output: `Conversation switch queued – will switch after current task completes`,
-                      phase: "finished",
-                      success: true,
-                    });
-                    buffersRef.current.order.push(cmdId);
-                    refreshDerived();
                     return;
                   }
 
@@ -10877,18 +10470,13 @@ Plan file path: ${planFilePath}`;
                   setCommandRunning(true);
 
                   const inputCmd = "/resume";
-                  const cmdId = uid("cmd");
-
-                  // Show loading indicator while switching
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: inputCmd,
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(inputCmd, "Switching conversation...");
+                  cmd.update({
                     output: "Switching conversation...",
                     phase: "running",
                   });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
 
                   try {
                     // Validate conversation exists BEFORE updating state
@@ -10912,17 +10500,6 @@ Plan file path: ${planFilePath}`;
                         conversationId: convId,
                       });
 
-                      // Clear current transcript and static items
-                      buffersRef.current.byId.clear();
-                      buffersRef.current.order = [];
-                      buffersRef.current.tokenCount = 0;
-                      buffersRef.current.lastContextTokens = 0;
-                      emittedIdsRef.current.clear();
-                      resetDeferredToolCallCommits();
-                      setStaticItems([]);
-                      setStaticRenderEpoch((e) => e + 1);
-                      resetTrajectoryBases();
-
                       // Build success command with agent + conversation info
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
@@ -10939,14 +10516,26 @@ Plan file path: ${planFilePath}`;
                               `⎿  Conversation: ${convId} (empty)`,
                             ];
                       const successOutput = successLines.join("\n");
+                      cmd.finish(successOutput, true);
                       const successItem: StaticItem = {
                         kind: "command",
-                        id: uid("cmd"),
-                        input: inputCmd,
+                        id: cmd.id,
+                        input: cmd.input,
                         output: successOutput,
                         phase: "finished",
                         success: true,
                       };
+
+                      // Clear current transcript and static items
+                      buffersRef.current.byId.clear();
+                      buffersRef.current.order = [];
+                      buffersRef.current.tokenCount = 0;
+                      buffersRef.current.lastContextTokens = 0;
+                      emittedIdsRef.current.clear();
+                      resetDeferredToolCallCommits();
+                      setStaticItems([]);
+                      setStaticRenderEpoch((e) => e + 1);
+                      resetTrajectoryBases();
 
                       // Backfill message history with visual separator
                       if (resumeData.messageHistory.length > 0) {
@@ -11029,38 +10618,28 @@ Plan file path: ${planFilePath}`;
                     } else if (error instanceof Error) {
                       errorMsg = error.message;
                     }
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: inputCmd,
-                      output: `Failed to switch conversation: ${errorMsg}`,
-                      phase: "finished",
-                      success: false,
-                    });
-                    refreshDerived();
+                    cmd.fail(`Failed to switch conversation: ${errorMsg}`);
                   } finally {
                     setCommandRunning(false);
                   }
                 }}
                 onNewConversation={async () => {
+                  const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
 
                   // Lock input for async operation
                   setCommandRunning(true);
 
-                  const inputCmd = "/resume";
-                  const cmdId = uid("cmd");
-
-                  // Show loading indicator
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: inputCmd,
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/resume",
+                      "Creating new conversation...",
+                    );
+                  cmd.update({
                     output: "Creating new conversation...",
                     phase: "running",
                   });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
 
                   try {
                     // Create a new conversation
@@ -11080,6 +10659,26 @@ Plan file path: ${planFilePath}`;
                       conversationId: conversation.id,
                     });
 
+                    // Build success command with agent + conversation info
+                    const currentAgentName =
+                      agentState?.name || "Unnamed Agent";
+                    const shortConvId = conversation.id.slice(0, 20);
+                    const successLines = [
+                      `Started new conversation with "${currentAgentName}"`,
+                      `⎿  Agent: ${agentId}`,
+                      `⎿  Conversation: ${shortConvId}... (new)`,
+                    ];
+                    const successOutput = successLines.join("\n");
+                    cmd.finish(successOutput, true);
+                    const successItem: StaticItem = {
+                      kind: "command",
+                      id: cmd.id,
+                      input: cmd.input,
+                      output: successOutput,
+                      phase: "finished",
+                      success: true,
+                    };
+
                     // Clear current transcript and static items
                     buffersRef.current.byId.clear();
                     buffersRef.current.order = [];
@@ -11090,38 +10689,12 @@ Plan file path: ${planFilePath}`;
                     setStaticItems([]);
                     setStaticRenderEpoch((e) => e + 1);
                     resetTrajectoryBases();
-
-                    // Build success command with agent + conversation info
-                    const currentAgentName =
-                      agentState?.name || "Unnamed Agent";
-                    const shortConvId = conversation.id.slice(0, 20);
-                    const successLines = [
-                      `Started new conversation with "${currentAgentName}"`,
-                      `⎿  Agent: ${agentId}`,
-                      `⎿  Conversation: ${shortConvId}... (new)`,
-                    ];
-                    const successItem: StaticItem = {
-                      kind: "command",
-                      id: uid("cmd"),
-                      input: inputCmd,
-                      output: successLines.join("\n"),
-                      phase: "finished",
-                      success: true,
-                    };
                     setStaticItems([successItem]);
                     setLines(toLines(buffersRef.current));
                   } catch (error) {
-                    const errorCmdId = uid("cmd");
-                    buffersRef.current.byId.set(errorCmdId, {
-                      kind: "command",
-                      id: errorCmdId,
-                      input: inputCmd,
-                      output: `Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`,
-                      phase: "finished",
-                      success: false,
-                    });
-                    buffersRef.current.order.push(errorCmdId);
-                    refreshDerived();
+                    cmd.fail(
+                      `Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`,
+                    );
                   } finally {
                     setCommandRunning(false);
                   }
@@ -11138,12 +10711,14 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 conversationId={conversationId}
                 onOpenConversation={async (targetAgentId, targetConvId) => {
+                  const overlayCommand = consumeOverlayCommand("search");
                   closeOverlay();
 
                   // Different agent: use handleAgentSelect (which supports optional conversationId)
                   if (targetAgentId !== agentId) {
                     await handleAgentSelect(targetAgentId, {
                       conversationId: targetConvId,
+                      commandId: overlayCommand?.id,
                     });
                     return;
                   }
@@ -11153,41 +10728,46 @@ Plan file path: ${planFilePath}`;
 
                   // Same agent, same conversation: nothing to do
                   if (actualTargetConv === conversationId) {
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/search",
+                        "Already on this conversation",
+                      );
+                    cmd.finish("Already on this conversation", true);
                     return;
                   }
 
                   // Same agent, different conversation: switch conversation
                   // (Reuses ConversationSelector's onSelect logic pattern)
                   if (isAgentBusy()) {
+                    const cmd =
+                      overlayCommand ??
+                      commandRunner.start(
+                        "/search",
+                        "Conversation switch queued – will switch after current task completes",
+                      );
+                    cmd.update({
+                      output:
+                        "Conversation switch queued – will switch after current task completes",
+                      phase: "running",
+                    });
                     setQueuedOverlayAction({
                       type: "switch_conversation",
                       conversationId: actualTargetConv,
+                      commandId: cmd.id,
                     });
-                    const cmdId = uid("cmd");
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/search",
-                      output: `Conversation switch queued – will switch after current task completes`,
-                      phase: "finished",
-                      success: true,
-                    });
-                    buffersRef.current.order.push(cmdId);
-                    refreshDerived();
                     return;
                   }
 
                   setCommandRunning(true);
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/search",
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start("/search", "Switching conversation...");
+                  cmd.update({
                     output: "Switching conversation...",
                     phase: "running",
                   });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
 
                   try {
                     if (agentState) {
@@ -11208,6 +10788,22 @@ Plan file path: ${planFilePath}`;
                         conversationId: actualTargetConv,
                       });
 
+                      const currentAgentName =
+                        agentState.name || "Unnamed Agent";
+                      const successOutput = [
+                        `Switched to conversation with "${currentAgentName}"`,
+                        `⎿  Conversation: ${actualTargetConv}`,
+                      ].join("\n");
+                      cmd.finish(successOutput, true);
+                      const successItem: StaticItem = {
+                        kind: "command",
+                        id: cmd.id,
+                        input: cmd.input,
+                        output: successOutput,
+                        phase: "finished",
+                        success: true,
+                      };
+
                       // Clear current transcript and static items
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
@@ -11218,21 +10814,6 @@ Plan file path: ${planFilePath}`;
                       setStaticItems([]);
                       setStaticRenderEpoch((e) => e + 1);
                       resetTrajectoryBases();
-
-                      const currentAgentName =
-                        agentState.name || "Unnamed Agent";
-                      const successOutput = [
-                        `Switched to conversation with "${currentAgentName}"`,
-                        `⎿  Conversation: ${actualTargetConv}`,
-                      ].join("\n");
-                      const successItem: StaticItem = {
-                        kind: "command",
-                        id: uid("cmd"),
-                        input: "/search",
-                        output: successOutput,
-                        phase: "finished",
-                        success: true,
-                      };
 
                       // Backfill message history
                       if (resumeData.messageHistory.length > 0) {
@@ -11304,15 +10885,7 @@ Plan file path: ${planFilePath}`;
                     } else if (error instanceof Error) {
                       errorMsg = error.message;
                     }
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/search",
-                      output: `Failed: ${errorMsg}`,
-                      phase: "finished",
-                      success: false,
-                    });
-                    refreshDerived();
+                    cmd.fail(`Failed: ${errorMsg}`);
                   } finally {
                     setCommandRunning(false);
                   }
@@ -11387,22 +10960,21 @@ Plan file path: ${planFilePath}`;
             {activeOverlay === "mcp-connect" && (
               <McpConnectFlow
                 onComplete={(serverName, serverId, toolCount) => {
+                  const overlayCommand = consumeOverlayCommand("mcp-connect");
                   closeOverlay();
-                  const cmdId = uid("cmd");
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/mcp connect",
-                    output:
-                      `Successfully created MCP server "${serverName}"\n` +
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start(
+                      "/mcp connect",
+                      "Connecting MCP server...",
+                    );
+                  cmd.finish(
+                    `Successfully created MCP server "${serverName}"\n` +
                       `ID: ${serverId}\n` +
                       `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
                       "Open /mcp to attach or detach tools for this server.",
-                    phase: "finished",
-                    success: true,
-                  });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
+                    true,
+                  );
                 }}
                 onCancel={closeOverlay}
               />
@@ -11430,25 +11002,23 @@ Plan file path: ${planFilePath}`;
                 currentName={agentName || ""}
                 local={pinDialogLocal}
                 onSubmit={async (newName) => {
+                  const overlayCommand = consumeOverlayCommand("pin");
                   closeOverlay();
                   setCommandRunning(true);
 
-                  const cmdId = uid("cmd");
+                  const cmd =
+                    overlayCommand ??
+                    commandRunner.start("/pin", "Pinning agent...");
                   const scopeText = pinDialogLocal
                     ? "to this project"
                     : "globally";
                   const displayName =
                     newName || agentName || agentId.slice(0, 12);
 
-                  buffersRef.current.byId.set(cmdId, {
-                    kind: "command",
-                    id: cmdId,
-                    input: "/pin",
+                  cmd.update({
                     output: `Pinning "${displayName}" ${scopeText}...`,
                     phase: "running",
                   });
-                  buffersRef.current.order.push(cmdId);
-                  refreshDerived();
 
                   try {
                     const client = await getClient();
@@ -11466,23 +11036,12 @@ Plan file path: ${planFilePath}`;
                       settingsManager.pinGlobal(agentId);
                     }
 
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/pin",
-                      output: `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
-                      phase: "finished",
-                      success: true,
-                    });
+                    cmd.finish(
+                      `Pinned "${newName || agentName || agentId.slice(0, 12)}" ${scopeText}.`,
+                      true,
+                    );
                   } catch (error) {
-                    buffersRef.current.byId.set(cmdId, {
-                      kind: "command",
-                      id: cmdId,
-                      input: "/pin",
-                      output: `Failed to pin: ${error}`,
-                      phase: "finished",
-                      success: false,
-                    });
+                    cmd.fail(`Failed to pin: ${error}`);
                   } finally {
                     setCommandRunning(false);
                     refreshDerived();
