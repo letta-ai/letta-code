@@ -27,6 +27,8 @@ import ShellDescription from "./descriptions/Shell.md";
 import ShellCommandDescription from "./descriptions/ShellCommand.md";
 import SkillDescription from "./descriptions/Skill.md";
 import TaskDescription from "./descriptions/Task.md";
+import TaskOutputDescription from "./descriptions/TaskOutput.md";
+import TaskStopDescription from "./descriptions/TaskStop.md";
 import TodoWriteDescription from "./descriptions/TodoWrite.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
@@ -62,6 +64,8 @@ import { shell } from "./impl/Shell";
 import { shell_command } from "./impl/ShellCommand";
 import { skill } from "./impl/Skill";
 import { task } from "./impl/Task";
+import { task_output } from "./impl/TaskOutput";
+import { task_stop } from "./impl/TaskStop";
 import { todo_write } from "./impl/TodoWrite";
 import { update_plan } from "./impl/UpdatePlan";
 import { view_image } from "./impl/ViewImage";
@@ -97,6 +101,8 @@ import ShellSchema from "./schemas/Shell.json";
 import ShellCommandSchema from "./schemas/ShellCommand.json";
 import SkillSchema from "./schemas/Skill.json";
 import TaskSchema from "./schemas/Task.json";
+import TaskOutputSchema from "./schemas/TaskOutput.json";
+import TaskStopSchema from "./schemas/TaskStop.json";
 import TodoWriteSchema from "./schemas/TodoWrite.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
@@ -157,6 +163,16 @@ const toolDefinitions = {
     schema: KillBashSchema,
     description: KillBashDescription.trim(),
     impl: kill_bash as unknown as ToolImplementation,
+  },
+  TaskOutput: {
+    schema: TaskOutputSchema,
+    description: TaskOutputDescription.trim(),
+    impl: task_output as unknown as ToolImplementation,
+  },
+  TaskStop: {
+    schema: TaskStopSchema,
+    description: TaskStopDescription.trim(),
+    impl: task_stop as unknown as ToolImplementation,
   },
   LS: {
     schema: LSSchema,

@@ -3,7 +3,7 @@
 import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import SpinnerLib from "ink-spinner";
 import {
   type ComponentType,
@@ -24,12 +24,14 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provide
 import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
+import type { QueuedMessage } from "../helpers/messageQueueBridge";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
+import { Text } from "./Text";
 
 // Type assertion for ink-spinner compatibility
 const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
@@ -114,6 +116,7 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider,
   isByokProvider,
   isAutocompleteActive,
+  hideFooter,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -126,9 +129,10 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   isAutocompleteActive: boolean;
+  hideFooter: boolean;
 }) {
   // Hide footer when autocomplete is showing
-  if (isAutocompleteActive) {
+  if (hideFooter || isAutocompleteActive) {
     return null;
   }
 
@@ -183,11 +187,14 @@ export function Input({
   visible = true,
   streaming,
   tokenCount,
+  elapsedBaseMs = 0,
   thinkingMessage,
   onSubmit,
   onBashSubmit,
   bashRunning = false,
   onBashInterrupt,
+  inputEnabled = true,
+  collapseInputWhenDisabled = false,
   permissionMode: externalMode,
   onPermissionModeChange,
   onExit,
@@ -208,15 +215,19 @@ export function Input({
   onPasteError,
   restoredInput,
   onRestoredInputConsumed,
+  networkPhase = null,
 }: {
   visible?: boolean;
   streaming: boolean;
   tokenCount: number;
+  elapsedBaseMs?: number;
   thinkingMessage: string;
   onSubmit: (message?: string) => Promise<{ submitted: boolean }>;
   onBashSubmit?: (command: string) => Promise<void>;
   bashRunning?: boolean;
   onBashInterrupt?: () => void;
+  inputEnabled?: boolean;
+  collapseInputWhenDisabled?: boolean;
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   onExit?: () => void;
@@ -226,7 +237,7 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
-  messageQueue?: string[];
+  messageQueue?: QueuedMessage[];
   onEnterQueueEditMode?: () => void;
   onEscapeCancel?: () => void;
   ralphActive?: boolean;
@@ -237,6 +248,7 @@ export function Input({
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
+  networkPhase?: "upload" | "download" | "error" | null;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -250,6 +262,18 @@ export function Input({
   const [isAutocompleteActive, setIsAutocompleteActive] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
+
+  // Terminal width (reactive to window resizing)
+  const columns = useTerminalWidth();
+  const contentWidth = Math.max(0, columns - 2);
+
+  const interactionEnabled = visible && inputEnabled;
+  const reserveInputSpace = !collapseInputWhenDisabled;
+  const hideFooter = !interactionEnabled || value.startsWith("/");
+  const inputRowLines = useMemo(() => {
+    return Math.max(1, getVisualLines(value, contentWidth).length);
+  }, [value, contentWidth]);
+  const inputChromeHeight = inputRowLines + 3; // top divider + input rows + bottom divider + footer
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -321,9 +345,11 @@ export function Input({
   const [elapsedMs, setElapsedMs] = useState(0);
   const streamStartRef = useRef<number | null>(null);
 
-  // Terminal width (reactive to window resizing)
-  const columns = useTerminalWidth();
-  const contentWidth = Math.max(0, columns - 2);
+  useEffect(() => {
+    if (!interactionEnabled) {
+      setIsAutocompleteActive(false);
+    }
+  }, [interactionEnabled]);
 
   // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
@@ -335,7 +361,7 @@ export function Input({
   // Handle profile confirmation: Enter confirms, any other key cancels
   // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     if (!onEscapeCancel) return;
 
     // Enter key confirms the action - trigger submit with empty input
@@ -350,7 +376,7 @@ export function Input({
 
   // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Debug logging for escape key detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
       // eslint-disable-next-line no-console
@@ -396,7 +422,7 @@ export function Input({
   });
 
   useInput((input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
 
     // Handle CTRL-C for double-ctrl-c-to-exit
     // In bash mode, CTRL-C wipes input but doesn't exit bash mode
@@ -428,7 +454,7 @@ export function Input({
 
   // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Debug logging for shift+tab detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
       // eslint-disable-next-line no-console
@@ -467,7 +493,7 @@ export function Input({
 
   // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
-    if (!visible) return;
+    if (!interactionEnabled) return;
     // Don't interfere with autocomplete navigation, BUT allow history navigation
     // when we're already browsing history (historyIndex !== -1)
     if (isAutocompleteActive && historyIndex === -1) {
@@ -523,7 +549,14 @@ export function Input({
         ) {
           setAtStartBoundary(false);
           // Clear the queue and load into input as one multi-line message
-          const queueText = messageQueue.join("\n");
+          const queueText = messageQueue
+            .filter((item) => item.kind === "user")
+            .map((item) => item.text.trim())
+            .filter((msg) => msg.length > 0)
+            .join("\n");
+          if (!queueText) {
+            return;
+          }
           setValue(queueText);
           // Signal to App.tsx to clear the queue
           if (onEnterQueueEditMode) {
@@ -658,11 +691,11 @@ export function Input({
     if (streaming && visible) {
       // Start tracking when streaming begins
       if (streamStartRef.current === null) {
-        streamStartRef.current = Date.now();
+        streamStartRef.current = performance.now();
       }
       const id = setInterval(() => {
         if (streamStartRef.current !== null) {
-          setElapsedMs(Date.now() - streamStartRef.current);
+          setElapsedMs(performance.now() - streamStartRef.current);
         }
       }, 1000);
       return () => clearInterval(id);
@@ -831,11 +864,20 @@ export function Input({
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
   const estimatedTokens = charsToTokens(tokenCount);
+  const totalElapsedMs = elapsedBaseMs + elapsedMs;
   const shouldShowTokenCount =
     streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
   const shouldShowElapsed =
-    streaming && elapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
-  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
+  const elapsedLabel = formatElapsedLabel(totalElapsedMs);
+
+  const networkArrow = useMemo(() => {
+    if (!networkPhase) return "";
+    if (networkPhase === "upload") return "↑";
+    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
+    return "↑\u0338";
+  }, [networkPhase]);
+  const showErrorArrow = networkArrow === "↑\u0338";
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
   // Uses chalk.dim to match reasoning text styling
@@ -843,10 +885,18 @@ export function Input({
   const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
-    const suffix =
-      (shouldShowElapsed ? ` · ${elapsedMinutes}m` : "") +
-      (shouldShowTokenCount ? ` · ${formatCompact(estimatedTokens)} ↑` : "") +
-      ")";
+    const parts: string[] = [];
+    if (shouldShowElapsed) {
+      parts.push(elapsedLabel);
+    }
+    if (shouldShowTokenCount) {
+      parts.push(
+        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
+      );
+    } else if (showErrorArrow) {
+      parts.push(networkArrow);
+    }
+    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
     if (interruptRequested) {
       return hintColor(` (interrupting${suffix}`);
     }
@@ -855,10 +905,12 @@ export function Input({
     );
   }, [
     shouldShowElapsed,
-    elapsedMinutes,
+    elapsedLabel,
     shouldShowTokenCount,
     estimatedTokens,
     interruptRequested,
+    networkArrow,
+    showErrorArrow,
   ]);
 
   // Create a horizontal line using box-drawing characters
@@ -896,79 +948,104 @@ export function Input({
         <QueuedMessages messages={messageQueue} />
       )}
 
-      <Box flexDirection="column">
-        {/* Top horizontal divider */}
-        <Text
-          dimColor={!isBashMode}
-          color={isBashMode ? colors.bash.border : undefined}
-        >
-          {horizontalLine}
-        </Text>
+      {interactionEnabled ? (
+        <Box flexDirection="column">
+          {/* Top horizontal divider */}
+          <Text
+            dimColor={!isBashMode}
+            color={isBashMode ? colors.bash.border : undefined}
+          >
+            {horizontalLine}
+          </Text>
 
-        {/* Two-column layout for input, matching message components */}
-        <Box flexDirection="row">
-          <Box width={2} flexShrink={0}>
-            <Text color={isBashMode ? colors.bash.prompt : colors.input.prompt}>
-              {isBashMode ? "!" : ">"}
-            </Text>
-            <Text> </Text>
+          {/* Two-column layout for input, matching message components */}
+          <Box flexDirection="row">
+            <Box width={2} flexShrink={0}>
+              <Text
+                color={isBashMode ? colors.bash.prompt : colors.input.prompt}
+              >
+                {isBashMode ? "!" : ">"}
+              </Text>
+              <Text> </Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <PasteAwareTextInput
+                value={value}
+                onChange={setValue}
+                onSubmit={handleSubmit}
+                cursorPosition={cursorPos}
+                onCursorMove={setCurrentCursorPosition}
+                focus={interactionEnabled && !onEscapeCancel}
+                onBangAtEmpty={handleBangAtEmpty}
+                onBackspaceAtEmpty={handleBackspaceAtEmpty}
+                onPasteError={onPasteError}
+              />
+            </Box>
           </Box>
-          <Box flexGrow={1} width={contentWidth}>
-            <PasteAwareTextInput
-              value={value}
-              onChange={setValue}
-              onSubmit={handleSubmit}
-              cursorPosition={cursorPos}
-              onCursorMove={setCurrentCursorPosition}
-              focus={!onEscapeCancel}
-              onBangAtEmpty={handleBangAtEmpty}
-              onBackspaceAtEmpty={handleBackspaceAtEmpty}
-              onPasteError={onPasteError}
-            />
-          </Box>
+
+          {/* Bottom horizontal divider */}
+          <Text
+            dimColor={!isBashMode}
+            color={isBashMode ? colors.bash.border : undefined}
+          >
+            {horizontalLine}
+          </Text>
+
+          <InputAssist
+            currentInput={value}
+            cursorPosition={currentCursorPosition}
+            onFileSelect={handleFileSelect}
+            onCommandSelect={handleCommandSelect}
+            onCommandAutocomplete={handleCommandAutocomplete}
+            onAutocompleteActiveChange={setIsAutocompleteActive}
+            agentId={agentId}
+            agentName={agentName}
+            serverUrl={serverUrl}
+            workingDirectory={process.cwd()}
+            conversationId={conversationId}
+          />
+
+          <InputFooter
+            ctrlCPressed={ctrlCPressed}
+            escapePressed={escapePressed}
+            isBashMode={isBashMode}
+            modeName={modeInfo?.name ?? null}
+            modeColor={modeInfo?.color ?? null}
+            showExitHint={ralphActive || ralphPending}
+            agentName={agentName}
+            currentModel={currentModel}
+            isOpenAICodexProvider={
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+            }
+            isByokProvider={
+              currentModelProvider?.startsWith("lc-") ||
+              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+            }
+            isAutocompleteActive={isAutocompleteActive}
+            hideFooter={hideFooter}
+          />
         </Box>
-
-        {/* Bottom horizontal divider */}
-        <Text
-          dimColor={!isBashMode}
-          color={isBashMode ? colors.bash.border : undefined}
-        >
-          {horizontalLine}
-        </Text>
-
-        <InputAssist
-          currentInput={value}
-          cursorPosition={currentCursorPosition}
-          onFileSelect={handleFileSelect}
-          onCommandSelect={handleCommandSelect}
-          onCommandAutocomplete={handleCommandAutocomplete}
-          onAutocompleteActiveChange={setIsAutocompleteActive}
-          agentId={agentId}
-          agentName={agentName}
-          serverUrl={serverUrl}
-          workingDirectory={process.cwd()}
-          conversationId={conversationId}
-        />
-
-        <InputFooter
-          ctrlCPressed={ctrlCPressed}
-          escapePressed={escapePressed}
-          isBashMode={isBashMode}
-          modeName={modeInfo?.name ?? null}
-          modeColor={modeInfo?.color ?? null}
-          showExitHint={ralphActive || ralphPending}
-          agentName={agentName}
-          currentModel={currentModel}
-          isOpenAICodexProvider={
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-          }
-          isByokProvider={
-            currentModelProvider?.startsWith("lc-") ||
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-          }
-          isAutocompleteActive={isAutocompleteActive}
-        />
-      </Box>
+      ) : reserveInputSpace ? (
+        <Box height={inputChromeHeight} />
+      ) : null}
     </Box>
   );
+}
+
+function formatElapsedLabel(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes === 0) {
+    return `${seconds}s`;
+  }
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) {
+    const parts: string[] = [`${hours}hr`];
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0) parts.push(`${seconds}s`);
+    return parts.join(" ");
+  }
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }

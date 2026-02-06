@@ -4,11 +4,12 @@
  */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { getClient } from "../agent/client";
 import { settingsManager } from "../settings-manager";
 import { colors } from "./components/colors";
+import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 
 interface ProfileOption {
@@ -70,7 +71,7 @@ function ProfileSelectionUI({
   externalFreshRepoMode,
   failedAgentMessage,
   serverModelsForNewAgent,
-  defaultModelHandle,
+  defaultModelHandle: _defaultModelHandle,
   serverBaseUrl,
   onComplete,
 }: {
@@ -283,7 +284,7 @@ function ProfileSelectionUI({
     <Box flexDirection="column">
       {/* Welcome Screen */}
       <WelcomeScreen
-        loadingState="ready"
+        loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
         agentState={null}
         agentProvenance={null}
@@ -297,9 +298,7 @@ function ProfileSelectionUI({
         </>
       )}
 
-      {loading ? (
-        <Text dimColor>Loading pinned agents...</Text>
-      ) : selectingModel && serverModelsForNewAgent ? (
+      {loading ? null : selectingModel && serverModelsForNewAgent ? (
         // Model selection mode
         <Box flexDirection="column" gap={1}>
           <Text bold color={colors.selector.title}>

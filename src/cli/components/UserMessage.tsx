@@ -1,5 +1,5 @@
-import { Text } from "ink";
 import { memo } from "react";
+import { Text } from "./Text";
 
 type UserLine = {
   kind: "user";

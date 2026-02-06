@@ -71,9 +71,16 @@ jobs:
         uses: t1m0thyj/unlock-keyring@v1
 
       - name: Run tests (extended timeout)
+        # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
+        # in a separate gated step.
+        run: bun test src/tests --timeout 15000
+
+      - name: Run integration tests (API)
+        # Only run on push to main or PRs from the same repo (not forks, to protect secrets)
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test --timeout 15000
+        run: bun test src/integration-tests --timeout 15000
 
       - name: Build bundle
         run: bun run build

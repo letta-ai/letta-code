@@ -1,11 +1,14 @@
 // src/cli/components/HooksManager.tsx
 // Interactive TUI for managing hooks configuration
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
+  type HookCommand,
   type HookEvent,
   type HookMatcher,
+  isCommandHook,
+  isPromptHook,
   isToolEvent,
   type SimpleHookEvent,
   type SimpleHookMatcher,
@@ -29,6 +32,7 @@ import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { Text } from "./Text";
 
 // Box drawing characters
 const BOX_TOP_LEFT = "╭";
@@ -37,6 +41,21 @@ const BOX_BOTTOM_LEFT = "╰";
 const BOX_BOTTOM_RIGHT = "╯";
 const BOX_HORIZONTAL = "─";
 const BOX_VERTICAL = "│";
+
+/**
+ * Get a display label for a hook (command or prompt).
+ * For prompt hooks, returns just the prompt text (without prefix).
+ */
+function getHookDisplayLabel(hook: HookCommand | undefined): string {
+  if (!hook) return "";
+  if (isCommandHook(hook)) {
+    return hook.command;
+  }
+  if (isPromptHook(hook)) {
+    return `${hook.prompt.slice(0, 40)}${hook.prompt.length > 40 ? "..." : ""}`;
+  }
+  return "";
+}
 
 interface HooksManagerProps {
   onClose: () => void;
@@ -55,13 +74,13 @@ type Screen =
 const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "PreToolUse", description: "Before tool execution" },
   { event: "PostToolUse", description: "After tool execution" },
+  { event: "PostToolUseFailure", description: "After tool execution fails" },
   { event: "PermissionRequest", description: "When permission is requested" },
   { event: "UserPromptSubmit", description: "When user submits a prompt" },
   { event: "Notification", description: "When notifications are sent" },
   { event: "Stop", description: "When the agent finishes responding" },
   { event: "SubagentStop", description: "When a subagent completes" },
   { event: "PreCompact", description: "Before context compaction" },
-  { event: "Setup", description: "When invoked with --init flags" },
   { event: "SessionStart", description: "When a session starts" },
   { event: "SessionEnd", description: "When a session ends" },
 ];
@@ -531,10 +550,12 @@ export const HooksManager = memo(function HooksManager({
           const matcherPattern = isToolMatcher
             ? (hook as HookMatcherWithSource).matcher || "*"
             : null;
-          // Both types have hooks array
-          const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
+          // Both types have hooks array - get display label for first hook
+          const firstHook = "hooks" in hook ? hook.hooks[0] : undefined;
+          const command = getHookDisplayLabel(firstHook);
           const truncatedCommand =
             command.length > 50 ? `${command.slice(0, 47)}...` : command;
+          const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -547,6 +568,7 @@ export const HooksManager = memo(function HooksManager({
               ) : (
                 <Text> </Text>
               )}
+              {isPrompt && <Text color={colors.status.processing}>✦ </Text>}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
           );
@@ -689,8 +711,10 @@ export const HooksManager = memo(function HooksManager({
     const matcherPattern = isToolMatcher
       ? (hook as HookMatcherWithSource).matcher || "*"
       : null;
-    // Both types have hooks array
-    const command = hook && "hooks" in hook ? hook.hooks[0]?.command : "";
+    // Both types have hooks array - get display label for first hook
+    const firstHook = hook && "hooks" in hook ? hook.hooks[0] : undefined;
+    const command = getHookDisplayLabel(firstHook);
+    const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -700,7 +724,16 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         {matcherPattern !== null && <Text>Matcher: {matcherPattern}</Text>}
-        <Text>Command: {command}</Text>
+        <Text>
+          {isPrompt ? (
+            <>
+              Hook: <Text color={colors.status.processing}>✦ </Text>
+              {command}
+            </>
+          ) : (
+            <>Command: {command}</>
+          )}
+        </Text>
         <Text>Source: {hook ? getSourceLabel(hook.source) : ""}</Text>
         <Text> </Text>
 

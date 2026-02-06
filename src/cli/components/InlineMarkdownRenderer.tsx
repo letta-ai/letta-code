@@ -1,6 +1,6 @@
-import { Text } from "ink";
 import type React from "react";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 interface InlineMarkdownProps {
   text: string;

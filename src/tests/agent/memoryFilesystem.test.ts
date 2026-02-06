@@ -77,7 +77,7 @@ function createMockClient(options: {
         // Filter by tags if provided
         if (params?.tags?.length) {
           const filtered = ownedBlocks.filter((b) =>
-            params.tags!.some((tag) => b.tags?.includes(tag)),
+            params.tags?.some((tag) => b.tags?.includes(tag)),
           );
           return Promise.resolve(filtered);
         }

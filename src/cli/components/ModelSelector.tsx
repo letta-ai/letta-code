@@ -1,5 +1,5 @@
 // Import useInput from vendored Ink for bracketed paste support
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearAvailableModelsCache,
@@ -9,6 +9,7 @@ import {
 import { models } from "../../agent/model";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";

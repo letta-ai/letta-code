@@ -2,6 +2,7 @@
 // Functions to write hooks to settings files via settings-manager
 
 import { settingsManager } from "../settings-manager";
+import { debugLog } from "../utils/debug";
 import {
   type HookEvent,
   type HookMatcher,
@@ -37,8 +38,9 @@ export function loadHooksFromLocation(
           settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {}
         );
     }
-  } catch {
+  } catch (error) {
     // Settings not loaded yet, return empty
+    debugLog("hooks", "loadHooksFromLocation: Settings not loaded yet", error);
     return {};
   }
 }
@@ -374,7 +376,12 @@ export function countHooksForEvent(
 export function isUserHooksDisabled(): boolean {
   try {
     return settingsManager.getSettings().hooks?.disabled === true;
-  } catch {
+  } catch (error) {
+    debugLog(
+      "hooks",
+      "isUserHooksDisabled: Failed to check user hooks disabled status",
+      error,
+    );
     return false;
   }
 }

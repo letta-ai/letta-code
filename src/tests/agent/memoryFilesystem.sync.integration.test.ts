@@ -43,6 +43,7 @@ import { settingsManager } from "../../settings-manager";
 // Skip all tests if no API key is available
 const LETTA_API_KEY = process.env.LETTA_API_KEY;
 const LETTA_BASE_URL = process.env.LETTA_BASE_URL || "https://api.letta.com";
+const API_KEY = LETTA_API_KEY ?? "";
 
 const describeIntegration = LETTA_API_KEY ? describe : describe.skip;
 
@@ -56,7 +57,7 @@ describeIntegration("memfs sync integration", () => {
   beforeAll(async () => {
     client = new Letta({
       baseURL: LETTA_BASE_URL,
-      apiKey: LETTA_API_KEY!,
+      apiKey: API_KEY,
     });
 
     // Create a test agent
@@ -358,14 +359,15 @@ describeIntegration("memfs sync integration", () => {
     let attachedBlocks = await getAttachedBlocks();
     let block = attachedBlocks.find((b) => b.label === label);
     expect(block).toBeDefined();
-    const blockId = block?.id;
-    if (blockId) {
-      createdBlockIds.push(blockId);
+    if (!block?.id) {
+      throw new Error("Expected block to exist after first sync.");
     }
+    const blockId = block.id;
+    createdBlockIds.push(blockId);
 
     // Change both file AND block
     writeSystemFile(label, fileContent);
-    await client.blocks.update(blockId!, { value: blockContent });
+    await client.blocks.update(blockId, { value: blockContent });
 
     // Second sync - file should win (no conflict)
     const result = await syncMemoryFilesystem(testAgentId, {
@@ -488,5 +490,166 @@ describeIntegration("memfs sync integration", () => {
 
     expect(status.locationMismatches).toContain(label);
     expect(status.isClean).toBe(false);
+  });
+
+  // =========================================================================
+  // Read-only block tests
+  // =========================================================================
+
+  test("read_only block: file edit is overwritten by API content", async () => {
+    const label = `test-readonly-${Date.now()}`;
+    const originalContent = "Original read-only content";
+    const editedContent = "User tried to edit this";
+
+    // Create a read_only block via API
+    const block = await client.blocks.create({
+      label,
+      value: originalContent,
+      description: "Test read-only block",
+      read_only: true,
+      tags: [`owner:${testAgentId}`],
+    });
+    createdBlockIds.push(block.id);
+
+    // Attach to agent
+    await client.agents.blocks.attach(block.id, { agent_id: testAgentId });
+
+    // First sync - creates file
+    await syncMemoryFilesystem(testAgentId, { homeDir: tempHomeDir });
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Edit the file locally
+    writeFileSync(filePath, editedContent);
+
+    // Second sync - should overwrite with API content
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be in updatedFiles (overwritten)
+    expect(result.updatedFiles).toContain(label);
+
+    // Verify file content is back to original (API wins)
+    const fileContent = readFileSync(filePath, "utf-8");
+    expect(fileContent).toContain(originalContent);
+
+    // Verify block was NOT updated (still has original content)
+    const updatedBlock = await client.blocks.retrieve(block.id);
+    expect(updatedBlock.value).toBe(originalContent);
+  });
+
+  test("read_only block: deleted file is recreated", async () => {
+    const label = `test-readonly-delete-${Date.now()}`;
+    const content = "Content that should persist";
+
+    // Create a read_only block via API
+    const block = await client.blocks.create({
+      label,
+      value: content,
+      description: "Test read-only block for deletion",
+      read_only: true,
+      tags: [`owner:${testAgentId}`],
+    });
+    createdBlockIds.push(block.id);
+
+    // Attach to agent
+    await client.agents.blocks.attach(block.id, { agent_id: testAgentId });
+
+    // First sync - creates file
+    await syncMemoryFilesystem(testAgentId, { homeDir: tempHomeDir });
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Delete the file locally
+    rmSync(filePath);
+    expect(existsSync(filePath)).toBe(false);
+
+    // Second sync - should recreate file (not remove owner tag)
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be recreated
+    expect(result.createdFiles).toContain(label);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Verify block still has owner tag and is attached
+    const attachedBlocks = await client.agents.blocks.list(testAgentId);
+    const attachedArray = Array.isArray(attachedBlocks)
+      ? attachedBlocks
+      : (attachedBlocks as { items?: Array<{ id: string }> }).items || [];
+    expect(attachedArray.some((b) => b.id === block.id)).toBe(true);
+  });
+
+  test("read_only label: file-only (no block) is deleted", async () => {
+    // This tests the case where someone creates a file for a read_only label
+    // but no corresponding block exists - the file should be deleted
+    const label = "skills";
+
+    // Helper to ensure no block exists for this label
+    async function ensureNoBlock(labelToDelete: string) {
+      // Remove attached blocks with this label
+      const attachedBlocks = await getAttachedBlocks();
+      for (const b of attachedBlocks.filter((x) => x.label === labelToDelete)) {
+        if (b.id) {
+          try {
+            await client.agents.blocks.detach(b.id, { agent_id: testAgentId });
+            await client.blocks.delete(b.id);
+          } catch {
+            // Ignore errors (block may not be deletable)
+          }
+        }
+      }
+      // Remove detached owned blocks with this label
+      const ownedBlocks = await getOwnedBlocks();
+      for (const b of ownedBlocks.filter((x) => x.label === labelToDelete)) {
+        if (b.id) {
+          try {
+            await client.blocks.delete(b.id);
+          } catch {
+            // Ignore errors
+          }
+        }
+      }
+    }
+
+    // Ensure API has no block for this label
+    await ensureNoBlock(label);
+
+    // Verify no block exists
+    const attachedBefore = await getAttachedBlocks();
+    const ownedBefore = await getOwnedBlocks();
+    const blockExists =
+      attachedBefore.some((b) => b.label === label) ||
+      ownedBefore.some((b) => b.label === label);
+
+    // For fresh test agents, there should be no skills block
+    // If one exists and can't be deleted, we can't run this test
+    expect(blockExists).toBe(false);
+    if (blockExists) {
+      // This assertion above will fail, but just in case:
+      return;
+    }
+
+    // Create local file in system/
+    writeSystemFile(label, "local skills content that should be deleted");
+
+    // Verify file was created
+    const filePath = join(getSystemDir(), `${label}.md`);
+    expect(existsSync(filePath)).toBe(true);
+
+    // Sync - should delete the file (API is authoritative for read_only labels)
+    const result = await syncMemoryFilesystem(testAgentId, {
+      homeDir: tempHomeDir,
+    });
+
+    // File should be deleted
+    expect(existsSync(filePath)).toBe(false);
+    expect(result.deletedFiles).toContain(label);
   });
 });

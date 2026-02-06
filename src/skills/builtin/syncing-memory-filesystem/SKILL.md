@@ -1,100 +1,161 @@
 ---
 name: syncing-memory-filesystem
-description: Manage memory filesystem sync conflicts with git-like commands. Load this skill when you receive a memFS conflict notification, need to check sync status, review diffs, or resolve conflicts between memory blocks and their filesystem counterparts.
+description: Manage git-backed memory repos. Load this skill when working with git-backed agent memory, setting up remote memory repos, resolving sync conflicts, or managing memory via git workflows.
 ---
 
-# Memory Filesystem Sync
+# Git-Backed Memory Repos
 
-When memFS is enabled, your memory blocks are mirrored as `.md` files on disk at `~/.letta/agents/<agent-id>/memory/`. Changes to blocks or files are detected via content hashing and synced at startup and on manual `/memfs-sync`.
+Agents with the `git-memory-enabled` tag have their memory blocks stored in git repositories accessible via the Letta API. This enables version control, collaboration, and external editing of agent memory.
 
-**Conflicts** occur when both the file and the block are modified since the last sync (e.g., user edits a file in their editor while the block is also updated manually by the user via the API). Non-conflicting changes (only one side changed) are resolved automatically during the next sync.
+**Features:**
+- Stored in cloud (GCS)
+- Accessible via `https://api.letta.com/v1/git/<agent-id>/state.git`
+- Bidirectional sync: API ↔ Git (webhook-triggered, ~2-3s delay)
+- Structure: `memory/system/*.md` for system blocks
 
-## Scripts
+## Setup Authentication (One-Time)
 
-Three scripts provide a git-like interface for managing sync status:
-
-### 1. `memfs-status.ts` — Check sync status (like `git status`)
-
-```bash
-npx tsx <SKILL_DIR>/scripts/memfs-status.ts $LETTA_AGENT_ID
-```
-
-**Output**: JSON object with:
-- `conflicts` — blocks where both file and block changed (need manual resolution)
-- `pendingFromFile` — file changed, block didn't (resolved on next sync)
-- `pendingFromBlock` — block changed, file didn't (resolved on next sync)
-- `newFiles` — files without corresponding blocks
-- `newBlocks` — blocks without corresponding files
-- `isClean` — true if everything is in sync
-- `lastSync` — timestamp of last sync
-
-Read-only, safe to run anytime.
-
-### 2. `memfs-diff.ts` — View conflict details (like `git diff`)
+Configure git credential helper to authenticate with Letta API:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/memfs-diff.ts $LETTA_AGENT_ID
+export LETTA_API_KEY="your-api-key"
+
+git config --global credential.https://api.letta.com.helper '!f() { 
+  echo "username=letta"; 
+  echo "password=$LETTA_API_KEY"; 
+}; f'
 ```
 
-**Output**: Writes a formatted markdown diff file showing both the file version and block version of each conflicting label. The path to the diff file is printed to stdout.
+After setup, git operations will automatically use your API key for authentication.
 
-Use the `Read` tool to review the diff file content.
-
-### 3. `memfs-resolve.ts` — Resolve conflicts (like `git merge`)
+## Clone Agent Memory
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/memfs-resolve.ts $LETTA_AGENT_ID --resolutions '<JSON>'
+# Clone agent's memory repo
+git clone "https://api.letta.com/v1/git/<agent-id>/state.git" ~/my-agent-memory
+
+# View memory blocks
+ls ~/my-agent-memory/memory/system/
+cat ~/my-agent-memory/memory/system/human.md
 ```
 
-**Arguments**:
-- `--resolutions` — JSON array of resolution objects
+## Bidirectional Sync
 
-**Resolution format**:
-```json
-[
-  {"label": "persona/soul", "resolution": "block"},
-  {"label": "human/prefs", "resolution": "file"}
-]
-```
-
-**Resolution options**:
-- `"file"` — Overwrite the memory block with the file contents
-- `"block"` — Overwrite the file with the memory block contents
-
-All resolutions must be provided in a single call (stateless).
-
-## Typical Workflow
-
-1. You receive a system reminder about memFS conflicts
-2. Run `memfs-diff.ts` to see the full content of both sides
-3. Read the diff file to understand the changes
-4. Decide for each conflict: keep the file version or the block version
-5. Run `memfs-resolve.ts` with all resolutions at once
-
-## Example
+### API Edit → Git Pull
 
 ```bash
-# Step 1: Check status (optional — the system reminder already tells you about conflicts)
-npx tsx <SKILL_DIR>/scripts/memfs-status.ts $LETTA_AGENT_ID
-
-# Step 2: View the diffs
-npx tsx <SKILL_DIR>/scripts/memfs-diff.ts $LETTA_AGENT_ID
-# Output: "Diff (2 conflicts) written to: /path/to/diff.md"
-
-# Step 3: Read the diff file (use Read tool on the path from step 2)
-
-# Step 4: Resolve all conflicts
-npx tsx <SKILL_DIR>/scripts/memfs-resolve.ts $LETTA_AGENT_ID --resolutions '[{"label":"persona/soul","resolution":"block"},{"label":"human/prefs","resolution":"file"}]'
+# 1. Edit block via API (or use memory tools)
+# 2. Pull to get changes (webhook creates commit automatically)
+cd ~/my-agent-memory
+git pull --ff-only
 ```
 
-## How Conflicts Arise
+Changes made via the API are automatically committed to git within 2-3 seconds.
 
-- **User edits a `.md` file** in their editor or IDE while the corresponding block is also modified manually by the user via the API
-- **Both sides diverge** from the last-synced state — neither can be resolved automatically without potentially losing changes
-- The system detects this after each turn and notifies you via a system reminder
+### Git Push → API Update
 
-## Notes
+```bash
+# 1. Edit files locally
+echo "Updated info" > memory/system/human.md
 
-- Non-conflicting changes (only one side modified) are resolved automatically during the next sync — you only need to intervene for true conflicts
-- The `/memfs-sync` command is still available for users to manually trigger sync and resolve conflicts via the CLI overlay
-- After resolving, the sync state is updated so the same conflicts won't reappear
+# 2. Commit and push
+git add memory/system/human.md
+git commit -m "update human block"
+git push
+
+# 3. API automatically reflects changes (webhook-triggered, ~2-3s delay)
+```
+
+Changes pushed to git are automatically synced to the API within 2-3 seconds.
+
+## Conflict Resolution
+
+When both API and git have diverged:
+
+```bash
+cd ~/my-agent-memory
+
+# 1. Try to push (will be rejected)
+git push  # → "fetch first"
+
+# 2. Pull to create merge conflict
+git pull --no-rebase
+# → CONFLICT in memory/system/human.md
+
+# 3. View conflict markers
+cat memory/system/human.md
+# <<<<<<< HEAD
+# your local changes
+# =======
+# server changes
+# >>>>>>> <commit>
+
+# 4. Resolve
+echo "final resolved content" > memory/system/human.md
+git add memory/system/human.md
+git commit -m "resolved conflict"
+
+# 5. Push resolution
+git push
+# → API automatically updates with resolved content
+```
+
+## Block Management
+
+### Create New Block
+
+```bash
+# Create file in system/ directory (automatically attached to agent)
+echo "My new block content" > memory/system/new-block.md
+git add memory/system/new-block.md
+git commit -m "add new block"
+git push
+# → Block automatically created and attached to agent
+```
+
+### Delete/Detach Block
+
+```bash
+# Remove file from system/ directory
+git rm memory/system/persona.md
+git commit -m "remove persona block"
+git push
+# → Block automatically detached from agent
+```
+
+## Directory Structure
+
+```
+repo/
+├── .letta/
+│   └── config.json          # Repo metadata
+└── memory/
+    └── system/              # System blocks (attached to agent)
+        ├── human.md
+        └── persona.md
+```
+
+**System blocks** (`memory/system/`) are attached to the agent and appear in the agent's memory.
+
+## Requirements
+
+- Agent must have `git-memory-enabled` tag
+- Valid API key with agent access
+- Git installed locally
+
+## Troubleshooting
+
+**Clone fails with "Authentication failed":**
+- Verify credential helper is set: `git config --global --get credential.https://api.letta.com.helper`
+- Verify API key is exported: `echo $LETTA_API_KEY`
+- Reconfigure: Run setup command again with your API key
+
+**Push/pull doesn't update API:**
+- Wait 2-3 seconds for webhook processing
+- Verify agent has `git-memory-enabled` tag
+- Check if you have write access to the agent
+
+**Can't see changes immediately:**
+- Bidirectional sync has a 2-3 second delay for webhook processing
+- Use `git pull` to get latest API changes
+- Use `git fetch` to check remote without merging

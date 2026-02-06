@@ -1,15 +1,16 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
+import { Text } from "./Text";
 
 // Helper function to normalize text - copied from old codebase
+// NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s
     .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\n+|\n+$/g, "");
+    .replace(/^\n+/g, ""); // Only trim leading newlines, preserve trailing ones
 
 type ReasoningLine = {
   kind: "reasoning";

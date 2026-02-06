@@ -1,6 +1,7 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo, useEffect, useState } from "react";
 import type { StreamingState } from "../helpers/accumulator";
+import { Text } from "./Text";
 
 interface StreamingOutputDisplayProps {
   streaming: StreamingState;

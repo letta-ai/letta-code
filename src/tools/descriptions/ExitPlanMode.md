@@ -11,13 +11,12 @@ Use this tool when you are in plan mode and have finished writing your plan to t
 ## When to Use This Tool
 IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
 
-## Handling Ambiguity in Plans
-Before using this tool, ensure your plan is clear and unambiguous. If there are multiple valid approaches or unclear requirements:
-1. Use the AskUserQuestion tool to clarify with the user
-2. Ask about specific implementation choices (e.g., architectural patterns, which library to use)
-3. Clarify any assumptions that could affect the implementation
-4. Edit your plan file to incorporate user feedback
-5. Only proceed with ExitPlanMode after resolving ambiguities and updating the plan file
+## Before Using This Tool
+Ensure your plan is complete and unambiguous:
+- If you have unresolved questions about requirements or approach, use AskUserQuestion first (in earlier phases)
+- Once your plan is finalized, use THIS tool to request approval
+
+**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that's exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.
 
 ## Examples
 

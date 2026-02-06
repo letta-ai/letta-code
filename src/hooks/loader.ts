@@ -2,14 +2,17 @@
 // Loads and matches hooks from settings-manager
 
 import { settingsManager } from "../settings-manager";
+import { debugLog } from "../utils/debug";
 import {
   type HookCommand,
   type HookEvent,
   type HookMatcher,
   type HooksConfig,
+  isPromptHook,
   isToolEvent,
   type SimpleHookEvent,
   type SimpleHookMatcher,
+  supportsPromptHooks,
   type ToolHookEvent,
 } from "./types";
 
@@ -27,8 +30,9 @@ export function clearHooksCache(): void {
 export function loadGlobalHooks(): HooksConfig {
   try {
     return settingsManager.getSettings().hooks || {};
-  } catch {
+  } catch (error) {
     // Settings not initialized yet
+    debugLog("hooks", "loadGlobalHooks: Settings not initialized yet", error);
     return {};
   }
 }
@@ -48,8 +52,9 @@ export async function loadProjectHooks(
       await settingsManager.loadProjectSettings(workingDirectory);
     }
     return settingsManager.getProjectSettings(workingDirectory)?.hooks || {};
-  } catch {
+  } catch (error) {
     // Settings not available
+    debugLog("hooks", "loadProjectHooks: Settings not available", error);
     return {};
   }
 }
@@ -71,8 +76,9 @@ export async function loadProjectLocalHooks(
     return (
       settingsManager.getLocalProjectSettings(workingDirectory)?.hooks || {}
     );
-  } catch {
+  } catch (error) {
     // Settings not available
+    debugLog("hooks", "loadProjectLocalHooks: Settings not available", error);
     return {};
   }
 }
@@ -162,10 +168,42 @@ export function matchesTool(pattern: string, toolName: string): boolean {
   try {
     const regex = new RegExp(`^(?:${pattern})$`);
     return regex.test(toolName);
-  } catch {
+  } catch (error) {
     // Invalid regex, fall back to exact match
+    debugLog(
+      "hooks",
+      `matchesTool: Invalid regex pattern "${pattern}", falling back to exact match`,
+      error,
+    );
     return pattern === toolName;
   }
+}
+
+/**
+ * Filter hooks, removing prompt hooks from unsupported events with a warning
+ */
+function filterHooksForEvent(
+  hooks: HookCommand[],
+  event: HookEvent,
+): HookCommand[] {
+  const filtered: HookCommand[] = [];
+  const promptHooksSupported = supportsPromptHooks(event);
+
+  for (const hook of hooks) {
+    if (isPromptHook(hook)) {
+      if (!promptHooksSupported) {
+        // Warn about unsupported prompt hook
+        console.warn(
+          `\x1b[33m[hooks] Warning: Prompt hooks are not supported for the ${event} event. ` +
+            `Ignoring prompt hook.\x1b[0m`,
+        );
+        continue;
+      }
+    }
+    filtered.push(hook);
+  }
+
+  return filtered;
 }
 
 /**
@@ -191,7 +229,7 @@ export function getMatchingHooks(
         hooks.push(...matcher.hooks);
       }
     }
-    return hooks;
+    return filterHooksForEvent(hooks, event);
   } else {
     // Simple events use SimpleHookMatcher[] - extract hooks from each matcher
     const matchers = config[event as SimpleHookEvent] as
@@ -205,7 +243,7 @@ export function getMatchingHooks(
     for (const matcher of matchers) {
       hooks.push(...matcher.hooks);
     }
-    return hooks;
+    return filterHooksForEvent(hooks, event);
   }
 }
 
@@ -270,8 +308,13 @@ export function areHooksDisabled(
       if (projectDisabled === true) {
         return true;
       }
-    } catch {
+    } catch (error) {
       // Project settings not loaded, skip
+      debugLog(
+        "hooks",
+        "areHooksDisabled: Project settings not loaded, skipping",
+        error,
+      );
     }
 
     // Check project-local settings
@@ -282,12 +325,22 @@ export function areHooksDisabled(
       if (localDisabled === true) {
         return true;
       }
-    } catch {
+    } catch (error) {
       // Local project settings not loaded, skip
+      debugLog(
+        "hooks",
+        "areHooksDisabled: Local project settings not loaded, skipping",
+        error,
+      );
     }
 
     return false;
-  } catch {
+  } catch (error) {
+    debugLog(
+      "hooks",
+      "areHooksDisabled: Failed to check hooks disabled status",
+      error,
+    );
     return false;
   }
 }

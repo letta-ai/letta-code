@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useMemo, useState } from "react";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../../agent/memoryFilesystem";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Line characters
 const SOLID_LINE = "─";
@@ -54,7 +55,7 @@ function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
       (name) => !name.startsWith(".") && name !== MEMORY_FS_STATE_FILE,
     );
 
-    // Sort: directories first, then alphabetically
+    // Sort: directories first, "system" always first among dirs, then alphabetically
     const sorted = filtered.sort((a, b) => {
       const aPath = join(dir, a);
       const bPath = join(dir, b);
@@ -67,6 +68,11 @@ function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
         bIsDir = statSync(bPath).isDirectory();
       } catch {}
       if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+      // "system" directory comes first (only at root level, depth 0)
+      if (aIsDir && bIsDir && depth === 0) {
+        if (a === "system") return -1;
+        if (b === "system") return 1;
+      }
       return a.localeCompare(b);
     });
 
@@ -396,6 +402,8 @@ export function MemfsTreeViewer({
               !node.isDirectory &&
               node.relativePath === selectedFile?.relativePath;
             const prefix = renderTreePrefix(node);
+            // "system/" directory gets special green color
+            const isSystemDir = node.isDirectory && node.name === "system/";
 
             return (
               <Box key={node.relativePath} flexDirection="row">
@@ -411,8 +419,14 @@ export function MemfsTreeViewer({
                   backgroundColor={
                     isSelected ? colors.selector.itemHighlighted : undefined
                   }
-                  color={isSelected ? "black" : undefined}
-                  dimColor={node.isDirectory}
+                  color={
+                    isSelected
+                      ? "black"
+                      : isSystemDir
+                        ? colors.status.success
+                        : undefined
+                  }
+                  dimColor={node.isDirectory && !isSystemDir}
                 >
                   {node.name}
                 </Text>

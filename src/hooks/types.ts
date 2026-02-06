@@ -7,6 +7,7 @@
 export type ToolHookEvent =
   | "PreToolUse" // Runs before tool calls (can block them)
   | "PostToolUse" // Runs after tool calls complete (cannot block)
+  | "PostToolUseFailure" // Runs after tool calls fail (cannot block, feeds stderr back to agent)
   | "PermissionRequest"; // Runs when a permission dialog is shown (can allow or deny)
 
 /**
@@ -18,7 +19,6 @@ export type SimpleHookEvent =
   | "Stop" // Runs when the agent finishes responding (can block)
   | "SubagentStop" // Runs when subagent tasks complete (can block)
   | "PreCompact" // Runs before a compact operation (cannot block)
-  | "Setup" // Runs when invoked with --init, --init-only, or --maintenance flags
   | "SessionStart" // Runs when a new session starts or is resumed
   | "SessionEnd"; // Runs when session ends (cannot block)
 
@@ -28,15 +28,80 @@ export type SimpleHookEvent =
 export type HookEvent = ToolHookEvent | SimpleHookEvent;
 
 /**
- * Individual hook command configuration
+ * Command hook configuration - executes a shell command
  */
-export interface HookCommand {
-  /** Type of hook - currently only "command" is supported */
+export interface CommandHookConfig {
+  /** Type of hook */
   type: "command";
   /** Shell command to execute */
   command: string;
-  /** Optional timeout in milliseconds (default: 60000) */
+  /** Optional timeout in milliseconds (default: 60000 for command hooks) */
   timeout?: number;
+}
+
+/**
+ * Prompt hook configuration - sends hook input to an LLM for evaluation.
+ * Supported events: PreToolUse, PostToolUse, PostToolUseFailure,
+ * PermissionRequest, UserPromptSubmit, Stop, and SubagentStop.
+ */
+export interface PromptHookConfig {
+  /** Type of hook */
+  type: "prompt";
+  /**
+   * Prompt text to send to the model.
+   * Use $ARGUMENTS as a placeholder for the hook input JSON.
+   */
+  prompt: string;
+  /** Optional model to use for evaluation */
+  model?: string;
+  /** Optional timeout in milliseconds (default: 30000 for prompt hooks) */
+  timeout?: number;
+}
+
+/**
+ * Placeholder for $ARGUMENTS in prompt hooks
+ */
+export const PROMPT_ARGUMENTS_PLACEHOLDER = "$ARGUMENTS";
+
+/**
+ * Events that support prompt-based hooks:
+ * PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest,
+ * UserPromptSubmit, Stop, SubagentStop
+ */
+export const PROMPT_HOOK_SUPPORTED_EVENTS: Set<HookEvent> = new Set([
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PermissionRequest",
+  "UserPromptSubmit",
+  "Stop",
+  "SubagentStop",
+]);
+
+/**
+ * Type guard to check if an event supports prompt hooks
+ */
+export function supportsPromptHooks(event: HookEvent): boolean {
+  return PROMPT_HOOK_SUPPORTED_EVENTS.has(event);
+}
+
+/**
+ * Individual hook configuration - can be command or prompt type
+ */
+export type HookCommand = CommandHookConfig | PromptHookConfig;
+
+/**
+ * Type guard to check if a hook is a command hook
+ */
+export function isCommandHook(hook: HookCommand): hook is CommandHookConfig {
+  return hook.type === "command";
+}
+
+/**
+ * Type guard to check if a hook is a prompt hook
+ */
+export function isPromptHook(hook: HookCommand): hook is PromptHookConfig {
+  return hook.type === "prompt";
 }
 
 /**
@@ -83,6 +148,7 @@ export type HooksConfig = {
 export const TOOL_EVENTS: Set<HookEvent> = new Set([
   "PreToolUse",
   "PostToolUse",
+  "PostToolUseFailure",
   "PermissionRequest",
 ]);
 
@@ -121,6 +187,17 @@ export interface HookResult {
   durationMs: number;
   /** Error message if hook failed to execute */
   error?: string;
+}
+
+/**
+ * Expected JSON response structure from prompt hooks.
+ * The LLM must respond with this schema per Claude Code spec.
+ */
+export interface PromptHookResponse {
+  /** true allows the action, false prevents it */
+  ok: boolean;
+  /** Required when ok is false. Explanation shown to Claude. */
+  reason?: string;
 }
 
 /**
@@ -193,6 +270,30 @@ export interface PostToolUseHookInput extends HookInputBase {
 }
 
 /**
+ * Input for PostToolUseFailure hooks
+ * Triggered after a tool call fails. Non-blocking, but stderr is fed back to the agent.
+ */
+export interface PostToolUseFailureHookInput extends HookInputBase {
+  event_type: "PostToolUseFailure";
+  /** Name of the tool that failed */
+  tool_name: string;
+  /** Tool input arguments */
+  tool_input: Record<string, unknown>;
+  /** Tool call ID */
+  tool_call_id?: string;
+  /** Error message from the tool failure */
+  error_message: string;
+  /** Error type/name (e.g., "AbortError", "TypeError") */
+  error_type?: string;
+  /** Agent ID (for server-side tools like memory) */
+  agent_id?: string;
+  /** Reasoning/thinking content that preceded this tool call */
+  preceding_reasoning?: string;
+  /** Assistant message content that preceded this tool call */
+  preceding_assistant_message?: string;
+}
+
+/**
  * Input for PermissionRequest hooks
  */
 export interface PermissionRequestHookInput extends HookInputBase {
@@ -255,6 +356,8 @@ export interface StopHookInput extends HookInputBase {
   preceding_reasoning?: string;
   /** The assistant's final message content */
   assistant_message?: string;
+  /** The user's original prompt that initiated this turn */
+  user_message?: string;
 }
 
 /**
@@ -289,15 +392,6 @@ export interface PreCompactHookInput extends HookInputBase {
   agent_id?: string;
   /** Conversation ID */
   conversation_id?: string;
-}
-
-/**
- * Input for Setup hooks
- */
-export interface SetupHookInput extends HookInputBase {
-  event_type: "Setup";
-  /** Which init flag was used */
-  init_type: "init" | "init-only" | "maintenance";
 }
 
 /**
@@ -338,12 +432,12 @@ export interface SessionEndHookInput extends HookInputBase {
 export type HookInput =
   | PreToolUseHookInput
   | PostToolUseHookInput
+  | PostToolUseFailureHookInput
   | PermissionRequestHookInput
   | UserPromptSubmitHookInput
   | NotificationHookInput
   | StopHookInput
   | SubagentStopHookInput
   | PreCompactHookInput
-  | SetupHookInput
   | SessionStartHookInput
   | SessionEndHookInput;

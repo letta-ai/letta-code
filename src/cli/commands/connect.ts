@@ -49,6 +49,12 @@ function uid(prefix: string) {
 // Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
+let activeCommandId: string | null = null;
+
+export function setActiveCommandId(id: string | null): void {
+  activeCommandId = id;
+}
+
 // Context passed to connect handlers
 export interface ConnectCommandContext {
   buffersRef: { current: Buffers };
@@ -66,17 +72,22 @@ function addCommandResult(
   success: boolean,
   phase: "running" | "finished" = "finished",
 ): string {
-  const cmdId = uid("cmd");
+  const cmdId = activeCommandId ?? uid("cmd");
+  const existing = buffersRef.current.byId.get(cmdId);
+  const nextInput =
+    existing && existing.kind === "command" ? existing.input : input;
   const line: CommandLine = {
     kind: "command",
     id: cmdId,
-    input,
+    input: nextInput,
     output,
     phase,
     ...(phase === "finished" && { success }),
   };
   buffersRef.current.byId.set(cmdId, line);
-  buffersRef.current.order.push(cmdId);
+  if (!buffersRef.current.order.includes(cmdId)) {
+    buffersRef.current.order.push(cmdId);
+  }
   refreshDerived();
   return cmdId;
 }
@@ -91,10 +102,13 @@ function updateCommandResult(
   success: boolean,
   phase: "running" | "finished" = "finished",
 ): void {
+  const existing = buffersRef.current.byId.get(cmdId);
+  const nextInput =
+    existing && existing.kind === "command" ? existing.input : input;
   const line: CommandLine = {
     kind: "command",
     id: cmdId,
-    input,
+    input: nextInput,
     output,
     phase,
     ...(phase === "finished" && { success }),

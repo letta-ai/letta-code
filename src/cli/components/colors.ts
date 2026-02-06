@@ -47,7 +47,7 @@ export const brandColors = {
   textDisabled: "#46484A", // dark grey
   // status colors
   statusSuccess: "#64CF64", // green
-  statusWarning: "FEE19C", // yellow
+  statusWarning: "#FEE19C", // yellow
   statusError: "#F1689F", // red
 } as const;
 
@@ -88,7 +88,7 @@ const _colors = {
     selected: brandColors.primaryAccent,
     inactive: brandColors.textDisabled, // uses dimColor prop
     border: brandColors.textDisabled,
-    running: brandColors.statusWarning,
+    running: brandColors.textSecondary,
     error: brandColors.statusError,
   },
 
@@ -126,8 +126,8 @@ const _colors = {
   tool: {
     pending: brandColors.textSecondary, // blinking dot (ready/waiting for approval)
     completed: brandColors.statusSuccess, // solid green dot (finished successfully)
-    streaming: brandColors.textDisabled, // solid gray dot (streaming/in progress)
-    running: brandColors.statusWarning, // blinking yellow dot (executing)
+    streaming: brandColors.textSecondary, // solid gray dot (streaming/in progress)
+    running: brandColors.textSecondary, // blinking gray dot (executing)
     error: brandColors.statusError, // solid red dot (failed)
     memoryName: brandColors.primaryAccent, // memory tool name highlight (matches thinking spinner)
   },
@@ -197,6 +197,16 @@ const _colors = {
   // Footer bar
   footer: {
     agentName: brandColors.primaryAccent,
+  },
+
+  // Context window breakdown categories
+  contextBreakdown: {
+    system: "#E07050", // coral-red
+    coreMemory: "#E0A040", // amber
+    tools: "#20B2AA", // turquoise
+    messages: "#8C8CF9", // brand purple
+    summaryMemory: "#D0B060", // gold
+    other: "#A0A0A0", // light grey
   },
 } as const;
 

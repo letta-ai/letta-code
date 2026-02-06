@@ -12,11 +12,13 @@ import {
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
+import { clearLoadedSkillsForConversation } from "./agent/loadedSkills";
 import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { ProfileSelectionInline } from "./cli/profile-selection";
+import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
 import { telemetry } from "./telemetry";
@@ -48,6 +50,10 @@ USAGE
 
   # maintenance
   letta update          Manually check for updates and install if available
+  letta memfs ...       Memory filesystem subcommands (JSON-only)
+  letta agents ...      Agents subcommands (JSON-only)
+  letta messages ...    Messages subcommands (JSON-only)
+  letta blocks ...      Blocks subcommands (JSON-only)
 
 OPTIONS
   -h, --help            Show this help and exit
@@ -71,11 +77,27 @@ OPTIONS
                         When set, reads JSON messages from stdin for bidirectional communication
   --include-partial-messages
                         Emit stream_event wrappers for each chunk (stream-json only)
+  --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
+
+SUBCOMMANDS (JSON-only)
+  letta memfs status --agent <id>
+  letta memfs diff --agent <id>
+  letta memfs resolve --agent <id> --resolutions '<JSON>'
+  letta memfs backup --agent <id>
+  letta memfs backups --agent <id>
+  letta memfs restore --agent <id> --from <backup> --force
+  letta memfs export --agent <id> --out <dir>
+  letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta messages search --query <text> [--all-agents]
+  letta messages list [--agent <id>]
+  letta blocks list --agent <id>
+  letta blocks copy --block-id <id> [--label <label>] [--agent <id>] [--override]
+  letta blocks attach --block-id <id> [--agent <id>] [--read-only] [--override]
 
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
@@ -324,6 +346,12 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
+  // Handle CLI subcommands (e.g., `letta memfs ...`) before parsing global flags
+  const subcommandResult = await runSubcommand(process.argv.slice(2));
+  if (subcommandResult !== null) {
+    process.exit(subcommandResult);
+  }
+
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
@@ -408,6 +436,7 @@ async function main(): Promise<void> {
         "output-format": { type: "string" },
         "input-format": { type: "string" },
         "include-partial-messages": { type: "boolean" },
+        "from-agent": { type: "string" },
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
@@ -1438,6 +1467,7 @@ async function main(): Promise<void> {
             filePath: fromAfFile,
             modelOverride: model,
             stripMessages: true,
+            stripSkills: false,
           });
           agent = result.agent;
           isNewlyCreatedAgent = true;
@@ -1445,6 +1475,15 @@ async function main(): Promise<void> {
             isNew: true,
             blocks: [],
           });
+
+          // Display extracted skills summary
+          if (result.skills && result.skills.length > 0) {
+            const { getAgentSkillsDir } = await import("./agent/skills");
+            const skillsDir = getAgentSkillsDir(agent.id);
+            console.log(
+              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
+            );
+          }
         }
 
         // Priority 2: Try to use --agent specified ID
@@ -1609,6 +1648,17 @@ async function main(): Promise<void> {
         } else if (isNewlyCreatedAgent && !isSubagent) {
           // Enable memfs by default for newly created agents (but not subagents)
           settingsManager.setMemfsEnabled(agent.id, true);
+        }
+
+        // Ensure agent's system prompt includes/excludes memfs section to match setting
+        if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
+          const { updateAgentSystemPromptMemfs } = await import(
+            "./agent/modify"
+          );
+          await updateAgentSystemPromptMemfs(
+            agent.id,
+            settingsManager.isMemfsEnabled(agent.id),
+          );
         }
 
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
@@ -1820,6 +1870,7 @@ async function main(): Promise<void> {
             isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
+          clearLoadedSkillsForConversation(conversation.id, client);
         } else {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";

@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { parsePatchToAdvancedDiff } from "../helpers/diff";
@@ -8,6 +8,7 @@ import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type FileEditInfo = {
   toolName: string;
@@ -43,6 +44,7 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  showPreview?: boolean;
 };
 
 // Horizontal line characters for Claude Code style
@@ -157,6 +159,7 @@ export const InlineFileEditApproval = memo(
     isFocused = true,
     approveAlwaysText,
     allowPersistence = true,
+    showPreview = true,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -273,6 +276,20 @@ export const InlineFileEditApproval = memo(
         }
         if (key.escape) {
           onCancel?.();
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApprove(diffsToPass.size > 0 ? diffsToPass : undefined);
+          return;
+        }
+        if (input === "2" && allowPersistence) {
+          onApproveAlways(
+            "project",
+            diffsToPass.size > 0 ? diffsToPass : undefined,
+          );
+          return;
         }
       },
       { isActive: isFocused },
@@ -428,13 +445,15 @@ export const InlineFileEditApproval = memo(
         : "Type reason · Esc to cancel"
       : "Enter to select · Esc to cancel";
 
+    const optionsMarginTop = showPreview ? 1 : 0;
+
     return (
       <Box flexDirection="column">
         {/* Static diff content - memoized to prevent re-render on keystroke */}
-        {memoizedDiffContent}
+        {showPreview && memoizedDiffContent}
 
         {/* Options */}
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={optionsMarginTop} flexDirection="column">
           {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>

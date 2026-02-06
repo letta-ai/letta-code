@@ -2,11 +2,24 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CommandHookConfig, HookCommand } from "../hooks/types";
 import { settingsManager } from "../settings-manager";
+
+// Type-safe helper to extract command from a hook (tests only use command hooks)
+function asCommand(
+  hook: HookCommand | undefined,
+): CommandHookConfig | undefined {
+  if (hook && hook.type === "command") {
+    return hook as CommandHookConfig;
+  }
+  return undefined;
+}
+
 import {
   deleteSecureTokens,
   isKeychainAvailable,
   keychainAvailablePrecompute,
+  setServiceName,
 } from "../utils/secrets.js";
 
 // Store original HOME to restore after tests
@@ -15,6 +28,9 @@ let testHomeDir: string;
 let testProjectDir: string;
 
 beforeEach(async () => {
+  // Use a test-specific keychain service name to avoid deleting real credentials
+  setServiceName("letta-code-test");
+
   // Reset settings manager FIRST before changing HOME
   await settingsManager.reset();
 
@@ -37,6 +53,9 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
+
+  // Restore the real service name
+  setServiceName("letta-code");
 });
 
 // ============================================================================
@@ -558,7 +577,7 @@ describe("Settings Manager - Hooks", () => {
 
     const settings = settingsManager.getSettings();
     expect(settings.hooks?.PreToolUse).toHaveLength(1);
-    expect(settings.hooks?.PreToolUse?.[0]?.hooks[0]?.command).toBe(
+    expect(asCommand(settings.hooks?.PreToolUse?.[0]?.hooks[0])?.command).toBe(
       "echo persisted",
     );
     expect(settings.hooks?.SessionStart).toHaveLength(1);
@@ -631,10 +650,12 @@ describe("Settings Manager - Hooks", () => {
 
     expect(reloaded.hooks?.Stop).toHaveLength(1);
     // Simple event hooks are in SimpleHookMatcher format with hooks array
-    expect(reloaded.hooks?.Stop?.[0]?.hooks[0]?.command).toBe("echo stop-hook");
+    expect(asCommand(reloaded.hooks?.Stop?.[0]?.hooks[0])?.command).toBe(
+      "echo stop-hook",
+    );
   });
 
-  test("All 11 hook event types can be configured", async () => {
+  test("All 10 hook event types can be configured", async () => {
     const allHookEvents = [
       "PreToolUse",
       "PostToolUse",
@@ -644,7 +665,6 @@ describe("Settings Manager - Hooks", () => {
       "Stop",
       "SubagentStop",
       "PreCompact",
-      "Setup",
       "SessionStart",
       "SessionEnd",
     ] as const;

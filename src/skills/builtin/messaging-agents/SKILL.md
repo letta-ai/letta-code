@@ -47,37 +47,37 @@ If you don't have a specific agent ID, use these skills to find one:
 ### By Name or Tags
 Load the `finding-agents` skill to search for agents:
 ```bash
-npx tsx <FINDING_AGENTS_SKILL_DIR>/scripts/find-agents.ts --query "agent-name"
-npx tsx <FINDING_AGENTS_SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
+letta agents list --query "agent-name"
+letta agents list --tags "origin:letta-code"
 ```
 
 ### By Topic They Discussed
 Load the `searching-messages` skill to find which agent worked on something:
 ```bash
-npx tsx <SEARCHING_MESSAGES_SKILL_DIR>/scripts/search-messages.ts --query "topic" --all-agents
+letta messages search --query "topic" --all-agents
 ```
 Results include `agent_id` for each matching message.
 
-## Script Usage
+## CLI Usage (agent-to-agent)
 
 ### Starting a New Conversation
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/start-conversation.ts --agent-id <id> --message "<text>"
+letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
-| `--agent-id <id>` | Yes | Target agent ID to message |
-| `--message <text>` | Yes | Message to send |
-| `--timeout <ms>` | No | Max wait time in ms (default: 120000) |
+| `--agent <id>` | Yes | Target agent ID to message |
+| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/start-conversation.ts \
-  --agent-id agent-abc123 \
-  --message "What do you know about the authentication system?"
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent agent-abc123 \
+  "What do you know about the authentication system?"
 ```
 
 **Response:**
@@ -93,28 +93,28 @@ npx tsx <SKILL_DIR>/scripts/start-conversation.ts \
 ### Continuing a Conversation
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/continue-conversation.ts --conversation-id <id> --message "<text>"
+letta -p --from-agent $LETTA_AGENT_ID --conversation <id> "message text"
 ```
 
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
-| `--conversation-id <id>` | Yes | Existing conversation ID |
-| `--message <text>` | Yes | Follow-up message to send |
-| `--timeout <ms>` | No | Max wait time in ms (default: 120000) |
+| `--conversation <id>` | Yes | Existing conversation ID |
+| `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `"message text"` | Yes | Follow-up message (positional after flags) |
 
 **Example:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/continue-conversation.ts \
-  --conversation-id conversation-xyz789 \
-  --message "Can you explain more about the token refresh flow?"
+letta -p --from-agent $LETTA_AGENT_ID \
+  --conversation conversation-xyz789 \
+  "Can you explain more about the token refresh flow?"
 ```
 
 ## Understanding the Response
 
 - Scripts return only the **final assistant message** (not tool calls or reasoning)
 - The target agent may use tools, think, and reason - but you only see their final response
-- To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `--agent-id` targeting the other agent
+- To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `letta messages list --agent <id>` targeting the other agent
 
 ## How It Works
 

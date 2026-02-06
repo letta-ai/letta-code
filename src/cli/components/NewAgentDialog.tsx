@@ -1,10 +1,11 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useState } from "react";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";
+import { Text } from "./Text";
 
 // Horizontal line character (matches other selectors)
 const SOLID_LINE = "─";

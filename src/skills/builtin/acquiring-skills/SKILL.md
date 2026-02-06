@@ -64,10 +64,11 @@ Browse these repositories to discover available skills. Check the README for ski
 
 | Location | Path | When to Use |
 |----------|------|-------------|
+| **Agent-scoped** | `~/.letta/agents/<agent-id>/skills/<skill>/` | Skills for a single agent (default for agent-specific capabilities) |
 | **Global** | `~/.letta/skills/<skill>/` | General-purpose skills useful across projects |
 | **Project** | `.skills/<skill>/` | Project-specific skills |
 
-**Rule**: If useful across multiple projects, install globally. If project-specific, install in `.skills/`.
+**Rule**: Default to **agent-scoped** for changes that should apply only to the current agent. Use **project** for repo-specific skills. Use **global** only if all agents should inherit the skill.
 
 ## How to Download Skills
 
@@ -80,10 +81,12 @@ Skills are directories containing SKILL.md and optionally scripts/, references/,
 git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
 
 # 2. Copy the skill to your skills directory
+# For agent-scoped (recommended default):
+cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/skills/
 # For global:
-cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/skills/
+# cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/skills/
 # For project:
-cp -r /tmp/skills-temp/skills/webapp-testing .skills/
+# cp -r /tmp/skills-temp/skills/webapp-testing .skills/
 
 # 3. Cleanup
 rm -rf /tmp/skills-temp
@@ -93,7 +96,7 @@ rm -rf /tmp/skills-temp
 
 ```bash
 git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
-rsync -av /tmp/skills-temp/skills/webapp-testing/ ~/.letta/skills/webapp-testing/
+rsync -av /tmp/skills-temp/skills/webapp-testing/ ~/.letta/agents/<agent-id>/skills/webapp-testing/
 rm -rf /tmp/skills-temp
 ```
 
@@ -106,6 +109,7 @@ Skill(command: "refresh")
 ```
 
 This scans `~/.letta/skills/` and `.skills/` and updates your `skills` memory block.
+Agent-scoped skills under `~/.letta/agents/<agent-id>/skills/` are included in the scan as well.
 
 ## Complete Example
 
@@ -117,7 +121,7 @@ User asks: "Can you help me test my React app's UI?"
 4. **Download** (trusted source):
    ```bash
    git clone --depth 1 https://github.com/anthropics/skills /tmp/skills-temp
-   cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/skills/
+   cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/skills/
    rm -rf /tmp/skills-temp
    ```
 5. **Refresh**: `Skill(command: "refresh")`
