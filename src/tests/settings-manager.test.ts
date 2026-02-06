@@ -19,6 +19,7 @@ import {
   deleteSecureTokens,
   isKeychainAvailable,
   keychainAvailablePrecompute,
+  setServiceName,
 } from "../utils/secrets.js";
 
 // Store original HOME to restore after tests
@@ -27,6 +28,9 @@ let testHomeDir: string;
 let testProjectDir: string;
 
 beforeEach(async () => {
+  // Use a test-specific keychain service name to avoid deleting real credentials
+  setServiceName("letta-code-test");
+
   // Reset settings manager FIRST before changing HOME
   await settingsManager.reset();
 
@@ -49,6 +53,9 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
+
+  // Restore the real service name
+  setServiceName("letta-code");
 });
 
 // ============================================================================
