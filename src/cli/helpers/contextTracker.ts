@@ -22,7 +22,7 @@ export function createContextTracker(): ContextTracker {
   return {
     lastContextTokens: 0,
     contextTokensHistory: [],
-    currentTurnId: 0,
+    currentTurnId: 0, // simple in-memory counter for now
     pendingCompaction: false,
   };
 }

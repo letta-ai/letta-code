@@ -194,16 +194,18 @@ export async function executePromptHook(
     const parsedResponse = parsePromptResponse(llmResponse);
     const durationMs = Date.now() - startTime;
 
-    // Log hook completion
+    // Log hook completion (matching command hook format from executor.ts)
     const shouldBlock = parsedResponse.ok !== true;
-    const exitLabel = shouldBlock
-      ? "\x1b[31m✗ blocked\x1b[0m"
-      : "\x1b[32m✓ allowed\x1b[0m";
-    console.log(`\x1b[90m[prompt-hook] ${hook.prompt.slice(0, 50)}...\x1b[0m`);
-    console.log(`\x1b[90m  ⏿ ${exitLabel} (${durationMs}ms)\x1b[0m`);
-    if (parsedResponse.reason) {
-      console.log(`\x1b[90m  ⏿ reason: ${parsedResponse.reason}\x1b[0m`);
-    }
+    const exitCode = shouldBlock ? 2 : 0;
+    const exitColor = shouldBlock ? "\x1b[31m" : "\x1b[32m";
+    const exitLabel = `${exitColor}exit ${exitCode}\x1b[0m`;
+    const promptLabel = `\x1b[38;2;140;140;249m✦\x1b[90m ${hook.prompt.slice(0, 50)}${hook.prompt.length > 50 ? "..." : ""}`;
+    console.log(`\x1b[90m[hook:${input.event_type}] ${promptLabel}\x1b[0m`);
+    console.log(`\x1b[90m  \u23BF ${exitLabel} (${durationMs}ms)\x1b[0m`);
+    // Show the JSON response as stdout
+    const responseJson = JSON.stringify(parsedResponse);
+    console.log(`\x1b[90m  \u23BF (stdout)\x1b[0m`);
+    console.log(`\x1b[90m    ${responseJson}\x1b[0m`);
 
     return responseToHookResult(parsedResponse, durationMs);
   } catch (error) {
@@ -211,9 +213,13 @@ export async function executePromptHook(
     const errorMessage = error instanceof Error ? error.message : String(error);
     const timedOut = errorMessage.includes("timed out");
 
-    console.log(`\x1b[90m[prompt-hook] ${hook.prompt.slice(0, 50)}...\x1b[0m`);
-    console.log(`\x1b[90m  ⏿ \x1b[33m⚠ error\x1b[0m (${durationMs}ms)\x1b[0m`);
-    console.log(`\x1b[90m  ⏿ ${errorMessage}\x1b[0m`);
+    const promptLabel = `\x1b[38;2;140;140;249m✦\x1b[90m ${hook.prompt.slice(0, 50)}${hook.prompt.length > 50 ? "..." : ""}`;
+    console.log(`\x1b[90m[hook:${input.event_type}] ${promptLabel}\x1b[0m`);
+    console.log(
+      `\x1b[90m  \u23BF \x1b[33mexit 1\x1b[0m (${durationMs}ms)\x1b[0m`,
+    );
+    console.log(`\x1b[90m  \u23BF (stderr)\x1b[0m`);
+    console.log(`\x1b[90m    ${errorMessage}\x1b[0m`);
 
     return {
       exitCode: HookExitCode.ERROR,

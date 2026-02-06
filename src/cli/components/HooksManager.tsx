@@ -45,13 +45,18 @@ const BOX_VERTICAL = "│";
 /**
  * Get a display label for a hook (command or prompt)
  */
+/**
+ * Get a display label for a hook (command or prompt).
+ * For prompt hooks, returns just the prompt text (without prefix).
+ * Use isPromptHook() to check if a purple ✦ prefix should be rendered.
+ */
 function getHookDisplayLabel(hook: HookCommand | undefined): string {
   if (!hook) return "";
   if (isCommandHook(hook)) {
     return hook.command;
   }
   if (isPromptHook(hook)) {
-    return `[prompt] ${hook.prompt.slice(0, 40)}${hook.prompt.length > 40 ? "..." : ""}`;
+    return `${hook.prompt.slice(0, 40)}${hook.prompt.length > 40 ? "..." : ""}`;
   }
   return "";
 }
@@ -551,10 +556,11 @@ export const HooksManager = memo(function HooksManager({
             ? (hook as HookMatcherWithSource).matcher || "*"
             : null;
           // Both types have hooks array - get display label for first hook
-          const command =
-            "hooks" in hook ? getHookDisplayLabel(hook.hooks[0]) : "";
+          const firstHook = "hooks" in hook ? hook.hooks[0] : undefined;
+          const command = getHookDisplayLabel(firstHook);
           const truncatedCommand =
             command.length > 50 ? `${command.slice(0, 47)}...` : command;
+          const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -567,6 +573,7 @@ export const HooksManager = memo(function HooksManager({
               ) : (
                 <Text> </Text>
               )}
+              {isPrompt && <Text color={colors.status.processing}>✦ </Text>}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
           );
@@ -710,8 +717,9 @@ export const HooksManager = memo(function HooksManager({
       ? (hook as HookMatcherWithSource).matcher || "*"
       : null;
     // Both types have hooks array - get display label for first hook
-    const command =
-      hook && "hooks" in hook ? getHookDisplayLabel(hook.hooks[0]) : "";
+    const firstHook = hook && "hooks" in hook ? hook.hooks[0] : undefined;
+    const command = getHookDisplayLabel(firstHook);
+    const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -721,7 +729,16 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         {matcherPattern !== null && <Text>Matcher: {matcherPattern}</Text>}
-        <Text>Command: {command}</Text>
+        <Text>
+          {isPrompt ? (
+            <>
+              Hook: <Text color={colors.status.processing}>✦ </Text>
+              {command}
+            </>
+          ) : (
+            <>Command: {command}</>
+          )}
+        </Text>
         <Text>Source: {hook ? getSourceLabel(hook.source) : ""}</Text>
         <Text> </Text>
 
