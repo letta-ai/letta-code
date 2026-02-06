@@ -212,6 +212,10 @@ import {
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
 } from "./helpers/subagentState";
+import {
+  flushEligibleLinesBeforeReentry,
+  shouldClearCompletedSubagentsOnTurnStart,
+} from "./helpers/subagentTurnStart";
 import { extractTaskNotificationsForDisplay } from "./helpers/taskNotifications";
 import {
   getRandomPastTenseVerb,
@@ -2960,9 +2964,13 @@ export default function App({
         // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
-        // Clear completed subagents from the UI when starting a new turn,
-        // but only if no subagents are still running.
-        if (!hasActiveSubagents()) {
+        // Clear completed subagents only on true new turns.
+        if (
+          shouldClearCompletedSubagentsOnTurnStart(
+            allowReentry,
+            hasActiveSubagents(),
+          )
+        ) {
           clearCompletedSubagents();
         }
 
@@ -8773,6 +8781,13 @@ ${SYSTEM_REMINDER_CLOSE}
           } else if (hadNotifications) {
             refreshDerived();
           }
+          // Flush finished items synchronously before reentry. This avoids a
+          // race where deferred non-Task commits delay Task grouping while the
+          // reentry path continues.
+          flushEligibleLinesBeforeReentry(
+            commitEligibleLines,
+            buffersRef.current,
+          );
           toolResultsInFlightRef.current = true;
           await processConversation(input, { allowReentry: true });
           toolResultsInFlightRef.current = false;
@@ -8808,6 +8823,7 @@ ${SYSTEM_REMINDER_CLOSE}
       syncTrajectoryElapsedBase,
       closeTrajectorySegment,
       openTrajectorySegment,
+      commitEligibleLines,
     ],
   );
 
