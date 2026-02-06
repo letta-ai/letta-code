@@ -43,10 +43,8 @@ import { getLettaCodeHeaders } from "../agent/http-headers";
 
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
-  detachMemoryFilesystemBlock,
   ensureMemoryFilesystemDirs,
   getMemoryFilesystemRoot,
-  updateMemoryFilesystemBlock,
 } from "../agent/memoryFilesystem";
 import { sendMessageStream } from "../agent/message";
 import { getModelInfo, getModelShortName } from "../agent/model";
@@ -2650,10 +2648,6 @@ export default function App({
         } else {
           await pullMemory(agentId);
         }
-        const { updateMemoryFilesystemBlock } = await import(
-          "../agent/memoryFilesystem"
-        );
-        await updateMemoryFilesystemBlock(agentId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
@@ -6914,7 +6908,6 @@ export default function App({
               if (!isGitRepo(agentId)) {
                 await cloneMemoryRepo(agentId);
               }
-              await updateMemoryFilesystemBlock(agentId);
               const memoryDir = getMemoryFilesystemRoot(agentId);
               updateMemorySyncCommand(
                 cmdId,
@@ -6960,7 +6953,6 @@ export default function App({
             try {
               const { pullMemory } = await import("../agent/memoryGit");
               const result = await pullMemory(agentId);
-              await updateMemoryFilesystemBlock(agentId);
               updateMemorySyncCommand(cmdId, result.summary, true, msg);
             } catch (error) {
               const errorText =
@@ -7041,16 +7033,13 @@ export default function App({
               const modelId = currentModelId || "anthropic/claude-sonnet-4";
               await reattachMemoryTool(agentId, modelId);
 
-              // 2. Detach memory_filesystem block
-              await detachMemoryFilesystemBlock(agentId);
-
-              // 3. Update system prompt to remove memfs section
+              // 2. Update system prompt to remove memfs section
               const { updateAgentSystemPromptMemfs } = await import(
                 "../agent/modify"
               );
               await updateAgentSystemPromptMemfs(agentId, false);
 
-              // 4. Update settings
+              // 3. Update settings
               settingsManager.setMemfsEnabled(agentId, false);
 
               updateMemorySyncCommand(

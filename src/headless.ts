@@ -18,7 +18,7 @@ import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import { updateMemoryFilesystemBlock } from "./agent/memoryFilesystem";
+
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -726,7 +726,6 @@ export async function handleHeadlessCommand(
           process.exit(1);
         }
       }
-      await updateMemoryFilesystemBlock(agent.id);
     } catch (error) {
       console.error(
         `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
