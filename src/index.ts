@@ -1649,6 +1649,17 @@ async function main(): Promise<void> {
           settingsManager.setMemfsEnabled(agent.id, true);
         }
 
+        // Ensure agent's system prompt includes/excludes memfs section to match setting
+        if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
+          const { updateAgentSystemPromptMemfs } = await import(
+            "./agent/modify"
+          );
+          await updateAgentSystemPromptMemfs(
+            agent.id,
+            settingsManager.isMemfsEnabled(agent.id),
+          );
+        }
+
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)
         // Don't await - this is just for the skill unload reminder
         initializeLoadedSkillsFlag().catch(() => {
