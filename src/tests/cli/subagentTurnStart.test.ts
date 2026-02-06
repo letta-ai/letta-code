@@ -157,23 +157,28 @@ describe("subagent turn-start reentry safeguards", () => {
     }
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();
 
-    // Explicit non-deferred flush before reentry should group Task instead of fallback.
-    let flushed: ReturnType<typeof simulateCommitPass> | null = null;
-    flushEligibleLinesBeforeReentry(() => {
-      flushed = simulateCommitPass(
-        order,
-        byId,
-        emitted,
-        deferred,
-        1_001,
-        false,
-      );
+    // Explicit non-deferred flush before reentry should request deferToolCalls=false.
+    let flushCalled = false;
+    let capturedOpts: { deferToolCalls?: boolean } | undefined;
+    flushEligibleLinesBeforeReentry((_b, opts) => {
+      flushCalled = true;
+      capturedOpts = opts;
     }, {} as never);
+    expect(flushCalled).toBe(true);
+    expect(capturedOpts?.deferToolCalls).toBe(false);
 
-    expect(flushed).not.toBeNull();
-    expect(flushed?.blockedByDeferred).toBe(false);
-    expect(flushed?.grouped).toBe(true);
-    expect(flushed?.taskFallbackCommitted).toBe(false);
+    // And with defer disabled, Task grouping should happen instead of fallback.
+    const flushed = simulateCommitPass(
+      order,
+      byId,
+      emitted,
+      deferred,
+      1_001,
+      false,
+    );
+    expect(flushed.blockedByDeferred).toBe(false);
+    expect(flushed.grouped).toBe(true);
+    expect(flushed.taskFallbackCommitted).toBe(false);
   });
 
   test("clearing completed agents before second pass reproduces Task fallback", () => {
