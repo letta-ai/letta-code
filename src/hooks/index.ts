@@ -15,7 +15,6 @@ import type {
   PreToolUseHookInput,
   SessionEndHookInput,
   SessionStartHookInput,
-  SetupHookInput,
   StopHookInput,
   SubagentStopHookInput,
   UserPromptSubmitHookInput,
@@ -356,27 +355,6 @@ export async function runPreCompactHooks(
 
   // Run in parallel - PreCompact cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
-}
-
-/**
- * Run Setup hooks when CLI is invoked with init flags
- */
-export async function runSetupHooks(
-  initType: "init" | "init-only" | "maintenance",
-  workingDirectory: string = process.cwd(),
-): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("Setup", undefined, workingDirectory);
-  if (hooks.length === 0) {
-    return { blocked: false, errored: false, feedback: [], results: [] };
-  }
-
-  const input: SetupHookInput = {
-    event_type: "Setup",
-    working_directory: workingDirectory,
-    init_type: initType,
-  };
-
-  return executeHooks(hooks, input, workingDirectory);
 }
 
 /**
