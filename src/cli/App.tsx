@@ -7505,8 +7505,10 @@ ${SYSTEM_REMINDER_CLOSE}
       }
 
       // Build memory reminder if interval is set and we've reached the Nth turn
+      // When MemFS is enabled, this returns a reflection reminder instead
       const memoryReminderContent = await buildMemoryReminder(
         turnCountRef.current,
+        agentId,
       );
 
       // Increment turn count for next iteration
