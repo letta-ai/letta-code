@@ -19,7 +19,6 @@ export type SimpleHookEvent =
   | "Stop" // Runs when the agent finishes responding (can block)
   | "SubagentStop" // Runs when subagent tasks complete (can block)
   | "PreCompact" // Runs before a compact operation (cannot block)
-  | "Setup" // Runs when invoked with --init, --init-only, or --maintenance flags
   | "SessionStart" // Runs when a new session starts or is resumed
   | "SessionEnd"; // Runs when session ends (cannot block)
 
@@ -396,15 +395,6 @@ export interface PreCompactHookInput extends HookInputBase {
 }
 
 /**
- * Input for Setup hooks
- */
-export interface SetupHookInput extends HookInputBase {
-  event_type: "Setup";
-  /** Which init flag was used */
-  init_type: "init" | "init-only" | "maintenance";
-}
-
-/**
  * Input for SessionStart hooks
  */
 export interface SessionStartHookInput extends HookInputBase {
@@ -449,6 +439,5 @@ export type HookInput =
   | StopHookInput
   | SubagentStopHookInput
   | PreCompactHookInput
-  | SetupHookInput
   | SessionStartHookInput
   | SessionEndHookInput;

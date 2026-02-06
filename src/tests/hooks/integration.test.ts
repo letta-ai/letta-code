@@ -15,7 +15,6 @@ import {
   runPreToolUseHooks,
   runSessionEndHooks,
   runSessionStartHooks,
-  runSetupHooks,
   runStopHooks,
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
@@ -851,58 +850,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const parsed = JSON.parse(result.results[0]?.stdout || "{}");
       expect(parsed.context_length).toBe(75000);
       expect(parsed.max_context_length).toBe(100000);
-    });
-  });
-
-  // ============================================================================
-  // Setup Hooks
-  // ============================================================================
-
-  describe("Setup hooks", () => {
-    test("runs on init", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "echo 'initializing'" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("init", tempDir);
-
-      expect(result.results[0]?.stdout).toBe("initializing");
-    });
-
-    test("runs on maintenance", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "echo 'maintenance mode'" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("maintenance", tempDir);
-
-      expect(result.results[0]?.stdout).toBe("maintenance mode");
-    });
-
-    test("receives init_type in input", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "cat" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("init-only", tempDir);
-
-      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
-      expect(parsed.init_type).toBe("init-only");
     });
   });
 

@@ -393,7 +393,7 @@ describe("Hooks Loader", () => {
     });
   });
 
-  describe("All 11 hook events", () => {
+  describe("All 10 hook events", () => {
     const allEvents: HookEvent[] = [
       "PreToolUse",
       "PostToolUse",
@@ -403,12 +403,11 @@ describe("Hooks Loader", () => {
       "Stop",
       "SubagentStop",
       "PreCompact",
-      "Setup",
       "SessionStart",
       "SessionEnd",
     ];
 
-    test("config can have all 11 event types", () => {
+    test("config can have all 10 event types", () => {
       const config: HooksConfig = {};
       for (const event of allEvents) {
         if (isToolEvent(event)) {

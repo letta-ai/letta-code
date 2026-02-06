@@ -81,7 +81,6 @@ const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "Stop", description: "When the agent finishes responding" },
   { event: "SubagentStop", description: "When a subagent completes" },
   { event: "PreCompact", description: "Before context compaction" },
-  { event: "Setup", description: "When invoked with --init flags" },
   { event: "SessionStart", description: "When a session starts" },
   { event: "SessionEnd", description: "When a session ends" },
 ];
