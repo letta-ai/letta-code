@@ -2031,6 +2031,12 @@ export default function App({
       openingOutput: string,
       dismissOutput: string,
     ) => {
+      const pending = pendingOverlayCommandRef.current;
+      if (pending && pending.overlay === overlay) {
+        pending.openingOutput = openingOutput;
+        pending.dismissOutput = dismissOutput;
+        return pending.command;
+      }
       const command = commandRunner.start(input, openingOutput);
       pendingOverlayCommandRef.current = {
         overlay,
