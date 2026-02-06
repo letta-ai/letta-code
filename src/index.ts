@@ -391,6 +391,7 @@ async function main(): Promise<void> {
         agent: { type: "string", short: "a" },
         name: { type: "string", short: "n" },
         model: { type: "string", short: "m" },
+        embedding: { type: "string" },
         system: { type: "string", short: "s" },
         "system-custom": { type: "string" },
         "system-append": { type: "string" },
