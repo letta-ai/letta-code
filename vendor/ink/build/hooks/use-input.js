@@ -3,6 +3,39 @@ import parseKeypress, { nonAlphanumericKeys } from '../parse-keypress.js';
 import reconciler from '../reconciler.js';
 import useStdin from './use-stdin.js';
 
+const IS_LINUX = process.platform === 'linux';
+const CSI_U_WITH_TRAILING_NEWLINE_PATTERN = /^(\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?u)(?:\r?\n)$/;
+const CSI_PROTOCOL_REPORT_PATTERN = /^(?:\x1b\[\?(?:\d+;)*\d+[uc])+$/;
+const BARE_ENTER_SUPPRESSION_WINDOW_MS = 75;
+
+const isLinuxPlatform = (platform = process.platform) => platform === 'linux';
+const isProtocolReportSequence = (data) => typeof data === 'string' && CSI_PROTOCOL_REPORT_PATTERN.test(data);
+const stripTrailingNewlineFromCsiU = (data) => {
+    if (typeof data !== 'string') {
+        return data;
+    }
+    const match = data.match(CSI_U_WITH_TRAILING_NEWLINE_PATTERN);
+    return match ? match[1] : data;
+};
+const shouldSuppressBareEnterAfterModifiedEnter = (data, suppressBareEnter, platform = process.platform) =>
+    isLinuxPlatform(platform) && suppressBareEnter && (data === '\n' || data === '\r');
+const shouldStartModifiedEnterSuppression = (keypress, platform = process.platform) =>
+    isLinuxPlatform(platform) &&
+    keypress?.name === 'return' &&
+    (keypress.shift || keypress.ctrl || keypress.meta || keypress.option);
+const shouldTreatAsReturn = (keypressName, platform = process.platform) =>
+    keypressName === 'return' || (isLinuxPlatform(platform) && keypressName === 'enter');
+
+// Exported for targeted key-sequence regression tests.
+export const __lettaUseInputTestUtils = {
+    isLinuxPlatform,
+    isProtocolReportSequence,
+    stripTrailingNewlineFromCsiU,
+    shouldSuppressBareEnterAfterModifiedEnter,
+    shouldStartModifiedEnterSuppression,
+    shouldTreatAsReturn,
+};
+
 // Patched for bracketed paste: propagate "isPasted" and avoid leaking ESC sequences
 // Also patched to use ref for inputHandler to avoid effect churn with inline handlers
 const useInput = (inputHandler, options = {}) => {
@@ -26,6 +59,9 @@ const useInput = (inputHandler, options = {}) => {
         if (options.isActive === false) {
             return;
         }
+
+        let suppressBareEnter = false;
+        let suppressBareEnterUntil = 0;
 
         const handleData = (data) => {
             // Handle bracketed paste events emitted by Ink stdin manager
@@ -53,13 +89,29 @@ const useInput = (inputHandler, options = {}) => {
                 return;
             }
 
-            // Normalize bare \n (Linux Enter) to \r before parsing.
-            // parseKeypress maps \r to name:'return' but \n to name:'enter'.
-            // Only 'return' should set key.return=true - treating 'enter' as
-            // return breaks Shift+Enter on terminals that emit a stray \n
-            // alongside the CSI u sequence.
-            if (data === '\n') {
-                data = '\r';
+            if (typeof data === 'string') {
+                // Drop kitty/xterm keyboard-protocol negotiation/status reports
+                // (e.g. ESC[?1u, ESC[?....c). These are not user keypresses.
+                if (isProtocolReportSequence(data)) {
+                    return;
+                }
+
+                // Some terminals deliver modified Enter as CSI u plus a trailing
+                // newline byte in the same chunk. Parse only the CSI u sequence.
+                data = stripTrailingNewlineFromCsiU(data);
+
+                if (IS_LINUX && suppressBareEnter && Date.now() > suppressBareEnterUntil) {
+                    suppressBareEnter = false;
+                    suppressBareEnterUntil = 0;
+                }
+
+                // Linux-only: when modified Enter is followed by a plain newline
+                // event, drop that immediate newline so Shift+Enter doesn't submit.
+                if (shouldSuppressBareEnterAfterModifiedEnter(data, suppressBareEnter)) {
+                    suppressBareEnter = false;
+                    suppressBareEnterUntil = 0;
+                    return;
+                }
             }
 
             let keypress = parseKeypress(data);
@@ -94,7 +146,7 @@ const useInput = (inputHandler, options = {}) => {
                     if (event === 3) {
                         return;
                     }
-
+                    
                     // Map keycodes to names
                     const csiUKeyMap = {
                         9: 'tab',
@@ -102,16 +154,16 @@ const useInput = (inputHandler, options = {}) => {
                         27: 'escape',
                         127: 'backspace',
                     };
-
+                    
                     let name = csiUKeyMap[keycode] || '';
-
+                    
                     // Handle letter keycodes (a-z: 97-122, A-Z: 65-90)
                     if (!name && keycode >= 97 && keycode <= 122) {
                         name = String.fromCharCode(keycode); // lowercase letter
                     } else if (!name && keycode >= 65 && keycode <= 90) {
                         name = String.fromCharCode(keycode + 32); // convert to lowercase
                     }
-
+                    
                     if (name) {
                         keypress = {
                             name,
@@ -125,6 +177,17 @@ const useInput = (inputHandler, options = {}) => {
                     }
                 }
             }
+
+            // Modified Enter can be followed by an extra bare newline event
+            // on some terminals. Suppress only that immediate follow-up.
+            if (shouldStartModifiedEnterSuppression(keypress)) {
+                suppressBareEnter = true;
+                suppressBareEnterUntil = Date.now() + BARE_ENTER_SUPPRESSION_WINDOW_MS;
+            } else if (IS_LINUX && keypress.name === 'enter' && suppressBareEnter) {
+                suppressBareEnter = false;
+                suppressBareEnterUntil = 0;
+                return;
+            }
             
             const key = {
                 upArrow: keypress.name === 'up',
@@ -133,7 +196,9 @@ const useInput = (inputHandler, options = {}) => {
                 rightArrow: keypress.name === 'right',
                 pageDown: keypress.name === 'pagedown',
                 pageUp: keypress.name === 'pageup',
-                return: keypress.name === 'return',
+                // Linux terminals may emit Enter as name:"enter" (\n), while
+                // macOS terminals keep Enter as name:"return" (\r).
+                return: shouldTreatAsReturn(keypress.name),
                 escape: keypress.name === 'escape',
                 ctrl: keypress.ctrl,
                 shift: keypress.shift,
