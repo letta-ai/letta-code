@@ -30,7 +30,7 @@ git status
 
 # Commit and push your changes
 git add memory/
-git commit -m "memory: <describe changes>"
+git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
 git push
 
 # Get latest from server

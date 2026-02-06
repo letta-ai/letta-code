@@ -7531,7 +7531,7 @@ To sync:
 \`\`\`bash
 cd ~/.letta/agents/${agentId}
 git add memory/
-git commit -m "memory: <describe changes>"
+git commit -m "<type>: <what changed>"
 git push
 \`\`\`
 ${SYSTEM_REMINDER_CLOSE}
