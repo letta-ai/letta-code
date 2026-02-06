@@ -2655,13 +2655,19 @@ export default function App({
         );
         await updateMemoryFilesystemBlock(agentId);
       } catch (err) {
-        debugWarn(
-          "memfs-git",
-          `Startup sync failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
+        // Warn user visually
+        appendError(`Memory git sync failed: ${errMsg}`);
+        // Inject reminder so the agent also knows memory isn't synced
+        pendingGitReminderRef.current = {
+          dirty: false,
+          aheadOfRemote: false,
+          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ~/.letta/agents/${agentId} pull`,
+        };
       }
     })();
-  }, [agentId, loadingState]);
+  }, [agentId, loadingState, appendError]);
 
   // Set up fs.watch on the memory directory to detect external file edits.
   // When a change is detected, set a dirty flag — the actual conflict check
