@@ -3427,11 +3427,11 @@ export default function App({
               lastAssistant && "text" in lastAssistant
                 ? lastAssistant.text
                 : undefined;
-            const firstUser = Array.from(buffersRef.current.byId.values()).find(
-              (item) => item.kind === "user" && "text" in item,
-            );
+            const lastUser = Array.from(
+              buffersRef.current.byId.values(),
+            ).findLast((item) => item.kind === "user" && "text" in item);
             const userMessage =
-              firstUser && "text" in firstUser ? firstUser.text : undefined;
+              lastUser && "text" in lastUser ? lastUser.text : undefined;
             const precedingReasoning = buffersRef.current.lastReasoning;
             buffersRef.current.lastReasoning = undefined; // Clear after use
 
