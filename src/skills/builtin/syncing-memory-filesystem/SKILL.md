@@ -15,13 +15,13 @@ Agents with the `git-memory-enabled` tag have their memory blocks stored in git 
 
 ## What the CLI Harness Does Automatically
 
-The Letta Code CLI handles initial setup when you run `/memfs enable`:
+The Letta Code CLI handles initial setup when the user runs `/memfs enable`:
 
 1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
 2. Clones the repo into `~/.letta/agents/<agent-id>/`
 3. Configures a **local** credential helper in `.git/config` (so `git push`/`git pull` work without auth ceremony)
 4. On subsequent startups: pulls latest changes and reconfigures credentials (self-healing)
-5. During sessions: periodically checks `git status` and reminds you to commit/push if dirty
+5. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
 
 If any of these steps fail, you can replicate them manually using the sections below.
 
