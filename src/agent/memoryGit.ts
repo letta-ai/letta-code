@@ -10,7 +10,14 @@
  */
 
 import { execFile as execFileCb } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -89,6 +96,108 @@ async function configureLocalCredentialHelper(
   debugLog("memfs-git", "Configured local credential helper");
 }
 
+/**
+ * Bash pre-commit hook that validates frontmatter in memory .md files.
+ *
+ * Rules:
+ * - Missing frontmatter is OK (raw block content)
+ * - If frontmatter exists (starts with ---), it must be properly closed
+ * - Only allowed keys: description, limit, read_only
+ * - limit must be a positive integer
+ * - read_only must be true or false
+ * - description must not be empty
+ */
+export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
+# Validate frontmatter in staged memory .md files
+# Installed by Letta Code CLI
+
+ALLOWED_KEYS="description limit read_only"
+errors=""
+
+for file in $(git diff --cached --name-only --diff-filter=ACM | grep '^memory/.*\\.md$'); do
+  content=$(git show ":$file")
+
+  # Skip files without frontmatter
+  first_line=$(echo "$content" | head -1)
+  if [ "$first_line" != "---" ]; then
+    continue
+  fi
+
+  # Check frontmatter is properly closed
+  closing_line=$(echo "$content" | tail -n +2 | grep -n '^---$' | head -1 | cut -d: -f1)
+  if [ -z "$closing_line" ]; then
+    errors="$errors\\n  $file: frontmatter opened but never closed (missing closing ---)"
+    continue
+  fi
+
+  # Extract frontmatter lines (between the two ---)
+  frontmatter=$(echo "$content" | tail -n +2 | head -n $((closing_line - 1)))
+
+  # Validate each line (use process substitution to avoid subshell)
+  while IFS= read -r line; do
+    # Skip empty lines
+    [ -z "$line" ] && continue
+
+    # Must be key: value format
+    key=$(echo "$line" | cut -d: -f1 | tr -d ' ')
+    value=$(echo "$line" | cut -d: -f2- | sed 's/^ *//;s/ *$//')
+
+    # Check key is allowed
+    allowed=false
+    for k in $ALLOWED_KEYS; do
+      if [ "$key" = "$k" ]; then
+        allowed=true
+        break
+      fi
+    done
+    if [ "$allowed" = "false" ]; then
+      errors="$errors\\n  $file: unknown frontmatter key '$key' (allowed: $ALLOWED_KEYS)"
+    fi
+
+    # Validate value types
+    case "$key" in
+      limit)
+        if ! echo "$value" | grep -qE '^[0-9]+$' || [ "$value" = "0" ]; then
+          errors="$errors\\n  $file: 'limit' must be a positive integer, got '$value'"
+        fi
+        ;;
+      read_only)
+        if [ "$value" != "true" ] && [ "$value" != "false" ]; then
+          errors="$errors\\n  $file: 'read_only' must be true or false, got '$value'"
+        fi
+        ;;
+      description)
+        if [ -z "$value" ]; then
+          errors="$errors\\n  $file: 'description' must not be empty"
+        fi
+        ;;
+    esac
+  done <<< "$frontmatter"
+done
+
+if [ -n "$errors" ]; then
+  echo "Frontmatter validation failed:"
+  echo -e "$errors"
+  exit 1
+fi
+`;
+
+/**
+ * Install the pre-commit hook for frontmatter validation.
+ */
+function installPreCommitHook(dir: string): void {
+  const hooksDir = join(dir, ".git", "hooks");
+  const hookPath = join(hooksDir, "pre-commit");
+
+  if (!existsSync(hooksDir)) {
+    mkdirSync(hooksDir, { recursive: true });
+  }
+
+  writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, "utf-8");
+  chmodSync(hookPath, 0o755);
+  debugLog("memfs-git", "Installed pre-commit hook");
+}
+
 /** Check if the agent root directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getAgentRootDir(agentId), ".git"));
@@ -141,6 +250,9 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
   // Configure local credential helper so the agent can do plain
   // `git push` / `git pull` without auth prefixes.
   await configureLocalCredentialHelper(dir, token);
+
+  // Install pre-commit hook to validate frontmatter
+  installPreCommitHook(dir);
 }
 
 /**
