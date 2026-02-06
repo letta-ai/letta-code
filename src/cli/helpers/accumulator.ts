@@ -158,7 +158,7 @@ export type Line =
       id: string;
       input: string;
       output: string;
-      phase?: "running" | "finished";
+      phase?: "running" | "waiting" | "finished";
       success?: boolean;
       dimOutput?: boolean;
       preformatted?: boolean;

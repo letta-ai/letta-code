@@ -11,7 +11,7 @@ type CommandLine = {
   id: string;
   input: string;
   output: string;
-  phase?: "running" | "finished";
+  phase?: "running" | "waiting" | "finished";
   success?: boolean;
   dimOutput?: boolean;
   preformatted?: boolean;
@@ -30,6 +30,9 @@ type CommandLine = {
 export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
   const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
+  if (line.phase === "waiting") {
+    return null;
+  }
 
   // Determine dot state based on phase and success
   const getDotElement = () => {
