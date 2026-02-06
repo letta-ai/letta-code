@@ -53,6 +53,15 @@ const useInput = (inputHandler, options = {}) => {
                 return;
             }
 
+            // Normalize bare \n (Linux Enter) to \r before parsing.
+            // parseKeypress maps \r to name:'return' but \n to name:'enter'.
+            // Only 'return' should set key.return=true - treating 'enter' as
+            // return breaks Shift+Enter on terminals that emit a stray \n
+            // alongside the CSI u sequence.
+            if (data === '\n') {
+                data = '\r';
+            }
+
             let keypress = parseKeypress(data);
             
             // CSI u fallback: iTerm2 3.5+, Kitty, and other modern terminals send
@@ -124,7 +133,7 @@ const useInput = (inputHandler, options = {}) => {
                 rightArrow: keypress.name === 'right',
                 pageDown: keypress.name === 'pagedown',
                 pageUp: keypress.name === 'pageup',
-                return: keypress.name === 'return' || keypress.name === 'enter',
+                return: keypress.name === 'return',
                 escape: keypress.name === 'escape',
                 ctrl: keypress.ctrl,
                 shift: keypress.shift,
