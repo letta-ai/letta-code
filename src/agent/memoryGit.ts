@@ -54,7 +54,10 @@ async function runGit(
   token?: string,
 ): Promise<{ stdout: string; stderr: string }> {
   const authArgs = token
-    ? ["-c", `http.extraHeader=Authorization: Bearer ${token}`]
+    ? [
+        "-c",
+        `http.extraHeader=Authorization: Basic ${Buffer.from(`letta:${token}`).toString("base64")}`,
+      ]
     : [];
   const allArgs = [...authArgs, ...args];
 
