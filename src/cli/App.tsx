@@ -4917,6 +4917,12 @@ export default function App({
           phase: "finished",
           success: true,
         };
+        buffersRef.current.byId.delete(cmd.id);
+        const orderIdx = buffersRef.current.order.indexOf(cmd.id);
+        if (orderIdx !== -1) {
+          buffersRef.current.order.splice(orderIdx, 1);
+        }
+        emittedIdsRef.current.add(cmd.id);
         setStaticItems([separator, successItem]);
         setLines(toLines(buffersRef.current));
       } catch (error) {
