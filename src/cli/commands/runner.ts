@@ -8,13 +8,19 @@ export type CommandUpdate = {
   phase?: CommandPhase;
   success?: boolean;
   dimOutput?: boolean;
+  preformatted?: boolean;
 };
 
 export type CommandHandle = {
   id: string;
   input: string;
   update: (update: CommandUpdate) => void;
-  finish: (output: string, success?: boolean, dimOutput?: boolean) => void;
+  finish: (
+    output: string,
+    success?: boolean,
+    dimOutput?: boolean,
+    preformatted?: boolean,
+  ) => void;
   fail: (output: string) => void;
 };
 
@@ -41,6 +47,7 @@ function upsertCommandLine(
     phase: update.phase ?? "running",
     success: update.success,
     dimOutput: update.dimOutput,
+    preformatted: update.preformatted,
   };
   buffers.byId.set(id, next);
 }
@@ -59,12 +66,18 @@ export function createCommandRunner({
       refreshDerived();
     };
 
-    const finish = (finalOutput: string, success = true, dimOutput?: boolean) =>
+    const finish = (
+      finalOutput: string,
+      success = true,
+      dimOutput?: boolean,
+      preformatted?: boolean,
+    ) =>
       update({
         output: finalOutput,
         phase: "finished",
         success,
         dimOutput,
+        preformatted,
       });
 
     const fail = (finalOutput: string) =>

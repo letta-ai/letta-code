@@ -1477,8 +1477,10 @@ async function main(): Promise<void> {
 
           // Display extracted skills summary
           if (result.skills && result.skills.length > 0) {
+            const { getAgentSkillsDir } = await import("./agent/skills");
+            const skillsDir = getAgentSkillsDir(agent.id);
             console.log(
-              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}\n`,
+              `\n📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}\n`,
             );
           }
         }
@@ -1645,6 +1647,17 @@ async function main(): Promise<void> {
         } else if (isNewlyCreatedAgent && !isSubagent) {
           // Enable memfs by default for newly created agents (but not subagents)
           settingsManager.setMemfsEnabled(agent.id, true);
+        }
+
+        // Ensure agent's system prompt includes/excludes memfs section to match setting
+        if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
+          const { updateAgentSystemPromptMemfs } = await import(
+            "./agent/modify"
+          );
+          await updateAgentSystemPromptMemfs(
+            agent.id,
+            settingsManager.isMemfsEnabled(agent.id),
+          );
         }
 
         // Fire-and-forget: Initialize loaded skills flag (LET-7101)

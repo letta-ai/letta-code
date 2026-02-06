@@ -118,7 +118,7 @@ import { AssistantMessage } from "./components/AssistantMessageRich";
 import { BashCommandMessage } from "./components/BashCommandMessage";
 import { CommandMessage } from "./components/CommandMessage";
 import { ConversationSelector } from "./components/ConversationSelector";
-import { brandColors, colors, hexToFgAnsi } from "./components/colors";
+import { colors } from "./components/colors";
 // EnterPlanModeDialog removed - now using InlineEnterPlanModeApproval
 import { ErrorMessage } from "./components/ErrorMessageRich";
 import { EventMessage } from "./components/EventMessage";
@@ -165,6 +165,11 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
+import { renderContextUsage } from "./helpers/contextChart";
+import {
+  createContextTracker,
+  resetContextHistory,
+} from "./helpers/contextTracker";
 import {
   type AdvancedDiffSuccess,
   computeAdvancedDiff,
@@ -1388,14 +1393,6 @@ export default function App({
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (queueAppendTimeoutRef.current) {
-        clearTimeout(queueAppendTimeoutRef.current);
-      }
-    };
-  }, []);
-
   // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
@@ -1459,8 +1456,6 @@ export default function App({
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
 
-  const queueAppendTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 15s append mode timeout
-
   // Cache last sent input - cleared on successful completion, remains if interrupted
   const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
     null,
@@ -1509,13 +1504,9 @@ export default function App({
     [],
   );
 
-  // Consume queued messages for appending to tool results (clears queue + timeout)
+  // Consume queued messages for appending to tool results (clears queue)
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     if (messageQueueRef.current.length === 0) return null;
-    if (queueAppendTimeoutRef.current) {
-      clearTimeout(queueAppendTimeoutRef.current);
-      queueAppendTimeoutRef.current = null;
-    }
     const messages = [...messageQueueRef.current];
     setMessageQueue([]);
     return messages;
@@ -1825,6 +1816,9 @@ export default function App({
 
   // Canonical buffers stored in a ref (mutated by onChunk), PERSISTED for session
   const buffersRef = useRef(createBuffers());
+
+  // Context-window token tracking, decoupled from streaming buffers
+  const contextTrackerRef = useRef(createContextTracker());
 
   // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
@@ -3306,6 +3300,15 @@ export default function App({
           trajectoryRunTokenStartRef.current = runTokenStart;
           sessionStatsRef.current.startTrajectory();
 
+          // Only bump turn counter for actual user messages, not approval continuations.
+          // This ensures all LLM steps within one user turn share the same color in /context chart.
+          const hasUserMessage = currentInput.some(
+            (item) => item.type === "message",
+          );
+          if (hasUserMessage) {
+            contextTrackerRef.current.currentTurnId++;
+          }
+
           const {
             stopReason,
             approval,
@@ -3319,6 +3322,8 @@ export default function App({
             refreshDerivedThrottled,
             signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
             handleFirstMessage,
+            undefined,
+            contextTrackerRef.current,
           );
 
           // Update currentRunId for error reporting in catch block
@@ -4861,7 +4866,7 @@ export default function App({
         setConversationId(targetConversationId);
 
         // Reset context token tracking for new agent
-        buffersRef.current.lastContextTokens = 0;
+        resetContextHistory(contextTrackerRef.current);
 
         // Build success message
         const agentLabel = agent.name || targetAgentId;
@@ -4969,7 +4974,7 @@ export default function App({
         setLlmConfig(agent.llm_config);
 
         // Reset context token tracking for new agent
-        buffersRef.current.lastContextTokens = 0;
+        resetContextHistory(contextTrackerRef.current);
 
         const separator = {
           kind: "separator" as const,
@@ -5443,50 +5448,7 @@ export default function App({
             { kind: "user", text: msg },
           ];
 
-          const isSlashCommand = msg.startsWith("/");
-
-          // Regular messages: use append mode (wait 15s for tools, then append to API call)
-          if (
-            !isSlashCommand &&
-            streamingRef.current &&
-            !waitingForQueueCancelRef.current &&
-            !queueAppendTimeoutRef.current
-          ) {
-            queueAppendTimeoutRef.current = setTimeout(() => {
-              if (messageQueueRef.current.length === 0) {
-                queueAppendTimeoutRef.current = null;
-                return;
-              }
-              queueAppendTimeoutRef.current = null;
-
-              // 15s expired - fall back to cancel
-              waitingForQueueCancelRef.current = true;
-              queueSnapshotRef.current = [...messageQueueRef.current];
-              if (toolAbortControllerRef.current) {
-                toolAbortControllerRef.current.abort();
-              }
-              getClient()
-                .then((client) => {
-                  if (conversationIdRef.current === "default") {
-                    return client.agents.messages.cancel(agentIdRef.current);
-                  }
-                  return client.conversations.cancel(conversationIdRef.current);
-                })
-                .catch(() => {
-                  waitingForQueueCancelRef.current = false;
-                });
-              setTimeout(() => {
-                if (
-                  waitingForQueueCancelRef.current &&
-                  abortControllerRef.current
-                ) {
-                  abortControllerRef.current.abort();
-                  waitingForQueueCancelRef.current = false;
-                  queueSnapshotRef.current = [];
-                }
-              }, 3000);
-            }, 15000);
-          }
+          // Regular messages: queue and wait for tool completion
 
           return newQueue;
         });
@@ -5857,40 +5819,22 @@ export default function App({
           const model = llmConfigRef.current?.model ?? "unknown";
 
           // Use most recent total tokens from usage_statistics as context size (after turn)
-          const usedTokens = buffersRef.current.lastContextTokens;
+          const usedTokens = contextTrackerRef.current.lastContextTokens;
+          const history = contextTrackerRef.current.contextTokensHistory;
 
-          let output: string;
+          const output = renderContextUsage({
+            usedTokens,
+            contextWindow,
+            model,
+            history,
+          });
 
-          // No data available yet (session start, after model/conversation switch)
-          if (usedTokens === 0) {
-            output = `Context data not available yet. Run a turn to see context usage.`;
-          } else {
-            const percentage =
-              contextWindow > 0
-                ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
-                : 0;
-
-            // Build visual bar (10 segments like ▰▰▰▰▰▰▱▱▱▱)
-            const totalSegments = 10;
-            const filledSegments = Math.round(
-              (percentage / 100) * totalSegments,
-            );
-            const emptySegments = totalSegments - filledSegments;
-
-            const barColor = hexToFgAnsi(brandColors.primaryAccent);
-            const reset = "\x1b[0m";
-
-            const filledBar = barColor + "▰".repeat(filledSegments) + reset;
-            const emptyBar = "▱".repeat(emptySegments);
-            const bar = filledBar + emptyBar;
-
-            output =
-              contextWindow > 0
-                ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
-                : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
-          }
-
-          cmd.finish(output, true);
+          cmd.update({
+            output,
+            phase: "finished",
+            success: true,
+            preformatted: true,
+          });
 
           return { submitted: true };
         }
@@ -6084,7 +6028,7 @@ export default function App({
             });
 
             // Reset context tokens for new conversation
-            buffersRef.current.lastContextTokens = 0;
+            resetContextHistory(contextTrackerRef.current);
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -6155,7 +6099,7 @@ export default function App({
             });
 
             // Reset context tokens for new conversation
-            buffersRef.current.lastContextTokens = 0;
+            resetContextHistory(contextTrackerRef.current);
 
             // Reset turn counter for memory reminders
             turnCountRef.current = 0;
@@ -6466,7 +6410,7 @@ export default function App({
                 buffersRef.current.byId.clear();
                 buffersRef.current.order = [];
                 buffersRef.current.tokenCount = 0;
-                buffersRef.current.lastContextTokens = 0;
+                resetContextHistory(contextTrackerRef.current);
                 emittedIdsRef.current.clear();
                 resetDeferredToolCallCommits();
                 setStaticItems([]);
@@ -9004,7 +8948,8 @@ ${SYSTEM_REMINDER_CLOSE}
           setLlmConfig(updatedConfig);
           setCurrentModelId(modelId);
 
-          buffersRef.current.lastContextTokens = 0;
+          // Reset context token tracking since different models have different tokenizers
+          resetContextHistory(contextTrackerRef.current);
 
           const { isOpenAIModel, isGeminiModel } = await import(
             "../tools/manager"
@@ -9281,7 +9226,7 @@ ${SYSTEM_REMINDER_CLOSE}
                 });
 
                 // Reset context tokens for new conversation
-                buffersRef.current.lastContextTokens = 0;
+                resetContextHistory(contextTrackerRef.current);
 
                 cmd.finish(
                   `Switched to conversation (${resumeData.messageHistory.length} messages)`,
@@ -10530,7 +10475,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
-                      buffersRef.current.lastContextTokens = 0;
+                      resetContextHistory(contextTrackerRef.current);
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);
@@ -10683,7 +10628,7 @@ Plan file path: ${planFilePath}`;
                     buffersRef.current.byId.clear();
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
-                    buffersRef.current.lastContextTokens = 0;
+                    resetContextHistory(contextTrackerRef.current);
                     emittedIdsRef.current.clear();
                     resetDeferredToolCallCommits();
                     setStaticItems([]);
@@ -10808,7 +10753,7 @@ Plan file path: ${planFilePath}`;
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
-                      buffersRef.current.lastContextTokens = 0;
+                      resetContextHistory(contextTrackerRef.current);
                       emittedIdsRef.current.clear();
                       resetDeferredToolCallCommits();
                       setStaticItems([]);

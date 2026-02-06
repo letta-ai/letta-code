@@ -512,8 +512,10 @@ export async function handleHeadlessCommand(
 
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
+      const { getAgentSkillsDir } = await import("./agent/skills");
+      const skillsDir = getAgentSkillsDir(agent.id);
       console.log(
-        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to .skills/: ${result.skills.join(", ")}`,
+        `📦 Extracted ${result.skills.length} skill${result.skills.length === 1 ? "" : "s"} to ${skillsDir}: ${result.skills.join(", ")}`,
       );
     }
   }
@@ -665,6 +667,20 @@ export async function handleHeadlessCommand(
   } else if (specifiedAgentId && !isSubagent) {
     // Enable memfs by default when using --agent in headless mode
     settingsManager.setMemfsEnabled(agent.id, true);
+  }
+
+  // Ensure agent's system prompt includes/excludes memfs section to match setting
+  if (
+    memfsFlag ||
+    noMemfsFlag ||
+    (isNewlyCreatedAgent && !isSubagent) ||
+    (specifiedAgentId && !isSubagent)
+  ) {
+    const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
+    await updateAgentSystemPromptMemfs(
+      agent.id,
+      settingsManager.isMemfsEnabled(agent.id),
+    );
   }
 
   // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
