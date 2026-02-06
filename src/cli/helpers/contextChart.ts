@@ -38,6 +38,9 @@ export function renderContextUsage(opts: ContextChartOptions): string {
   }
 
   const reset = "\x1b[0m";
+  const bold = "\x1b[1m";
+  const dim = "\x1b[2m";
+  const italic = "\x1b[3m";
   const termWidth = process.stdout?.columns ?? 80;
 
   const percentage =
@@ -45,21 +48,29 @@ export function renderContextUsage(opts: ContextChartOptions): string {
       ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
       : 0;
 
+  // Use consistent bar width for both breakdown and fallback (25% of terminal)
+  const totalSegments = Math.max(1, Math.floor(termWidth * 0.25));
+
+  // Calculate the filled segment count from usedTokens (used for both paths)
+  const filledFromUsage =
+    contextWindow > 0
+      ? Math.round(
+          (Math.min(usedTokens, contextWindow) / contextWindow) * totalSegments,
+        )
+      : 0;
+
   let bar: string;
   let legend = "";
 
   if (breakdown && contextWindow > 0) {
     // --- Color-coded breakdown bar ---
-    const labelWidth = 5;
-    const totalSegments = Math.max(
-      1,
-      Math.floor(termWidth * 0.25) - labelWidth,
-    );
-
+    // Order categories for adjacent color contrast in the bar:
+    // purple → amber → turquoise → coral → green → gold
     const categories: Array<{
       label: string;
       tokens: number;
       color: string;
+      description?: string;
     }> = [
       {
         label: "System",
@@ -67,7 +78,7 @@ export function renderContextUsage(opts: ContextChartOptions): string {
         color: colors.contextBreakdown.system,
       },
       {
-        label: "Core mem",
+        label: "Core Memory",
         tokens: breakdown.num_tokens_core_memory,
         color: colors.contextBreakdown.coreMemory,
       },
@@ -87,81 +98,131 @@ export function renderContextUsage(opts: ContextChartOptions): string {
         color: colors.contextBreakdown.summaryMemory,
       },
       {
-        label: "External",
+        label: "Other",
         tokens: breakdown.num_tokens_external_memory_summary,
-        color: colors.contextBreakdown.externalMemory,
+        color: colors.contextBreakdown.other,
+        description: "external memory, archival storage",
       },
     ];
 
-    const totalUsed = breakdown.context_window_size_current;
-    const filledTotal = Math.round(
-      (Math.min(totalUsed, contextWindow) / contextWindow) * totalSegments,
-    );
+    // Use filledFromUsage (same as fallback) so bar width matches between phases
+    const filledTotal = filledFromUsage;
     const emptyTotal = totalSegments - filledTotal;
 
-    // Distribute filled segments proportionally across categories
-    const segmentCounts: number[] = [];
-    let assigned = 0;
-    for (let i = 0; i < categories.length; i++) {
-      const cat = categories[i]!;
-      if (i === categories.length - 1) {
-        // Last category gets remaining to avoid rounding drift
-        segmentCounts.push(filledTotal - assigned);
-      } else {
-        const count =
-          totalUsed > 0
-            ? Math.round((cat.tokens / totalUsed) * filledTotal)
-            : 0;
-        segmentCounts.push(count);
-        assigned += count;
+    // Distribute segments: ensure at least 1 per non-zero category (if room)
+    const nonZeroCats = categories.filter((c) => c.tokens > 0);
+    const totalUsed = breakdown.context_window_size_current;
+    const segmentCounts: number[] = new Array(categories.length).fill(0);
+
+    if (filledTotal > 0 && totalUsed > 0) {
+      // First pass: give every non-zero category at least 1 segment
+      let remaining = filledTotal;
+      for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        if (cat && cat.tokens > 0 && remaining > 0) {
+          segmentCounts[i] = 1;
+          remaining--;
+        }
+      }
+
+      // Second pass: distribute remaining segments proportionally
+      if (remaining > 0) {
+        // Proportional weights (excluding the 1 already given)
+        const weights = categories.map((cat) =>
+          cat.tokens > 0 ? cat.tokens / totalUsed : 0,
+        );
+        let distributed = 0;
+        for (let i = 0; i < categories.length; i++) {
+          const cat = categories[i];
+          if (cat && cat.tokens > 0) {
+            const extra = Math.round((weights[i] ?? 0) * remaining);
+            segmentCounts[i] = (segmentCounts[i] ?? 0) + extra;
+            distributed += extra;
+          }
+        }
+        // Fix rounding: adjust the largest category
+        const diff = remaining - distributed;
+        if (diff !== 0 && nonZeroCats.length > 0) {
+          // Find the category with the most tokens
+          let maxIdx = 0;
+          for (let i = 1; i < categories.length; i++) {
+            const cat = categories[i];
+            const maxCat = categories[maxIdx];
+            if (cat && maxCat && cat.tokens > maxCat.tokens) {
+              maxIdx = i;
+            }
+          }
+          segmentCounts[maxIdx] = (segmentCounts[maxIdx] ?? 0) + diff;
+        }
       }
     }
 
     // Build the bar string with colored segments
     let barStr = "";
     for (let i = 0; i < categories.length; i++) {
-      const count = segmentCounts[i]!;
+      const count = segmentCounts[i] ?? 0;
       if (count > 0) {
-        barStr += hexToFgAnsi(categories[i]!.color) + "▰".repeat(count) + reset;
+        const cat = categories[i];
+        if (cat) {
+          barStr += `${hexToFgAnsi(cat.color)}${"▰".repeat(count)}${reset}`;
+        }
       }
     }
-    barStr += "▱".repeat(emptyTotal);
+    barStr += "▱".repeat(Math.max(0, emptyTotal));
     bar = barStr;
 
-    // Build legend line: only show categories with >0%
-    const legendParts: string[] = [];
+    // Build indented row-wise legend with token counts and percentages.
+    // Derive proportions from API breakdown, apply to usedTokens (ground truth).
+    const indent = "  ";
+    const legendLines: string[] = [
+      `${indent}${italic}${dim}Estimated usage by category${reset}`,
+    ];
     for (const cat of categories) {
-      const pct =
-        totalUsed > 0 ? Math.round((cat.tokens / totalUsed) * 100) : 0;
-      if (pct > 0) {
-        legendParts.push(
-          ` ${hexToFgAnsi(cat.color)}■${reset} ${cat.label} ${pct}%`,
+      if (cat.tokens > 0) {
+        const proportion = totalUsed > 0 ? cat.tokens / totalUsed : 0;
+        const estimatedTokens = Math.round(proportion * usedTokens);
+        const pct =
+          contextWindow > 0
+            ? ((estimatedTokens / contextWindow) * 100).toFixed(1)
+            : "0.0";
+        legendLines.push(
+          `${indent}${hexToFgAnsi(cat.color)}■${reset} ${cat.label}: ${formatCompact(estimatedTokens)} tokens (${pct}%)`,
         );
+        if (cat.description) {
+          legendLines.push(`${indent}  ${dim}${cat.description}${reset}`);
+        }
       }
     }
-    if (legendParts.length > 0) {
-      legend = "\n" + legendParts.join("  ");
-    }
+    legend = `\n${legendLines.join("\n")}`;
   } else {
-    // --- Fallback: single-color bar ---
+    // --- Fallback: single-color bar (same width as breakdown) ---
     const barColor = hexToFgAnsi(brandColors.primaryAccent);
-    const totalSegments = 10;
-    const filledSegments = Math.round((percentage / 100) * totalSegments);
-    const filledBar = barColor + "▰".repeat(filledSegments) + reset;
-    const emptyBar = "▱".repeat(totalSegments - filledSegments);
+    const filledBar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}`;
+    const emptyBar = "▱".repeat(totalSegments - filledFromUsage);
     bar = filledBar + emptyBar;
+
+    // Reserve legend space with placeholder
+    legend = `\n${dim}  Fetching breakdown...${reset}`;
   }
 
-  let output =
+  // Bold title + blank line
+  let output = `${bold}Context Usage${reset}\n\n`;
+
+  // Bar
+  output += bar;
+
+  // Token/model info line (below bar)
+  output +=
     contextWindow > 0
-      ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
-      : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
+      ? `\n${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
+      : `\n${model} · ${formatCompact(usedTokens)} tokens used (context window unknown)`;
 
-  output += legend;
+  // Legend (below bar)
+  output += `\n${legend}`;
 
-  // --- Braille area chart ---
+  // --- Braille area chart (extra spacing from legend) ---
   if (history.length > 1) {
-    output += `\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
+    output += `\n\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
   }
 
   return output;

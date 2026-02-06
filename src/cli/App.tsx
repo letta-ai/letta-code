@@ -36,7 +36,7 @@ import {
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
-import { getClient } from "../agent/client";
+import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { getLettaCodeHeaders } from "../agent/http-headers";
@@ -5834,11 +5834,6 @@ export default function App({
 
         // Special handling for /context command - show context window usage
         if (trimmed === "/context") {
-          const cmd = commandRunner.start(
-            trimmed,
-            "Calculating context usage...",
-          );
-
           const contextWindow = llmConfigRef.current?.context_window ?? 0;
           const model = llmConfigRef.current?.model ?? "unknown";
 
@@ -5846,79 +5841,63 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
-          // Show immediately with single-color bar
-          const output = renderContextUsage({
+          // Phase 1: Show single-color bar + chart + "Fetching breakdown..."
+          // Stays in dynamic area ("running" phase) so it can be updated
+          const initialOutput = renderContextUsage({
             usedTokens,
             contextWindow,
             model,
             history,
           });
 
+          const cmd = commandRunner.start(trimmed, "");
           cmd.update({
-            output,
-            phase: "finished",
-            success: true,
+            output: initialOutput,
+            phase: "running",
             preformatted: true,
           });
 
-          // Async: fetch breakdown from API and re-render with color-coded bar
-          (async () => {
-            try {
-              console.error(
-                "[context-debug] Starting async breakdown fetch...",
-              );
-              const { getServerUrl } = await import("../agent/client");
-              const settings =
-                await settingsManager.getSettingsWithSecureTokens();
-              const apiKey =
-                process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-              const baseUrl = getServerUrl();
-              const url = `${baseUrl}/v1/agents/${agentIdRef.current}/context`;
+          // Phase 2: Fetch breakdown (5s timeout), then finish with color-coded bar
+          let breakdown: ContextWindowOverview | undefined;
+          try {
+            const settings =
+              await settingsManager.getSettingsWithSecureTokens();
+            const apiKey =
+              process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+            const baseUrl = getServerUrl();
 
-              console.error(`[context-debug] Fetching: ${url}`);
-              console.error(`[context-debug] Has API key: ${!!apiKey}`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-              const res = await fetch(url, {
-                headers: {
-                  Authorization: `Bearer ${apiKey}`,
-                },
-              });
+            const res = await fetch(
+              `${baseUrl}/v1/agents/${agentIdRef.current}/context`,
+              {
+                headers: { Authorization: `Bearer ${apiKey}` },
+                signal: controller.signal,
+              },
+            );
+            clearTimeout(timeoutId);
 
-              console.error(`[context-debug] Response status: ${res.status}`);
-              if (!res.ok) {
-                const body = await res.text();
-                console.error(`[context-debug] Error body: ${body}`);
-                return;
-              }
-
-              const overview = (await res.json()) as ContextWindowOverview;
-              console.error(
-                "[context-debug] Got overview:",
-                JSON.stringify(overview).slice(0, 200),
-              );
-
-              const updatedOutput = renderContextUsage({
-                usedTokens,
-                contextWindow,
-                model,
-                history,
-                breakdown: overview,
-              });
-
-              console.error(
-                "[context-debug] Re-rendering with breakdown via cmd.update()",
-              );
-              cmd.update({
-                output: updatedOutput,
-                phase: "finished",
-                success: true,
-                preformatted: true,
-              });
-              console.error("[context-debug] Done! cmd.update() called.");
-            } catch (err) {
-              console.error("[context-debug] Caught error:", err);
+            if (res.ok) {
+              breakdown = (await res.json()) as ContextWindowOverview;
             }
-          })();
+          } catch {
+            // Timeout or network error — proceed without breakdown
+          }
+
+          // Finish with breakdown (bar colors + legend) or fallback
+          cmd.finish(
+            renderContextUsage({
+              usedTokens,
+              contextWindow,
+              model,
+              history,
+              ...(breakdown && { breakdown }),
+            }),
+            true,
+            false,
+            true,
+          );
 
           return { submitted: true };
         }
