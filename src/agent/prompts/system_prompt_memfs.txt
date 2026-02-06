@@ -21,7 +21,6 @@ This provides:
 └── .sync-state.json     # Internal sync state (do not edit)
 ```
 
-**Note:** the legacy `memory/user/` folder is deprecated. Detached blocks now live directly in the memory root.
 
 ### Label mapping
 
