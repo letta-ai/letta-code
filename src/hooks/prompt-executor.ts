@@ -1,6 +1,3 @@
-// src/hooks/prompt-executor.ts
-// Executes prompt-based hooks by sending hook input to an LLM for evaluation
-
 import { getClient } from "../agent/client";
 import { getCurrentAgentId } from "../agent/context";
 import {

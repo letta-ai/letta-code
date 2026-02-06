@@ -42,8 +42,8 @@ export interface CommandHookConfig {
 
 /**
  * Prompt hook configuration - sends hook input to an LLM for evaluation.
- * Supported events: PreToolUse, PostToolUse, PermissionRequest,
- * UserPromptSubmit, Stop, and SubagentStop.
+ * Supported events: PreToolUse, PostToolUse, PostToolUseFailure,
+ * PermissionRequest, UserPromptSubmit, Stop, and SubagentStop.
  */
 export interface PromptHookConfig {
   /** Type of hook */
@@ -53,7 +53,7 @@ export interface PromptHookConfig {
    * Use $ARGUMENTS as a placeholder for the hook input JSON.
    */
   prompt: string;
-  /** Optional model to use for evaluation (defaults to a fast model) */
+  /** Optional model to use for evaluation */
   model?: string;
   /** Optional timeout in milliseconds (default: 30000 for prompt hooks) */
   timeout?: number;
@@ -66,12 +66,13 @@ export const PROMPT_ARGUMENTS_PLACEHOLDER = "$ARGUMENTS";
 
 /**
  * Events that support prompt-based hooks:
- * PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SubagentStop
+ * PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest,
+ * UserPromptSubmit, Stop, SubagentStop
  */
 export const PROMPT_HOOK_SUPPORTED_EVENTS: Set<HookEvent> = new Set([
   "PreToolUse",
   "PostToolUse",
-  // "PostToolUseFailure", // Not yet implemented in Letta Code
+  "PostToolUseFailure",
   "PermissionRequest",
   "UserPromptSubmit",
   "Stop",
@@ -356,6 +357,8 @@ export interface StopHookInput extends HookInputBase {
   preceding_reasoning?: string;
   /** The assistant's final message content */
   assistant_message?: string;
+  /** The user's original prompt that initiated this turn */
+  user_message?: string;
 }
 
 /**

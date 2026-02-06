@@ -194,9 +194,8 @@ function filterHooksForEvent(
       if (!promptHooksSupported) {
         // Warn about unsupported prompt hook
         console.warn(
-          `\x1b[33m[hooks] Warning: Prompt hooks are only supported for PreToolUse, PostToolUse, ` +
-            `PermissionRequest, UserPromptSubmit, Stop, and SubagentStop events. ` +
-            `Ignoring prompt hook for ${event} event.\x1b[0m`,
+          `\x1b[33m[hooks] Warning: Prompt hooks are not supported for the ${event} event. ` +
+            `Ignoring prompt hook.\x1b[0m`,
         );
         continue;
       }

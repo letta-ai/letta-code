@@ -357,7 +357,6 @@ export async function executeHooks(
     }
 
     // Collect feedback from stderr when hook blocks
-    // Format: [hook identifier]: {stderr} per spec
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
       if (result.stderr) {
@@ -423,7 +422,7 @@ export async function executeHooksParallel(
       }
     }
 
-    // Format: [command]: {stderr} per spec
+    // Collect feedback from stderr when hook blocks
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
       if (result.stderr) {
