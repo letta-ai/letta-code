@@ -3336,7 +3336,7 @@ export default function App({
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
 
-            // Get last assistant message and reasoning for Stop hook
+            // Get last assistant message, user message, and reasoning for Stop hook
             const lastAssistant = Array.from(
               buffersRef.current.byId.values(),
             ).findLast((item) => item.kind === "assistant" && "text" in item);
@@ -3344,6 +3344,11 @@ export default function App({
               lastAssistant && "text" in lastAssistant
                 ? lastAssistant.text
                 : undefined;
+            const firstUser = Array.from(buffersRef.current.byId.values()).find(
+              (item) => item.kind === "user" && "text" in item,
+            );
+            const userMessage =
+              firstUser && "text" in firstUser ? firstUser.text : undefined;
             const precedingReasoning = buffersRef.current.lastReasoning;
             buffersRef.current.lastReasoning = undefined; // Clear after use
 
@@ -3357,6 +3362,7 @@ export default function App({
               undefined, // workingDirectory (uses default)
               precedingReasoning,
               assistantMessage,
+              userMessage,
             );
 
             // If hook blocked (exit 2), inject stderr feedback and continue conversation
@@ -3373,9 +3379,7 @@ export default function App({
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
                 id: statusId,
-                lines: [
-                  "Stop hook encountered blocking error, continuing loop with stderr feedback.",
-                ],
+                lines: ["Stop hook blocked, continuing conversation."],
               });
               buffersRef.current.order.push(statusId);
               refreshDerived();

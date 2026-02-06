@@ -4,8 +4,11 @@
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
+  type HookCommand,
   type HookEvent,
   type HookMatcher,
+  isCommandHook,
+  isPromptHook,
   isToolEvent,
   type SimpleHookEvent,
   type SimpleHookMatcher,
@@ -38,6 +41,21 @@ const BOX_BOTTOM_LEFT = "╰";
 const BOX_BOTTOM_RIGHT = "╯";
 const BOX_HORIZONTAL = "─";
 const BOX_VERTICAL = "│";
+
+/**
+ * Get a display label for a hook (command or prompt).
+ * For prompt hooks, returns just the prompt text (without prefix).
+ */
+function getHookDisplayLabel(hook: HookCommand | undefined): string {
+  if (!hook) return "";
+  if (isCommandHook(hook)) {
+    return hook.command;
+  }
+  if (isPromptHook(hook)) {
+    return `${hook.prompt.slice(0, 40)}${hook.prompt.length > 40 ? "..." : ""}`;
+  }
+  return "";
+}
 
 interface HooksManagerProps {
   onClose: () => void;
@@ -533,10 +551,12 @@ export const HooksManager = memo(function HooksManager({
           const matcherPattern = isToolMatcher
             ? (hook as HookMatcherWithSource).matcher || "*"
             : null;
-          // Both types have hooks array
-          const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
+          // Both types have hooks array - get display label for first hook
+          const firstHook = "hooks" in hook ? hook.hooks[0] : undefined;
+          const command = getHookDisplayLabel(firstHook);
           const truncatedCommand =
             command.length > 50 ? `${command.slice(0, 47)}...` : command;
+          const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -549,6 +569,7 @@ export const HooksManager = memo(function HooksManager({
               ) : (
                 <Text> </Text>
               )}
+              {isPrompt && <Text color={colors.status.processing}>✦ </Text>}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
           );
@@ -691,8 +712,10 @@ export const HooksManager = memo(function HooksManager({
     const matcherPattern = isToolMatcher
       ? (hook as HookMatcherWithSource).matcher || "*"
       : null;
-    // Both types have hooks array
-    const command = hook && "hooks" in hook ? hook.hooks[0]?.command : "";
+    // Both types have hooks array - get display label for first hook
+    const firstHook = hook && "hooks" in hook ? hook.hooks[0] : undefined;
+    const command = getHookDisplayLabel(firstHook);
+    const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -702,7 +725,16 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         {matcherPattern !== null && <Text>Matcher: {matcherPattern}</Text>}
-        <Text>Command: {command}</Text>
+        <Text>
+          {isPrompt ? (
+            <>
+              Hook: <Text color={colors.status.processing}>✦ </Text>
+              {command}
+            </>
+          ) : (
+            <>Command: {command}</>
+          )}
+        </Text>
         <Text>Source: {hook ? getSourceLabel(hook.source) : ""}</Text>
         <Text> </Text>
 

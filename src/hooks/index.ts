@@ -266,6 +266,7 @@ export async function runStopHooks(
   workingDirectory: string = process.cwd(),
   precedingReasoning?: string,
   assistantMessage?: string,
+  userMessage?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent("Stop", undefined, workingDirectory);
   if (hooks.length === 0) {
@@ -280,6 +281,7 @@ export async function runStopHooks(
     tool_call_count: toolCallCount,
     preceding_reasoning: precedingReasoning,
     assistant_message: assistantMessage,
+    user_message: userMessage,
   };
 
   // Run sequentially - Stop can block
