@@ -175,11 +175,10 @@ export function renderContextUsage(opts: ContextChartOptions): string {
   } else {
     const barColor = hexToFgAnsi(brandColors.primaryAccent);
     bar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}${"▱".repeat(totalSegments - filledFromUsage)}`;
-    // Reserve same number of lines as the breakdown legend to avoid layout shift.
-    // Legend has: title + up to 6 categories + 1 description = 8 lines max.
+    // Reserve same line count as breakdown legend to avoid layout shift
     const placeholderLines = [
       `${dim}  Fetching breakdown...${reset}`,
-      ...new Array(7).fill(""),
+      ...new Array(6).fill(""),
     ];
     legend = `\n${placeholderLines.join("\n")}`;
   }
