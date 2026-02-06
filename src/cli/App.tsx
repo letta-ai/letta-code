@@ -8823,6 +8823,7 @@ ${SYSTEM_REMINDER_CLOSE}
       syncTrajectoryElapsedBase,
       closeTrajectorySegment,
       openTrajectorySegment,
+      commitEligibleLines,
     ],
   );
 
