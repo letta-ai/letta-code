@@ -670,9 +670,17 @@ export async function handleHeadlessCommand(
   }
 
   // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent) || (specifiedAgentId && !isSubagent)) {
+  if (
+    memfsFlag ||
+    noMemfsFlag ||
+    (isNewlyCreatedAgent && !isSubagent) ||
+    (specifiedAgentId && !isSubagent)
+  ) {
     const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
-    await updateAgentSystemPromptMemfs(agent.id, settingsManager.isMemfsEnabled(agent.id));
+    await updateAgentSystemPromptMemfs(
+      agent.id,
+      settingsManager.isMemfsEnabled(agent.id),
+    );
   }
 
   // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
