@@ -75,6 +75,20 @@ async function runGit(
   };
 }
 
+/**
+ * Configure a local credential helper in the repo's .git/config
+ * so plain `git push` / `git pull` work without auth prefixes.
+ */
+async function configureLocalCredentialHelper(
+  dir: string,
+  token: string,
+): Promise<void> {
+  const baseUrl = getServerUrl();
+  const helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
+  await runGit(dir, ["config", `credential.${baseUrl}.helper`, helper]);
+  debugLog("memfs-git", "Configured local credential helper");
+}
+
 /** Check if the agent root directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
   return existsSync(join(getAgentRootDir(agentId), ".git"));
@@ -123,6 +137,10 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       }
     }
   }
+
+  // Configure local credential helper so the agent can do plain
+  // `git push` / `git pull` without auth prefixes.
+  await configureLocalCredentialHelper(dir, token);
 }
 
 /**
@@ -135,8 +153,11 @@ export async function pullMemory(
   const token = await getAuthToken();
   const dir = getAgentRootDir(agentId);
 
+  // Ensure credential helper is configured (self-healing for old clones)
+  await configureLocalCredentialHelper(dir, token);
+
   try {
-    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"], token);
+    const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"]);
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
     return {
@@ -147,7 +168,7 @@ export async function pullMemory(
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
-      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"], token);
+      const { stdout, stderr } = await runGit(dir, ["pull", "--rebase"]);
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       const msg =
