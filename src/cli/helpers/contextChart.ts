@@ -1,6 +1,17 @@
-import { brandColors, hexToFgAnsi } from "../components/colors";
+import { brandColors, colors, hexToFgAnsi } from "../components/colors";
 import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { formatCompact } from "./format";
+
+export interface ContextWindowOverview {
+  context_window_size_max: number;
+  context_window_size_current: number;
+  num_tokens_system: number;
+  num_tokens_core_memory: number;
+  num_tokens_external_memory_summary: number;
+  num_tokens_summary_memory: number;
+  num_tokens_functions_definitions: number;
+  num_tokens_messages: number;
+}
 
 interface ContextChartOptions {
   usedTokens: number;
@@ -12,42 +23,176 @@ interface ContextChartOptions {
     turnId: number;
     compacted?: boolean;
   }>;
+  breakdown?: ContextWindowOverview;
 }
 
-/**
- * Renders the /context command output: a usage bar + optional braille area chart.
- * Returns the fully formatted string (with ANSI color codes).
- */
+/** Renders the /context command output with usage bar, legend, and braille chart. */
 export function renderContextUsage(opts: ContextChartOptions): string {
-  const { usedTokens, contextWindow, model, history } = opts;
+  const { usedTokens, contextWindow, model, history, breakdown } = opts;
 
   if (usedTokens === 0) {
     return "Context data not available yet. Run a turn to see context usage.";
   }
 
-  const barColor = hexToFgAnsi(brandColors.primaryAccent);
   const reset = "\x1b[0m";
+  const bold = "\x1b[1m";
+  const dim = "\x1b[2m";
+  const italic = "\x1b[3m";
   const termWidth = process.stdout?.columns ?? 80;
 
-  // --- Usage bar (static 10 segments) ---
   const percentage =
     contextWindow > 0
       ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
       : 0;
-  const totalSegments = 10;
-  const filledSegments = Math.round((percentage / 100) * totalSegments);
-  const filledBar = barColor + "▰".repeat(filledSegments) + reset;
-  const emptyBar = "▱".repeat(totalSegments - filledSegments);
-  const bar = filledBar + emptyBar;
 
-  let output =
+  const totalSegments = Math.max(1, Math.floor(termWidth * 0.25));
+  const filledFromUsage =
     contextWindow > 0
-      ? `${bar} ~${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
-      : `${model} · ~${formatCompact(usedTokens)} tokens used (context window unknown)`;
+      ? Math.round(
+          (Math.min(usedTokens, contextWindow) / contextWindow) * totalSegments,
+        )
+      : 0;
 
-  // --- Braille area chart ---
+  let bar: string;
+  let legend = "";
+
+  if (breakdown && contextWindow > 0) {
+    const categories: Array<{
+      label: string;
+      tokens: number;
+      color: string;
+      description?: string;
+    }> = [
+      {
+        label: "System",
+        tokens: breakdown.num_tokens_system,
+        color: colors.contextBreakdown.system,
+      },
+      {
+        label: "Core Memory",
+        tokens: breakdown.num_tokens_core_memory,
+        color: colors.contextBreakdown.coreMemory,
+      },
+      {
+        label: "Tools",
+        tokens: breakdown.num_tokens_functions_definitions,
+        color: colors.contextBreakdown.tools,
+      },
+      {
+        label: "Messages",
+        tokens: breakdown.num_tokens_messages,
+        color: colors.contextBreakdown.messages,
+      },
+      {
+        label: "Summary",
+        tokens: breakdown.num_tokens_summary_memory,
+        color: colors.contextBreakdown.summaryMemory,
+      },
+      {
+        label: "Other",
+        tokens: breakdown.num_tokens_external_memory_summary,
+        color: colors.contextBreakdown.other,
+        description: "external memory, archival storage",
+      },
+    ];
+
+    const filledTotal = filledFromUsage;
+    const emptyTotal = totalSegments - filledTotal;
+    const nonZeroCats = categories.filter((c) => c.tokens > 0);
+    const totalUsed = breakdown.context_window_size_current;
+    const segmentCounts: number[] = new Array(categories.length).fill(0);
+
+    if (filledTotal > 0 && totalUsed > 0) {
+      let remaining = filledTotal;
+      for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        if (cat && cat.tokens > 0 && remaining > 0) {
+          segmentCounts[i] = 1;
+          remaining--;
+        }
+      }
+
+      if (remaining > 0) {
+        const weights = categories.map((cat) =>
+          cat.tokens > 0 ? cat.tokens / totalUsed : 0,
+        );
+        let distributed = 0;
+        for (let i = 0; i < categories.length; i++) {
+          const cat = categories[i];
+          if (cat && cat.tokens > 0) {
+            const extra = Math.round((weights[i] ?? 0) * remaining);
+            segmentCounts[i] = (segmentCounts[i] ?? 0) + extra;
+            distributed += extra;
+          }
+        }
+        const diff = remaining - distributed;
+        if (diff !== 0 && nonZeroCats.length > 0) {
+          let maxIdx = 0;
+          for (let i = 1; i < categories.length; i++) {
+            const cat = categories[i];
+            const maxCat = categories[maxIdx];
+            if (cat && maxCat && cat.tokens > maxCat.tokens) maxIdx = i;
+          }
+          segmentCounts[maxIdx] = (segmentCounts[maxIdx] ?? 0) + diff;
+        }
+      }
+    }
+
+    let barStr = "";
+    for (let i = 0; i < categories.length; i++) {
+      const count = segmentCounts[i] ?? 0;
+      if (count > 0) {
+        const cat = categories[i];
+        if (cat) {
+          barStr += `${hexToFgAnsi(cat.color)}${"▰".repeat(count)}${reset}`;
+        }
+      }
+    }
+    barStr += "▱".repeat(Math.max(0, emptyTotal));
+    bar = barStr;
+
+    const indent = "  ";
+    const legendLines: string[] = [
+      `${indent}${italic}${dim}Estimated usage by category${reset}`,
+    ];
+    for (const cat of categories) {
+      if (cat.tokens > 0) {
+        const proportion = totalUsed > 0 ? cat.tokens / totalUsed : 0;
+        const estimatedTokens = Math.round(proportion * usedTokens);
+        const pct =
+          contextWindow > 0
+            ? ((estimatedTokens / contextWindow) * 100).toFixed(1)
+            : "0.0";
+        legendLines.push(
+          `${indent}${hexToFgAnsi(cat.color)}■${reset} ${cat.label}: ${formatCompact(estimatedTokens)} tokens (${pct}%)`,
+        );
+        if (cat.description) {
+          legendLines.push(`${indent}  ${dim}${cat.description}${reset}`);
+        }
+      }
+    }
+    legend = `\n${legendLines.join("\n")}`;
+  } else {
+    const barColor = hexToFgAnsi(brandColors.primaryAccent);
+    bar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}${"▱".repeat(totalSegments - filledFromUsage)}`;
+    // Reserve same line count as breakdown legend to avoid layout shift
+    const placeholderLines = [
+      `${dim}  Fetching breakdown...${reset}`,
+      ...new Array(6).fill(""),
+    ];
+    legend = `\n${placeholderLines.join("\n")}`;
+  }
+
+  let output = `${bold}Context Usage${reset}\n\n`;
+  output += bar;
+  output +=
+    contextWindow > 0
+      ? `\n${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
+      : `\n${model} · ${formatCompact(usedTokens)} tokens used (context window unknown)`;
+  output += `\n${legend}`;
+
   if (history.length > 1) {
-    output += `\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
+    output += `\n\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
   }
 
   return output;
@@ -56,20 +201,18 @@ export function renderContextUsage(opts: ContextChartOptions): string {
 // White-to-purple spectrum with brand color (#8C8CF9) in the middle.
 // Ordered lightest → brand → darkest, then bounced for smooth cycling.
 const CHART_PALETTE = [
-  "#E8E8FE", // near-white lavender
-  "#CDCDFB", // light lavender
-  "#B0B0FA", // soft purple
-  "#8C8CF9", // brand primaryAccent (middle)
-  "#7272E0", // medium purple
-  "#5B5BC8", // deep purple
-  "#4545B0", // dark purple
+  "#B0B0B0", // grey
+  "#BEBEEE", // light purple
+  "#8C8CF9", // brand purple
+  "#5B5BC8", // dark purple
+  "#3D3D8F", // indigo
 ].map(hexToFgAnsi);
 
-// Bounce sequence: 0→1→2→3→4→5→6→5→4→3→2→1→ (period = 12)
 function bounceIndex(turnId: number): number {
-  const period = (CHART_PALETTE.length - 1) * 2; // 12
-  const pos = ((turnId % period) + period) % period;
-  return pos < CHART_PALETTE.length ? pos : period - pos;
+  return (
+    ((turnId % CHART_PALETTE.length) + CHART_PALETTE.length) %
+    CHART_PALETTE.length
+  );
 }
 
 function renderBrailleChart(

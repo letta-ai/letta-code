@@ -36,7 +36,7 @@ import {
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
-import { getClient } from "../agent/client";
+import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { getLettaCodeHeaders } from "../agent/http-headers";
@@ -165,7 +165,10 @@ import {
 } from "./helpers/accumulator";
 import { classifyApprovals } from "./helpers/approvalClassification";
 import { backfillBuffers } from "./helpers/backfill";
-import { renderContextUsage } from "./helpers/contextChart";
+import {
+  type ContextWindowOverview,
+  renderContextUsage,
+} from "./helpers/contextChart";
 import {
   createContextTracker,
   resetContextHistory,
@@ -3329,7 +3332,7 @@ export default function App({
           sessionStatsRef.current.startTrajectory();
 
           // Only bump turn counter for actual user messages, not approval continuations.
-          // This ensures all LLM steps within one user turn share the same color in /context chart.
+          // This ensures all LLM steps within one user "turn" are counted as one.
           const hasUserMessage = currentInput.some(
             (item) => item.type === "message",
           );
@@ -5831,11 +5834,6 @@ export default function App({
 
         // Special handling for /context command - show context window usage
         if (trimmed === "/context") {
-          const cmd = commandRunner.start(
-            trimmed,
-            "Calculating context usage...",
-          );
-
           const contextWindow = llmConfigRef.current?.context_window ?? 0;
           const model = llmConfigRef.current?.model ?? "unknown";
 
@@ -5843,19 +5841,63 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
-          const output = renderContextUsage({
+          // Phase 1: Show single-color bar + chart + "Fetching breakdown..."
+          // Stays in dynamic area ("running" phase) so it can be updated
+          const initialOutput = renderContextUsage({
             usedTokens,
             contextWindow,
             model,
             history,
           });
 
+          const cmd = commandRunner.start(trimmed, "");
           cmd.update({
-            output,
-            phase: "finished",
-            success: true,
+            output: initialOutput,
+            phase: "running",
             preformatted: true,
           });
+
+          // Phase 2: Fetch breakdown (5s timeout), then finish with color-coded bar
+          let breakdown: ContextWindowOverview | undefined;
+          try {
+            const settings =
+              await settingsManager.getSettingsWithSecureTokens();
+            const apiKey =
+              process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+            const baseUrl = getServerUrl();
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            const res = await fetch(
+              `${baseUrl}/v1/agents/${agentIdRef.current}/context`,
+              {
+                headers: { Authorization: `Bearer ${apiKey}` },
+                signal: controller.signal,
+              },
+            );
+            clearTimeout(timeoutId);
+
+            if (res.ok) {
+              breakdown = (await res.json()) as ContextWindowOverview;
+            }
+          } catch {
+            // Timeout or network error — proceed without breakdown
+          }
+
+          // Finish with breakdown (bar colors + legend) or fallback
+          cmd.finish(
+            renderContextUsage({
+              usedTokens,
+              contextWindow,
+              model,
+              history,
+              ...(breakdown && { breakdown }),
+            }),
+            true,
+            false,
+            true,
+          );
 
           return { submitted: true };
         }

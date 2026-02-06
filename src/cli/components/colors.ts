@@ -198,6 +198,16 @@ const _colors = {
   footer: {
     agentName: brandColors.primaryAccent,
   },
+
+  // Context window breakdown categories
+  contextBreakdown: {
+    system: "#E07050", // coral-red
+    coreMemory: "#E0A040", // amber
+    tools: "#20B2AA", // turquoise
+    messages: "#8C8CF9", // brand purple
+    summaryMemory: "#D0B060", // gold
+    other: "#A0A0A0", // light grey
+  },
 } as const;
 
 // Combine static colors with theme-aware dynamic properties
