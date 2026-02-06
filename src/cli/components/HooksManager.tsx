@@ -43,9 +43,6 @@ const BOX_HORIZONTAL = "─";
 const BOX_VERTICAL = "│";
 
 /**
- * Get a display label for a hook (command or prompt)
- */
-/**
  * Get a display label for a hook (command or prompt).
  * For prompt hooks, returns just the prompt text (without prefix).
  * Use isPromptHook() to check if a purple ✦ prefix should be rendered.
