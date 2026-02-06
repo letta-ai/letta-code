@@ -95,6 +95,7 @@ export async function handleHeadlessCommand(
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
+      embedding: { type: "string" },
       system: { type: "string", short: "s" },
       "system-custom": { type: "string" },
       "system-append": { type: "string" },
@@ -233,6 +234,7 @@ export async function handleHeadlessCommand(
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
+  const embeddingModel = values.embedding as string | undefined;
   const memoryBlocksJson = values["memory-blocks"] as string | undefined;
   const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
@@ -469,6 +471,7 @@ export async function handleHeadlessCommand(
     const updateArgs = getModelUpdateArgs(model);
     const createOptions = {
       model,
+      embeddingModel,
       updateArgs,
       skillsDirectory,
       parallelToolCalls: true,
