@@ -201,12 +201,12 @@ const _colors = {
 
   // Context window breakdown categories
   contextBreakdown: {
-    system: "#8C8CF9", // brand purple
-    coreMemory: "#64CF64", // green
-    tools: "#5BC0EB", // cyan
-    messages: "#FF5533", // orange
-    summaryMemory: "#F1689F", // pink
-    externalMemory: "#FEE19C", // yellow
+    system: "#E07050", // coral-red
+    coreMemory: "#E0A040", // amber
+    tools: "#20B2AA", // turquoise
+    messages: "#8C8CF9", // brand purple
+    summaryMemory: "#D0B060", // gold
+    other: "#A0A0A0", // light grey
   },
 } as const;
 

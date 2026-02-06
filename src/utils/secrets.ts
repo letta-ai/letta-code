@@ -14,9 +14,16 @@ try {
   secretsAvailable = false;
 }
 
-const SERVICE_NAME = "letta-code";
+let SERVICE_NAME = "letta-code";
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
+
+/**
+ * Override the keychain service name (useful for tests to avoid touching real credentials)
+ */
+export function setServiceName(name: string): void {
+  SERVICE_NAME = name;
+}
 
 // Note: When secrets API is unavailable (Node.js), tokens will be managed
 // by the settings manager which falls back to storing in the settings file
