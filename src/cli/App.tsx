@@ -4902,29 +4902,12 @@ export default function App({
               `⎿  Type /resume to browse all conversations`,
               `⎿  Type /new to start a new conversation`,
             ].join("\n");
-        cmd.finish(successOutput, true);
-
-        // Add separator for visual spacing, then success message
         const separator = {
           kind: "separator" as const,
           id: uid("sep"),
         };
-        const successItem: StaticItem = {
-          kind: "command",
-          id: cmd.id,
-          input: cmd.input,
-          output: successOutput,
-          phase: "finished",
-          success: true,
-        };
-        buffersRef.current.byId.delete(cmd.id);
-        const orderIdx = buffersRef.current.order.indexOf(cmd.id);
-        if (orderIdx !== -1) {
-          buffersRef.current.order.splice(orderIdx, 1);
-        }
-        emittedIdsRef.current.add(cmd.id);
-        setStaticItems([separator, successItem]);
-        setLines(toLines(buffersRef.current));
+        setStaticItems([separator]);
+        cmd.finish(successOutput, true);
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
         cmd.fail(`Failed: ${errorDetails}`);
