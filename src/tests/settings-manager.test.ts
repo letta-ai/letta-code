@@ -648,7 +648,7 @@ describe("Settings Manager - Hooks", () => {
     );
   });
 
-  test("All 11 hook event types can be configured", async () => {
+  test("All 10 hook event types can be configured", async () => {
     const allHookEvents = [
       "PreToolUse",
       "PostToolUse",
@@ -658,7 +658,6 @@ describe("Settings Manager - Hooks", () => {
       "Stop",
       "SubagentStop",
       "PreCompact",
-      "Setup",
       "SessionStart",
       "SessionEnd",
     ] as const;
