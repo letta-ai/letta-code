@@ -2015,6 +2015,7 @@ async function main(): Promise<void> {
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         resumedExistingConversation,
         tokenStreaming: settings.tokenStreaming,
+        showCompactions: settings.showCompactions,
         agentProvenance,
         releaseNotes,
       });
@@ -2031,6 +2032,7 @@ async function main(): Promise<void> {
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       resumedExistingConversation,
       tokenStreaming: settings.tokenStreaming,
+      showCompactions: settings.showCompactions,
       agentProvenance,
       releaseNotes,
     });
