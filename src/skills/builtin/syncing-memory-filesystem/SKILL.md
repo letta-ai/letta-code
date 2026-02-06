@@ -20,8 +20,9 @@ When memfs is enabled, the Letta Code CLI automatically:
 1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
 2. Clones the repo into `~/.letta/agents/<agent-id>/`
 3. Configures a **local** credential helper in `.git/config` (so `git push`/`git pull` work without auth ceremony)
-4. On subsequent startups: pulls latest changes and reconfigures credentials (self-healing)
-5. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
+4. Installs a **pre-commit hook** that validates frontmatter before each commit (see below)
+5. On subsequent startups: pulls latest changes, reconfigures credentials and hook (self-healing)
+6. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
 
 If any of these steps fail, you can replicate them manually using the sections below.
 
@@ -46,6 +47,28 @@ For cloning a *different* agent's repo (e.g. during memory migration), set up a 
 git config --global credential.$LETTA_BASE_URL.helper \
   '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
+
+## Pre-Commit Hook (Frontmatter Validation)
+
+The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject.
+
+**Rules:**
+- Every `.md` file must have YAML frontmatter (`---` header and closing `---`)
+- Required fields: `description` (non-empty string), `limit` (positive integer)
+- `read_only` is a **protected field**: you (the agent) cannot add, remove, or change it. Files with `read_only: true` cannot be modified at all. Only the server/user sets this field.
+- Unknown frontmatter keys are rejected
+
+**Valid file format:**
+```markdown
+---
+description: What this block contains
+limit: 20000
+---
+
+Block content goes here.
+```
+
+If the hook rejects a commit, read the error message — it tells you exactly which file and which rule was violated. Fix the file and retry.
 
 ## Clone Agent Memory
 

@@ -325,8 +325,9 @@ export async function pullMemory(
   const token = await getAuthToken();
   const dir = getAgentRootDir(agentId);
 
-  // Ensure credential helper is configured (self-healing for old clones)
+  // Self-healing: ensure credential helper and pre-commit hook are configured
   await configureLocalCredentialHelper(dir, token);
+  installPreCommitHook(dir);
 
   try {
     const { stdout, stderr } = await runGit(dir, ["pull", "--ff-only"]);
