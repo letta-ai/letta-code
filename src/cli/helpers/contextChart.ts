@@ -26,10 +26,7 @@ interface ContextChartOptions {
   breakdown?: ContextWindowOverview;
 }
 
-/**
- * Renders the /context command output: a usage bar + optional braille area chart.
- * Returns the fully formatted string (with ANSI color codes).
- */
+/** Renders the /context command output with usage bar, legend, and braille chart. */
 export function renderContextUsage(opts: ContextChartOptions): string {
   const { usedTokens, contextWindow, model, history, breakdown } = opts;
 
@@ -48,10 +45,7 @@ export function renderContextUsage(opts: ContextChartOptions): string {
       ? Math.min(100, Math.round((usedTokens / contextWindow) * 100))
       : 0;
 
-  // Use consistent bar width for both breakdown and fallback (25% of terminal)
   const totalSegments = Math.max(1, Math.floor(termWidth * 0.25));
-
-  // Calculate the filled segment count from usedTokens (used for both paths)
   const filledFromUsage =
     contextWindow > 0
       ? Math.round(
@@ -63,9 +57,6 @@ export function renderContextUsage(opts: ContextChartOptions): string {
   let legend = "";
 
   if (breakdown && contextWindow > 0) {
-    // --- Color-coded breakdown bar ---
-    // Order categories for adjacent color contrast in the bar:
-    // purple → amber → turquoise → coral → green → gold
     const categories: Array<{
       label: string;
       tokens: number;
@@ -105,17 +96,13 @@ export function renderContextUsage(opts: ContextChartOptions): string {
       },
     ];
 
-    // Use filledFromUsage (same as fallback) so bar width matches between phases
     const filledTotal = filledFromUsage;
     const emptyTotal = totalSegments - filledTotal;
-
-    // Distribute segments: ensure at least 1 per non-zero category (if room)
     const nonZeroCats = categories.filter((c) => c.tokens > 0);
     const totalUsed = breakdown.context_window_size_current;
     const segmentCounts: number[] = new Array(categories.length).fill(0);
 
     if (filledTotal > 0 && totalUsed > 0) {
-      // First pass: give every non-zero category at least 1 segment
       let remaining = filledTotal;
       for (let i = 0; i < categories.length; i++) {
         const cat = categories[i];
@@ -125,9 +112,7 @@ export function renderContextUsage(opts: ContextChartOptions): string {
         }
       }
 
-      // Second pass: distribute remaining segments proportionally
       if (remaining > 0) {
-        // Proportional weights (excluding the 1 already given)
         const weights = categories.map((cat) =>
           cat.tokens > 0 ? cat.tokens / totalUsed : 0,
         );
@@ -140,24 +125,19 @@ export function renderContextUsage(opts: ContextChartOptions): string {
             distributed += extra;
           }
         }
-        // Fix rounding: adjust the largest category
         const diff = remaining - distributed;
         if (diff !== 0 && nonZeroCats.length > 0) {
-          // Find the category with the most tokens
           let maxIdx = 0;
           for (let i = 1; i < categories.length; i++) {
             const cat = categories[i];
             const maxCat = categories[maxIdx];
-            if (cat && maxCat && cat.tokens > maxCat.tokens) {
-              maxIdx = i;
-            }
+            if (cat && maxCat && cat.tokens > maxCat.tokens) maxIdx = i;
           }
           segmentCounts[maxIdx] = (segmentCounts[maxIdx] ?? 0) + diff;
         }
       }
     }
 
-    // Build the bar string with colored segments
     let barStr = "";
     for (let i = 0; i < categories.length; i++) {
       const count = segmentCounts[i] ?? 0;
@@ -171,8 +151,6 @@ export function renderContextUsage(opts: ContextChartOptions): string {
     barStr += "▱".repeat(Math.max(0, emptyTotal));
     bar = barStr;
 
-    // Build indented row-wise legend with token counts and percentages.
-    // Derive proportions from API breakdown, apply to usedTokens (ground truth).
     const indent = "  ";
     const legendLines: string[] = [
       `${indent}${italic}${dim}Estimated usage by category${reset}`,
@@ -195,32 +173,25 @@ export function renderContextUsage(opts: ContextChartOptions): string {
     }
     legend = `\n${legendLines.join("\n")}`;
   } else {
-    // --- Fallback: single-color bar (same width as breakdown) ---
     const barColor = hexToFgAnsi(brandColors.primaryAccent);
-    const filledBar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}`;
-    const emptyBar = "▱".repeat(totalSegments - filledFromUsage);
-    bar = filledBar + emptyBar;
-
-    // Reserve legend space with placeholder
-    legend = `\n${dim}  Fetching breakdown...${reset}`;
+    bar = `${barColor}${"▰".repeat(filledFromUsage)}${reset}${"▱".repeat(totalSegments - filledFromUsage)}`;
+    // Reserve same number of lines as the breakdown legend to avoid layout shift.
+    // Legend has: title + up to 6 categories + 1 description = 8 lines max.
+    const placeholderLines = [
+      `${dim}  Fetching breakdown...${reset}`,
+      ...new Array(7).fill(""),
+    ];
+    legend = `\n${placeholderLines.join("\n")}`;
   }
 
-  // Bold title + blank line
   let output = `${bold}Context Usage${reset}\n\n`;
-
-  // Bar
   output += bar;
-
-  // Token/model info line (below bar)
   output +=
     contextWindow > 0
       ? `\n${formatCompact(usedTokens)}/${formatCompact(contextWindow)} tokens (${percentage}%) · ${model}`
       : `\n${model} · ${formatCompact(usedTokens)} tokens used (context window unknown)`;
-
-  // Legend (below bar)
   output += `\n${legend}`;
 
-  // --- Braille area chart (extra spacing from legend) ---
   if (history.length > 1) {
     output += `\n\n\n${renderBrailleChart(history, contextWindow, termWidth)}`;
   }
@@ -231,20 +202,18 @@ export function renderContextUsage(opts: ContextChartOptions): string {
 // White-to-purple spectrum with brand color (#8C8CF9) in the middle.
 // Ordered lightest → brand → darkest, then bounced for smooth cycling.
 const CHART_PALETTE = [
-  "#E8E8FE", // near-white lavender
-  "#CDCDFB", // light lavender
-  "#B0B0FA", // soft purple
-  "#8C8CF9", // brand primaryAccent (middle)
-  "#7272E0", // medium purple
-  "#5B5BC8", // deep purple
-  "#4545B0", // dark purple
+  "#B0B0B0", // grey
+  "#BEBEEE", // light purple
+  "#8C8CF9", // brand purple
+  "#5B5BC8", // dark purple
+  "#3D3D8F", // indigo
 ].map(hexToFgAnsi);
 
-// Bounce sequence: 0→1→2→3→4→5→6→5→4→3→2→1→ (period = 12)
 function bounceIndex(turnId: number): number {
-  const period = (CHART_PALETTE.length - 1) * 2; // 12
-  const pos = ((turnId % period) + period) % period;
-  return pos < CHART_PALETTE.length ? pos : period - pos;
+  return (
+    ((turnId % CHART_PALETTE.length) + CHART_PALETTE.length) %
+    CHART_PALETTE.length
+  );
 }
 
 function renderBrailleChart(
