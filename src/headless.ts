@@ -152,10 +152,10 @@ export async function handleHeadlessCommand(
       if (validModes.includes(permissionModeValue)) {
         permissionMode.setMode(
           permissionModeValue as
-          | "default"
-          | "acceptEdits"
-          | "bypassPermissions"
-          | "plan",
+            | "default"
+            | "acceptEdits"
+            | "bypassPermissions"
+            | "plan",
         );
       }
     }
@@ -222,9 +222,9 @@ export async function handleHeadlessCommand(
   if (values.resume) {
     console.error(
       "Error: --resume is for interactive mode only (opens conversation selector).\n" +
-      "In headless mode, use:\n" +
-      "  --continue           Resume the last session (agent + conversation)\n" +
-      "  --conversation <id>  Resume a specific conversation by ID",
+        "In headless mode, use:\n" +
+        "  --continue           Resume the last session (agent + conversation)\n" +
+        "  --conversation <id>  Resume a specific conversation by ID",
     );
     process.exit(1);
   }
@@ -422,9 +422,9 @@ export async function handleHeadlessCommand(
   // - BlockReference: { blockId: string }
   let memoryBlocks:
     | Array<
-      | { label: string; value: string; description?: string }
-      | { blockId: string }
-    >
+        | { label: string; value: string; description?: string }
+        | { blockId: string }
+      >
     | undefined;
   if (memoryBlocksJson !== undefined) {
     if (!forceNew) {
@@ -715,8 +715,8 @@ export async function handleHeadlessCommand(
       initBlocks === undefined
         ? [...ISOLATED_BLOCK_LABELS]
         : ISOLATED_BLOCK_LABELS.filter((label) =>
-          initBlocks.includes(label as string),
-        );
+            initBlocks.includes(label as string),
+          );
   }
   // If --no-skills is set, isolatedBlockLabels stays empty (no isolation)
 
@@ -923,24 +923,24 @@ export async function handleHeadlessCommand(
       // Phase 1: Collect decisions for all approvals
       type Decision =
         | {
-          type: "approve";
-          approval: {
-            toolCallId: string;
-            toolName: string;
-            toolArgs: string;
-          };
-          reason: string;
-          matchedRule: string;
-        }
+            type: "approve";
+            approval: {
+              toolCallId: string;
+              toolName: string;
+              toolArgs: string;
+            };
+            reason: string;
+            matchedRule: string;
+          }
         | {
-          type: "deny";
-          approval: {
-            toolCallId: string;
-            toolName: string;
-            toolArgs: string;
+            type: "deny";
+            approval: {
+              toolCallId: string;
+              toolName: string;
+              toolArgs: string;
+            };
+            reason: string;
           };
-          reason: string;
-        };
 
       const { autoAllowed, autoDenied } = await classifyApprovals(
         pendingApprovals,
@@ -1026,7 +1026,7 @@ export async function handleHeadlessCommand(
         await drainStreamWithResume(
           approvalStream,
           createBuffers(agent.id),
-          () => { },
+          () => {},
         );
       }
     }
@@ -1220,14 +1220,14 @@ ${SYSTEM_REMINDER_CLOSE}
               uuid: crypto.randomUUID(),
               ...(errorInfo.error_type &&
                 errorInfo.run_id && {
-                api_error: {
-                  message_type: "error_message",
-                  message: errorInfo.message,
-                  error_type: errorInfo.error_type,
-                  detail: errorInfo.detail,
-                  run_id: errorInfo.run_id,
-                },
-              }),
+                  api_error: {
+                    message_type: "error_message",
+                    message: errorInfo.message,
+                    error_type: errorInfo.error_type,
+                    detail: errorInfo.detail,
+                    run_id: errorInfo.run_id,
+                  },
+                }),
             };
             console.log(JSON.stringify(errorEvent));
             shouldOutputChunk = false;
@@ -1335,7 +1335,7 @@ ${SYSTEM_REMINDER_CLOSE}
         const result = await drainStreamWithResume(
           stream,
           buffers,
-          () => { }, // No UI refresh needed in headless mode
+          () => {}, // No UI refresh needed in headless mode
         );
         stopReason = result.stopReason;
         approvals = result.approvals || [];
@@ -1373,22 +1373,22 @@ ${SYSTEM_REMINDER_CLOSE}
         // Phase 1: Collect decisions for all approvals
         type Decision =
           | {
-            type: "approve";
-            approval: {
-              toolCallId: string;
-              toolName: string;
-              toolArgs: string;
-            };
-          }
+              type: "approve";
+              approval: {
+                toolCallId: string;
+                toolName: string;
+                toolArgs: string;
+              };
+            }
           | {
-            type: "deny";
-            approval: {
-              toolCallId: string;
-              toolName: string;
-              toolArgs: string;
+              type: "deny";
+              approval: {
+                toolCallId: string;
+                toolName: string;
+                toolArgs: string;
+              };
+              reason: string;
             };
-            reason: string;
-          };
 
         const { autoAllowed, autoDenied } = await classifyApprovals(approvals, {
           treatAskAsDeny: true,
@@ -1557,12 +1557,12 @@ ${SYSTEM_REMINDER_CLOSE}
           const run = await client.runs.retrieve(lastRunId);
           const metaError = run.metadata?.error as
             | {
-              error_type?: string;
-              message?: string;
-              detail?: string;
-              // Handle nested error structure (error.error) that can occur in some edge cases
-              error?: { error_type?: string; detail?: string };
-            }
+                error_type?: string;
+                message?: string;
+                detail?: string;
+                // Handle nested error structure (error.error) that can occur in some edge cases
+                error?: { error_type?: string; detail?: string };
+              }
             | undefined;
 
           // Check for llm_error at top level or nested (handles error.error nesting)
@@ -1735,7 +1735,7 @@ ${SYSTEM_REMINDER_CLOSE}
       line.kind === "tool_call" &&
       "resultText" in line &&
       typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
-      "string" &&
+        "string" &&
       ((line as Extract<Line, { kind: "tool_call" }>).resultText ?? "").trim()
         .length > 0,
   ) as Extract<Line, { kind: "tool_call" }> | undefined;
@@ -2175,23 +2175,23 @@ async function runBidirectionalMode(
             // Check permissions and collect decisions
             type Decision =
               | {
-                type: "approve";
-                approval: {
-                  toolCallId: string;
-                  toolName: string;
-                  toolArgs: string;
-                };
-                matchedRule: string;
-              }
+                  type: "approve";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  matchedRule: string;
+                }
               | {
-                type: "deny";
-                approval: {
-                  toolCallId: string;
-                  toolName: string;
-                  toolArgs: string;
+                  type: "deny";
+                  approval: {
+                    toolCallId: string;
+                    toolName: string;
+                    toolArgs: string;
+                  };
+                  reason: string;
                 };
-                reason: string;
-              };
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
@@ -2335,7 +2335,7 @@ async function runBidirectionalMode(
             line.kind === "tool_call" &&
             "resultText" in line &&
             typeof (line as Extract<Line, { kind: "tool_call" }>).resultText ===
-            "string" &&
+              "string" &&
             (
               (line as Extract<Line, { kind: "tool_call" }>).resultText ?? ""
             ).trim().length > 0,
