@@ -4498,6 +4498,15 @@ export default function App({
 
         abortControllerRef.current = null;
 
+        // Trigger dequeue effect now that processConversation is no longer active.
+        // The dequeue effect checks abortControllerRef (a ref, not state), so it
+        // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
+        // Only bump for normal completions — if stale (ESC was pressed), the user
+        // cancelled and queued messages should NOT be auto-submitted.
+        if (!isStale && messageQueueRef.current.length > 0) {
+          setDequeueEpoch((e) => e + 1);
+        }
+
         // Only decrement ref if this conversation is still current.
         // If stale (ESC was pressed), handleInterrupt already reset ref to 0.
         if (!isStale) {
@@ -8320,7 +8329,8 @@ ${SYSTEM_REMINDER_CLOSE}
       !isExecutingTool &&
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
-      !userCancelledRef.current // Don't dequeue if user just cancelled
+      !userCancelledRef.current && // Don't dequeue if user just cancelled
+      !abortControllerRef.current // Don't dequeue while processConversation is still active
     ) {
       // Concatenate all queued messages into one (better UX when user types multiple
       // messages quickly - they get combined into one context for the agent)
@@ -8347,7 +8357,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
         "queue",
-        `Dequeue blocked: streaming=${streaming}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}`,
+        `Dequeue blocked: streaming=${streaming}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
     }
   }, [
