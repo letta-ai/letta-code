@@ -771,6 +771,7 @@ export default function App({
   messageHistory = [],
   resumedExistingConversation = false,
   tokenStreaming = false,
+  showCompactions = false,
   agentProvenance = null,
   releaseNotes = null,
 }: {
@@ -789,6 +790,7 @@ export default function App({
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
   tokenStreaming?: boolean;
+  showCompactions?: boolean;
   agentProvenance?: AgentProvenance | null;
   releaseNotes?: string | null; // Markdown release notes to display above header
 }) {
@@ -1265,6 +1267,10 @@ export default function App({
   // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
+
+  // Show compaction messages preference (can be toggled at runtime)
+  const [showCompactionsEnabled, _setShowCompactionsEnabled] =
+    useState(showCompactions);
 
   // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
@@ -9879,12 +9885,20 @@ Plan file path: ${planFilePath}`;
       }
       // Events (like compaction) show while running
       if (ln.kind === "event") {
+        if (!showCompactionsEnabled && ln.eventType === "compaction")
+          return false;
         return ln.phase === "running";
       }
       if (!tokenStreamingEnabled && ln.phase === "streaming") return false;
       return ln.phase === "streaming";
     });
-  }, [lines, tokenStreamingEnabled, staticItems.length, deferredCommitAt]);
+  }, [
+    lines,
+    tokenStreamingEnabled,
+    showCompactionsEnabled,
+    staticItems.length,
+    deferredCommitAt,
+  ]);
 
   // Subscribe to subagent state for reactive overflow detection
   const { agents: subagents } = useSyncExternalStore(
@@ -10093,7 +10107,10 @@ Plan file path: ${planFilePath}`;
               ) : item.kind === "status" ? (
                 <StatusMessage line={item} />
               ) : item.kind === "event" ? (
-                <EventMessage line={item} />
+                !showCompactionsEnabled &&
+                item.eventType === "compaction" ? null : (
+                  <EventMessage line={item} />
+                )
               ) : item.kind === "separator" ? (
                 <Box marginTop={1}>
                   <Text dimColor>{"─".repeat(columns)}</Text>

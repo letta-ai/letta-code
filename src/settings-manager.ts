@@ -39,6 +39,7 @@ export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   tokenStreaming: boolean;
+  showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
@@ -91,6 +92,7 @@ export interface LocalProjectSettings {
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
+  showCompactions: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
   memoryReminderInterval: 5, // number = prompt memory check every N turns
