@@ -174,12 +174,12 @@ Read-only content.`;
 
   test("sets read_only for known read-only labels", () => {
     const content = `---
-label: skills
+label: memory_filesystem
 ---
 
-Skills content.`;
+Filesystem content.`;
 
-    const result = parseBlockFromFileContent(content, "skills");
+    const result = parseBlockFromFileContent(content, "memory_filesystem");
 
     expect(result.read_only).toBe(true);
   });

@@ -6,7 +6,6 @@
 interface AgentContext {
   agentId: string | null;
   skillsDirectory: string | null;
-  hasLoadedSkills: boolean;
   conversationId: string | null;
 }
 
@@ -24,7 +23,6 @@ function getContext(): AgentContext {
     global[CONTEXT_KEY] = {
       agentId: null,
       skillsDirectory: null,
-      hasLoadedSkills: false,
       conversationId: null,
     };
   }
@@ -73,22 +71,6 @@ export function getSkillsDirectory(): string | null {
 }
 
 /**
- * Check if skills are currently loaded (cached state)
- * @returns true if skills are loaded, false otherwise
- */
-export function hasLoadedSkills(): boolean {
-  return context.hasLoadedSkills;
-}
-
-/**
- * Update the loaded skills state (called by Skill tool)
- * @param loaded - Whether skills are currently loaded
- */
-export function setHasLoadedSkills(loaded: boolean): void {
-  context.hasLoadedSkills = loaded;
-}
-
-/**
  * Set the current conversation ID
  * @param conversationId - The conversation ID, or null to clear
  */
@@ -102,29 +84,4 @@ export function setConversationId(conversationId: string | null): void {
  */
 export function getConversationId(): string | null {
   return context.conversationId;
-}
-
-/**
- * Initialize the loaded skills flag by checking the block
- * Should be called after setAgentContext to sync the cached state
- */
-export async function initializeLoadedSkillsFlag(): Promise<void> {
-  if (!context.agentId) {
-    return;
-  }
-
-  try {
-    const { getClient } = await import("./client");
-    const client = await getClient();
-    const loadedSkillsBlock = await client.agents.blocks.retrieve(
-      "loaded_skills",
-      { agent_id: context.agentId },
-    );
-    const value = loadedSkillsBlock?.value?.trim() || "";
-    // Check for actual skill content (skills are formatted with "# Skill:" headers)
-    context.hasLoadedSkills = value.includes("# Skill:");
-  } catch {
-    // Block doesn't exist, no skills loaded
-    context.hasLoadedSkills = false;
-  }
 }

@@ -6,14 +6,12 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
 import { getClient } from "./agent/client";
 import {
-  initializeLoadedSkillsFlag,
   setAgentContext,
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import { getLettaCodeHeaders } from "./agent/http-headers";
-import { clearLoadedSkillsForConversation } from "./agent/loadedSkills";
-import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import { LETTA_CLOUD_API_URL } from "./auth/oauth";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -440,7 +438,7 @@ async function main(): Promise<void> {
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
-        "no-skills": { type: "boolean" },
+
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
       },
@@ -1630,10 +1628,22 @@ async function main(): Promise<void> {
         settingsManager.updateLocalProjectSettings({ lastAgent: agent.id });
         settingsManager.updateSettings({ lastAgent: agent.id });
 
-        // Ensure the agent has the required skills blocks (for backwards compatibility)
-        const createdBlocks = await ensureSkillsBlocks(agent.id);
-        if (createdBlocks.length > 0) {
-          console.log("Created missing skills blocks for agent compatibility");
+        // Migration (LET-7353): Remove legacy skills/loaded_skills blocks
+        // These blocks are no longer used - skills are now injected via system reminders
+        for (const label of ["skills", "loaded_skills"]) {
+          try {
+            const block = await client.agents.blocks.retrieve(label, {
+              agent_id: agent.id,
+            });
+            if (block) {
+              await client.agents.blocks.detach(block.id, {
+                agent_id: agent.id,
+              });
+              await client.blocks.delete(block.id);
+            }
+          } catch {
+            // Block doesn't exist or already removed, skip
+          }
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
@@ -1660,35 +1670,6 @@ async function main(): Promise<void> {
             settingsManager.isMemfsEnabled(agent.id),
           );
         }
-
-        // Fire-and-forget: Initialize loaded skills flag (LET-7101)
-        // Don't await - this is just for the skill unload reminder
-        initializeLoadedSkillsFlag().catch(() => {
-          // Ignore errors - not critical
-        });
-
-        // Fire-and-forget: Sync skills in background (LET-7101)
-        // This ensures new skills added after agent creation are available
-        // Don't await - user can start typing immediately
-        (async () => {
-          try {
-            const { syncSkillsToAgent, SKILLS_DIR } = await import(
-              "./agent/skills"
-            );
-            const { join } = await import("node:path");
-
-            const resolvedSkillsDirectory =
-              skillsDirectory || join(process.cwd(), SKILLS_DIR);
-
-            await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
-              skipIfUnchanged: true,
-            });
-          } catch (error) {
-            console.warn(
-              `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        })();
 
         // Check if we're resuming an existing agent
         // We're resuming if:
@@ -1870,7 +1851,6 @@ async function main(): Promise<void> {
             isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
           });
           conversationIdToUse = conversation.id;
-          clearLoadedSkillsForConversation(conversation.id, client);
         } else {
           // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";

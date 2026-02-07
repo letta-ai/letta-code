@@ -64,8 +64,6 @@ These files ARE the agent's memory — they sync directly to API memory blocks v
 
 ## Files to Skip (DO NOT edit)
 - memory_filesystem.md (auto-generated tree view)
-- skills.md (auto-generated)
-- loaded_skills.md (system-managed)
 - .sync-state.json (internal)
 
 ## What to Edit
@@ -168,7 +166,7 @@ Bash({
 Task({
   subagent_type: "memory",
   description: "Decompose and reorganize memory files",
-  prompt: "Decompose and reorganize memory files in ~/.letta/agents/$LETTA_AGENT_ID/memory/system/. These files sync directly to API blocks via memfs. Be aggressive about splitting large multi-section blocks into many smaller, single-purpose blocks using hierarchical / naming. Skip memory_filesystem.md, skills.md, loaded_skills.md, and .sync-state.json. Structure with markdown headers and bullets. Remove redundancy and speculation. Resolve contradictions. Organize logically. Each block should have ONE clear purpose. Report files created, modified, deleted, before/after character counts, and rationale for changes."
+  prompt: "Decompose and reorganize memory files in ~/.letta/agents/$LETTA_AGENT_ID/memory/system/. These files sync directly to API blocks via memfs. Be aggressive about splitting large multi-section blocks into many smaller, single-purpose blocks using hierarchical / naming. Skip memory_filesystem.md and .sync-state.json. Structure with markdown headers and bullets. Remove redundancy and speculation. Resolve contradictions. Organize logically. Each block should have ONE clear purpose. Report files created, modified, deleted, before/after character counts, and rationale for changes."
 })
 
 // No Step 3 needed — memfs sync handles propagation to API blocks

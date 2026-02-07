@@ -16,6 +16,8 @@ export type ContextTracker = {
   currentTurnId: number;
   /** Set when a compaction event is seen; consumed by the next usage_statistics push */
   pendingCompaction: boolean;
+  /** Set when compaction happens; consumed by the next user message to reinject skills reminder */
+  pendingSkillsReinject: boolean;
 };
 
 export function createContextTracker(): ContextTracker {
@@ -24,6 +26,7 @@ export function createContextTracker(): ContextTracker {
     contextTokensHistory: [],
     currentTurnId: 0, // simple in-memory counter for now
     pendingCompaction: false,
+    pendingSkillsReinject: false,
   };
 }
 
