@@ -2412,7 +2412,11 @@ export default function App({
             agent.llm_config.model_endpoint_type && agent.llm_config.model
               ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
               : agent.llm_config.model;
-          const modelInfo = getModelInfo(agentModelHandle || "");
+          const { getModelInfoForLlmConfig } = await import("../agent/model");
+          const modelInfo = getModelInfoForLlmConfig(
+            agentModelHandle || "",
+            agent.llm_config as unknown as { reasoning_effort?: string | null },
+          );
           if (modelInfo) {
             setCurrentModelId(modelInfo.id);
           } else {
@@ -3318,13 +3322,20 @@ export default function App({
 
                 // Derive model ID from llm_config for ModelSelector
                 // Try to find matching model by handle in models.json
-                const { getModelInfo } = await import("../agent/model");
+                const { getModelInfoForLlmConfig } = await import(
+                  "../agent/model"
+                );
                 const agentModelHandle =
                   agent.llm_config.model_endpoint_type && agent.llm_config.model
                     ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
                     : agent.llm_config.model;
 
-                const modelInfo = getModelInfo(agentModelHandle || "");
+                const modelInfo = getModelInfoForLlmConfig(
+                  agentModelHandle || "",
+                  agent.llm_config as unknown as {
+                    reasoning_effort?: string | null;
+                  },
+                );
                 if (modelInfo) {
                   setCurrentModelId(modelInfo.id);
                 } else {
