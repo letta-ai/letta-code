@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-// We need to test the internal functions, so we'll recreate them here
-// In a real scenario, we'd export these for testing or use dependency injection
+import {
+  checkForUpdate,
+  detectPackageManager,
+} from "../../updater/auto-update";
 
 describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;
@@ -136,5 +137,140 @@ npm error ENOTEMPTY: directory not empty`;
       expect(lettaAiDir).toContain("node_modules");
       expect(lettaAiDir).toContain("@letta-ai");
     });
+  });
+});
+
+describe("detectPackageManager", () => {
+  let originalArgv1: string;
+  let originalEnv: string | undefined;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1] || "";
+    originalEnv = process.env.LETTA_PACKAGE_MANAGER;
+    delete process.env.LETTA_PACKAGE_MANAGER;
+  });
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+    if (originalEnv !== undefined) {
+      process.env.LETTA_PACKAGE_MANAGER = originalEnv;
+    } else {
+      delete process.env.LETTA_PACKAGE_MANAGER;
+    }
+  });
+
+  test("detects bun from path containing /.bun/", () => {
+    process.argv[1] =
+      "/Users/test/.bun/install/global/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("bun");
+  });
+
+  test("detects pnpm from path containing /.pnpm/", () => {
+    process.argv[1] =
+      "/Users/test/.local/share/pnpm/global/5/.pnpm/@letta-ai+letta-code@0.14.11/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("pnpm");
+  });
+
+  test("detects pnpm from path containing /pnpm/", () => {
+    process.argv[1] =
+      "/Users/test/.local/share/pnpm/global/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("pnpm");
+  });
+
+  test("defaults to npm for standard nvm path", () => {
+    process.argv[1] =
+      "/Users/test/.nvm/versions/node/v20.10.0/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("npm");
+  });
+
+  test("defaults to npm for standard npm global path", () => {
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("npm");
+  });
+
+  test("detects bun from Windows-style path", () => {
+    process.argv[1] =
+      "C:\\Users\\test\\.bun\\install\\global\\node_modules\\@letta-ai\\letta-code\\dist\\index.js";
+    expect(detectPackageManager()).toBe("bun");
+  });
+
+  test("LETTA_PACKAGE_MANAGER override returns specified PM", () => {
+    process.env.LETTA_PACKAGE_MANAGER = "bun";
+    // Even with an npm-style path, env var wins
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("bun");
+  });
+
+  test("invalid LETTA_PACKAGE_MANAGER falls back to path detection", () => {
+    process.env.LETTA_PACKAGE_MANAGER = "invalid";
+    process.argv[1] =
+      "/Users/test/.bun/install/global/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("bun");
+  });
+
+  test("invalid LETTA_PACKAGE_MANAGER with npm path falls back to npm", () => {
+    process.env.LETTA_PACKAGE_MANAGER = "yarn";
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    expect(detectPackageManager()).toBe("npm");
+  });
+});
+
+describe("checkForUpdate with fetch", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("returns updateAvailable when registry version differs", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const result = await checkForUpdate();
+    expect(result.updateAvailable).toBe(true);
+    expect(result.latestVersion).toBe("99.0.0");
+    expect(result.checkFailed).toBeUndefined();
+  });
+
+  test("returns checkFailed on non-2xx response", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response("Not Found", { status: 404 })),
+    ) as unknown as typeof fetch;
+
+    const result = await checkForUpdate();
+    expect(result.updateAvailable).toBe(false);
+    expect(result.checkFailed).toBe(true);
+  });
+
+  test("returns checkFailed on malformed JSON (no version field)", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ name: "test" }), { status: 200 }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const result = await checkForUpdate();
+    expect(result.updateAvailable).toBe(false);
+    expect(result.checkFailed).toBe(true);
+  });
+
+  test("returns checkFailed on network error", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.reject(new Error("fetch failed")),
+    ) as unknown as typeof fetch;
+
+    const result = await checkForUpdate();
+    expect(result.updateAvailable).toBe(false);
+    expect(result.checkFailed).toBe(true);
   });
 });
