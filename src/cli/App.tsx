@@ -4501,7 +4501,9 @@ export default function App({
         // Trigger dequeue effect now that processConversation is no longer active.
         // The dequeue effect checks abortControllerRef (a ref, not state), so it
         // won't re-run on its own — bump dequeueEpoch to force re-evaluation.
-        if (messageQueueRef.current.length > 0) {
+        // Only bump for normal completions — if stale (ESC was pressed), the user
+        // cancelled and queued messages should NOT be auto-submitted.
+        if (!isStale && messageQueueRef.current.length > 0) {
           setDequeueEpoch((e) => e + 1);
         }
 
