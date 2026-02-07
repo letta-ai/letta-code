@@ -2413,7 +2413,10 @@ export default function App({
           const { getModelInfoForLlmConfig } = await import("../agent/model");
           const modelInfo = getModelInfoForLlmConfig(
             agentModelHandle || "",
-            agent.llm_config as unknown as { reasoning_effort?: string | null },
+            agent.llm_config as unknown as {
+              reasoning_effort?: string | null;
+              enable_reasoner?: boolean | null;
+            },
           );
           if (modelInfo) {
             setCurrentModelId(modelInfo.id);
@@ -3283,15 +3286,32 @@ export default function App({
               const client = await getClient();
               const agent = await client.agents.retrieve(agentIdRef.current);
 
-              // Check if the model has changed by comparing llm_config
+              // Keep model UI in sync with the agent configuration.
+              // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
+              // must also treat reasoning settings as model-affecting.
               const currentModel = llmConfigRef.current?.model;
               const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
+              const currentEffort = llmConfigRef.current?.reasoning_effort;
+              const currentEnableReasoner = (
+                llmConfigRef.current as unknown as {
+                  enable_reasoner?: boolean | null;
+                }
+              )?.enable_reasoner;
+
               const agentModel = agent.llm_config.model;
               const agentEndpoint = agent.llm_config.model_endpoint_type;
+              const agentEffort = agent.llm_config.reasoning_effort;
+              const agentEnableReasoner = (
+                agent.llm_config as unknown as {
+                  enable_reasoner?: boolean | null;
+                }
+              )?.enable_reasoner;
 
               if (
                 currentModel !== agentModel ||
-                currentEndpoint !== agentEndpoint
+                currentEndpoint !== agentEndpoint ||
+                currentEffort !== agentEffort ||
+                currentEnableReasoner !== agentEnableReasoner
               ) {
                 // Model has changed - update local state
                 setLlmConfig(agent.llm_config);
@@ -3310,6 +3330,7 @@ export default function App({
                   agentModelHandle || "",
                   agent.llm_config as unknown as {
                     reasoning_effort?: string | null;
+                    enable_reasoner?: boolean | null;
                   },
                 );
                 if (modelInfo) {
