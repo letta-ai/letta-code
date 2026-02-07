@@ -92,10 +92,10 @@ export async function handleHeadlessCommand(
       conversation: { type: "string" },
       default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
-      "create-only": { type: "boolean" }, // Create agent and exit (for SDK)
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
       agent: { type: "string", short: "a" },
       model: { type: "string", short: "m" },
+      embedding: { type: "string" },
       system: { type: "string", short: "s" },
       "system-custom": { type: "string" },
       "system-append": { type: "string" },
@@ -255,6 +255,7 @@ export async function handleHeadlessCommand(
   const systemPromptPreset = values.system as string | undefined;
   const systemCustom = values["system-custom"] as string | undefined;
   const systemAppend = values["system-append"] as string | undefined;
+  const embeddingModel = values.embedding as string | undefined;
   const memoryBlocksJson = values["memory-blocks"] as string | undefined;
   const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
@@ -535,6 +536,7 @@ export async function handleHeadlessCommand(
     const updateArgs = getModelUpdateArgs(model);
     const createOptions = {
       model,
+      embeddingModel,
       updateArgs,
       skillsDirectory,
       parallelToolCalls: true,
@@ -891,11 +893,6 @@ export async function handleHeadlessCommand(
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
-
-    // --create-only: exit after outputting init (for SDK createAgent)
-    if (values["create-only"]) {
-      process.exit(0);
-    }
   }
 
   // Helper to resolve any pending approvals before sending user input
