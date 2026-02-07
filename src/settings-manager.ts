@@ -92,7 +92,7 @@ export interface LocalProjectSettings {
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
-  showCompactions: true,
+  showCompactions: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
   memoryReminderInterval: 5, // number = prompt memory check every N turns
