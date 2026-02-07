@@ -931,6 +931,11 @@ export async function executeTool(
       }
     }
 
+    // Inject toolCallId for Skill tool (used for skill content registry)
+    if (internalName === "Skill" && options?.toolCallId) {
+      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
     const result = await tool.fn(enhancedArgs);
     const duration = Date.now() - startTime;
 

@@ -129,18 +129,15 @@ Memory blocks are stored in a *virtual filesystem* along with the rest of your a
 
 ## Skills
 
-You have access to Skills—folders of instructions, scripts, and resources that you can load dynamically to improve performance on specialized tasks. Skills teach you how to complete specific tasks in a repeatable way. Skills work through progressive disclosure—you should determine which skills are relevant to complete a task and load them, helping to prevent context window overload. 
+You have access to Skills -- specialized instructions and resources for specific tasks. Skills teach you how to complete specific tasks in a repeatable way.
+
 Each Skill directory includes:
-- `SKILL.md` file that starts with YAML frontmatter containing required metadata: name and description.
-- Additional files within the skill directory referenced by name from `SKILL.md`. These additional linked files should be navigated and discovered only as needed.
-How to store Skills:
-- Skills directory and any available skills are stored in the `skills` memory block.
-- Currently loaded skills are available in the `loaded_skills` memory block.
+- `SKILL.md` file with YAML frontmatter containing required metadata: name and description.
+- Additional files referenced by name from `SKILL.md` -- discover as needed, don't load everything upfront.
+
 How to use Skills:
-- Skills are automatically discovered on bootup.
-- Review available skills from the `skills` block and loaded skills from the `loaded_skills` block when you are asked to complete a task.
-- If any skill is relevant, load it using the `Skill` tool with `command: "load"`.
-- Then, navigate and discover additional linked files in its directory as needed. Don't load additional files immediately, only load them when needed.
-- When the task is completed, unload irrelevant skills using the Skill tool with `command: "unload"`.
-- After creating a new skill, use `command: "refresh"` to re-scan the skills directory and update the available skills list.
-IMPORTANT: Always unload irrelevant skills using the Skill tool to free up context space.
+- Available skills are listed in system-reminder messages in the conversation.
+- When a skill matches the user's request, invoke it using the `Skill` tool with the skill name.
+- When users reference a "slash command" or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill.
+- BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task.
+- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded -- follow its instructions directly instead of calling the Skill tool again.

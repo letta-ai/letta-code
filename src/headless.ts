@@ -15,13 +15,9 @@ import {
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
-import {
-  initializeLoadedSkillsFlag,
-  setAgentContext,
-  setConversationId,
-} from "./agent/context";
+import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { ensureSkillsBlocks, ISOLATED_BLOCK_LABELS } from "./agent/memory";
+import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
 import {
   ensureMemoryFilesystemBlock,
   syncMemoryFilesystem,
@@ -121,7 +117,7 @@ export async function handleHeadlessCommand(
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
-      "no-skills": { type: "boolean" },
+
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
       "max-turns": { type: "string" }, // Maximum number of agentic turns
@@ -646,16 +642,7 @@ export async function handleHeadlessCommand(
   // Determine which conversation to use
   let conversationId: string;
 
-  // Check flags early
-  const noSkillsFlag = values["no-skills"] as boolean | undefined;
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-
-  // Ensure skills blocks exist BEFORE conversation creation (for non-subagent, non-no-skills)
-  // This prevents "block not found" errors when creating conversations with isolated_block_labels
-  // Note: ensureSkillsBlocks already calls blocks.list internally, so no extra API call
-  if (!noSkillsFlag && !isSubagent) {
-    await ensureSkillsBlocks(agent.id);
-  }
 
   // Apply memfs flag if specified, or enable by default for new agents
   // In headless mode, also enable for --agent since users expect full functionality
@@ -707,18 +694,12 @@ export async function handleHeadlessCommand(
   }
 
   // Determine which blocks to isolate for the conversation
-  let isolatedBlockLabels: string[] = [];
-  if (!noSkillsFlag) {
-    // After ensureSkillsBlocks, we know all standard blocks exist
-    // Use the full list, optionally filtered by initBlocks
-    isolatedBlockLabels =
-      initBlocks === undefined
-        ? [...ISOLATED_BLOCK_LABELS]
-        : ISOLATED_BLOCK_LABELS.filter((label) =>
-            initBlocks.includes(label as string),
-          );
-  }
-  // If --no-skills is set, isolatedBlockLabels stays empty (no isolation)
+  const isolatedBlockLabels: string[] =
+    initBlocks === undefined
+      ? [...ISOLATED_BLOCK_LABELS]
+      : ISOLATED_BLOCK_LABELS.filter((label) =>
+          initBlocks.includes(label as string),
+        );
 
   if (specifiedConversationId) {
     if (specifiedConversationId === "default") {
@@ -802,40 +783,25 @@ export async function handleHeadlessCommand(
     });
   }
 
+  // Migration (LET-7353): Remove legacy skills/loaded_skills blocks
+  for (const label of ["skills", "loaded_skills"]) {
+    try {
+      const block = await client.agents.blocks.retrieve(label, {
+        agent_id: agent.id,
+      });
+      if (block) {
+        await client.agents.blocks.detach(block.id, {
+          agent_id: agent.id,
+        });
+        await client.blocks.delete(block.id);
+      }
+    } catch {
+      // Block doesn't exist or already removed, skip
+    }
+  }
+
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
   setAgentContext(agent.id, skillsDirectory);
-
-  // Skills-related fire-and-forget operations (skip for subagents/--no-skills)
-  if (!noSkillsFlag && !isSubagent) {
-    // Fire-and-forget: Initialize loaded skills flag (LET-7101)
-    // Don't await - this is just for the skill unload reminder
-    initializeLoadedSkillsFlag().catch(() => {
-      // Ignore errors - not critical
-    });
-
-    // Fire-and-forget: Sync skills in background (LET-7101)
-    // This ensures new skills added after agent creation are available
-    // Don't await - proceed to message sending immediately
-    (async () => {
-      try {
-        const { syncSkillsToAgent, SKILLS_DIR } = await import(
-          "./agent/skills"
-        );
-        const { join } = await import("node:path");
-
-        const resolvedSkillsDirectory =
-          skillsDirectory || join(process.cwd(), SKILLS_DIR);
-
-        await syncSkillsToAgent(client, agent.id, resolvedSkillsDirectory, {
-          skipIfUnchanged: true,
-        });
-      } catch (error) {
-        console.warn(
-          `[skills] Background sync failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    })();
-  }
 
   // Validate output format
   const outputFormat =
@@ -1011,10 +977,31 @@ export async function handleHeadlessCommand(
         approvals: executedResults as ApprovalResult[],
       };
 
+      // Inject queued skill content as user message parts (LET-7353)
+      const approvalMessages: Array<
+        | import("@letta-ai/letta-client/resources/agents/agents").MessageCreate
+        | import("@letta-ai/letta-client/resources/agents/messages").ApprovalCreate
+      > = [approvalInput];
+      {
+        const { consumeQueuedSkillContent } = await import(
+          "./tools/impl/skillContentRegistry"
+        );
+        const skillContents = consumeQueuedSkillContent();
+        if (skillContents.length > 0) {
+          approvalMessages.push({
+            role: "user" as const,
+            content: skillContents.map((sc) => ({
+              type: "text" as const,
+              text: sc.content,
+            })),
+          });
+        }
+      }
+
       // Send the approval to clear the pending state; drain the stream without output
       const approvalStream = await sendMessageStream(
         conversationId,
-        [approvalInput],
+        approvalMessages,
         { agentId: agent.id },
       );
       if (outputFormat === "stream-json") {
@@ -1038,9 +1025,8 @@ export async function handleHeadlessCommand(
     await resolveAllPendingApprovals();
   }
 
-  // Build message content with reminders (plan mode first, then skill unload)
+  // Build message content with reminders
   const { permissionMode } = await import("./permissions/mode");
-  const { hasLoadedSkills } = await import("./agent/context");
   const contentParts: MessageCreate["content"] = [];
   const pushPart = (text: string) => {
     if (!text) return;
@@ -1060,16 +1046,31 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
+  // Inject available skills as system-reminder (LET-7353)
+  {
+    const {
+      discoverSkills,
+      SKILLS_DIR: defaultDir,
+      formatSkillsAsSystemReminder,
+    } = await import("./agent/skills");
+    const { getSkillsDirectory } = await import("./agent/context");
+    const { join } = await import("node:path");
+    try {
+      const skillsDir = getSkillsDirectory() || join(process.cwd(), defaultDir);
+      const { skills } = await discoverSkills(skillsDir, agent.id);
+      const skillsReminder = formatSkillsAsSystemReminder(skills);
+      if (skillsReminder) {
+        pushPart(skillsReminder);
+      }
+    } catch {
+      // Skills discovery failed, skip
+    }
+  }
+
   // Add plan mode reminder if in plan mode (highest priority)
   if (permissionMode.getMode() === "plan") {
     const { PLAN_MODE_REMINDER } = await import("./agent/promptAssets");
     pushPart(PLAN_MODE_REMINDER);
-  }
-
-  // Add skill unload reminder if skills are loaded (using cached flag)
-  if (hasLoadedSkills()) {
-    const { SKILL_UNLOAD_REMINDER } = await import("./agent/promptAssets");
-    pushPart(SKILL_UNLOAD_REMINDER);
   }
 
   // Add user prompt
@@ -1115,6 +1116,26 @@ ${SYSTEM_REMINDER_CLOSE}
     while (true) {
       // Check max turns limit before starting a new turn (uses server-side step count)
       checkMaxTurns();
+
+      // Inject queued skill content as user message parts (LET-7353)
+      {
+        const { consumeQueuedSkillContent } = await import(
+          "./tools/impl/skillContentRegistry"
+        );
+        const skillContents = consumeQueuedSkillContent();
+        if (skillContents.length > 0) {
+          currentInput = [
+            ...currentInput,
+            {
+              role: "user" as const,
+              content: skillContents.map((sc) => ({
+                type: "text" as const,
+                text: sc.content,
+              })),
+            },
+          ];
+        }
+      }
 
       // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
@@ -2059,9 +2080,32 @@ async function runBidirectionalMode(
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
 
+        // Inject available skills as system-reminder for bidirectional mode (LET-7353)
+        let enrichedContent = userContent;
+        if (typeof enrichedContent === "string") {
+          try {
+            const {
+              discoverSkills: discover,
+              SKILLS_DIR: defaultDir,
+              formatSkillsAsSystemReminder,
+            } = await import("./agent/skills");
+            const { getSkillsDirectory } = await import("./agent/context");
+            const { join } = await import("node:path");
+            const skillsDir =
+              getSkillsDirectory() || join(process.cwd(), defaultDir);
+            const { skills } = await discover(skillsDir, agent.id);
+            const skillsReminder = formatSkillsAsSystemReminder(skills);
+            if (skillsReminder) {
+              enrichedContent = `${skillsReminder}\n\n${enrichedContent}`;
+            }
+          } catch {
+            // Skills discovery failed, skip
+          }
+        }
+
         // Initial input is the user message
         let currentInput: MessageCreate[] = [
-          { role: "user", content: userContent },
+          { role: "user", content: enrichedContent },
         ];
 
         // Approval handling loop - continue until end_turn or error
@@ -2071,6 +2115,26 @@ async function runBidirectionalMode(
           // Check if aborted
           if (currentAbortController?.signal.aborted) {
             break;
+          }
+
+          // Inject queued skill content as user message parts (LET-7353)
+          {
+            const { consumeQueuedSkillContent } = await import(
+              "./tools/impl/skillContentRegistry"
+            );
+            const skillContents = consumeQueuedSkillContent();
+            if (skillContents.length > 0) {
+              currentInput = [
+                ...currentInput,
+                {
+                  role: "user" as const,
+                  content: skillContents.map((sc) => ({
+                    type: "text" as const,
+                    text: sc.content,
+                  })),
+                },
+              ];
+            }
           }
 
           // Send message to agent

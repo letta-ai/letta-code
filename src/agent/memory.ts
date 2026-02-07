@@ -14,8 +14,9 @@ export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
 
 /**
  * Block labels that are stored per-project (local to the current directory).
+ * Note: skills/loaded_skills removed in LET-7353 - skills are now injected via system reminders.
  */
-export const PROJECT_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+export const PROJECT_BLOCK_LABELS = [] as const;
 
 /**
  * All available memory block labels (derived from global + project blocks)
@@ -32,16 +33,14 @@ export type MemoryBlockLabel = (typeof MEMORY_BLOCK_LABELS)[number];
 
 /**
  * Block labels that should be read-only (agent cannot modify via memory tools).
- * These blocks are managed by specific tools (e.g., Skill tool for skills/loaded_skills).
  */
 export { READ_ONLY_BLOCK_LABELS };
 
 /**
  * Block labels that should be isolated per-conversation.
- * When creating a conversation, these blocks are copied from the agent's blocks
- * to create conversation-specific versions, preventing cross-conversation state pollution.
+ * Note: skills/loaded_skills removed in LET-7353.
  */
-export const ISOLATED_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+export const ISOLATED_BLOCK_LABELS = [] as const;
 
 /**
  * Check if a block label is a project-level block
@@ -115,7 +114,7 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
         }
       }
 
-      // Set read-only for skills blocks (managed by Skill tool, not memory tools)
+      // Set read-only for blocks managed by specific tools (not memory tools)
       if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
         block.read_only = true;
       }
@@ -140,70 +139,4 @@ export async function getDefaultMemoryBlocks(): Promise<CreateBlock[]> {
     cachedMemoryBlocks = await loadMemoryBlocksFromMdx();
   }
   return cachedMemoryBlocks;
-}
-
-/**
- * Ensure an agent has the required skills blocks (skills, loaded_skills).
- * If missing, creates them with default values and attaches to the agent.
- * This is needed for backwards compatibility with agents created before skills were added.
- *
- * @param agentId - The agent ID to check/update
- * @returns Array of block labels that were created (empty if all existed)
- */
-export async function ensureSkillsBlocks(agentId: string): Promise<string[]> {
-  const { getClient } = await import("./client");
-  const client = await getClient();
-
-  // Get current blocks on the agent
-  // Response may be paginated or an array depending on SDK version
-  const blocksResponse = await client.agents.blocks.list(agentId);
-  const blocks = Array.isArray(blocksResponse)
-    ? blocksResponse
-    : (blocksResponse as { items?: Array<{ label?: string }> }).items || [];
-  const existingLabels = new Set(blocks.map((b) => b.label));
-
-  const createdLabels: string[] = [];
-
-  // Check each required skills block
-  for (const label of ISOLATED_BLOCK_LABELS) {
-    if (existingLabels.has(label)) {
-      continue;
-    }
-
-    // Load the default block definition from .mdx
-    const content = MEMORY_PROMPTS[`${label}.mdx`];
-    if (!content) {
-      console.warn(`Missing embedded prompt file for ${label}.mdx`);
-      continue;
-    }
-
-    const { frontmatter, body } = parseMdxFrontmatter(content);
-
-    const blockData: CreateBlock = {
-      label,
-      value: body,
-      read_only: true, // Skills blocks are read-only (managed by Skill tool)
-    };
-
-    if (frontmatter.description) {
-      blockData.description = frontmatter.description;
-    }
-
-    if (frontmatter.limit) {
-      const limit = parseInt(frontmatter.limit, 10);
-      if (!Number.isNaN(limit) && limit > 0) {
-        blockData.limit = limit;
-      }
-    }
-
-    // Create the block and attach to agent
-    const createdBlock = await client.blocks.create({
-      ...blockData,
-      tags: [`owner:${agentId}`],
-    });
-    await client.agents.blocks.attach(createdBlock.id, { agent_id: agentId });
-    createdLabels.push(label);
-  }
-
-  return createdLabels;
 }

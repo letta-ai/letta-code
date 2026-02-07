@@ -24,9 +24,6 @@ export const MEMORY_FS_STATE_FILE = ".sync-state.json";
  */
 const MEMFS_MANAGED_LABELS = new Set([MEMORY_FILESYSTEM_BLOCK_LABEL]);
 
-// Note: skills and loaded_skills (ISOLATED_BLOCK_LABELS) are now synced
-// but are read_only in the API, so file edits are ignored (API → file only)
-
 // Unified sync state - no system/detached split
 // The attached/detached distinction is derived at runtime from API and FS
 type SyncState = {

@@ -133,8 +133,6 @@ Before you edit anything, you MUST first **propose a new organization**:
 ### Step 2: Identify system-managed blocks (skip)
 
 Do **not** edit:
-- `skills.md` (auto-generated; will be overwritten)
-- `loaded_skills.md` (system-managed)
 - `manifest.json` (metadata)
 
 Focus on user-managed blocks like:
@@ -350,8 +348,6 @@ Read({ file_path: ".letta/backups/working/human.md" })
 ### Step 2: Identify system-managed blocks (skip)
 
 Do **not** edit:
-- `skills.md` (auto-generated; will be overwritten)
-- `loaded_skills.md` (system-managed)
 - `manifest.json` (metadata)
 
 Focus on user-managed blocks like:
@@ -511,8 +507,6 @@ Read({ file_path: ".letta/backups/working/human.md" })
 - `project.md` - Project-specific information
 
 **Files you should NOT edit:**
-- `skills.md` - Auto-generated, will be overwritten
-- `loaded_skills.md` - System-managed
 - `manifest.json` - Metadata file
 
 

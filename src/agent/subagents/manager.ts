@@ -22,13 +22,13 @@ import { cliPermissions } from "../../permissions/cli";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
-import { preloadSkillsContent } from "../../tools/impl/Skill";
+
 import { getErrorMessage } from "../../utils/error";
 import { getAvailableModelHandles } from "../available-models";
 import { getClient } from "../client";
 import { getCurrentAgentId } from "../context";
 import { resolveModel } from "../model";
-import { SKILLS_DIR } from "../skills";
+
 import { getAllSubagentConfigs, type SubagentConfig } from ".";
 
 // ============================================================================
@@ -432,7 +432,6 @@ function buildSubagentArgs(
   userPrompt: string,
   existingAgentId?: string,
   existingConversationId?: string,
-  preloadedSkillsContent?: string,
   maxTurns?: number,
 ): string[] {
   const args: string[] = [];
@@ -452,8 +451,6 @@ function buildSubagentArgs(
     }
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
-    // Skip skills block operations (existing agent may not have standard blocks)
-    args.push("--no-skills");
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
@@ -515,11 +512,6 @@ function buildSubagentArgs(
     args.push("--tools", config.allowedTools.join(","));
   }
 
-  // Add pre-loaded skills content if provided (only for new agents)
-  if (!isDeployingExisting && preloadedSkillsContent) {
-    args.push("--block-value", `loaded_skills=${preloadedSkillsContent}`);
-  }
-
   // Add max turns limit if specified
   if (maxTurns !== undefined && maxTurns > 0) {
     args.push("--max-turns", String(maxTurns));
@@ -560,15 +552,6 @@ async function executeSubagent(
   }
 
   try {
-    // Pre-load skills if configured
-    let preloadedSkillsContent: string | undefined;
-    if (config.skills && config.skills.length > 0) {
-      preloadedSkillsContent = await preloadSkillsContent(
-        config.skills,
-        SKILLS_DIR,
-      );
-    }
-
     const cliArgs = buildSubagentArgs(
       type,
       config,
@@ -576,7 +559,6 @@ async function executeSubagent(
       userPrompt,
       existingAgentId,
       existingConversationId,
-      preloadedSkillsContent,
       maxTurns,
     );
 

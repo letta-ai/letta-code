@@ -40,7 +40,7 @@ import { getClient, getServerUrl } from "../agent/client";
 import { getCurrentAgentId, setCurrentAgentId } from "../agent/context";
 import { type AgentProvenance, createAgent } from "../agent/create";
 import { getLettaCodeHeaders } from "../agent/http-headers";
-import { clearLoadedSkillsForConversation } from "../agent/loadedSkills";
+
 import { ISOLATED_BLOCK_LABELS } from "../agent/memory";
 import {
   checkMemoryFilesystemStatus,
@@ -599,16 +599,6 @@ function getQuestionsFromApproval(approval: ApprovalRequest) {
       multiSelect: boolean;
     }>) || []
   );
-}
-
-// Get skill unload reminder if skills are loaded (using cached flag)
-function getSkillUnloadReminder(): string {
-  const { hasLoadedSkills } = require("../agent/context");
-  if (hasLoadedSkills()) {
-    const { SKILL_UNLOAD_REMINDER } = require("../agent/promptAssets");
-    return SKILL_UNLOAD_REMINDER;
-  }
-  return "";
 }
 
 // Parse /ralph or /yolo-ralph command arguments
@@ -1406,6 +1396,12 @@ export default function App({
 
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
+
+  // Track skills injection state (LET-7353)
+  const discoveredSkillsRef = useRef<import("../agent/skills").Skill[] | null>(
+    null,
+  );
+  const hasInjectedSkillsRef = useRef(false);
 
   // Track conversation turn count for periodic memory reminders
   const turnCountRef = useRef(0);
@@ -3067,6 +3063,28 @@ export default function App({
               setStreaming(false);
             }
             return;
+          }
+
+          // Inject queued skill content as user message parts (LET-7353)
+          // This centralizes skill content injection so all approval-send paths
+          // automatically get skill SKILL.md content alongside tool results.
+          {
+            const { consumeQueuedSkillContent } = await import(
+              "../tools/impl/skillContentRegistry"
+            );
+            const skillContents = consumeQueuedSkillContent();
+            if (skillContents.length > 0) {
+              currentInput = [
+                ...currentInput,
+                {
+                  role: "user",
+                  content: skillContents.map((sc) => ({
+                    type: "text" as const,
+                    text: sc.content,
+                  })),
+                },
+              ];
+            }
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -6087,7 +6105,6 @@ export default function App({
 
             // Update conversationId state
             setConversationId(conversation.id);
-            clearLoadedSkillsForConversation(conversation.id, client);
 
             // Save the new session to settings
             settingsManager.setLocalLastSession(
@@ -7387,21 +7404,19 @@ Use this path when working with memory files during initialization.
             const initMessage = `${SYSTEM_REMINDER_OPEN}
 The user has requested memory initialization via /init.
 ${memfsSection}
-## 1. Load the initializing-memory skill
+## 1. Invoke the initializing-memory skill
 
-First, check your \`loaded_skills\` memory block. If the \`initializing-memory\` skill is not already loaded:
-1. Use the \`Skill\` tool with \`command: "load", skills: ["initializing-memory"]\`
-2. The skill contains comprehensive instructions for memory initialization
+Use the \`Skill\` tool with \`skill: "initializing-memory"\` to load the comprehensive instructions for memory initialization.
 
-If the skill fails to load, proceed with your best judgment based on these guidelines:
+If the skill fails to invoke, proceed with your best judgment based on these guidelines:
 - Ask upfront questions (research depth, identity, related repos, workflow style)
 - Research the project based on chosen depth
 - Create/update memory blocks incrementally
 - Reflect and verify completeness
 
-## 2. Follow the loaded skill instructions
+## 2. Follow the skill instructions
 
-Once loaded, follow the instructions in the \`initializing-memory\` skill to complete the initialization.
+Once invoked, follow the instructions from the \`initializing-memory\` skill to complete the initialization.
 ${gitContext}
 ${SYSTEM_REMINDER_CLOSE}`;
 
@@ -7544,9 +7559,6 @@ ${SYSTEM_REMINDER_CLOSE}`;
         }
       }
 
-      // Prepend skill unload reminder if skills are loaded (using cached flag)
-      const skillUnloadReminder = getSkillUnloadReminder();
-
       // Prepend session context on first message of CLI session (if enabled)
       let sessionContextReminder = "";
       const sessionContextEnabled = settingsManager.getSetting(
@@ -7660,11 +7672,46 @@ ${SYSTEM_REMINDER_CLOSE}
         reminderParts.push({ type: "text", text });
       };
       pushReminder(sessionContextReminder);
+
+      // Inject available skills as system-reminder (LET-7353)
+      // Lazy-discover on first message, reinject after compaction
+      {
+        if (!discoveredSkillsRef.current) {
+          try {
+            const { discoverSkills: discover, SKILLS_DIR: defaultDir } =
+              await import("../agent/skills");
+            const { getSkillsDirectory } = await import("../agent/context");
+            const skillsDir =
+              getSkillsDirectory() || join(process.cwd(), defaultDir);
+            const { skills } = await discover(skillsDir, agentId);
+            discoveredSkillsRef.current = skills;
+          } catch {
+            discoveredSkillsRef.current = [];
+          }
+        }
+
+        const needsSkillsReinject =
+          contextTrackerRef.current.pendingSkillsReinject;
+        if (!hasInjectedSkillsRef.current || needsSkillsReinject) {
+          const { formatSkillsAsSystemReminder } = await import(
+            "../agent/skills"
+          );
+          const skillsReminder = formatSkillsAsSystemReminder(
+            discoveredSkillsRef.current,
+          );
+          if (skillsReminder) {
+            pushReminder(skillsReminder);
+          }
+          hasInjectedSkillsRef.current = true;
+          contextTrackerRef.current.pendingSkillsReinject = false;
+        }
+      }
+
       pushReminder(sessionStartHookFeedback);
       pushReminder(permissionModeAlert);
       pushReminder(planModeReminder);
       pushReminder(ralphModeReminder);
-      pushReminder(skillUnloadReminder);
+
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryReminderContent);
@@ -10675,7 +10722,6 @@ Plan file path: ${planFilePath}`;
                       isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
                     });
                     setConversationId(conversation.id);
-                    clearLoadedSkillsForConversation(conversation.id, client);
                     settingsManager.setLocalLastSession(
                       { agentId, conversationId: conversation.id },
                       process.cwd(),

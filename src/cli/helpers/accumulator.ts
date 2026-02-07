@@ -882,6 +882,7 @@ export function onChunk(
         // reduced token count.
         if (ctx) {
           ctx.pendingCompaction = true;
+          ctx.pendingSkillsReinject = true;
         }
         break;
       }

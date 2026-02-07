@@ -2,7 +2,6 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import { join } from "node:path";
 import type {
   AgentState,
   AgentType,
@@ -20,7 +19,6 @@ import {
 import { updateAgentLLMConfig } from "./modify";
 import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
-import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 /**
  * Describes where a memory block came from
@@ -238,34 +236,6 @@ export async function createAgent(
         );
       }
     }
-  }
-
-  // Resolve absolute path for skills directory
-  const resolvedSkillsDirectory =
-    options.skillsDirectory || join(process.cwd(), SKILLS_DIR);
-
-  // Discover skills from .skills directory and populate skills memory block
-  try {
-    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
-
-    // Log any errors encountered during skill discovery
-    if (errors.length > 0) {
-      console.warn("Errors encountered during skill discovery:");
-      for (const error of errors) {
-        console.warn(`  ${error.path}: ${error.message}`);
-      }
-    }
-
-    // Find and update the skills memory block with discovered skills
-    const skillsBlock = filteredMemoryBlocks.find((b) => b.label === "skills");
-    if (skillsBlock) {
-      const formatted = formatSkillsForMemory(skills, resolvedSkillsDirectory);
-      skillsBlock.value = formatted;
-    }
-  } catch (error) {
-    console.warn(
-      `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
   }
 
   // Track provenance: which blocks were created
