@@ -96,17 +96,15 @@ async function readSkillContent(
   }
 
   // Legacy fallback: check for bundled skills in a repo-level skills directory
-  {
-    try {
-      const bundledSkillsDir = join(process.cwd(), "skills", "skills");
-      const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
-      const content = await readFile(bundledSkillPath, "utf-8");
-      return { content, path: bundledSkillPath };
-    } catch {
-      throw new Error(
-        `Skill "${skillId}" not found. Check that the skill name is correct and that it appears in the available skills list.`,
-      );
-    }
+  try {
+    const bundledSkillsDir = join(process.cwd(), "skills", "skills");
+    const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
+    const content = await readFile(bundledSkillPath, "utf-8");
+    return { content, path: bundledSkillPath };
+  } catch {
+    throw new Error(
+      `Skill "${skillId}" not found. Check that the skill name is correct and that it appears in the available skills list.`,
+    );
   }
 }
 
