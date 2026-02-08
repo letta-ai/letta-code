@@ -582,10 +582,20 @@ async function executeSubagent(
       // Context not available
     }
 
+    // Resolve auth once in parent and forward to child to avoid per-subagent
+    // keychain lookups under high parallel fan-out.
+    const settings = await settingsManager.getSettingsWithSecureTokens();
+    const inheritedApiKey =
+      process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
+    const inheritedBaseUrl =
+      process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
+
     const proc = spawn(lettaCmd, cliArgs, {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
+        ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
         // Tag Task-spawned agents for easy filtering.
         LETTA_CODE_AGENT_ROLE: "subagent",
         // Pass parent agent ID for subagents that need to access parent's context
