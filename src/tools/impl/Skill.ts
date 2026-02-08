@@ -155,8 +155,12 @@ export async function skill(args: SkillArgs): Promise<SkillResult> {
     const fullContent = `${dirHeader}${processedContent}`;
 
     // Queue the skill content for harness-level injection as a user message part
+    // Wrap in <skill-name> XML tags so the agent can detect already-loaded skills
     if (toolCallId) {
-      queueSkillContent(toolCallId, fullContent);
+      queueSkillContent(
+        toolCallId,
+        `<${skillName}>\n${fullContent}\n</${skillName}>`,
+      );
     }
 
     return { message: `Launching skill: ${skillName}` };
