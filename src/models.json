@@ -71,6 +71,30 @@
     }
   },
   {
+    "id": "gpt-5.3-codex-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
     "id": "gpt-5.2-codex-plus-pro-medium",
     "handle": "chatgpt-plus-pro/gpt-5.2-codex",
     "label": "GPT-5.2 Codex",
