@@ -3,6 +3,8 @@
  *
  * Used by both SubagentGroupDisplay (live) and SubagentGroupStatic (frozen).
  */
+import { getModelShortName, resolveModel } from "../../agent/model";
+import { OPENAI_CODEX_PROVIDER_NAME } from "../../providers/openai-codex-provider";
 
 /**
  * Format tool count and token statistics for display
@@ -44,5 +46,37 @@ export function getTreeChars(isLast: boolean): {
   return {
     treeChar: isLast ? "└─" : "├─",
     continueChar: isLast ? "  " : "│ ",
+  };
+}
+
+export interface SubagentModelDisplay {
+  label: string;
+  isByokProvider: boolean;
+  isOpenAICodexProvider: boolean;
+}
+
+/**
+ * Format a subagent model identifier using the same logic as the input footer:
+ * short label (if known) + provider-based BYOK marker eligibility.
+ */
+export function getSubagentModelDisplay(
+  model: string | undefined,
+): SubagentModelDisplay | null {
+  if (!model) return null;
+
+  // Normalize model IDs (e.g. "haiku") to handles before formatting.
+  const normalized = resolveModel(model) ?? model;
+  const slashIndex = normalized.indexOf("/");
+  const provider =
+    slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized;
+  const isOpenAICodexProvider = provider === OPENAI_CODEX_PROVIDER_NAME;
+  const isByokProvider = provider.startsWith("lc-") || isOpenAICodexProvider;
+  const label =
+    getModelShortName(normalized) ?? normalized.split("/").pop() ?? normalized;
+
+  return {
+    label,
+    isByokProvider,
+    isOpenAICodexProvider,
   };
 }
