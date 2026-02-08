@@ -1372,10 +1372,17 @@ class SettingsManager {
    * Check if secrets are available
    */
   async isKeychainAvailable(): Promise<boolean> {
-    if (this.secretsAvailable === null) {
-      this.secretsAvailable = await isKeychainAvailable();
+    if (this.secretsAvailable === true) {
+      return true;
     }
-    return this.secretsAvailable;
+
+    const available = await isKeychainAvailable();
+    // Cache only positive availability to avoid pinning transient failures
+    // for the entire process lifetime.
+    if (available) {
+      this.secretsAvailable = true;
+    }
+    return available;
   }
 
   /**

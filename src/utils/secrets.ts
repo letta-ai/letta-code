@@ -218,21 +218,11 @@ export async function isKeychainAvailable(): Promise<boolean> {
   }
 
   try {
-    // Try to set and delete a test value
-    const testName = "test-availability";
-    const testValue = "test";
-
-    await secrets.set({
+    // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
+    await secrets.get({
       service: SERVICE_NAME,
-      name: testName,
-      value: testValue,
+      name: API_KEY_NAME,
     });
-
-    await secrets.delete({
-      service: SERVICE_NAME,
-      name: testName,
-    });
-
     return true;
   } catch {
     return false;
