@@ -277,6 +277,7 @@ export function Input({
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  onCycleReasoningEffort,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -312,6 +313,7 @@ export function Input({
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  onCycleReasoningEffort?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -518,6 +520,21 @@ export function Input({
   // Handle Shift+Tab for permission mode cycling (or ralph mode exit)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
+
+    // Tab (no shift): cycle reasoning effort tiers for the current model (when idle).
+    // Only trigger when autocomplete is NOT active and the input is empty.
+    if (
+      key.tab &&
+      !key.shift &&
+      !isAutocompleteActive &&
+      value.length === 0 &&
+      !streaming &&
+      onCycleReasoningEffort
+    ) {
+      onCycleReasoningEffort();
+      return;
+    }
+
     // Debug logging for shift+tab detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
       // eslint-disable-next-line no-console
@@ -525,6 +542,7 @@ export function Input({
         `[debug:InputRich] shift=${key.shift} tab=${key.tab} visible=${visible}`,
       );
     }
+
     if (key.shift && key.tab) {
       // If ralph mode is active, exit it first (goes to default mode)
       if (ralphActive && onRalphExit) {

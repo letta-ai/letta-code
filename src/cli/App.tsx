@@ -9597,6 +9597,90 @@ ${SYSTEM_REMINDER_CLOSE}
     setUiPermissionMode(mode);
   }, []);
 
+  const reasoningCycleInFlightRef = useRef(false);
+
+  const handleCycleReasoningEffort = useCallback(() => {
+    if (reasoningCycleInFlightRef.current) return;
+    reasoningCycleInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        if (!agentId) return;
+        if (isAgentBusy()) return;
+
+        const current = llmConfigRef.current;
+        const modelHandle =
+          current?.model_endpoint_type && current?.model
+            ? `${current.model_endpoint_type}/${current.model}`
+            : current?.model;
+        if (!modelHandle) return;
+
+        const currentEffort = current?.reasoning_effort ?? "none";
+
+        const { models } = await import("../agent/model");
+        const candidates = models
+          .filter((m) => m.handle === modelHandle)
+          .map((m) => {
+            const effort = (
+              m.updateArgs as { reasoning_effort?: unknown } | undefined
+            )?.reasoning_effort;
+            return {
+              id: m.id,
+              effort: typeof effort === "string" ? effort : null,
+            };
+          })
+          .filter((m): m is { id: string; effort: string } =>
+            Boolean(m.effort),
+          );
+
+        // Only enable cycling when there are multiple tiers for the same handle.
+        if (candidates.length < 2) return;
+
+        const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+        const rank = (effort: string): number => {
+          const idx = order.indexOf(effort);
+          return idx >= 0 ? idx : 999;
+        };
+
+        const tiers = [...candidates].sort(
+          (a, b) => rank(a.effort) - rank(b.effort),
+        );
+
+        const curIndex = tiers.findIndex((t) => t.effort === currentEffort);
+        const nextIndex = (curIndex + 1) % tiers.length;
+        const next = tiers[nextIndex];
+        if (!next) return;
+
+        await withCommandLock(async () => {
+          const cmd = commandRunner.start("/reasoning", "Cycling reasoning...");
+
+          try {
+            const { updateAgentLLMConfig } = await import("../agent/modify");
+            const updated = await updateAgentLLMConfig(agentId, modelHandle, {
+              reasoning_effort: next.effort,
+            });
+
+            setLlmConfig(updated);
+            setCurrentModelId(next.id);
+
+            const display =
+              next.effort === "medium"
+                ? "med"
+                : next.effort === "minimal"
+                  ? "low"
+                  : next.effort;
+            cmd.finish(`Reasoning set to ${display}`, true);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to set reasoning: ${errorDetails}`);
+          }
+        });
+      } finally {
+        reasoningCycleInFlightRef.current = false;
+      }
+    })();
+  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
+
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
       const currentIndex = approvalResults.length;
@@ -10435,6 +10519,7 @@ Plan file path: ${planFilePath}`;
                 }
                 permissionMode={uiPermissionMode}
                 onPermissionModeChange={handlePermissionModeChange}
+                onCycleReasoningEffort={handleCycleReasoningEffort}
                 onExit={handleExit}
                 onInterrupt={handleInterrupt}
                 interruptRequested={interruptRequested}
