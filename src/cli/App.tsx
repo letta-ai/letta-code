@@ -9559,9 +9559,11 @@ ${SYSTEM_REMINDER_CLOSE}
       lastPlanFilePathRef.current = planFilePath;
 
       // Exit plan mode
-      const newMode = acceptEdits ? "acceptEdits" : "default";
-      permissionMode.setMode(newMode);
-      setUiPermissionMode(newMode);
+      const restoreMode = acceptEdits
+        ? "acceptEdits"
+        : (permissionMode.getModeBeforePlan() ?? "default");
+      permissionMode.setMode(restoreMode);
+      setUiPermissionMode(restoreMode);
 
       try {
         // Execute ExitPlanMode tool to get the result

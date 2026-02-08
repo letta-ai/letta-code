@@ -16,10 +16,12 @@ export type PermissionMode =
 // This prevents Bun's bundler from creating duplicate instances of the mode manager
 const MODE_KEY = Symbol.for("@letta/permissionMode");
 const PLAN_FILE_KEY = Symbol.for("@letta/planFilePath");
+const MODE_BEFORE_PLAN_KEY = Symbol.for("@letta/permissionModeBeforePlan");
 
 type GlobalWithMode = typeof globalThis & {
   [MODE_KEY]: PermissionMode;
   [PLAN_FILE_KEY]: string | null;
+  [MODE_BEFORE_PLAN_KEY]?: PermissionMode | null;
 };
 
 function getGlobalMode(): PermissionMode {
@@ -45,6 +47,16 @@ function setGlobalPlanFilePath(value: string | null): void {
   global[PLAN_FILE_KEY] = value;
 }
 
+function getGlobalModeBeforePlan(): PermissionMode | null {
+  const global = globalThis as GlobalWithMode;
+  return global[MODE_BEFORE_PLAN_KEY] ?? null;
+}
+
+function setGlobalModeBeforePlan(value: PermissionMode | null): void {
+  const global = globalThis as GlobalWithMode;
+  global[MODE_BEFORE_PLAN_KEY] = value;
+}
+
 /**
  * Permission mode state for the current session.
  * Set via CLI --permission-mode flag or settings.json defaultMode.
@@ -62,11 +74,33 @@ class PermissionModeManager {
    * Set the permission mode for this session
    */
   setMode(mode: PermissionMode): void {
+    const prevMode = this.currentMode;
+
+    // If we are entering plan mode, remember what mode we were previously in so
+    // ExitPlanMode can restore it (e.g. YOLO).
+    if (mode === "plan" && prevMode !== "plan") {
+      setGlobalModeBeforePlan(prevMode);
+    }
+
     this.currentMode = mode;
+
     // Clear plan file path when exiting plan mode
     if (mode !== "plan") {
       setGlobalPlanFilePath(null);
     }
+
+    // Once we leave plan mode, the remembered mode has been consumed.
+    if (prevMode === "plan" && mode !== "plan") {
+      setGlobalModeBeforePlan(null);
+    }
+  }
+
+  /**
+   * Get the permission mode that was active before entering plan mode.
+   * Used to restore the user's previous setting (e.g., bypassPermissions).
+   */
+  getModeBeforePlan(): PermissionMode | null {
+    return getGlobalModeBeforePlan();
   }
 
   /**
@@ -261,6 +295,8 @@ class PermissionModeManager {
    */
   reset(): void {
     this.currentMode = "default";
+    setGlobalPlanFilePath(null);
+    setGlobalModeBeforePlan(null);
   }
 }
 
