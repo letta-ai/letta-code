@@ -79,6 +79,55 @@ export function getModelInfo(modelIdentifier: string) {
 }
 
 /**
+ * Get model info by handle + llm_config.
+ *
+ * This exists because many model "tiers" (e.g. gpt-5.2-none/low/medium/high)
+ * share the same handle and differ only by updateArgs like reasoning_effort.
+ *
+ * When resuming a session we want `/model` to highlight the tier that actually
+ * matches the agent configuration.
+ */
+export function getModelInfoForLlmConfig(
+  modelHandle: string,
+  llmConfig?: {
+    reasoning_effort?: string | null;
+    enable_reasoner?: boolean | null;
+  } | null,
+) {
+  // Try ID/handle direct resolution first.
+  const direct = getModelInfo(modelHandle);
+
+  // Collect all candidates that share this handle.
+  const candidates = models.filter((m) => m.handle === modelHandle);
+  if (candidates.length === 0) {
+    return direct;
+  }
+
+  const effort = llmConfig?.reasoning_effort ?? null;
+  if (effort) {
+    const match = candidates.find(
+      (m) =>
+        (m.updateArgs as { reasoning_effort?: unknown } | undefined)
+          ?.reasoning_effort === effort,
+    );
+    if (match) return match;
+  }
+
+  // Anthropic-style toggle (best-effort; llm_config may not always include it)
+  if (llmConfig?.enable_reasoner === false) {
+    const match = candidates.find(
+      (m) =>
+        (m.updateArgs as { enable_reasoner?: unknown } | undefined)
+          ?.enable_reasoner === false,
+    );
+    if (match) return match;
+  }
+
+  // Fall back to whatever models.json considers the default for this handle.
+  return direct ?? candidates[0] ?? null;
+}
+
+/**
  * Get updateArgs for a model by ID or handle
  * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
  * @returns The updateArgs if found, undefined otherwise
