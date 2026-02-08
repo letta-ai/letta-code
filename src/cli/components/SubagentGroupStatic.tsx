@@ -15,7 +15,11 @@
 
 import { Box } from "ink";
 import { memo } from "react";
-import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
+import {
+  formatStats,
+  getSubagentModelDisplay,
+  getTreeChars,
+} from "../helpers/subagentDisplay.js";
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
@@ -59,6 +63,7 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const isRunning = agent.status === "running";
   const shouldDim = isRunning && !agent.isBackground;
   const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
+  const modelDisplay = getSubagentModelDisplay(agent.model);
 
   return (
     <Box flexDirection="column">
@@ -75,7 +80,22 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
           <Text dimColor>
             {" · "}
             {agent.type.toLowerCase()}
-            {agent.model ? ` · ${agent.model}` : ""}
+          </Text>
+          {modelDisplay && (
+            <>
+              <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+              {modelDisplay.isByokProvider && (
+                <Text
+                  color={
+                    modelDisplay.isOpenAICodexProvider ? "#74AA9C" : "yellow"
+                  }
+                >
+                  {" ▲"}
+                </Text>
+              )}
+            </>
+          )}
+          <Text dimColor>
             {" · "}
             {stats}
           </Text>

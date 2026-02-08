@@ -18,7 +18,11 @@
 import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
-import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
+import {
+  formatStats,
+  getSubagentModelDisplay,
+  getTreeChars,
+} from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
   type SubagentState,
@@ -78,6 +82,7 @@ const AgentRow = memo(
       agent.totalTokens,
       isRunning,
     );
+    const modelDisplay = getSubagentModelDisplay(agent.model);
     const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
     // Condensed mode: simplified view to reduce re-renders when overflowing
@@ -101,8 +106,23 @@ const AgentRow = memo(
               <Text dimColor>
                 {" · "}
                 {agent.type.toLowerCase()}
-                {agent.model ? ` · ${agent.model}` : ""}
               </Text>
+              {modelDisplay && (
+                <>
+                  <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+                  {modelDisplay.isByokProvider && (
+                    <Text
+                      color={
+                        modelDisplay.isOpenAICodexProvider
+                          ? "#74AA9C"
+                          : "yellow"
+                      }
+                    >
+                      {" ▲"}
+                    </Text>
+                  )}
+                </>
+              )}
             </Text>
           </Box>
           {/* Simple status line */}
@@ -142,7 +162,22 @@ const AgentRow = memo(
             <Text dimColor>
               {" · "}
               {agent.type.toLowerCase()}
-              {agent.model ? ` · ${agent.model}` : ""}
+            </Text>
+            {modelDisplay && (
+              <>
+                <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+                {modelDisplay.isByokProvider && (
+                  <Text
+                    color={
+                      modelDisplay.isOpenAICodexProvider ? "#74AA9C" : "yellow"
+                    }
+                  >
+                    {" ▲"}
+                  </Text>
+                )}
+              </>
+            )}
+            <Text dimColor>
               {" · "}
               {stats}
             </Text>
