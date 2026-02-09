@@ -109,6 +109,10 @@ const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
 
 const DEFAULT_LETTA_API_URL = "https://api.letta.com";
 
+function isSubagentProcess(): boolean {
+  return process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+}
+
 /**
  * Normalize a base URL for use as a settings key.
  * Strips protocol (https://, http://) and returns host:port.
@@ -173,8 +177,10 @@ class SettingsManager {
       // Check secrets availability and warn if not available
       await this.checkSecretsSupport();
 
-      // Migrate tokens to secrets if they exist in settings
-      await this.migrateTokensToSecrets();
+      // Migrate tokens to secrets if they exist in settings (parent process only)
+      if (!isSubagentProcess()) {
+        await this.migrateTokensToSecrets();
+      }
 
       // Migrate pinnedAgents/pinnedAgentsByServer to agents array
       this.migrateToAgentsArray();
@@ -185,7 +191,9 @@ class SettingsManager {
 
       // Still check secrets support and try to migrate in case of partial failure
       await this.checkSecretsSupport();
-      await this.migrateTokensToSecrets();
+      if (!isSubagentProcess()) {
+        await this.migrateTokensToSecrets();
+      }
       this.migrateToAgentsArray();
     }
   }
