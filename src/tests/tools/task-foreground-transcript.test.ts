@@ -20,10 +20,17 @@ const mockSpawnSubagent = mock(
 
 const mockRegisterSubagent = mock(() => {});
 const mockCompleteSubagent = mock(() => {});
-const mockRunSubagentStopHooks = mock(async () => {});
+
+const originalAgentSubagents = await import("../../agent/subagents");
+const originalMessageQueueBridge = await import(
+  "../../cli/helpers/messageQueueBridge.js"
+);
+const originalSubagentState = await import(
+  "../../cli/helpers/subagentState.js"
+);
 
 mock.module("../../agent/subagents", () => ({
-  clearSubagentConfigCache: () => {},
+  ...originalAgentSubagents,
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
   getAllSubagentConfigs: async () => ({
     explore: { recommendedModel: "inherit" },
@@ -36,14 +43,12 @@ mock.module("../../agent/subagents/manager", () => ({
 }));
 
 mock.module("../../cli/helpers/messageQueueBridge.js", () => ({
+  ...originalMessageQueueBridge,
   addToMessageQueue: () => {},
 }));
 
-mock.module("../../hooks", () => ({
-  runSubagentStopHooks: mockRunSubagentStopHooks,
-}));
-
 mock.module("../../cli/helpers/subagentState.js", () => ({
+  ...originalSubagentState,
   generateSubagentId: () => "subagent-1",
   registerSubagent: mockRegisterSubagent,
   completeSubagent: mockCompleteSubagent,
@@ -57,7 +62,6 @@ describe("Task foreground transcript output", () => {
     mockSpawnSubagent.mockReset();
     mockRegisterSubagent.mockClear();
     mockCompleteSubagent.mockClear();
-    mockRunSubagentStopHooks.mockClear();
   });
 
   test("returns output file path and writes full transcript on success", async () => {
