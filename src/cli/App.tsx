@@ -2421,6 +2421,62 @@ export default function App({
           setAgentState(agent);
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
+
+          // Infer the system prompt id for footer/selector display by matching the
+          // stored agent.system content against our known prompt presets.
+          try {
+            const agentSystem = (agent as { system?: unknown }).system;
+            if (typeof agentSystem === "string") {
+              const normalize = (s: string) => {
+                // Match prompt presets even if memfs addon is enabled/disabled.
+                // The memfs addon is appended to the stored agent.system prompt.
+                const withoutMemfs = s.replace(
+                  /\n## Memory Filesystem[\s\S]*?(?=\n# |$)/,
+                  "",
+                );
+                return withoutMemfs.replace(/\r\n/g, "\n").trim();
+              };
+              const sysNorm = normalize(agentSystem);
+              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
+                "../agent/promptAssets"
+              );
+
+              // Best-effort preset detection.
+              // Exact match is ideal, but allow prefix-matches because the stored
+              // agent.system may have additional sections appended.
+              let matched: string | null = null;
+
+              const contentMatches = (content: string): boolean => {
+                const norm = normalize(content);
+                return (
+                  norm === sysNorm ||
+                  (norm.length > 0 &&
+                    (sysNorm.startsWith(norm) || norm.startsWith(sysNorm)))
+                );
+              };
+
+              const defaultPrompt = SYSTEM_PROMPTS.find((p) => p.id === "default");
+              if (defaultPrompt && contentMatches(defaultPrompt.content)) {
+                matched = "default";
+              } else {
+                const found = SYSTEM_PROMPTS.find((p) => contentMatches(p.content));
+                if (found) {
+                  matched = found.id;
+                } else if (contentMatches(SYSTEM_PROMPT)) {
+                  // SYSTEM_PROMPT is used when no preset was specified.
+                  // Display as default since it maps to the default selector option.
+                  matched = "default";
+                }
+              }
+
+              setCurrentSystemPromptId(matched ?? "custom");
+            } else {
+              setCurrentSystemPromptId("custom");
+            }
+          } catch {
+            // best-effort only
+            setCurrentSystemPromptId("custom");
+          }
           // Get last message timestamp from agent state if available
           const lastRunCompletion = (agent as { last_run_completion?: string })
             .last_run_completion;
@@ -5471,6 +5527,10 @@ export default function App({
       }
 
       if (!msg) return { submitted: false };
+
+      // If the user just cycled reasoning tiers, flush the final choice before
+      // sending the next message so the upcoming run uses the selected tier.
+      await flushPendingReasoningEffort({ immediate: true });
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
       const isCommand = userTextForInput.startsWith("/");
@@ -9597,89 +9657,182 @@ ${SYSTEM_REMINDER_CLOSE}
     setUiPermissionMode(mode);
   }, []);
 
+  // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
+  //
+  // We update the footer immediately (optimistic local state) and debounce the
+  // actual server update so users can rapidly cycle tiers.
+  const reasoningCycleDebounceMs = 500;
+  const reasoningCycleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const reasoningCycleInFlightRef = useRef(false);
+  const reasoningCycleDesiredRef = useRef<{
+    modelHandle: string;
+    effort: string;
+    modelId: string;
+  } | null>(null);
+  const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
 
-  const handleCycleReasoningEffort = useCallback(() => {
-    if (reasoningCycleInFlightRef.current) return;
-    reasoningCycleInFlightRef.current = true;
+  const flushPendingReasoningEffort = useCallback(
+    async (opts?: { immediate?: boolean }) => {
+      const desired = reasoningCycleDesiredRef.current;
+      if (!desired) return;
 
-    void (async () => {
+      // Clear any pending timer; we're flushing now.
+      if (reasoningCycleTimerRef.current) {
+        clearTimeout(reasoningCycleTimerRef.current);
+        reasoningCycleTimerRef.current = null;
+      }
+
+      if (reasoningCycleInFlightRef.current) return;
+      if (!agentId) return;
+
+      // Don't change model settings mid-run.
+      if (isAgentBusy()) {
+        // If called from submit, caller can retry after the run completes.
+        if (opts?.immediate) return;
+        // Otherwise, reschedule.
+        reasoningCycleTimerRef.current = setTimeout(() => {
+          void flushPendingReasoningEffort();
+        }, reasoningCycleDebounceMs);
+        return;
+      }
+
+      reasoningCycleInFlightRef.current = true;
       try {
-        if (!agentId) return;
-        if (isAgentBusy()) return;
-
-        const current = llmConfigRef.current;
-        const modelHandle =
-          current?.model_endpoint_type && current?.model
-            ? `${current.model_endpoint_type}/${current.model}`
-            : current?.model;
-        if (!modelHandle) return;
-
-        const currentEffort = current?.reasoning_effort ?? "none";
-
-        const { models } = await import("../agent/model");
-        const candidates = models
-          .filter((m) => m.handle === modelHandle)
-          .map((m) => {
-            const effort = (
-              m.updateArgs as { reasoning_effort?: unknown } | undefined
-            )?.reasoning_effort;
-            return {
-              id: m.id,
-              effort: typeof effort === "string" ? effort : null,
-            };
-          })
-          .filter((m): m is { id: string; effort: string } =>
-            Boolean(m.effort),
-          );
-
-        // Only enable cycling when there are multiple tiers for the same handle.
-        if (candidates.length < 2) return;
-
-        const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
-        const rank = (effort: string): number => {
-          const idx = order.indexOf(effort);
-          return idx >= 0 ? idx : 999;
-        };
-
-        const tiers = [...candidates].sort(
-          (a, b) => rank(a.effort) - rank(b.effort),
-        );
-
-        const curIndex = tiers.findIndex((t) => t.effort === currentEffort);
-        const nextIndex = (curIndex + 1) % tiers.length;
-        const next = tiers[nextIndex];
-        if (!next) return;
-
         await withCommandLock(async () => {
-          const cmd = commandRunner.start("/reasoning", "Cycling reasoning...");
+          const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
           try {
             const { updateAgentLLMConfig } = await import("../agent/modify");
-            const updated = await updateAgentLLMConfig(agentId, modelHandle, {
-              reasoning_effort: next.effort,
-            });
+            const updated = await updateAgentLLMConfig(
+              agentId,
+              desired.modelHandle,
+              {
+                reasoning_effort: desired.effort,
+              },
+            );
 
             setLlmConfig(updated);
-            setCurrentModelId(next.id);
+
+            const { getModelInfoForLlmConfig } = await import("../agent/model");
+            const modelInfo = getModelInfoForLlmConfig(
+              desired.modelHandle,
+              updated,
+            );
+            setCurrentModelId(modelInfo?.id ?? desired.modelId);
+
+            // Clear pending state.
+            reasoningCycleDesiredRef.current = null;
+            reasoningCycleLastConfirmedRef.current = null;
 
             const display =
-              next.effort === "medium"
+              desired.effort === "medium"
                 ? "med"
-                : next.effort === "minimal"
+                : desired.effort === "minimal"
                   ? "low"
-                  : next.effort;
+                  : desired.effort;
             cmd.finish(`Reasoning set to ${display}`, true);
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to set reasoning: ${errorDetails}`);
+
+            // Revert optimistic UI if we have a confirmed config snapshot.
+            if (reasoningCycleLastConfirmedRef.current) {
+              const prev = reasoningCycleLastConfirmedRef.current;
+              reasoningCycleDesiredRef.current = null;
+              reasoningCycleLastConfirmedRef.current = null;
+              setLlmConfig(prev);
+
+              const { getModelInfoForLlmConfig } = await import(
+                "../agent/model"
+              );
+              const modelHandle =
+                prev.model_endpoint_type && prev.model
+                  ? `${prev.model_endpoint_type}/${prev.model}`
+                  : prev.model;
+              const modelInfo = modelHandle
+                ? getModelInfoForLlmConfig(modelHandle, prev)
+                : null;
+              setCurrentModelId(modelInfo?.id ?? null);
+            }
           }
         });
       } finally {
         reasoningCycleInFlightRef.current = false;
       }
+    },
+    [agentId, commandRunner, isAgentBusy, withCommandLock],
+  );
+
+  const handleCycleReasoningEffort = useCallback(() => {
+    void (async () => {
+      if (!agentId) return;
+      if (reasoningCycleInFlightRef.current) return;
+
+      const current = llmConfigRef.current;
+      const modelHandle =
+        current?.model_endpoint_type && current?.model
+          ? `${current.model_endpoint_type}/${current.model}`
+          : current?.model;
+      if (!modelHandle) return;
+
+      const currentEffort = current?.reasoning_effort ?? "none";
+
+      const { models } = await import("../agent/model");
+      const tiers = models
+        .filter((m) => m.handle === modelHandle)
+        .map((m) => {
+          const effort = (
+            m.updateArgs as { reasoning_effort?: unknown } | undefined
+          )?.reasoning_effort;
+          return {
+            id: m.id,
+            effort: typeof effort === "string" ? effort : null,
+          };
+        })
+        .filter((m): m is { id: string; effort: string } => Boolean(m.effort));
+
+      // Only enable cycling when there are multiple tiers for the same handle.
+      if (tiers.length < 2) return;
+
+      const order = ["none", "minimal", "low", "medium", "high", "xhigh"];
+      const rank = (effort: string): number => {
+        const idx = order.indexOf(effort);
+        return idx >= 0 ? idx : 999;
+      };
+
+      const sorted = [...tiers].sort((a, b) => rank(a.effort) - rank(b.effort));
+      const curIndex = sorted.findIndex((t) => t.effort === currentEffort);
+      const nextIndex = (curIndex + 1) % sorted.length;
+      const next = sorted[nextIndex];
+      if (!next) return;
+
+      // Snapshot the last confirmed config once per burst so we can revert on failure.
+      if (!reasoningCycleLastConfirmedRef.current) {
+        reasoningCycleLastConfirmedRef.current = current ?? null;
+      }
+
+      // Optimistic UI update (footer changes immediately).
+      setLlmConfig((prev) =>
+        prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
+      );
+      setCurrentModelId(next.id);
+
+      // Debounce the server update.
+      reasoningCycleDesiredRef.current = {
+        modelHandle,
+        effort: next.effort,
+        modelId: next.id,
+      };
+      if (reasoningCycleTimerRef.current) {
+        clearTimeout(reasoningCycleTimerRef.current);
+      }
+      reasoningCycleTimerRef.current = setTimeout(() => {
+        void flushPendingReasoningEffort();
+      }, reasoningCycleDebounceMs);
     })();
-  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
+  }, [agentId, flushPendingReasoningEffort]);
 
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
