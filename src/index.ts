@@ -441,6 +441,7 @@ async function main(): Promise<void> {
 
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
+        "max-turns": { type: "string" },
       },
       strict: true,
       allowPositionals: true,
