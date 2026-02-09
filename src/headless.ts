@@ -1941,11 +1941,20 @@ async function runBidirectionalMode(
 
     console.log(JSON.stringify(controlRequest));
 
+    const deferredLines: string[] = [];
+
     // Wait for control_response
-    while (true) {
+    let result: {
+      decision: "allow" | "deny";
+      reason?: string;
+      updatedInput?: Record<string, unknown> | null;
+    } | null = null;
+
+    while (result === null) {
       const line = await getNextLine();
       if (line === null) {
-        return { decision: "deny", reason: "stdin closed" };
+        result = { decision: "deny", reason: "stdin closed" };
+        break;
       }
       if (!line.trim()) continue;
 
@@ -1960,28 +1969,38 @@ async function runBidirectionalMode(
             | CanUseToolResponse
             | undefined;
           if (!response) {
-            return { decision: "deny", reason: "Invalid response format" };
+            result = { decision: "deny", reason: "Invalid response format" };
+            break;
           }
 
           if (response.behavior === "allow") {
-            return { decision: "allow", updatedInput: response.updatedInput };
+            result = {
+              decision: "allow",
+              updatedInput: response.updatedInput,
+            };
           } else {
-            return {
+            result = {
               decision: "deny",
               reason: response.message,
               // TODO: handle interrupt flag
             };
           }
+          break;
         }
-        // Put other messages back in queue for main loop
-        lineQueue.unshift(line);
-        // But since we're waiting for permission, we need to wait more
-        // Actually this causes issues - let's just ignore other messages
-        // during permission wait (they'll be lost)
+
+        // Defer other messages for the main loop without re-reading them.
+        deferredLines.push(line);
       } catch {
-        // Ignore parse errors
+        // Defer parse errors so the main loop can surface them.
+        deferredLines.push(line);
       }
     }
+
+    if (deferredLines.length > 0) {
+      lineQueue.unshift(...deferredLines);
+    }
+
+    return result;
   }
 
   // Main processing loop
