@@ -8,6 +8,9 @@ describe("packageSkills from .skills/ directory", () => {
   const skillsDir = join(testDir, ".skills");
   const originalCwd = process.cwd();
 
+  // Windows CI can be significantly slower for filesystem-heavy tests.
+  const exportTimeoutMs = process.platform === "win32" ? 30000 : 15000;
+
   beforeEach(() => {
     mkdirSync(testDir, { recursive: true });
     process.chdir(testDir);
@@ -20,21 +23,28 @@ describe("packageSkills from .skills/ directory", () => {
     }
   });
 
-  test("packages single skill", async () => {
-    mkdirSync(join(skillsDir, "test-skill"), { recursive: true });
-    writeFileSync(
-      join(skillsDir, "test-skill", "SKILL.md"),
-      "---\nname: test-skill\ndescription: Test\n---\n\n# Test Skill",
-    );
-    writeFileSync(join(skillsDir, "test-skill", "config.yaml"), "version: 1.0");
+  test(
+    "packages single skill",
+    async () => {
+      mkdirSync(join(skillsDir, "test-skill"), { recursive: true });
+      writeFileSync(
+        join(skillsDir, "test-skill", "SKILL.md"),
+        "---\nname: test-skill\ndescription: Test\n---\n\n# Test Skill",
+      );
+      writeFileSync(
+        join(skillsDir, "test-skill", "config.yaml"),
+        "version: 1.0",
+      );
 
-    const skills = await packageSkills(undefined, skillsDir);
+      const skills = await packageSkills(undefined, skillsDir);
 
-    expect(skills).toHaveLength(1);
-    expect(skills[0]?.name).toBe("test-skill");
-    expect(skills[0]?.files?.["SKILL.md"]).toContain("Test Skill");
-    expect(skills[0]?.files?.["config.yaml"]).toBe("version: 1.0");
-  });
+      expect(skills).toHaveLength(1);
+      expect(skills[0]?.name).toBe("test-skill");
+      expect(skills[0]?.files?.["SKILL.md"]).toContain("Test Skill");
+      expect(skills[0]?.files?.["config.yaml"]).toBe("version: 1.0");
+    },
+    { timeout: exportTimeoutMs },
+  );
 
   test("packages multiple skills", async () => {
     for (const name of ["skill-one", "skill-two"]) {
