@@ -2455,11 +2455,15 @@ export default function App({
                 );
               };
 
-              const defaultPrompt = SYSTEM_PROMPTS.find((p) => p.id === "default");
+              const defaultPrompt = SYSTEM_PROMPTS.find(
+                (p) => p.id === "default",
+              );
               if (defaultPrompt && contentMatches(defaultPrompt.content)) {
                 matched = "default";
               } else {
-                const found = SYSTEM_PROMPTS.find((p) => contentMatches(p.content));
+                const found = SYSTEM_PROMPTS.find((p) =>
+                  contentMatches(p.content),
+                );
                 if (found) {
                   matched = found.id;
                 } else if (contentMatches(SYSTEM_PROMPT)) {
@@ -9715,12 +9719,9 @@ ${SYSTEM_REMINDER_CLOSE}
 
             setLlmConfig(updated);
 
-            const { getModelInfoForLlmConfig } = await import("../agent/model");
-            const modelInfo = getModelInfoForLlmConfig(
-              desired.modelHandle,
-              updated,
-            );
-            setCurrentModelId(modelInfo?.id ?? desired.modelId);
+            // Keep selector/footers in sync with the tier we applied.
+            // (Upstream does not have getModelInfoForLlmConfig yet.)
+            setCurrentModelId(desired.modelId);
 
             // Clear pending state.
             reasoningCycleDesiredRef.current = null;
@@ -9744,16 +9745,12 @@ ${SYSTEM_REMINDER_CLOSE}
               reasoningCycleLastConfirmedRef.current = null;
               setLlmConfig(prev);
 
-              const { getModelInfoForLlmConfig } = await import(
-                "../agent/model"
-              );
+              const { getModelInfo } = await import("../agent/model");
               const modelHandle =
                 prev.model_endpoint_type && prev.model
                   ? `${prev.model_endpoint_type}/${prev.model}`
                   : prev.model;
-              const modelInfo = modelHandle
-                ? getModelInfoForLlmConfig(modelHandle, prev)
-                : null;
+              const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
               setCurrentModelId(modelInfo?.id ?? null);
             }
           }
