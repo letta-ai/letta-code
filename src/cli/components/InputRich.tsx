@@ -210,7 +210,7 @@ const InputFooter = memo(function InputFooter({
       ) : (
         <Text dimColor>Press / for commands</Text>
       )}
-      <Text>
+      <Text wrap="truncate">
         <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
         <Text dimColor>{" ["}</Text>
         <Text dimColor>{modelBase}</Text>
@@ -522,12 +522,11 @@ export function Input({
     if (!interactionEnabled) return;
 
     // Tab (no shift): cycle reasoning effort tiers for the current model (when idle).
-    // Only trigger when autocomplete is NOT active and the input is empty.
+    // Only trigger when autocomplete is NOT active.
     if (
       key.tab &&
       !key.shift &&
       !isAutocompleteActive &&
-      value.length === 0 &&
       !streaming &&
       onCycleReasoningEffort
     ) {
