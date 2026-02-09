@@ -186,17 +186,17 @@ const InputFooter = memo(function InputFooter({
         ) : (
           <Text wrap="truncate-end">
             <Text color={colors.footer.agentName}>{displayAgentName}</Text>
-            <Text dimColor={!isByokProvider}>{" ["}</Text>
-            <Text dimColor={!isByokProvider}>{displayModel}</Text>
+            <Text dimColor>{" ["}</Text>
+            <Text dimColor>{displayModel}</Text>
             {isByokProvider ? (
               <>
-                <Text> </Text>
+                <Text dimColor> </Text>
                 <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}>
                   ▲
                 </Text>
               </>
             ) : null}
-            <Text dimColor={!isByokProvider}>{"]"}</Text>
+            <Text dimColor>{"]"}</Text>
           </Text>
         )}
       </Box>
