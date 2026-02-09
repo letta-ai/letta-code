@@ -116,22 +116,48 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
           return;
         }
 
-        // Step 2: When we see approval request, send another user message instead
+        // Step 2: When we see approval request, send another user message instead,
+        // then explicitly deny the pending approval so the flow can complete in
+        // headless stream-json mode (which waits for approval responses).
         if (
           msg.type === "message" &&
           msg.message_type === "approval_request_message" &&
           !approvalSeen
         ) {
           approvalSeen = true;
-          // Wait a moment, then send interrupt message (NOT an approval)
+
+          const toolCall = Array.isArray(msg.tool_call)
+            ? msg.tool_call[0]
+            : msg.tool_call;
+          const toolCallId =
+            toolCall && typeof toolCall === "object"
+              ? (toolCall as { tool_call_id?: string }).tool_call_id
+              : undefined;
+
+          // Wait a moment, then send interrupt message and deny the pending approval.
           setTimeout(() => {
-            if (!interruptSent) {
-              interruptSent = true;
-              const userMsg = JSON.stringify({
-                type: "user",
-                message: { role: "user", content: INTERRUPT_MESSAGE },
+            if (interruptSent) return;
+            interruptSent = true;
+
+            const userMsg = JSON.stringify({
+              type: "user",
+              message: { role: "user", content: INTERRUPT_MESSAGE },
+            });
+            proc.stdin?.write(`${userMsg}\n`);
+
+            if (toolCallId) {
+              const denyApproval = JSON.stringify({
+                type: "control_response",
+                response: {
+                  request_id: `perm-${toolCallId}`,
+                  response: {
+                    behavior: "deny",
+                    message:
+                      "Denied by integration test to simulate stale approval",
+                  },
+                },
               });
-              proc.stdin?.write(`${userMsg}\n`);
+              proc.stdin?.write(`${denyApproval}\n`);
             }
           }, 500);
           return;
