@@ -25,7 +25,6 @@ import { ralphMode } from "../../ralph/mode";
 import { settingsManager } from "../../settings-manager";
 import { charsToTokens, formatCompact } from "../helpers/format";
 import type { QueuedMessage } from "../helpers/messageQueueBridge";
-import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -38,6 +37,13 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+
+function truncateEnd(value: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  if (value.length <= maxChars) return value;
+  if (maxChars <= 3) return value.slice(0, maxChars);
+  return `${value.slice(0, maxChars - 3)}...`;
+}
 
 /**
  * Represents a visual line segment in the text.
@@ -117,6 +123,7 @@ const InputFooter = memo(function InputFooter({
   isByokProvider,
   isAutocompleteActive,
   hideFooter,
+  terminalWidth,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -130,47 +137,70 @@ const InputFooter = memo(function InputFooter({
   isByokProvider: boolean;
   isAutocompleteActive: boolean;
   hideFooter: boolean;
+  terminalWidth: number;
 }) {
-  // Hide footer when autocomplete is showing
-  if (hideFooter || isAutocompleteActive) {
-    return null;
-  }
+  const hideFooterContent = hideFooter || isAutocompleteActive;
+  const rightColumnWidth = Math.max(
+    28,
+    Math.min(72, Math.floor(terminalWidth * 0.45)),
+  );
+  const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
+  const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
+  const byokFlag = isByokProvider ? " ▲" : "";
+  const reservedChars = displayAgentName.length + byokFlag.length + 4;
+  const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
+  const displayModel = truncateEnd(currentModel ?? "unknown", maxModelChars);
 
   return (
-    <Box justifyContent="space-between" marginBottom={1}>
-      {ctrlCPressed ? (
-        <Text dimColor>Press CTRL-C again to exit</Text>
-      ) : escapePressed ? (
-        <Text dimColor>Press Esc again to clear</Text>
-      ) : isBashMode ? (
-        <Text>
-          <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
-          <Text color={colors.bash.prompt} dimColor>
-            {" "}
-            (backspace to exit)
+    <Box flexDirection="row" marginBottom={1}>
+      <Box flexGrow={1} paddingRight={1}>
+        {hideFooterContent ? (
+          <Text> </Text>
+        ) : ctrlCPressed ? (
+          <Text dimColor>Press CTRL-C again to exit</Text>
+        ) : escapePressed ? (
+          <Text dimColor>Press Esc again to clear</Text>
+        ) : isBashMode ? (
+          <Text>
+            <Text color={colors.bash.prompt}>⏵⏵ bash mode</Text>
+            <Text color={colors.bash.prompt} dimColor>
+              {" "}
+              (backspace to exit)
+            </Text>
           </Text>
-        </Text>
-      ) : modeName && modeColor ? (
-        <Text>
-          <Text color={modeColor}>⏵⏵ {modeName}</Text>
-          <Text color={modeColor} dimColor>
-            {" "}
-            (shift+tab to {showExitHint ? "exit" : "cycle"})
+        ) : modeName && modeColor ? (
+          <Text>
+            <Text color={modeColor}>⏵⏵ {modeName}</Text>
+            <Text color={modeColor} dimColor>
+              {" "}
+              (shift+tab to {showExitHint ? "exit" : "cycle"})
+            </Text>
           </Text>
-        </Text>
-      ) : (
-        <Text dimColor>Press / for commands</Text>
-      )}
-      <Text>
-        <Text color={colors.footer.agentName}>{agentName || "Unnamed"}</Text>
-        <Text dimColor>
-          {` [${currentModel ?? "unknown"}`}
-          {isByokProvider && (
-            <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}> ▲</Text>
-          )}
-          {"]"}
-        </Text>
-      </Text>
+        ) : (
+          <Text dimColor>Press / for commands</Text>
+        )}
+      </Box>
+      <Box width={rightColumnWidth} flexShrink={0} justifyContent="flex-end">
+        {hideFooterContent ? (
+          <Text> </Text>
+        ) : (
+          <Text wrap="truncate-end">
+            <Text color={colors.footer.agentName}>{displayAgentName}</Text>
+            <Text
+              dimColor={!isByokProvider}
+              color={
+                isByokProvider
+                  ? isOpenAICodexProvider
+                    ? "#74AA9C"
+                    : "yellow"
+                  : undefined
+              }
+            >
+              {` [${displayModel}${byokFlag}]`}
+            </Text>
+          </Text>
+        )}
+      </Box>
     </Box>
   );
 });
@@ -216,6 +246,7 @@ export function Input({
   restoredInput,
   onRestoredInputConsumed,
   networkPhase = null,
+  terminalWidth,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -249,6 +280,7 @@ export function Input({
   restoredInput?: string | null;
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
+  terminalWidth: number;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -263,8 +295,8 @@ export function Input({
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
 
-  // Terminal width (reactive to window resizing)
-  const columns = useTerminalWidth();
+  // Terminal width is sourced from App.tsx to avoid duplicate resize subscriptions.
+  const columns = terminalWidth;
   const contentWidth = Math.max(0, columns - 2);
 
   const interactionEnabled = visible && inputEnabled;
@@ -1023,6 +1055,7 @@ export function Input({
             }
             isAutocompleteActive={isAutocompleteActive}
             hideFooter={hideFooter}
+            terminalWidth={columns}
           />
         </Box>
       ) : reserveInputSpace ? (

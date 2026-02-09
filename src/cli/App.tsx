@@ -244,6 +244,8 @@ import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
 // Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 const MIN_RESIZE_DELTA = 2;
+const RESIZE_SETTLE_MS = 250;
+const MIN_CLEAR_INTERVAL_MS = 750;
 const TOOL_CALL_COMMIT_DEFER_MS = 50;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
@@ -1546,7 +1548,59 @@ export default function App({
   const pendingResizeColumnsRef = useRef<number | null>(null);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastClearAtRef = useRef(0);
   const isInitialResizeRef = useRef(true);
+
+  const clearAndRemount = useCallback((targetColumns: number) => {
+    if (
+      typeof process !== "undefined" &&
+      process.stdout &&
+      "write" in process.stdout &&
+      process.stdout.isTTY
+    ) {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+    }
+    setStaticRenderEpoch((epoch) => epoch + 1);
+    lastClearedColumnsRef.current = targetColumns;
+    lastClearAtRef.current = Date.now();
+  }, []);
+
+  const scheduleResizeClear = useCallback(
+    (targetColumns: number) => {
+      if (targetColumns === lastClearedColumnsRef.current) {
+        return;
+      }
+
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+
+      const elapsedSinceClear = Date.now() - lastClearAtRef.current;
+      const rateLimitDelay =
+        elapsedSinceClear >= MIN_CLEAR_INTERVAL_MS
+          ? 0
+          : MIN_CLEAR_INTERVAL_MS - elapsedSinceClear;
+      const delay = Math.max(RESIZE_SETTLE_MS, rateLimitDelay);
+
+      resizeClearTimeout.current = setTimeout(() => {
+        resizeClearTimeout.current = null;
+
+        // If resize changed again while waiting, let the latest schedule win.
+        if (prevColumnsRef.current !== targetColumns) {
+          return;
+        }
+
+        if (targetColumns === lastClearedColumnsRef.current) {
+          return;
+        }
+
+        clearAndRemount(targetColumns);
+      }, delay);
+    },
+    [clearAndRemount],
+  );
+
   useEffect(() => {
     const prev = prevColumnsRef.current;
     if (columns === prev) return;
@@ -1567,12 +1621,12 @@ export default function App({
 
     const delta = Math.abs(columns - prev);
     const isMinorJitter = delta > 0 && delta < MIN_RESIZE_DELTA;
-    if (streaming) {
-      if (isMinorJitter) {
-        prevColumnsRef.current = columns;
-        return;
-      }
+    if (isMinorJitter) {
+      prevColumnsRef.current = columns;
+      return;
+    }
 
+    if (streaming) {
       // Defer clear/remount until streaming ends to avoid Ghostty flicker.
       pendingResizeRef.current = true;
       pendingResizeColumnsRef.current = columns;
@@ -1588,32 +1642,11 @@ export default function App({
     }
 
     // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
-    // Clear and remount must happen together - otherwise Static re-renders on top of existing content
-    const scheduledColumns = columns;
-    resizeClearTimeout.current = setTimeout(() => {
-      resizeClearTimeout.current = null;
-      if (
-        typeof process !== "undefined" &&
-        process.stdout &&
-        "write" in process.stdout &&
-        process.stdout.isTTY
-      ) {
-        process.stdout.write(CLEAR_SCREEN_AND_HOME);
-      }
-      setStaticRenderEpoch((epoch) => epoch + 1);
-      lastClearedColumnsRef.current = scheduledColumns;
-    }, 150);
+    // and keep clear frequency bounded to prevent flash storms.
+    scheduleResizeClear(columns);
 
     prevColumnsRef.current = columns;
-
-    // Cleanup on unmount
-    return () => {
-      if (resizeClearTimeout.current) {
-        clearTimeout(resizeClearTimeout.current);
-        resizeClearTimeout.current = null;
-      }
-    };
-  }, [columns, streaming]);
+  }, [columns, streaming, scheduleResizeClear]);
 
   useEffect(() => {
     if (streaming) {
@@ -1635,17 +1668,17 @@ export default function App({
     if (pendingColumns === null) return;
     if (pendingColumns === lastClearedColumnsRef.current) return;
 
-    if (
-      typeof process !== "undefined" &&
-      process.stdout &&
-      "write" in process.stdout &&
-      process.stdout.isTTY
-    ) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
-    setStaticRenderEpoch((epoch) => epoch + 1);
-    lastClearedColumnsRef.current = pendingColumns;
-  }, [columns, streaming]);
+    scheduleResizeClear(pendingColumns);
+  }, [columns, streaming, scheduleResizeClear]);
+
+  useEffect(() => {
+    return () => {
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+    };
+  }, []);
 
   const deferredToolCallCommitsRef = useRef<Map<string, number>>(new Map());
   const [deferredCommitAt, setDeferredCommitAt] = useState<number | null>(null);
@@ -10437,6 +10470,7 @@ Plan file path: ${planFilePath}`;
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                terminalWidth={columns}
               />
             </Box>
 
