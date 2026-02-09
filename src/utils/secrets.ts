@@ -18,6 +18,53 @@ let SERVICE_NAME = "letta-code";
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isDuplicateKeychainItemError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return (
+    message.includes("already exists in the keychain") ||
+    message.includes("code: -25299")
+  );
+}
+
+async function setSecretValue(name: string, value: string): Promise<void> {
+  if (!secretsAvailable) {
+    throw new Error("Secrets API unavailable");
+  }
+
+  try {
+    await secrets.set({
+      service: SERVICE_NAME,
+      name,
+      value,
+    });
+    return;
+  } catch (error) {
+    if (!isDuplicateKeychainItemError(error)) {
+      throw error;
+    }
+  }
+
+  // Replace existing keychain item and retry once.
+  try {
+    await secrets.delete({
+      service: SERVICE_NAME,
+      name,
+    });
+  } catch {
+    // Ignore delete errors and retry set below.
+  }
+
+  await secrets.set({
+    service: SERVICE_NAME,
+    name,
+    value,
+  });
+}
+
 /**
  * Override the keychain service name (useful for tests to avoid touching real credentials)
  */
@@ -38,23 +85,12 @@ export interface SecureTokens {
  * Store API key in system secrets
  */
 export async function setApiKey(apiKey: string): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.set({
-        service: SERVICE_NAME,
-        name: API_KEY_NAME,
-        value: apiKey,
-      });
-      return;
-    } catch (error) {
-      console.warn(
-        `Failed to store API key in secrets, using fallback: ${error}`,
-      );
-    }
+  if (!secretsAvailable) {
+    // When secrets unavailable, let the settings manager handle fallback
+    throw new Error("Secrets API unavailable");
   }
 
-  // When secrets unavailable, let the settings manager handle fallback
-  throw new Error("Secrets API unavailable");
+  await setSecretValue(API_KEY_NAME, apiKey);
 }
 
 /**
@@ -80,23 +116,12 @@ export async function getApiKey(): Promise<string | null> {
  * Store refresh token in system secrets
  */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.set({
-        service: SERVICE_NAME,
-        name: REFRESH_TOKEN_NAME,
-        value: refreshToken,
-      });
-      return;
-    } catch (error) {
-      console.warn(
-        `Failed to store refresh token in secrets, using fallback: ${error}`,
-      );
-    }
+  if (!secretsAvailable) {
+    // When secrets unavailable, let the settings manager handle fallback
+    throw new Error("Secrets API unavailable");
   }
 
-  // When secrets unavailable, let the settings manager handle fallback
-  throw new Error("Secrets API unavailable");
+  await setSecretValue(REFRESH_TOKEN_NAME, refreshToken);
 }
 
 /**

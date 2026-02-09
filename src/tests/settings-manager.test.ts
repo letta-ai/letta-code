@@ -785,6 +785,42 @@ describe("Settings Manager - Edge Cases", () => {
 // ============================================================================
 
 describe("Settings Manager - Agents Array Migration", () => {
+  const originalSubagentRole = process.env.LETTA_CODE_AGENT_ROLE;
+
+  afterEach(() => {
+    if (originalSubagentRole === undefined) {
+      delete process.env.LETTA_CODE_AGENT_ROLE;
+    } else {
+      process.env.LETTA_CODE_AGENT_ROLE = originalSubagentRole;
+    }
+  });
+
+  test.skipIf(!keychainAvailablePrecompute)(
+    "Subagent process skips token migration to secrets",
+    async () => {
+      const { writeFile, mkdir } = await import("../utils/fs.js");
+      const settingsDir = join(testHomeDir, ".letta");
+      await mkdir(settingsDir, { recursive: true });
+      await writeFile(
+        join(settingsDir, "settings.json"),
+        JSON.stringify({
+          refreshToken: "rt-subagent-should-stay",
+          env: {
+            LETTA_API_KEY: "sk-subagent-should-stay",
+          },
+        }),
+      );
+
+      process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+
+      await settingsManager.initialize();
+      const settings = settingsManager.getSettings();
+
+      expect(settings.refreshToken).toBe("rt-subagent-should-stay");
+      expect(settings.env?.LETTA_API_KEY).toBe("sk-subagent-should-stay");
+    },
+  );
+
   test("Migrates from pinnedAgents (oldest legacy format)", async () => {
     // Setup: Write old format to disk
     const { writeFile, mkdir } = await import("../utils/fs.js");
