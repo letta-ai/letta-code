@@ -246,6 +246,7 @@ const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 const MIN_RESIZE_DELTA = 2;
 const RESIZE_SETTLE_MS = 250;
 const MIN_CLEAR_INTERVAL_MS = 750;
+const STABLE_WIDTH_SETTLE_MS = 180;
 const TOOL_CALL_COMMIT_DEFER_MS = 50;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
@@ -1540,16 +1541,49 @@ export default function App({
   );
 
   // Track terminal dimensions for layout and overflow detection
-  const columns = useTerminalWidth();
+  const rawColumns = useTerminalWidth();
   const terminalRows = useTerminalRows();
-  const prevColumnsRef = useRef(columns);
-  const lastClearedColumnsRef = useRef(columns);
+  const [stableColumns, setStableColumns] = useState(rawColumns);
+  const stableColumnsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const prevColumnsRef = useRef(rawColumns);
+  const lastClearedColumnsRef = useRef(rawColumns);
   const pendingResizeRef = useRef(false);
   const pendingResizeColumnsRef = useRef<number | null>(null);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastClearAtRef = useRef(0);
   const isInitialResizeRef = useRef(true);
+  const columns = stableColumns;
+
+  useEffect(() => {
+    if (rawColumns === stableColumns) {
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const delta = Math.abs(rawColumns - stableColumns);
+    if (delta >= MIN_RESIZE_DELTA) {
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
+      }
+      setStableColumns(rawColumns);
+      return;
+    }
+
+    if (stableColumnsTimeoutRef.current) {
+      clearTimeout(stableColumnsTimeoutRef.current);
+    }
+    stableColumnsTimeoutRef.current = setTimeout(() => {
+      stableColumnsTimeoutRef.current = null;
+      setStableColumns(rawColumns);
+    }, STABLE_WIDTH_SETTLE_MS);
+  }, [rawColumns, stableColumns]);
 
   const clearAndRemount = useCallback((targetColumns: number) => {
     if (
@@ -1603,7 +1637,7 @@ export default function App({
 
   useEffect(() => {
     const prev = prevColumnsRef.current;
-    if (columns === prev) return;
+    if (rawColumns === prev) return;
 
     // Clear pending debounced operation on any resize
     if (resizeClearTimeout.current) {
@@ -1614,39 +1648,39 @@ export default function App({
     // Skip initial mount - no clearing needed on first render
     if (isInitialResizeRef.current) {
       isInitialResizeRef.current = false;
-      prevColumnsRef.current = columns;
-      lastClearedColumnsRef.current = columns;
+      prevColumnsRef.current = rawColumns;
+      lastClearedColumnsRef.current = rawColumns;
       return;
     }
 
-    const delta = Math.abs(columns - prev);
+    const delta = Math.abs(rawColumns - prev);
     const isMinorJitter = delta > 0 && delta < MIN_RESIZE_DELTA;
     if (isMinorJitter) {
-      prevColumnsRef.current = columns;
+      prevColumnsRef.current = rawColumns;
       return;
     }
 
     if (streaming) {
       // Defer clear/remount until streaming ends to avoid Ghostty flicker.
       pendingResizeRef.current = true;
-      pendingResizeColumnsRef.current = columns;
-      prevColumnsRef.current = columns;
+      pendingResizeColumnsRef.current = rawColumns;
+      prevColumnsRef.current = rawColumns;
       return;
     }
 
-    if (columns === lastClearedColumnsRef.current) {
+    if (rawColumns === lastClearedColumnsRef.current) {
       pendingResizeRef.current = false;
       pendingResizeColumnsRef.current = null;
-      prevColumnsRef.current = columns;
+      prevColumnsRef.current = rawColumns;
       return;
     }
 
     // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
     // and keep clear frequency bounded to prevent flash storms.
-    scheduleResizeClear(columns);
+    scheduleResizeClear(rawColumns);
 
-    prevColumnsRef.current = columns;
-  }, [columns, streaming, scheduleResizeClear]);
+    prevColumnsRef.current = rawColumns;
+  }, [rawColumns, streaming, scheduleResizeClear]);
 
   useEffect(() => {
     if (streaming) {
@@ -1654,7 +1688,7 @@ export default function App({
         clearTimeout(resizeClearTimeout.current);
         resizeClearTimeout.current = null;
         pendingResizeRef.current = true;
-        pendingResizeColumnsRef.current = columns;
+        pendingResizeColumnsRef.current = rawColumns;
       }
       return;
     }
@@ -1669,13 +1703,17 @@ export default function App({
     if (pendingColumns === lastClearedColumnsRef.current) return;
 
     scheduleResizeClear(pendingColumns);
-  }, [columns, streaming, scheduleResizeClear]);
+  }, [rawColumns, streaming, scheduleResizeClear]);
 
   useEffect(() => {
     return () => {
       if (resizeClearTimeout.current) {
         clearTimeout(resizeClearTimeout.current);
         resizeClearTimeout.current = null;
+      }
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
       }
     };
   }, []);
