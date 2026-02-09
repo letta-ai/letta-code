@@ -146,8 +146,8 @@ const InputFooter = memo(function InputFooter({
   );
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
-  const byokFlag = isByokProvider ? " ▲" : "";
-  const reservedChars = displayAgentName.length + byokFlag.length + 4;
+  const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
+  const reservedChars = displayAgentName.length + byokExtraChars + 4;
   const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
   const displayModel = truncateEnd(currentModel ?? "unknown", maxModelChars);
 
@@ -186,18 +186,17 @@ const InputFooter = memo(function InputFooter({
         ) : (
           <Text wrap="truncate-end">
             <Text color={colors.footer.agentName}>{displayAgentName}</Text>
-            <Text
-              dimColor={!isByokProvider}
-              color={
-                isByokProvider
-                  ? isOpenAICodexProvider
-                    ? "#74AA9C"
-                    : "yellow"
-                  : undefined
-              }
-            >
-              {` [${displayModel}${byokFlag}]`}
-            </Text>
+            <Text dimColor={!isByokProvider}>{" ["}</Text>
+            <Text dimColor={!isByokProvider}>{displayModel}</Text>
+            {isByokProvider ? (
+              <>
+                <Text> </Text>
+                <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}>
+                  ▲
+                </Text>
+              </>
+            ) : null}
+            <Text dimColor={!isByokProvider}>{"]"}</Text>
           </Text>
         )}
       </Box>
