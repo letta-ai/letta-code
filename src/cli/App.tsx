@@ -9097,10 +9097,9 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         if (!selectedModel) {
-          const cmd =
-            overlayCommand ??
-            commandRunner.start("/model", `Model not found: ${modelId}`);
-          cmd.fail(`Model not found: ${modelId}`);
+          const output = `Model not found: ${modelId}. Run /model and press R to refresh available models.`;
+          const cmd = overlayCommand ?? commandRunner.start("/model", output);
+          cmd.fail(output);
           return;
         }
         const model = selectedModel;
@@ -9191,10 +9190,18 @@ ${SYSTEM_REMINDER_CLOSE}
         });
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
+        const modelLabel = selectedModel?.label ?? modelId;
+        const guidance =
+          "Run /model and press R to refresh available models. If the model is still unavailable, choose another model or connect a provider with /connect.";
         const cmd =
           overlayCommand ??
-          commandRunner.start("/model", "Failed to switch model.");
-        cmd.fail(`Failed to switch model: ${errorDetails}`);
+          commandRunner.start(
+            "/model",
+            `Failed to switch model to ${modelLabel}.`,
+          );
+        cmd.fail(
+          `Failed to switch model to ${modelLabel}: ${errorDetails}\n${guidance}`,
+        );
       }
     },
     [
