@@ -5534,7 +5534,7 @@ export default function App({
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
-      await flushPendingReasoningEffort({ immediate: true });
+      await flushPendingReasoningEffort();
 
       // Run UserPromptSubmit hooks - can block the prompt from being processed
       const isCommand = userTextForInput.startsWith("/");
@@ -9677,90 +9677,84 @@ ${SYSTEM_REMINDER_CLOSE}
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
 
-  const flushPendingReasoningEffort = useCallback(
-    async (opts?: { immediate?: boolean }) => {
-      const desired = reasoningCycleDesiredRef.current;
-      if (!desired) return;
+  const flushPendingReasoningEffort = useCallback(async () => {
+    const desired = reasoningCycleDesiredRef.current;
+    if (!desired) return;
 
-      // Clear any pending timer; we're flushing now.
-      if (reasoningCycleTimerRef.current) {
-        clearTimeout(reasoningCycleTimerRef.current);
-        reasoningCycleTimerRef.current = null;
-      }
+    if (reasoningCycleInFlightRef.current) return;
+    if (!agentId) return;
 
-      if (reasoningCycleInFlightRef.current) return;
-      if (!agentId) return;
-
-      // Don't change model settings mid-run.
-      if (isAgentBusy()) {
-        // If called from submit, caller can retry after the run completes.
-        if (opts?.immediate) return;
-        // Otherwise, reschedule.
+    // Don't change model settings mid-run.
+    // If a flush is requested while busy, ensure we still apply once the run completes.
+    if (isAgentBusy()) {
+      if (!reasoningCycleTimerRef.current) {
         reasoningCycleTimerRef.current = setTimeout(() => {
           void flushPendingReasoningEffort();
         }, reasoningCycleDebounceMs);
-        return;
       }
+      return;
+    }
 
-      reasoningCycleInFlightRef.current = true;
-      try {
-        await withCommandLock(async () => {
-          const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
+    // Clear any pending timer; we're flushing now.
+    if (reasoningCycleTimerRef.current) {
+      clearTimeout(reasoningCycleTimerRef.current);
+      reasoningCycleTimerRef.current = null;
+    }
 
-          try {
-            const { updateAgentLLMConfig } = await import("../agent/modify");
-            const updated = await updateAgentLLMConfig(
-              agentId,
-              desired.modelHandle,
-              {
-                reasoning_effort: desired.effort,
-              },
-            );
+    reasoningCycleInFlightRef.current = true;
+    try {
+      await withCommandLock(async () => {
+        const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
-            setLlmConfig(updated);
+        try {
+          const { updateAgentLLMConfig } = await import("../agent/modify");
+          const updated = await updateAgentLLMConfig(
+            agentId,
+            desired.modelHandle,
+            {
+              reasoning_effort: desired.effort,
+            },
+          );
 
-            // Keep selector/footers in sync with the tier we applied.
-            // (Upstream does not have getModelInfoForLlmConfig yet.)
-            setCurrentModelId(desired.modelId);
+          setLlmConfig(updated);
+          setCurrentModelId(desired.modelId);
 
-            // Clear pending state.
+          // Clear pending state.
+          reasoningCycleDesiredRef.current = null;
+          reasoningCycleLastConfirmedRef.current = null;
+
+          const display =
+            desired.effort === "medium"
+              ? "med"
+              : desired.effort === "minimal"
+                ? "low"
+                : desired.effort;
+          cmd.finish(`Reasoning set to ${display}`, true);
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to set reasoning: ${errorDetails}`);
+
+          // Revert optimistic UI if we have a confirmed config snapshot.
+          if (reasoningCycleLastConfirmedRef.current) {
+            const prev = reasoningCycleLastConfirmedRef.current;
             reasoningCycleDesiredRef.current = null;
             reasoningCycleLastConfirmedRef.current = null;
+            setLlmConfig(prev);
 
-            const display =
-              desired.effort === "medium"
-                ? "med"
-                : desired.effort === "minimal"
-                  ? "low"
-                  : desired.effort;
-            cmd.finish(`Reasoning set to ${display}`, true);
-          } catch (error) {
-            const errorDetails = formatErrorDetails(error, agentId);
-            cmd.fail(`Failed to set reasoning: ${errorDetails}`);
-
-            // Revert optimistic UI if we have a confirmed config snapshot.
-            if (reasoningCycleLastConfirmedRef.current) {
-              const prev = reasoningCycleLastConfirmedRef.current;
-              reasoningCycleDesiredRef.current = null;
-              reasoningCycleLastConfirmedRef.current = null;
-              setLlmConfig(prev);
-
-              const { getModelInfo } = await import("../agent/model");
-              const modelHandle =
-                prev.model_endpoint_type && prev.model
-                  ? `${prev.model_endpoint_type}/${prev.model}`
-                  : prev.model;
-              const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
-              setCurrentModelId(modelInfo?.id ?? null);
-            }
+            const { getModelInfo } = await import("../agent/model");
+            const modelHandle =
+              prev.model_endpoint_type && prev.model
+                ? `${prev.model_endpoint_type}/${prev.model}`
+                : prev.model;
+            const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
+            setCurrentModelId(modelInfo?.id ?? null);
           }
-        });
-      } finally {
-        reasoningCycleInFlightRef.current = false;
-      }
-    },
-    [agentId, commandRunner, isAgentBusy, withCommandLock],
-  );
+        }
+      });
+    } finally {
+      reasoningCycleInFlightRef.current = false;
+    }
+  }, [agentId, commandRunner, isAgentBusy, withCommandLock]);
 
   const handleCycleReasoningEffort = useCallback(() => {
     void (async () => {
