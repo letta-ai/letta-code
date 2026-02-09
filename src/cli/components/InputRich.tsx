@@ -121,7 +121,6 @@ const InputFooter = memo(function InputFooter({
   currentModel,
   isOpenAICodexProvider,
   isByokProvider,
-  isAutocompleteActive,
   hideFooter,
   terminalWidth,
 }: {
@@ -135,11 +134,10 @@ const InputFooter = memo(function InputFooter({
   currentModel: string | null | undefined;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
-  isAutocompleteActive: boolean;
   hideFooter: boolean;
   terminalWidth: number;
 }) {
-  const hideFooterContent = hideFooter || isAutocompleteActive;
+  const hideFooterContent = hideFooter;
   const rightColumnWidth = Math.max(
     28,
     Math.min(72, Math.floor(terminalWidth * 0.45)),
@@ -199,6 +197,137 @@ const InputFooter = memo(function InputFooter({
             <Text dimColor>{"]"}</Text>
           </Text>
         )}
+      </Box>
+    </Box>
+  );
+});
+
+const StreamingStatus = memo(function StreamingStatus({
+  streaming,
+  visible,
+  tokenCount,
+  elapsedBaseMs,
+  thinkingMessage,
+  agentName,
+  interruptRequested,
+  networkPhase,
+}: {
+  streaming: boolean;
+  visible: boolean;
+  tokenCount: number;
+  elapsedBaseMs: number;
+  thinkingMessage: string;
+  agentName: string | null | undefined;
+  interruptRequested: boolean;
+  networkPhase: "upload" | "download" | "error" | null;
+}) {
+  const [shimmerOffset, setShimmerOffset] = useState(-3);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const streamStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!streaming || !visible) return;
+
+    const id = setInterval(() => {
+      setShimmerOffset((prev) => {
+        // Include agent name length (+1 for space) in shimmer cycle
+        const prefixLen = agentName ? agentName.length + 1 : 0;
+        const len = prefixLen + thinkingMessage.length;
+        const next = prev + 1;
+        return next > len + 3 ? -3 : next;
+      });
+    }, 120); // Speed of shimmer animation
+
+    return () => clearInterval(id);
+  }, [streaming, thinkingMessage, visible, agentName]);
+
+  // Elapsed time tracking
+  useEffect(() => {
+    if (streaming && visible) {
+      // Start tracking when streaming begins
+      if (streamStartRef.current === null) {
+        streamStartRef.current = performance.now();
+      }
+      const id = setInterval(() => {
+        if (streamStartRef.current !== null) {
+          setElapsedMs(performance.now() - streamStartRef.current);
+        }
+      }, 1000);
+      return () => clearInterval(id);
+    }
+    // Reset when streaming stops
+    streamStartRef.current = null;
+    setElapsedMs(0);
+  }, [streaming, visible]);
+
+  const estimatedTokens = charsToTokens(tokenCount);
+  const totalElapsedMs = elapsedBaseMs + elapsedMs;
+  const shouldShowTokenCount =
+    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
+  const shouldShowElapsed =
+    streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
+  const elapsedLabel = formatElapsedLabel(totalElapsedMs);
+
+  const networkArrow = useMemo(() => {
+    if (!networkPhase) return "";
+    if (networkPhase === "upload") return "↑";
+    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
+    return "↑\u0338";
+  }, [networkPhase]);
+  const showErrorArrow = networkArrow === "↑\u0338";
+
+  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
+  // Uses chalk.dim to match reasoning text styling
+  // Memoized to prevent unnecessary re-renders during shimmer updates
+  const statusHintText = useMemo(() => {
+    const hintColor = chalk.hex(colors.subagent.hint);
+    const hintBold = hintColor.bold;
+    const parts: string[] = [];
+    if (shouldShowElapsed) {
+      parts.push(elapsedLabel);
+    }
+    if (shouldShowTokenCount) {
+      parts.push(
+        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
+      );
+    } else if (showErrorArrow) {
+      parts.push(networkArrow);
+    }
+    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
+    if (interruptRequested) {
+      return hintColor(` (interrupting${suffix}`);
+    }
+    return (
+      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
+    );
+  }, [
+    shouldShowElapsed,
+    elapsedLabel,
+    shouldShowTokenCount,
+    estimatedTokens,
+    interruptRequested,
+    networkArrow,
+    showErrorArrow,
+  ]);
+
+  if (!streaming || !visible) {
+    return null;
+  }
+
+  return (
+    <Box flexDirection="row" marginBottom={1}>
+      <Box width={2} flexShrink={0}>
+        <Text color={colors.status.processing}>
+          <Spinner type="layer" />
+        </Text>
+      </Box>
+      <Box flexGrow={1} flexDirection="row">
+        <ShimmerText
+          boldPrefix={agentName || undefined}
+          message={thinkingMessage}
+          shimmerOffset={shimmerOffset}
+        />
+        <Text>{statusHintText}</Text>
       </Box>
     </Box>
   );
@@ -370,11 +499,6 @@ export function Input({
       setCurrentMode(externalMode);
     }
   }, [externalMode]);
-
-  // Shimmer animation state
-  const [shimmerOffset, setShimmerOffset] = useState(-3);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!interactionEnabled) {
@@ -700,42 +824,6 @@ export function Input({
     };
   }, []);
 
-  // Shimmer animation effect
-  useEffect(() => {
-    if (!streaming || !visible) return;
-
-    const id = setInterval(() => {
-      setShimmerOffset((prev) => {
-        // Include agent name length (+1 for space) in shimmer cycle
-        const prefixLen = agentName ? agentName.length + 1 : 0;
-        const len = prefixLen + thinkingMessage.length;
-        const next = prev + 1;
-        return next > len + 3 ? -3 : next;
-      });
-    }, 120); // Speed of shimmer animation
-
-    return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName]);
-
-  // Elapsed time tracking
-  useEffect(() => {
-    if (streaming && visible) {
-      // Start tracking when streaming begins
-      if (streamStartRef.current === null) {
-        streamStartRef.current = performance.now();
-      }
-      const id = setInterval(() => {
-        if (streamStartRef.current !== null) {
-          setElapsedMs(performance.now() - streamStartRef.current);
-        }
-      }, 1000);
-      return () => clearInterval(id);
-    }
-    // Reset when streaming stops
-    streamStartRef.current = null;
-    setElapsedMs(0);
-  }, [streaming, visible]);
-
   const handleSubmit = async () => {
     // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
@@ -894,56 +982,6 @@ export function Input({
     }
   }, [ralphPending, ralphPendingYolo, ralphActive, currentMode]);
 
-  const estimatedTokens = charsToTokens(tokenCount);
-  const totalElapsedMs = elapsedBaseMs + elapsedMs;
-  const shouldShowTokenCount =
-    streaming && estimatedTokens > TOKEN_DISPLAY_THRESHOLD;
-  const shouldShowElapsed =
-    streaming && totalElapsedMs > ELAPSED_DISPLAY_THRESHOLD_MS;
-  const elapsedLabel = formatElapsedLabel(totalElapsedMs);
-
-  const networkArrow = useMemo(() => {
-    if (!networkPhase) return "";
-    if (networkPhase === "upload") return "↑";
-    if (networkPhase === "download") return "↑"; // Use ↑ for both to avoid distracting flip (change to ↓ to restore)
-    return "↑\u0338";
-  }, [networkPhase]);
-  const showErrorArrow = networkArrow === "↑\u0338";
-
-  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
-  // Uses chalk.dim to match reasoning text styling
-  // Memoized to prevent unnecessary re-renders during shimmer updates
-  const statusHintText = useMemo(() => {
-    const hintColor = chalk.hex(colors.subagent.hint);
-    const hintBold = hintColor.bold;
-    const parts: string[] = [];
-    if (shouldShowElapsed) {
-      parts.push(elapsedLabel);
-    }
-    if (shouldShowTokenCount) {
-      parts.push(
-        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
-      );
-    } else if (showErrorArrow) {
-      parts.push(networkArrow);
-    }
-    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
-    if (interruptRequested) {
-      return hintColor(` (interrupting${suffix}`);
-    }
-    return (
-      hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
-    );
-  }, [
-    shouldShowElapsed,
-    elapsedLabel,
-    shouldShowTokenCount,
-    estimatedTokens,
-    interruptRequested,
-    networkArrow,
-    showErrorArrow,
-  ]);
-
   // Create a horizontal line using box-drawing characters
   // Memoized since it only changes when terminal width changes
   const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
@@ -955,24 +993,16 @@ export function Input({
 
   return (
     <Box flexDirection="column">
-      {/* Live status / token counter - only show when streaming */}
-      {streaming && (
-        <Box flexDirection="row" marginBottom={1}>
-          <Box width={2} flexShrink={0}>
-            <Text color={colors.status.processing}>
-              <Spinner type="layer" />
-            </Text>
-          </Box>
-          <Box flexGrow={1} flexDirection="row">
-            <ShimmerText
-              boldPrefix={agentName || undefined}
-              message={thinkingMessage}
-              shimmerOffset={shimmerOffset}
-            />
-            <Text>{statusHintText}</Text>
-          </Box>
-        </Box>
-      )}
+      <StreamingStatus
+        streaming={streaming}
+        visible={visible}
+        tokenCount={tokenCount}
+        elapsedBaseMs={elapsedBaseMs}
+        thinkingMessage={thinkingMessage}
+        agentName={agentName}
+        interruptRequested={interruptRequested}
+        networkPhase={networkPhase}
+      />
 
       {/* Queue display - show whenever there are queued messages */}
       {messageQueue && messageQueue.length > 0 && (
@@ -1052,7 +1082,6 @@ export function Input({
               currentModelProvider?.startsWith("lc-") ||
               currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
             }
-            isAutocompleteActive={isAutocompleteActive}
             hideFooter={hideFooter}
             terminalWidth={columns}
           />
