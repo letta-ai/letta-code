@@ -19,7 +19,6 @@ import {
   removeMinimaxProvider,
 } from "../../providers/minimax-provider";
 import {
-  checkOpenAICodexEligibility,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
   OPENAI_CODEX_PROVIDER_NAME,
@@ -225,28 +224,7 @@ async function handleConnectCodex(
   );
 
   try {
-    // 1. Check eligibility before starting OAuth flow
-    const eligibility = await checkOpenAICodexEligibility();
-    if (!eligibility.eligible) {
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
-          `This feature is only available for Letta Pro or Enterprise customers.\n` +
-          `Current plan: ${eligibility.billing_tier}\n\n` +
-          `To upgrade your plan, visit:\n\n` +
-          `  https://app.letta.com/settings/organization/usage\n\n` +
-          `If you have an OpenAI API key, you can use it directly by setting:\n` +
-          `  export OPENAI_API_KEY=your-key`,
-        false,
-        "finished",
-      );
-      return;
-    }
-
-    // 2. Start OAuth flow - generate PKCE and authorization URL
+    // 1. Start OAuth flow - generate PKCE and authorization URL
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -396,21 +374,8 @@ async function handleConnectCodex(
     // Clear any partial state
     settingsManager.clearOAuthState();
 
-    // Check if this is a plan upgrade requirement error from provider creation
     const errorMessage = getErrorMessage(error);
-
-    let displayMessage: string;
-    if (errorMessage === "PLAN_UPGRADE_REQUIRED") {
-      displayMessage =
-        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
-        `This feature is only available for Letta Pro or Enterprise customers.\n` +
-        `To upgrade your plan, visit:\n\n` +
-        `  https://app.letta.com/settings/organization/usage\n\n` +
-        `If you have an OpenAI API key, you can use it directly by setting:\n` +
-        `  export OPENAI_API_KEY=your-key`;
-    } else {
-      displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
-    }
+    const displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
 
     updateCommandResult(
       ctx.buffersRef,
