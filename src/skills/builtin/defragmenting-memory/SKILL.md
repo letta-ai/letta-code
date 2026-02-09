@@ -49,6 +49,7 @@ The memory subagent works directly on the memfs `system/` directory. After it fi
 ```typescript
 Task({
   subagent_type: "memory",
+  run_in_background: true,
   description: "Decompose and reorganize memory files",
   prompt: `You are decomposing and reorganizing memory files in ~/.letta/agents/${LETTA_AGENT_ID}/memory/system/ to improve clarity and focus.
 
@@ -162,14 +163,16 @@ Bash({
   description: "Backup memfs directory before defrag"
 })
 
-// Step 2: Spawn subagent to decompose and reorganize
+// Step 2: Spawn subagent to decompose and reorganize (runs async in background)
 Task({
   subagent_type: "memory",
+  run_in_background: true,
   description: "Decompose and reorganize memory files",
   prompt: "Decompose and reorganize memory files in ~/.letta/agents/$LETTA_AGENT_ID/memory/system/. These files sync directly to API blocks via memfs. Be aggressive about splitting large multi-section blocks into many smaller, single-purpose blocks using hierarchical / naming. Skip memory_filesystem.md and .sync-state.json. Structure with markdown headers and bullets. Remove redundancy and speculation. Resolve contradictions. Organize logically. Each block should have ONE clear purpose. Report files created, modified, deleted, before/after character counts, and rationale for changes."
 })
 
 // No Step 3 needed — memfs sync handles propagation to API blocks
+// Check progress with /task <task_id>, restart CLI to sync when done
 ```
 
 ## Rollback
