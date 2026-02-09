@@ -11,6 +11,11 @@ describe("getModelInfoForLlmConfig", () => {
 
     const none = getModelInfoForLlmConfig(handle, { reasoning_effort: "none" });
     expect(none?.id).toBe("gpt-5.2-none");
+
+    const xhigh = getModelInfoForLlmConfig(handle, {
+      reasoning_effort: "xhigh",
+    });
+    expect(xhigh?.id).toBe("gpt-5.2-xhigh");
   });
 
   test("falls back to first handle match when effort missing", () => {
