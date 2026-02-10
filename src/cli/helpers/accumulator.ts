@@ -6,7 +6,11 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import {
+  runPostToolUseHooks,
+  runPreCompactHooks,
+  runPreToolUseHooks,
+} from "../../hooks";
 import { debugLog } from "../../utils/debug";
 import { extractCompactionSummary } from "./backfill";
 import type { ContextTracker } from "./contextTracker";
@@ -909,6 +913,18 @@ export function onChunk(
           eventData: eventChunk.event_data || {},
           phase: "running",
         }));
+
+        // Fire PreCompact hooks when server-side auto-compaction starts
+        if (eventType === "compaction") {
+          runPreCompactHooks(
+            ctx?.lastContextTokens,
+            undefined, // max_context_length not available here
+            b.agentId,
+            undefined, // conversationId not available here
+          ).catch((error) => {
+            debugLog("hooks", "PreCompact hook error (accumulator)", error);
+          });
+        }
 
         // Note: pendingCompaction is set in summary_message (not here) because
         // usage_statistics for the step that triggered compaction can arrive after
