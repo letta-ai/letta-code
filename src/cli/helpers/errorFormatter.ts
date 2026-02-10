@@ -148,7 +148,7 @@ const ENCRYPTED_CONTENT_HINT = [
   "This occurs when the conversation contains messages with encrypted",
   "reasoning from a different OpenAI authentication scope (e.g. switching",
   "between ChatGPT OAuth and an OpenAI API key).",
-  "Use /clear to start a fresh conversation.",
+  "/clear to start a new conversation.",
 ].join("\n");
 
 /**
@@ -217,7 +217,7 @@ function checkEncryptedContentError(e: unknown): string | undefined {
         const innerError = parsed.error || parsed;
         if (innerError.code === "invalid_encrypted_content") {
           return [
-            "OpenAI authentication error:",
+            "OpenAI error:",
             "  {",
             `    type: "${innerError.type || "invalid_request_error"}",`,
             `    code: "${innerError.code}",`,
@@ -233,7 +233,7 @@ function checkEncryptedContentError(e: unknown): string | undefined {
   }
 
   return (
-    "OpenAI authentication error: Encrypted content could not be verified — organization mismatch." +
+    "OpenAI error: Encrypted content could not be verified — organization mismatch." +
     ENCRYPTED_CONTENT_HINT
   );
 }

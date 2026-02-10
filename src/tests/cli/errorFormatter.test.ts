@@ -24,9 +24,9 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI authentication error:");
+      expect(result).toContain("OpenAI error:");
       expect(result).toContain("invalid_encrypted_content");
-      expect(result).toContain("Use /clear to start a fresh conversation.");
+      expect(result).toContain("/clear to start a new conversation.");
       expect(result).toContain("different OpenAI authentication scope");
       // Should NOT be raw JSON
       expect(result).not.toContain('"message_type"');
@@ -59,8 +59,8 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI authentication error:");
-      expect(result).toContain("Use /clear to start a fresh conversation.");
+      expect(result).toContain("OpenAI error:");
+      expect(result).toContain("/clear to start a new conversation.");
     });
 
     test("falls back gracefully when detail JSON is malformed", () => {
@@ -75,8 +75,8 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI authentication error:");
-      expect(result).toContain("Use /clear to start a fresh conversation.");
+      expect(result).toContain("OpenAI error:");
+      expect(result).toContain("/clear to start a new conversation.");
     });
   });
 });

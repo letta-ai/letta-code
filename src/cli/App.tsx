@@ -4423,15 +4423,11 @@ export default function App({
                 );
 
                 // Encrypted content errors are self-explanatory (include /clear advice)
-                // — skip the generic "Something went wrong?" hint and use a calmer color
+                // — skip the generic "Something went wrong?" hint
                 const isEncryptedContent = errorDetails.includes(
-                  "Use /clear to start a fresh conversation.",
+                  "/clear to start a new conversation.",
                 );
-                appendError(
-                  errorDetails,
-                  true, // Skip telemetry - already tracked above
-                  isEncryptedContent ? "cyan" : undefined,
-                );
+                appendError(errorDetails, true); // Skip telemetry - already tracked above
 
                 if (!isEncryptedContent) {
                   // Show appropriate error hint based on stop reason
