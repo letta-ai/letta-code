@@ -382,7 +382,12 @@ export type ExternalToolExecutor = (
   toolName: string,
   input: Record<string, unknown>,
 ) => Promise<{
-  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  content: Array<{
+    type: string;
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  }>;
   isError: boolean;
 }>;
 
@@ -438,7 +443,9 @@ export function isExternalTool(name: string): boolean {
 /**
  * Get external tool definition
  */
-export function getExternalToolDefinition(name: string): ExternalToolDefinition | undefined {
+export function getExternalToolDefinition(
+  name: string,
+): ExternalToolDefinition | undefined {
   return getExternalToolsRegistry().get(name);
 }
 
@@ -461,7 +468,9 @@ export async function executeExternalTool(
   toolName: string,
   input: Record<string, unknown>,
 ): Promise<ToolExecutionResult> {
-  const executor = (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY];
+  const executor = (globalThis as GlobalWithExternalTools)[
+    EXTERNAL_EXECUTOR_KEY
+  ];
   if (!executor) {
     return {
       toolReturn: `External tool executor not set for tool: ${toolName}`,
@@ -471,13 +480,13 @@ export async function executeExternalTool(
 
   try {
     const result = await executor(toolCallId, toolName, input);
-    
+
     // Convert external tool result to ToolExecutionResult format
     const textContent = result.content
       .filter((c) => c.type === "text" && c.text)
       .map((c) => c.text)
       .join("\n");
-    
+
     return {
       toolReturn: textContent || JSON.stringify(result.content),
       status: result.isError ? "error" : "success",
@@ -498,14 +507,16 @@ export async function executeExternalTool(
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
   // Get built-in tools
-  const builtInTools = Array.from(toolRegistry.entries()).map(([name, tool]) => {
-    const serverName = getServerToolName(name);
-    return {
-      name: serverName,
-      description: tool.schema.description,
-      parameters: tool.schema.input_schema,
-    };
-  });
+  const builtInTools = Array.from(toolRegistry.entries()).map(
+    ([name, tool]) => {
+      const serverName = getServerToolName(name);
+      return {
+        name: serverName,
+        description: tool.schema.description,
+        parameters: tool.schema.input_schema,
+      };
+    },
+  );
 
   // Add external tools
   const externalTools = getExternalToolsAsClientTools();

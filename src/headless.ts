@@ -41,9 +41,9 @@ import {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { settingsManager } from "./settings-manager";
 import {
+  type ExternalToolDefinition,
   registerExternalTools,
   setExternalToolExecutor,
-  type ExternalToolDefinition,
 } from "./tools/manager";
 import type {
   AutoApprovalMessage,
@@ -2108,11 +2108,13 @@ async function runBidirectionalMode(
         console.log(JSON.stringify(interruptResponse));
       } else if (subtype === "register_external_tools") {
         // Register external tools from SDK
-        const toolsRequest = message.request as { tools?: ExternalToolDefinition[] };
+        const toolsRequest = message.request as {
+          tools?: ExternalToolDefinition[];
+        };
         const tools = toolsRequest.tools ?? [];
-        
+
         registerExternalTools(tools);
-        
+
         // Set up the external tool executor to send requests back to SDK
         setExternalToolExecutor(async (toolCallId, toolName, input) => {
           // Send execute_external_tool request to SDK
@@ -2127,15 +2129,18 @@ async function runBidirectionalMode(
             } as unknown as CanUseToolControlRequest, // Type cast for compatibility
           };
           console.log(JSON.stringify(execRequest));
-          
+
           // Wait for external_tool_result response
           while (true) {
             const line = await getNextLine();
             if (line === null) {
-              return { content: [{ type: "text", text: "stdin closed" }], isError: true };
+              return {
+                content: [{ type: "text", text: "stdin closed" }],
+                isError: true,
+              };
             }
             if (!line.trim()) continue;
-            
+
             try {
               const msg = JSON.parse(line);
               if (
@@ -2153,7 +2158,7 @@ async function runBidirectionalMode(
             }
           }
         });
-        
+
         const registerResponse: ControlResponse = {
           type: "control_response",
           response: {
