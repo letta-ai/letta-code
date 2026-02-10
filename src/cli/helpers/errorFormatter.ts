@@ -148,7 +148,7 @@ const ENCRYPTED_CONTENT_HINT = [
   "This occurs when the conversation contains messages with encrypted",
   "reasoning from a different OpenAI authentication scope (e.g. switching",
   "between ChatGPT OAuth and an OpenAI API key).",
-  "/clear to start a new conversation.",
+  "Use /clear to start a new conversation.",
 ].join("\n");
 
 /**
