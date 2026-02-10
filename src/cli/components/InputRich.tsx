@@ -37,6 +37,7 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+const FOOTER_WIDTH_STREAMING_DELTA = 2;
 
 function truncateEnd(value: string, maxChars: number): string {
   if (maxChars <= 0) return "";
@@ -122,7 +123,7 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider,
   isByokProvider,
   hideFooter,
-  terminalWidth,
+  rightColumnWidth,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -135,19 +136,39 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   hideFooter: boolean;
-  terminalWidth: number;
+  rightColumnWidth: number;
 }) {
   const hideFooterContent = hideFooter;
-  const rightColumnWidth = Math.max(
-    28,
-    Math.min(72, Math.floor(terminalWidth * 0.45)),
-  );
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
   const reservedChars = displayAgentName.length + byokExtraChars + 4;
   const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
   const displayModel = truncateEnd(currentModel ?? "unknown", maxModelChars);
+  const rightTextLength =
+    displayAgentName.length + displayModel.length + byokExtraChars + 3;
+  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
+  const rightLabel = useMemo(() => {
+    const parts: string[] = [];
+    parts.push(" ".repeat(rightPrefixSpaces));
+    parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
+    parts.push(chalk.dim(" ["));
+    parts.push(chalk.dim(displayModel));
+    if (isByokProvider) {
+      parts.push(chalk.dim(" "));
+      parts.push(
+        isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
+      );
+    }
+    parts.push(chalk.dim("]"));
+    return parts.join("");
+  }, [
+    rightPrefixSpaces,
+    displayAgentName,
+    displayModel,
+    isByokProvider,
+    isOpenAICodexProvider,
+  ]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -178,24 +199,11 @@ const InputFooter = memo(function InputFooter({
           <Text dimColor>Press / for commands</Text>
         )}
       </Box>
-      <Box width={rightColumnWidth} flexShrink={0} justifyContent="flex-end">
+      <Box width={rightColumnWidth} flexShrink={0}>
         {hideFooterContent ? (
-          <Text> </Text>
+          <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : (
-          <Text wrap="truncate-end">
-            <Text color={colors.footer.agentName}>{displayAgentName}</Text>
-            <Text dimColor>{" ["}</Text>
-            <Text dimColor>{displayModel}</Text>
-            {isByokProvider ? (
-              <>
-                <Text dimColor> </Text>
-                <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}>
-                  ▲
-                </Text>
-              </>
-            ) : null}
-            <Text dimColor>{"]"}</Text>
-          </Text>
+          <Text>{rightLabel}</Text>
         )}
       </Box>
     </Box>
@@ -212,6 +220,7 @@ const StreamingStatus = memo(function StreamingStatus({
   interruptRequested,
   networkPhase,
   terminalWidth,
+  shouldAnimate,
 }: {
   streaming: boolean;
   visible: boolean;
@@ -222,13 +231,14 @@ const StreamingStatus = memo(function StreamingStatus({
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
   terminalWidth: number;
+  shouldAnimate: boolean;
 }) {
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!streaming || !visible) return;
+    if (!streaming || !visible || !shouldAnimate) return;
 
     const id = setInterval(() => {
       setShimmerOffset((prev) => {
@@ -241,7 +251,13 @@ const StreamingStatus = memo(function StreamingStatus({
     }, 120); // Speed of shimmer animation
 
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName]);
+  }, [streaming, thinkingMessage, visible, agentName, shouldAnimate]);
+
+  useEffect(() => {
+    if (!shouldAnimate) {
+      setShimmerOffset(-3);
+    }
+  }, [shouldAnimate]);
 
   // Elapsed time tracking
   useEffect(() => {
@@ -279,29 +295,7 @@ const StreamingStatus = memo(function StreamingStatus({
   const showErrorArrow = networkArrow === "↑\u0338";
   const statusContentWidth = Math.max(0, terminalWidth - 2);
   const minMessageWidth = 12;
-  const desiredHintWidth = Math.max(18, Math.floor(statusContentWidth * 0.34));
-  const cappedHintWidth = Math.min(44, desiredHintWidth);
-  const hintColumnWidth = Math.max(
-    0,
-    Math.min(
-      cappedHintWidth,
-      Math.max(0, statusContentWidth - minMessageWidth),
-    ),
-  );
-  const maxMessageWidth = Math.max(0, statusContentWidth - hintColumnWidth);
-  const statusLabel = `${agentName ? `${agentName} ` : ""}${thinkingMessage}…`;
-  const statusLabelWidth = Array.from(statusLabel).length;
-  const messageColumnWidth = Math.max(
-    0,
-    Math.min(maxMessageWidth, Math.max(minMessageWidth, statusLabelWidth)),
-  );
-
-  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
-  // Uses chalk.dim to match reasoning text styling
-  // Memoized to prevent unnecessary re-renders during shimmer updates
-  const statusHintText = useMemo(() => {
-    const hintColor = chalk.hex(colors.subagent.hint);
-    const hintBold = hintColor.bold;
+  const statusHintParts = useMemo(() => {
     const parts: string[] = [];
     if (shouldShowElapsed) {
       parts.push(elapsedLabel);
@@ -313,22 +307,40 @@ const StreamingStatus = memo(function StreamingStatus({
     } else if (showErrorArrow) {
       parts.push(networkArrow);
     }
-    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
+    return parts;
+  }, [
+    shouldShowElapsed,
+    elapsedLabel,
+    shouldShowTokenCount,
+    estimatedTokens,
+    networkArrow,
+    showErrorArrow,
+  ]);
+  const statusHintSuffix = statusHintParts.length
+    ? ` · ${statusHintParts.join(" · ")}`
+    : "";
+  const statusHintPlain = interruptRequested
+    ? ` (interrupting${statusHintSuffix})`
+    : ` (esc to interrupt${statusHintSuffix})`;
+  const statusHintWidth = Array.from(statusHintPlain).length;
+  const maxHintWidth = Math.max(0, statusContentWidth - minMessageWidth);
+  const hintColumnWidth = Math.max(0, Math.min(statusHintWidth, maxHintWidth));
+  const messageColumnWidth = Math.max(0, statusContentWidth - hintColumnWidth);
+
+  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
+  // Uses chalk.dim to match reasoning text styling
+  // Memoized to prevent unnecessary re-renders during shimmer updates
+  const statusHintText = useMemo(() => {
+    const hintColor = chalk.hex(colors.subagent.hint);
+    const hintBold = hintColor.bold;
+    const suffix = `${statusHintSuffix})`;
     if (interruptRequested) {
       return hintColor(` (interrupting${suffix}`);
     }
     return (
       hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
-  }, [
-    shouldShowElapsed,
-    elapsedLabel,
-    shouldShowTokenCount,
-    estimatedTokens,
-    interruptRequested,
-    networkArrow,
-    showErrorArrow,
-  ]);
+  }, [interruptRequested, statusHintSuffix]);
 
   if (!streaming || !visible) {
     return null;
@@ -338,7 +350,7 @@ const StreamingStatus = memo(function StreamingStatus({
     <Box flexDirection="row" marginBottom={1}>
       <Box width={2} flexShrink={0}>
         <Text color={colors.status.processing}>
-          <Spinner type="layer" />
+          {shouldAnimate ? <Spinner type="layer" /> : "●"}
         </Text>
       </Box>
       <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -346,7 +358,7 @@ const StreamingStatus = memo(function StreamingStatus({
           <ShimmerText
             boldPrefix={agentName || undefined}
             message={thinkingMessage}
-            shimmerOffset={shimmerOffset}
+            shimmerOffset={shouldAnimate ? shimmerOffset : -3}
             wrap="truncate-end"
           />
         </Box>
@@ -403,6 +415,7 @@ export function Input({
   onRestoredInputConsumed,
   networkPhase = null,
   terminalWidth,
+  shouldAnimate = true,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -437,6 +450,7 @@ export function Input({
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth: number;
+  shouldAnimate?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -462,6 +476,60 @@ export function Input({
     return Math.max(1, getVisualLines(value, contentWidth).length);
   }, [value, contentWidth]);
   const inputChromeHeight = inputRowLines + 3; // top divider + input rows + bottom divider + footer
+  const computedFooterRightColumnWidth = useMemo(
+    () => Math.max(28, Math.min(72, Math.floor(columns * 0.45))),
+    [columns],
+  );
+  const [footerRightColumnWidth, setFooterRightColumnWidth] = useState(
+    computedFooterRightColumnWidth,
+  );
+  const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
+
+  useEffect(() => {
+    if (!streaming) {
+      setFooterRightColumnWidth(computedFooterRightColumnWidth);
+      return;
+    }
+
+    // While streaming, keep the right column width stable to avoid occasional
+    // right-edge jitter. Allow significant shrink (terminal got smaller),
+    // defer growth until streaming ends.
+    if (computedFooterRightColumnWidth >= footerRightColumnWidth) {
+      const growthDelta =
+        computedFooterRightColumnWidth - footerRightColumnWidth;
+      if (debugFlicker && growthDelta >= FOOTER_WIDTH_STREAMING_DELTA) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:footer-width] defer growth ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${growthDelta})`,
+        );
+      }
+      return;
+    }
+
+    const shrinkDelta = footerRightColumnWidth - computedFooterRightColumnWidth;
+    if (shrinkDelta < FOOTER_WIDTH_STREAMING_DELTA) {
+      if (debugFlicker && shrinkDelta > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:footer-width] ignore minor shrink ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${shrinkDelta})`,
+        );
+      }
+      return;
+    }
+
+    if (debugFlicker) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:flicker:footer-width] shrink ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${shrinkDelta})`,
+      );
+    }
+    setFooterRightColumnWidth(computedFooterRightColumnWidth);
+  }, [
+    streaming,
+    computedFooterRightColumnWidth,
+    footerRightColumnWidth,
+    debugFlicker,
+  ]);
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -1031,6 +1099,7 @@ export function Input({
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
         terminalWidth={columns}
+        shouldAnimate={shouldAnimate}
       />
 
       {/* Queue display - show whenever there are queued messages */}
@@ -1112,7 +1181,7 @@ export function Input({
               currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
             }
             hideFooter={hideFooter}
-            terminalWidth={columns}
+            rightColumnWidth={footerRightColumnWidth}
           />
         </Box>
       ) : reserveInputSpace ? (

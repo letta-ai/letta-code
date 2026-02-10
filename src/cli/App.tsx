@@ -248,6 +248,7 @@ const RESIZE_SETTLE_MS = 250;
 const MIN_CLEAR_INTERVAL_MS = 750;
 const STABLE_WIDTH_SETTLE_MS = 180;
 const TOOL_CALL_COMMIT_DEFER_MS = 50;
+const ANIMATION_RESUME_HYSTERESIS_ROWS = 2;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
 // - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
@@ -1556,6 +1557,7 @@ export default function App({
   const lastClearAtRef = useRef(0);
   const isInitialResizeRef = useRef(true);
   const columns = stableColumns;
+  const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
 
   useEffect(() => {
     if (rawColumns === stableColumns) {
@@ -1585,19 +1587,29 @@ export default function App({
     }, STABLE_WIDTH_SETTLE_MS);
   }, [rawColumns, stableColumns]);
 
-  const clearAndRemount = useCallback((targetColumns: number) => {
-    if (
-      typeof process !== "undefined" &&
-      process.stdout &&
-      "write" in process.stdout &&
-      process.stdout.isTTY
-    ) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
-    setStaticRenderEpoch((epoch) => epoch + 1);
-    lastClearedColumnsRef.current = targetColumns;
-    lastClearAtRef.current = Date.now();
-  }, []);
+  const clearAndRemount = useCallback(
+    (targetColumns: number) => {
+      if (debugFlicker) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:clear-remount] target=${targetColumns} previousCleared=${lastClearedColumnsRef.current} raw=${prevColumnsRef.current}`,
+        );
+      }
+
+      if (
+        typeof process !== "undefined" &&
+        process.stdout &&
+        "write" in process.stdout &&
+        process.stdout.isTTY
+      ) {
+        process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      }
+      setStaticRenderEpoch((epoch) => epoch + 1);
+      lastClearedColumnsRef.current = targetColumns;
+      lastClearAtRef.current = Date.now();
+    },
+    [debugFlicker],
+  );
 
   const scheduleResizeClear = useCallback(
     (targetColumns: number) => {
@@ -1616,23 +1628,47 @@ export default function App({
           ? 0
           : MIN_CLEAR_INTERVAL_MS - elapsedSinceClear;
       const delay = Math.max(RESIZE_SETTLE_MS, rateLimitDelay);
+      if (debugFlicker) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:resize-schedule] target=${targetColumns} delay=${delay}ms elapsedSinceClear=${elapsedSinceClear}ms`,
+        );
+      }
 
       resizeClearTimeout.current = setTimeout(() => {
         resizeClearTimeout.current = null;
 
         // If resize changed again while waiting, let the latest schedule win.
         if (prevColumnsRef.current !== targetColumns) {
+          if (debugFlicker) {
+            // eslint-disable-next-line no-console
+            console.error(
+              `[debug:flicker:resize-skip] stale target=${targetColumns} currentRaw=${prevColumnsRef.current}`,
+            );
+          }
           return;
         }
 
         if (targetColumns === lastClearedColumnsRef.current) {
+          if (debugFlicker) {
+            // eslint-disable-next-line no-console
+            console.error(
+              `[debug:flicker:resize-skip] already-cleared target=${targetColumns}`,
+            );
+          }
           return;
         }
 
+        if (debugFlicker) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[debug:flicker:resize-fire] clear target=${targetColumns}`,
+          );
+        }
         clearAndRemount(targetColumns);
       }, delay);
     },
-    [clearAndRemount],
+    [clearAndRemount, debugFlicker],
   );
 
   useEffect(() => {
@@ -10020,9 +10056,8 @@ Plan file path: ${planFilePath}`;
     getSubagentSnapshot,
   );
 
-  // Overflow detection: disable animations when live content exceeds viewport
-  // This prevents Ink's clearTerminal flicker on every re-render cycle
-  const shouldAnimate = useMemo(() => {
+  // Estimate live area height for overflow detection.
+  const estimatedLiveHeight = useMemo(() => {
     // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {
       if (!text) return 0;
@@ -10064,8 +10099,33 @@ Plan file path: ${planFilePath}`;
 
     const estimatedHeight = liveItemsHeight + subagentsHeight + FIXED_BUFFER;
 
-    return estimatedHeight < terminalRows;
-  }, [liveItems, terminalRows, subagents.length]);
+    return estimatedHeight;
+  }, [liveItems, subagents.length]);
+
+  // Overflow detection with hysteresis: disable quickly on overflow, re-enable
+  // only after we've recovered extra headroom to avoid flap near the boundary.
+  const [shouldAnimate, setShouldAnimate] = useState(
+    () => estimatedLiveHeight < terminalRows,
+  );
+  useEffect(() => {
+    if (terminalRows <= 0) {
+      setShouldAnimate(false);
+      return;
+    }
+
+    const disableThreshold = terminalRows;
+    const resumeThreshold = Math.max(
+      0,
+      terminalRows - ANIMATION_RESUME_HYSTERESIS_ROWS,
+    );
+
+    setShouldAnimate((prev) => {
+      if (prev) {
+        return estimatedLiveHeight < disableThreshold;
+      }
+      return estimatedLiveHeight < resumeThreshold;
+    });
+  }, [estimatedLiveHeight, terminalRows]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
@@ -10518,6 +10578,7 @@ Plan file path: ${planFilePath}`;
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
                 terminalWidth={columns}
+                shouldAnimate={shouldAnimate}
               />
             </Box>
 
