@@ -161,7 +161,7 @@ export function SlashCommandAutocomplete({
 
   // Manually manage active state to include the "no matches" case
   useLayoutEffect(() => {
-    const isActive = matches.length > 0 || showNoMatches;
+    const isActive = matches.length > 0;
     onActiveChange?.(isActive);
   }, [matches.length, showNoMatches, onActiveChange]);
 
