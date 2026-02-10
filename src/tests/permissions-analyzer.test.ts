@@ -203,6 +203,123 @@ test("Unknown command suggests exact match", () => {
   expect(context.allowPersistence).toBe(true);
 });
 
+test("Skill script in bundled skill suggests bundled-scope message", () => {
+  if (process.platform === "win32") return;
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        "cd /Users/test/project && npx tsx /tmp/letta/src/skills/builtin/creating-skills/scripts/init-skill.ts my-skill",
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe(
+    "Bash(cd /Users/test/project && npx tsx /tmp/letta/src/skills/builtin/creating-skills:*)",
+  );
+  expect(context.approveAlwaysText).toBe(
+    "Yes, and don't ask again for scripts in bundled skill 'creating-skills'",
+  );
+  expect(context.safetyLevel).toBe("moderate");
+});
+
+test("Skill script in agent-scoped skill suggests agent-scoped message", () => {
+  if (process.platform === "win32") return;
+  const home = require("node:os").homedir();
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command: `npx tsx ${home}/.letta/agents/agent-123/skills/finding-agents/scripts/main.ts --help`,
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe(
+    `Bash(npx tsx ${home}/.letta/agents/agent-123/skills/finding-agents:*)`,
+  );
+  expect(context.approveAlwaysText).toBe(
+    "Yes, and don't ask again for scripts in agent-scoped skill 'finding-agents'",
+  );
+});
+
+test("Skill script in global skill suggests global message", () => {
+  if (process.platform === "win32") return;
+  const home = require("node:os").homedir();
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command: `npx tsx ${home}/.letta/skills/messaging-agents/scripts/run.ts`,
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe(
+    `Bash(npx tsx ${home}/.letta/skills/messaging-agents:*)`,
+  );
+  expect(context.approveAlwaysText).toBe(
+    "Yes, and don't ask again for scripts in global skill 'messaging-agents'",
+  );
+});
+
+test("Skill script in project skill supports nested skill IDs", () => {
+  if (process.platform === "win32") return;
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        "npx tsx /Users/test/project/.skills/workflow/agent-tools/scripts/do.ts",
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toBe(
+    "Bash(npx tsx /Users/test/project/.skills/workflow/agent-tools:*)",
+  );
+  expect(context.approveAlwaysText).toBe(
+    "Yes, and don't ask again for scripts in project skill 'workflow/agent-tools'",
+  );
+});
+
+test("Dangerous skill script command still blocks persistence", () => {
+  if (process.platform === "win32") return;
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        "npx tsx /tmp/letta/src/skills/builtin/creating-skills/scripts/init-skill.ts --force",
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.allowPersistence).toBe(false);
+  expect(context.safetyLevel).toBe("dangerous");
+});
+
+test("Skill script path in quoted command is detected", () => {
+  if (process.platform === "win32") return;
+
+  const context = analyzeApprovalContext(
+    "Bash",
+    {
+      command:
+        "bash -lc \"npx tsx '/tmp/letta/src/skills/builtin/creating-skills/scripts/package-skill.ts'\"",
+    },
+    "/Users/test/project",
+  );
+
+  expect(context.recommendedRule).toContain(
+    "/tmp/letta/src/skills/builtin/creating-skills:*",
+  );
+  expect(context.approveAlwaysText).toBe(
+    "Yes, and don't ask again for scripts in bundled skill 'creating-skills'",
+  );
+});
+
 // ============================================================================
 // File Tool Analysis Tests
 // ============================================================================
