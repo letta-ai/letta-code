@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 // Mock getClient before importing the module under test
 
-const detachMock = mock(() => Promise.resolve({}));
-const retrieveMock = mock(() =>
+const detachMock = mock((_toolId: string, _opts: { agent_id: string }) =>
+  Promise.resolve({}),
+);
+const retrieveMock = mock((_agentId: string, _opts?: Record<string, unknown>) =>
   Promise.resolve({
     tools: [
       { name: "memory", id: "tool-memory" },
