@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  classifyPreStreamConflict,
+  getPreStreamErrorAction,
   isApprovalPendingError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
@@ -63,13 +65,21 @@ describe("isApprovalPendingError", () => {
   });
 
   test("detects approval pending error case-insensitively", () => {
-    expect(isApprovalPendingError("CANNOT SEND A NEW MESSAGE")).toBe(true);
-    expect(isApprovalPendingError("cannot send a new message")).toBe(true);
+    expect(isApprovalPendingError("WAITING FOR APPROVAL")).toBe(true);
+    expect(isApprovalPendingError("waiting for approval")).toBe(true);
   });
 
   test("detects partial match in longer message", () => {
-    const detail = "Error occurred: Cannot send a new message while processing";
+    const detail =
+      "Error occurred: agent is waiting for approval while processing";
     expect(isApprovalPendingError(detail)).toBe(true);
+  });
+
+  test("does not misclassify conversation busy conflict as approval pending", () => {
+    const busyDetail =
+      "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
+    expect(isConversationBusyError(busyDetail)).toBe(true);
+    expect(isApprovalPendingError(busyDetail)).toBe(false);
   });
 
   test("returns false for desync errors (opposite case)", () => {
@@ -135,6 +145,55 @@ describe("isConversationBusyError", () => {
     expect(isConversationBusyError(undefined)).toBe(false);
     expect(isConversationBusyError(123)).toBe(false);
     expect(isConversationBusyError({ detail: REAL_ERROR_DETAIL })).toBe(false);
+  });
+});
+
+describe("classifyPreStreamConflict", () => {
+  test("classifies approval-pending conflict distinctly from busy conflict", () => {
+    const approvalDetail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+    const busyDetail =
+      "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
+
+    expect(classifyPreStreamConflict(approvalDetail)).toBe("approval_pending");
+    expect(classifyPreStreamConflict(busyDetail)).toBe("conversation_busy");
+  });
+
+  test("returns null for non-conflict errors", () => {
+    expect(classifyPreStreamConflict("Rate limit exceeded")).toBeNull();
+  });
+});
+
+describe("getPreStreamErrorAction", () => {
+  test("returns resolve_approval_pending for approval conflict details", () => {
+    const detail =
+      "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
+
+    expect(getPreStreamErrorAction(detail, 0, 1)).toBe(
+      "resolve_approval_pending",
+    );
+  });
+
+  test("returns retry_conversation_busy when busy and retries remain", () => {
+    const detail =
+      "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
+
+    expect(getPreStreamErrorAction(detail, 0, 1)).toBe(
+      "retry_conversation_busy",
+    );
+  });
+
+  test("returns rethrow when conversation busy retries are exhausted", () => {
+    const detail =
+      "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
+
+    expect(getPreStreamErrorAction(detail, 1, 1)).toBe("rethrow");
+  });
+
+  test("returns rethrow for unrelated errors", () => {
+    expect(getPreStreamErrorAction("Rate limit exceeded", 0, 1)).toBe(
+      "rethrow",
+    );
   });
 });
 
