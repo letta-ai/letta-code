@@ -241,6 +241,9 @@ import {
   isTaskTool,
 } from "./helpers/toolNameMapping.js";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
+import { resolveStatusLineConfig } from "./helpers/statusLineConfig";
+import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
+import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
 
@@ -340,6 +343,7 @@ const NON_STATE_COMMANDS = new Set([
   "/memory",
   "/feedback",
   "/download",
+  "/statusline",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -1561,6 +1565,18 @@ export default function App({
   const isInitialResizeRef = useRef(true);
   const columns = stableColumns;
   const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
+
+  // Configurable status line hook
+  const statusLine = useConfigurableStatusLine({
+    agentId,
+    agentName,
+    conversationId,
+    model: currentModelDisplay,
+    provider: currentModelProvider,
+    streaming,
+    terminalWidth: columns,
+    workingDirectory: process.cwd(),
+  });
 
   useEffect(() => {
     if (rawColumns === stableColumns) {
@@ -5945,6 +5961,100 @@ export default function App({
             "Hooks manager dismissed",
           );
           setActiveOverlay("hooks");
+          return { submitted: true };
+        }
+
+        // Special handling for /statusline command
+        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
+          const parts = trimmed.slice("/statusline".length).trim().split(/\s+/);
+          const sub = parts[0] || "show";
+          const rest = parts.slice(1).join(" ");
+          const cmd = commandRunner.start(trimmed, "Managing status line...");
+
+          (async () => {
+            try {
+              const wd = process.cwd();
+              if (sub === "show") {
+                // Display config from all levels + resolved effective
+                const lines: string[] = [];
+                try {
+                  const global = settingsManager.getSettings().statusLine;
+                  lines.push(`Global: ${global?.command ? `command="${global.command}" interval=${global.interval ?? "default"} timeout=${global.timeout ?? "default"} disabled=${global.disabled ?? false}` : "(not set)"}`);
+                } catch { lines.push("Global: (unavailable)"); }
+                try {
+                  const project = settingsManager.getProjectSettings(wd)?.statusLine;
+                  lines.push(`Project: ${project?.command ? `command="${project.command}"` : "(not set)"}`);
+                } catch { lines.push("Project: (not loaded)"); }
+                try {
+                  const local = settingsManager.getLocalProjectSettings(wd)?.statusLine;
+                  lines.push(`Local: ${local?.command ? `command="${local.command}"` : "(not set)"}`);
+                } catch { lines.push("Local: (not loaded)"); }
+                const effective = resolveStatusLineConfig(wd);
+                lines.push(`Effective: ${effective ? `command="${effective.command}" interval=${effective.interval}ms timeout=${effective.timeout}ms` : "(inactive)"}`);
+                cmd.finish(lines.join("\n"), true);
+              } else if (sub === "set") {
+                if (!rest) { cmd.finish("Usage: /statusline set <command> [-l|-p]", false); return; }
+                const isLocal = rest.endsWith(" -l");
+                const isProject = rest.endsWith(" -p");
+                const command = rest.replace(/\s+-(l|p)$/, "");
+                const config = { command };
+                if (isLocal) {
+                  settingsManager.updateLocalProjectSettings({ statusLine: config }, wd);
+                  cmd.finish(`Status line set (local): ${command}`, true);
+                } else if (isProject) {
+                  settingsManager.updateProjectSettings({ statusLine: config }, wd);
+                  cmd.finish(`Status line set (project): ${command}`, true);
+                } else {
+                  settingsManager.updateSettings({ statusLine: config });
+                  cmd.finish(`Status line set (global): ${command}`, true);
+                }
+              } else if (sub === "clear") {
+                const isLocal = rest === "-l";
+                const isProject = rest === "-p";
+                if (isLocal) {
+                  settingsManager.updateLocalProjectSettings({ statusLine: undefined }, wd);
+                  cmd.finish("Status line cleared (local)", true);
+                } else if (isProject) {
+                  settingsManager.updateProjectSettings({ statusLine: undefined }, wd);
+                  cmd.finish("Status line cleared (project)", true);
+                } else {
+                  settingsManager.updateSettings({ statusLine: undefined });
+                  cmd.finish("Status line cleared (global)", true);
+                }
+              } else if (sub === "test") {
+                const config = resolveStatusLineConfig(wd);
+                if (!config) { cmd.finish("No status line configured", false); return; }
+                const result = await executeStatusLineCommand(config.command, {
+                  agent_id: agentIdRef.current,
+                  agent_name: agentName,
+                  conversation_id: conversationIdRef.current,
+                  model: currentModelDisplay,
+                  streaming: streamingRef.current,
+                  terminal_width: columns,
+                  working_directory: wd,
+                }, { timeout: config.timeout, workingDirectory: wd });
+                if (result.ok) {
+                  cmd.finish(`Output: ${result.text} (${result.durationMs}ms)`, true);
+                } else {
+                  cmd.finish(`Error: ${result.error} (${result.durationMs}ms)`, false);
+                }
+              } else if (sub === "disable") {
+                settingsManager.updateSettings({ statusLine: { ...settingsManager.getSettings().statusLine, command: settingsManager.getSettings().statusLine?.command ?? "", disabled: true } });
+                cmd.finish("Status line disabled", true);
+              } else if (sub === "enable") {
+                const current = settingsManager.getSettings().statusLine;
+                if (current) {
+                  settingsManager.updateSettings({ statusLine: { ...current, disabled: false } });
+                }
+                cmd.finish("Status line enabled", true);
+              } else {
+                cmd.finish(`Unknown subcommand: ${sub}. Use show|set|clear|test|enable|disable`, false);
+              }
+            } catch (error) {
+              cmd.finish(`Error: ${error instanceof Error ? error.message : String(error)}`, false);
+            }
+          })();
+
           return { submitted: true };
         }
 
@@ -10590,6 +10700,7 @@ Plan file path: ${planFilePath}`;
                 networkPhase={networkPhase}
                 terminalWidth={columns}
                 shouldAnimate={shouldAnimate}
+                statusLineText={statusLine.text || undefined}
               />
             </Box>
 

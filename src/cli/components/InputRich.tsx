@@ -423,6 +423,7 @@ export function Input({
   networkPhase = null,
   terminalWidth,
   shouldAnimate = true,
+  statusLineText,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -458,6 +459,7 @@ export function Input({
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth: number;
   shouldAnimate?: boolean;
+  statusLineText?: string;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1174,6 +1176,14 @@ export function Input({
               conversationId={conversationId}
             />
 
+            {statusLineText && !hideFooter ? (
+              <Box marginLeft={2}>
+                <Text dimColor wrap="truncate-end">
+                  {statusLineText}
+                </Text>
+              </Box>
+            ) : null}
+
             <InputFooter
               ctrlCPressed={ctrlCPressed}
               escapePressed={escapePressed}
@@ -1232,6 +1242,7 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
+    statusLineText,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
