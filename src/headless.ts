@@ -45,6 +45,10 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
+import {
+  isHeadlessAutoAllowTool,
+  isInteractiveApprovalTool,
+} from "./tools/interactivePolicy";
 import type {
   AutoApprovalMessage,
   CanUseToolControlRequest,
@@ -74,11 +78,6 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for 409 "conversation busy" errors
 const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
 const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
-
-// One-shot headless mode has no control channel for interactive approvals.
-// Match Claude Code behavior by permitting EnterPlanMode while denying tools
-// that require interactive responses.
-const ONE_SHOT_AUTO_ALLOW_ASK_TOOLS = new Set(["EnterPlanMode"]);
 
 export async function handleHeadlessCommand(
   argv: string[],
@@ -960,6 +959,7 @@ export async function handleHeadlessCommand(
       const { autoAllowed, autoDenied } = await classifyApprovals(
         pendingApprovals,
         {
+          alwaysRequiresUserInput: isInteractiveApprovalTool,
           treatAskAsDeny: true,
           denyReasonForAsk: "Tool requires approval (headless mode)",
           requireArgsForAutoApprove: true,
@@ -1357,6 +1357,7 @@ ${SYSTEM_REMINDER_CLOSE}
             !autoApprovalEmitted.has(updatedApproval.toolCallId)
           ) {
             const { autoAllowed } = await classifyApprovals([updatedApproval], {
+              alwaysRequiresUserInput: isInteractiveApprovalTool,
               requireArgsForAutoApprove: true,
               missingNameReason: "Tool call incomplete - missing name",
             });
@@ -1489,6 +1490,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
         const { autoAllowed, autoDenied, needsUserInput } =
           await classifyApprovals(approvals, {
+            alwaysRequiresUserInput: isInteractiveApprovalTool,
             requireArgsForAutoApprove: true,
             missingNameReason: "Tool call incomplete - missing name",
           });
@@ -1499,7 +1501,10 @@ ${SYSTEM_REMINDER_CLOSE}
             approval: ac.approval,
           })),
           ...needsUserInput.map((ac) => {
-            if (ONE_SHOT_AUTO_ALLOW_ASK_TOOLS.has(ac.approval.toolName)) {
+            // One-shot headless mode has no control channel for interactive
+            // approvals. Match Claude behavior by auto-allowing EnterPlanMode
+            // while denying tools that need runtime user responses.
+            if (isHeadlessAutoAllowTool(ac.approval.toolName)) {
               return {
                 type: "approve" as const,
                 approval: ac.approval,
@@ -2599,6 +2604,7 @@ async function runBidirectionalMode(
 
             const { autoAllowed, autoDenied, needsUserInput } =
               await classifyApprovals(approvals, {
+                alwaysRequiresUserInput: isInteractiveApprovalTool,
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
               });
