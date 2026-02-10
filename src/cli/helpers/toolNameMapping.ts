@@ -3,6 +3,8 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
+import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+
 /**
  * Maps internal tool names to user-friendly display names.
  * Handles multiple tool naming conventions:
@@ -132,11 +134,7 @@ export function isFancyUITool(name: string): boolean {
  * Other tools (bash, file edits) should respect yolo mode and auto-approve.
  */
 export function alwaysRequiresUserInput(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
+  return isInteractiveApprovalTool(name);
 }
 
 /**
