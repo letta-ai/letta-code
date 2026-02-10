@@ -307,8 +307,8 @@ export interface ExecuteExternalToolRequest {
   input: Record<string, unknown>;
 }
 
-export type CliToSdkControlRequest = 
-  | CanUseToolControlRequest 
+export type CliToSdkControlRequest =
+  | CanUseToolControlRequest
   | ExecuteExternalToolRequest;
 
 // Combined for parsing
@@ -357,7 +357,7 @@ export type CanUseToolResponse =
 export interface ExternalToolResultContent {
   type: "text" | "image";
   text?: string;
-  data?: string;      // base64 for images
+  data?: string; // base64 for images
   mimeType?: string;
 }
 
