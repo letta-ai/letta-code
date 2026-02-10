@@ -16,6 +16,13 @@ export interface ImportAgentOptions {
   stripSkills?: boolean;
 }
 
+export interface ImportFromRegistryOptions {
+  handle: string; // e.g., "@cpfiffer/co-3"
+  modelOverride?: string;
+  stripMessages?: boolean;
+  stripSkills?: boolean;
+}
+
 export interface ImportAgentResult {
   agent: AgentState;
   skills?: string[];
@@ -217,6 +224,89 @@ async function downloadGitHubDirectory(
         branch,
         basePath,
       );
+    }
+  }
+}
+
+/**
+ * Registry constants
+ */
+const AGENT_REGISTRY_OWNER = "letta-ai";
+const AGENT_REGISTRY_REPO = "agent-file";
+const AGENT_REGISTRY_BRANCH = "main";
+
+/**
+ * Parse a registry handle (e.g., "@cpfiffer/co-3") into author and agent name
+ */
+function parseRegistryHandle(handle: string): { author: string; name: string } {
+  // Handle can be "@author/name" or "author/name"
+  const normalized = handle.startsWith("@") ? handle.slice(1) : handle;
+  const parts = normalized.split("/");
+
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(
+      `Invalid import handle "${handle}". Use format: @author/agentname`,
+    );
+  }
+
+  return { author: parts[0], name: parts[1] };
+}
+
+/**
+ * Import an agent from the letta-ai/agent-file registry
+ * Downloads the .af file from GitHub and imports it
+ */
+export async function importAgentFromRegistry(
+  options: ImportFromRegistryOptions,
+): Promise<ImportAgentResult> {
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { writeFile, unlink } = await import("node:fs/promises");
+
+  const { author, name } = parseRegistryHandle(options.handle);
+
+  // Construct the raw GitHub URL
+  // Pattern: agents/@{author}/{name}/{name}.af
+  const rawUrl = `https://raw.githubusercontent.com/${AGENT_REGISTRY_OWNER}/${AGENT_REGISTRY_REPO}/refs/heads/${AGENT_REGISTRY_BRANCH}/agents/@${author}/${name}/${name}.af`;
+
+  // Download the .af file
+  const response = await fetch(rawUrl);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(
+        `Agent @${author}/${name} not found in registry. Check that the agent exists at https://github.com/${AGENT_REGISTRY_OWNER}/${AGENT_REGISTRY_REPO}/tree/${AGENT_REGISTRY_BRANCH}/agents/@${author}/${name}`,
+      );
+    }
+    throw new Error(
+      `Failed to download agent @${author}/${name}: ${response.statusText}`,
+    );
+  }
+
+  const afContent = await response.text();
+
+  // Write to a temp file
+  const tempPath = join(
+    tmpdir(),
+    `letta-import-${author}-${name}-${Date.now()}.af`,
+  );
+  await writeFile(tempPath, afContent, "utf-8");
+
+  try {
+    // Import using the existing file-based import
+    const result = await importAgentFromFile({
+      filePath: tempPath,
+      modelOverride: options.modelOverride,
+      stripMessages: options.stripMessages ?? true,
+      stripSkills: options.stripSkills ?? false,
+    });
+
+    return result;
+  } finally {
+    // Clean up temp file
+    try {
+      await unlink(tempPath);
+    } catch {
+      // Ignore cleanup errors
     }
   }
 }

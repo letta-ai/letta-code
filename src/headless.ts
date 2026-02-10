@@ -349,6 +349,8 @@ export async function handleHeadlessCommand(
   }
 
   // Validate --from-af flag
+  // Detect if it's a registry handle (e.g., @author/name) or a local file path
+  let isRegistryImport = false;
   if (fromAfFile) {
     if (specifiedAgentId) {
       console.error("Error: --from-af cannot be used with --agent");
@@ -361,6 +363,21 @@ export async function handleHeadlessCommand(
     if (forceNew) {
       console.error("Error: --from-af cannot be used with --new");
       process.exit(1);
+    }
+
+    // Check if this looks like a registry handle (@author/name)
+    if (fromAfFile.startsWith("@")) {
+      // Definitely a registry handle
+      isRegistryImport = true;
+      // Validate handle format
+      const normalized = fromAfFile.slice(1);
+      const parts = normalized.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        console.error(
+          `Error: Invalid registry handle "${fromAfFile}". Use format: @author/agentname`,
+        );
+        process.exit(1);
+      }
     }
   }
 
@@ -495,15 +512,30 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Priority 1: Import from AgentFile template
+  // Priority 1: Import from AgentFile template (local file or registry)
   if (!agent && fromAfFile) {
-    const { importAgentFromFile } = await import("./agent/import");
-    const result = await importAgentFromFile({
-      filePath: fromAfFile,
-      modelOverride: model,
-      stripMessages: true,
-      stripSkills: false,
-    });
+    let result: { agent: AgentState; skills?: string[] };
+
+    if (isRegistryImport) {
+      // Import from letta-ai/agent-file registry
+      const { importAgentFromRegistry } = await import("./agent/import");
+      result = await importAgentFromRegistry({
+        handle: fromAfFile,
+        modelOverride: model,
+        stripMessages: true,
+        stripSkills: false,
+      });
+    } else {
+      // Import from local file
+      const { importAgentFromFile } = await import("./agent/import");
+      result = await importAgentFromFile({
+        filePath: fromAfFile,
+        modelOverride: model,
+        stripMessages: true,
+        stripSkills: false,
+      });
+    }
+
     agent = result.agent;
     isNewlyCreatedAgent = true;
 

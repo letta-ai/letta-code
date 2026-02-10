@@ -79,6 +79,7 @@ OPTIONS
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
   --from-af <path>      Create agent from an AgentFile (.af) template
+                        Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
 
@@ -723,6 +724,8 @@ async function main(): Promise<void> {
   }
 
   // Validate --from-af flag
+  // Detect if it's a registry handle (e.g., @author/name) or a local file path
+  let isRegistryImport = false;
   if (fromAfFile) {
     if (specifiedAgentId) {
       console.error("Error: --from-af cannot be used with --agent");
@@ -740,13 +743,29 @@ async function main(): Promise<void> {
       console.error("Error: --from-af cannot be used with --new");
       process.exit(1);
     }
-    // Verify file exists
-    const { resolve } = await import("node:path");
-    const { existsSync } = await import("node:fs");
-    const resolvedPath = resolve(fromAfFile);
-    if (!existsSync(resolvedPath)) {
-      console.error(`Error: AgentFile not found: ${resolvedPath}`);
-      process.exit(1);
+
+    // Check if this looks like a registry handle (@author/name)
+    if (fromAfFile.startsWith("@")) {
+      // Definitely a registry handle
+      isRegistryImport = true;
+      // Validate handle format
+      const normalized = fromAfFile.slice(1);
+      const parts = normalized.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        console.error(
+          `Error: Invalid registry handle "${fromAfFile}". Use format: @author/agentname`,
+        );
+        process.exit(1);
+      }
+    } else {
+      // Local file - verify it exists
+      const { resolve } = await import("node:path");
+      const { existsSync } = await import("node:fs");
+      const resolvedPath = resolve(fromAfFile);
+      if (!existsSync(resolvedPath)) {
+        console.error(`Error: AgentFile not found: ${resolvedPath}`);
+        process.exit(1);
+      }
     }
   }
 
@@ -962,6 +981,7 @@ async function main(): Promise<void> {
     toolset,
     skillsDirectory,
     fromAfFile,
+    isRegistryImport,
   }: {
     continueSession: boolean;
     forceNew: boolean;
@@ -973,6 +993,7 @@ async function main(): Promise<void> {
     toolset?: "codex" | "default" | "gemini";
     skillsDirectory?: string;
     fromAfFile?: string;
+    isRegistryImport?: boolean;
   }) {
     const [showKeybindingSetup, setShowKeybindingSetup] = useState<
       boolean | null
@@ -1458,16 +1479,31 @@ async function main(): Promise<void> {
         let agent: AgentState | null = null;
         let isNewlyCreatedAgent = false;
 
-        // Priority 1: Import from AgentFile template
+        // Priority 1: Import from AgentFile template (local file or registry)
         if (fromAfFile) {
           setLoadingState("importing");
-          const { importAgentFromFile } = await import("./agent/import");
-          const result = await importAgentFromFile({
-            filePath: fromAfFile,
-            modelOverride: model,
-            stripMessages: true,
-            stripSkills: false,
-          });
+          let result: { agent: AgentState; skills?: string[] };
+
+          if (isRegistryImport) {
+            // Import from letta-ai/agent-file registry
+            const { importAgentFromRegistry } = await import("./agent/import");
+            result = await importAgentFromRegistry({
+              handle: fromAfFile,
+              modelOverride: model,
+              stripMessages: true,
+              stripSkills: false,
+            });
+          } else {
+            // Import from local file
+            const { importAgentFromFile } = await import("./agent/import");
+            result = await importAgentFromFile({
+              filePath: fromAfFile,
+              modelOverride: model,
+              stripMessages: true,
+              stripSkills: false,
+            });
+          }
+
           agent = result.agent;
           isNewlyCreatedAgent = true;
           setAgentProvenance({
@@ -2033,6 +2069,7 @@ async function main(): Promise<void> {
       toolset: specifiedToolset as "codex" | "default" | "gemini" | undefined,
       skillsDirectory: skillsDirectory,
       fromAfFile: fromAfFile,
+      isRegistryImport: isRegistryImport,
     }),
     {
       exitOnCtrlC: false, // We handle CTRL-C manually with double-press guard
