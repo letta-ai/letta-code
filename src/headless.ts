@@ -75,6 +75,11 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 const CONVERSATION_BUSY_MAX_RETRIES = 1; // Only retry once, fail on 2nd 409
 const CONVERSATION_BUSY_RETRY_DELAY_MS = 2500; // 2.5 seconds
 
+// One-shot headless mode has no control channel for interactive approvals.
+// Match Claude Code behavior by permitting EnterPlanMode while denying tools
+// that require interactive responses.
+const ONE_SHOT_AUTO_ALLOW_ASK_TOOLS = new Set(["EnterPlanMode"]);
+
 export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
@@ -857,6 +862,13 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
+  const { getClientToolsFromRegistry } = await import("./tools/manager");
+  const loadedToolNames = getClientToolsFromRegistry().map((t) => t.name);
+  const availableTools =
+    loadedToolNames.length > 0
+      ? loadedToolNames
+      : agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
+
   // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
     await runBidirectionalMode(
@@ -865,6 +877,7 @@ export async function handleHeadlessCommand(
       client,
       outputFormat,
       includePartialMessages,
+      availableTools,
     );
     return;
   }
@@ -887,8 +900,7 @@ export async function handleHeadlessCommand(
       agent_id: agent.id,
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
-      tools:
-        agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [],
+      tools: availableTools,
       cwd: process.cwd(),
       mcp_servers: [],
       permission_mode: "",
@@ -1475,18 +1487,30 @@ ${SYSTEM_REMINDER_CLOSE}
               reason: string;
             };
 
-        const { autoAllowed, autoDenied } = await classifyApprovals(approvals, {
-          treatAskAsDeny: true,
-          denyReasonForAsk: "Tool requires approval (headless mode)",
-          requireArgsForAutoApprove: true,
-          missingNameReason: "Tool call incomplete - missing name",
-        });
+        const { autoAllowed, autoDenied, needsUserInput } =
+          await classifyApprovals(approvals, {
+            requireArgsForAutoApprove: true,
+            missingNameReason: "Tool call incomplete - missing name",
+          });
 
         const decisions: Decision[] = [
           ...autoAllowed.map((ac) => ({
             type: "approve" as const,
             approval: ac.approval,
           })),
+          ...needsUserInput.map((ac) => {
+            if (ONE_SHOT_AUTO_ALLOW_ASK_TOOLS.has(ac.approval.toolName)) {
+              return {
+                type: "approve" as const,
+                approval: ac.approval,
+              };
+            }
+            return {
+              type: "deny" as const,
+              approval: ac.approval,
+              reason: "Tool requires approval (headless mode)",
+            };
+          }),
           ...autoDenied.map((ac) => {
             const fallback =
               "matchedRule" in ac.permission && ac.permission.matchedRule
@@ -1914,6 +1938,7 @@ async function runBidirectionalMode(
   client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
+  availableTools: string[],
 ): Promise<void> {
   const sessionId = agent.id;
   const readline = await import("node:readline");
@@ -1926,7 +1951,7 @@ async function runBidirectionalMode(
     agent_id: agent.id,
     conversation_id: conversationId,
     model: agent.llm_config?.model,
-    tools: agent.tools?.map((t) => t.name) || [],
+    tools: availableTools,
     cwd: process.cwd(),
     uuid: `init-${agent.id}`,
   };
@@ -2234,7 +2259,7 @@ async function runBidirectionalMode(
             response: {
               agent_id: agent.id,
               model: agent.llm_config?.model,
-              tools: agent.tools?.map((t) => t.name) || [],
+              tools: availableTools,
             },
           },
           session_id: sessionId,
