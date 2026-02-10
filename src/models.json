@@ -551,7 +551,8 @@
     "isFeatured": true,
     "free": true,
     "updateArgs": {
-      "context_window": 180000
+      "context_window": 160000,
+      "max_output_tokens": 64000
     }
   },
   {
@@ -560,7 +561,8 @@
     "label": "Minimax M2",
     "description": "Minimax's latest model",
     "updateArgs": {
-      "context_window": 196000
+      "context_window": 160000,
+      "max_output_tokens": 64000
     }
   },
   {
