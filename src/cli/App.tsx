@@ -179,7 +179,10 @@ import {
   parsePatchToAdvancedDiff,
 } from "./helpers/diff";
 import { setErrorContext } from "./helpers/errorContext";
-import { formatErrorDetails } from "./helpers/errorFormatter";
+import {
+  formatErrorDetails,
+  isEncryptedContentError,
+} from "./helpers/errorFormatter";
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
@@ -4527,13 +4530,21 @@ export default function App({
                   errorObject,
                   agentIdRef.current,
                 );
+
+                // Encrypted content errors are self-explanatory (include /clear advice)
+                // — skip the generic "Something went wrong?" hint
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
 
-                // Show appropriate error hint based on stop reason
-                appendError(
-                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
-                  true,
-                );
+                if (!isEncryptedContentError(errorObject)) {
+                  // Show appropriate error hint based on stop reason
+                  appendError(
+                    getErrorHintForStopReason(
+                      stopReasonToHandle,
+                      currentModelId,
+                    ),
+                    true,
+                  );
+                }
               } else {
                 // No error metadata, show generic error with run info
                 appendError(

@@ -166,6 +166,117 @@ function isCreditExhaustedError(e: APIError, reasons?: string[]): boolean {
   return hasErrorReason(e, "not-enough-credits", reasons);
 }
 
+const ENCRYPTED_CONTENT_HINT = [
+  "",
+  "This occurs when the conversation contains messages with encrypted",
+  "reasoning from a different OpenAI authentication scope (e.g. switching",
+  "between ChatGPT OAuth and an OpenAI API key).",
+  "Use /clear to start a new conversation.",
+].join("\n");
+
+/**
+ * Walk the error object to find the `detail` string containing the encrypted content error.
+ * Handles both direct (e.detail) and nested (e.error.error.detail) structures.
+ */
+function findEncryptedContentDetail(
+  e: unknown,
+): string | undefined {
+  if (typeof e !== "object" || e === null) return undefined;
+  const obj = e as Record<string, unknown>;
+
+  // Check direct: e.detail
+  if (
+    typeof obj.detail === "string" &&
+    obj.detail.includes("invalid_encrypted_content")
+  ) {
+    return obj.detail;
+  }
+
+  // Check nested: e.error.error.detail or e.error.detail
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+      if (
+        typeof inner.detail === "string" &&
+        inner.detail.includes("invalid_encrypted_content")
+      ) {
+        return inner.detail;
+      }
+    }
+    if (
+      typeof errObj.detail === "string" &&
+      errObj.detail.includes("invalid_encrypted_content")
+    ) {
+      return errObj.detail;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Check if the error contains an encrypted content organization mismatch from OpenAI/ChatGPT.
+ * This occurs when switching between ChatGPT OAuth and OpenAI API key auth,
+ * leaving encrypted reasoning tokens from a different auth scope in the conversation.
+ */
+function checkEncryptedContentError(e: unknown): string | undefined {
+  // Walk the object structure first (cheap) before falling back to stringify
+  const detail = findEncryptedContentDetail(e);
+  if (!detail) {
+    // Fallback: stringify for edge cases (e.g. plain string errors)
+    try {
+      const errorStr = typeof e === "string" ? e : JSON.stringify(e);
+      if (!errorStr.includes("invalid_encrypted_content")) return undefined;
+    } catch {
+      return undefined;
+    }
+    // Detected via stringify but couldn't extract detail — return generic message
+    return (
+      "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+      ENCRYPTED_CONTENT_HINT
+    );
+  }
+
+  // Try to parse the embedded JSON from the detail string for pretty-printing
+  try {
+    const jsonStart = detail.indexOf("{");
+    if (jsonStart >= 0) {
+      const parsed = JSON.parse(detail.slice(jsonStart));
+      const innerError = parsed.error || parsed;
+      if (innerError.code === "invalid_encrypted_content") {
+        const msg = String(
+          innerError.message || "Encrypted content verification failed.",
+        ).replaceAll('"', '\\"');
+        return [
+          "OpenAI error:",
+          "  {",
+          `    type: "${innerError.type || "invalid_request_error"}",`,
+          `    code: "${innerError.code}",`,
+          `    message: "${msg}"`,
+          "  }",
+          ENCRYPTED_CONTENT_HINT,
+        ].join("\n");
+      }
+    }
+  } catch {
+    // Fall through to generic message
+  }
+
+  return (
+    "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+    ENCRYPTED_CONTENT_HINT
+  );
+}
+
+/**
+ * Returns true if the error is an OpenAI encrypted content org mismatch.
+ * Used by callers to skip generic error hints for this self-explanatory error.
+ */
+export function isEncryptedContentError(e: unknown): boolean {
+  return findEncryptedContentDetail(e) !== undefined;
+}
+
 /**
  * Extract comprehensive error details from any error object
  * Handles APIError, Error, and other error types consistently
@@ -179,6 +290,10 @@ export function formatErrorDetails(
   conversationId?: string,
 ): string {
   let runId: string | undefined;
+
+  // Check for OpenAI encrypted content org mismatch before anything else
+  const encryptedContentMsg = checkEncryptedContentError(e);
+  if (encryptedContentMsg) return encryptedContentMsg;
 
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
