@@ -4,8 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
-  getAgentRootDir,
   getMemoryGitStatus,
+  getMemoryRepoDir,
   isGitRepo,
   pullMemory,
 } from "../../agent/memoryGit";
@@ -159,7 +159,7 @@ export async function runMemfsSubcommand(argv: string[]): Promise<number> {
       const { execFile: execFileCb } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const execFile = promisify(execFileCb);
-      const dir = getAgentRootDir(agentId);
+      const dir = getMemoryRepoDir(agentId);
       const { stdout } = await execFile("git", ["diff"], { cwd: dir });
       if (stdout.trim()) {
         console.log(stdout);

@@ -18,8 +18,8 @@ Agents with the `git-memory-enabled` tag have their memory blocks stored in git 
 When memfs is enabled, the Letta Code CLI automatically:
 
 1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
-2. Clones the repo into `~/.letta/agents/<agent-id>/`
-3. Configures a **local** credential helper in `.git/config` (so `git push`/`git pull` work without auth ceremony)
+2. Clones the repo into `~/.letta/agents/<agent-id>/memory/` (git root is the memory directory)
+3. Configures a **local** credential helper in `memory/.git/config` (so `git push`/`git pull` work without auth ceremony)
 4. Installs a **pre-commit hook** that validates frontmatter before each commit (see below)
 5. On subsequent startups: pulls latest changes, reconfigures credentials and hook (self-healing)
 6. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
@@ -31,7 +31,7 @@ If any of these steps fail, you can replicate them manually using the sections b
 The harness configures a per-repo credential helper during clone. To verify or reconfigure:
 
 ```bash
-cd ~/.letta/agents/<agent-id>
+cd ~/.letta/agents/<agent-id>/memory
 
 # Check if configured
 git config --get credential.$LETTA_BASE_URL.helper
@@ -88,6 +88,7 @@ If the harness `/memfs enable` failed, you can replicate it:
 ```bash
 AGENT_ID="<your-agent-id>"
 AGENT_DIR=~/.letta/agents/$AGENT_ID
+MEMORY_REPO_DIR="$AGENT_DIR/memory"
 
 # 1. Add git-memory-enabled tag (IMPORTANT: preserve existing tags!)
 # First GET the agent to read current tags, then PATCH with the new tag appended.
@@ -97,11 +98,12 @@ curl -X PATCH "$LETTA_BASE_URL/v1/agents/$AGENT_ID" \
   -H "Content-Type: application/json" \
   -d '{"tags": ["origin:letta-code", "git-memory-enabled"]}'
 
-# 2. Clone the repo
-git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$AGENT_DIR"
+# 2. Clone the repo into memory/
+mkdir -p "$MEMORY_REPO_DIR"
+git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$MEMORY_REPO_DIR"
 
 # 3. Configure local credential helper
-cd "$AGENT_DIR"
+cd "$MEMORY_REPO_DIR"
 git config credential.$LETTA_BASE_URL.helper \
   '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
@@ -113,7 +115,7 @@ git config credential.$LETTA_BASE_URL.helper \
 ```bash
 # 1. Edit block via API (or use memory tools)
 # 2. Pull to get changes (webhook creates commit automatically)
-cd ~/.letta/agents/<agent-id>
+cd ~/.letta/agents/<agent-id>/memory
 git pull
 ```
 
@@ -122,13 +124,13 @@ Changes made via the API are automatically committed to git within 2-3 seconds.
 ### Git Push -> API Update
 
 ```bash
-cd ~/.letta/agents/<agent-id>
+cd ~/.letta/agents/<agent-id>/memory
 
 # 1. Edit files locally
-echo "Updated info" > memory/system/human.md
+echo "Updated info" > system/human.md
 
 # 2. Commit and push
-git add memory/system/human.md
+git add system/human.md
 git commit -m "fix: update human block"
 git push
 
@@ -140,17 +142,17 @@ git push
 When both API and git have diverged:
 
 ```bash
-cd ~/.letta/agents/<agent-id>
+cd ~/.letta/agents/<agent-id>/memory
 
 # 1. Try to push (will be rejected)
 git push  # -> "fetch first"
 
 # 2. Pull to create merge conflict
 git pull --no-rebase
-# -> CONFLICT in memory/system/human.md
+# -> CONFLICT in system/human.md
 
 # 3. View conflict markers
-cat memory/system/human.md
+cat system/human.md
 # <<<<<<< HEAD
 # your local changes
 # =======
@@ -158,8 +160,8 @@ cat memory/system/human.md
 # >>>>>>> <commit>
 
 # 4. Resolve
-echo "final resolved content" > memory/system/human.md
-git add memory/system/human.md
+echo "final resolved content" > system/human.md
+git add system/human.md
 git commit -m "fix: resolved conflict in human block"
 
 # 5. Push resolution
@@ -173,8 +175,8 @@ git push
 
 ```bash
 # Create file in system/ directory (automatically attached to agent)
-echo "My new block content" > memory/system/new-block.md
-git add memory/system/new-block.md
+echo "My new block content" > system/new-block.md
+git add system/new-block.md
 git commit -m "feat: add new block"
 git push
 # -> Block automatically created and attached to agent
@@ -184,7 +186,7 @@ git push
 
 ```bash
 # Remove file from system/ directory
-git rm memory/system/persona.md
+git rm system/persona.md
 git commit -m "chore: remove persona block"
 git push
 # -> Block automatically detached from agent
@@ -194,10 +196,10 @@ git push
 
 ```
 ~/.letta/agents/<agent-id>/
-├── .git/                        # Git repo data
 ├── .letta/
-│   └── config.json              # Repo metadata
-└── memory/
+│   └── config.json              # Agent metadata
+└── memory/                      # Git repo root
+    ├── .git/                    # Git repo data
     └── system/                  # System blocks (attached to agent)
         ├── human.md
         └── persona.md

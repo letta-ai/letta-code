@@ -2657,7 +2657,7 @@ export default function App({
         pendingGitReminderRef.current = {
           dirty: false,
           aheadOfRemote: false,
-          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ~/.letta/agents/${agentId} pull`,
+          summary: `Git memory sync failed on startup: ${errMsg}\nMemory may be stale. Try running: git -C ~/.letta/agents/${agentId}/memory pull`,
         };
       }
     })();
@@ -7524,8 +7524,8 @@ ${gitStatus.summary}
 
 To sync:
 \`\`\`bash
-cd ~/.letta/agents/${agentId}
-git add memory/
+cd ~/.letta/agents/${agentId}/memory
+git add system/
 git commit -m "<type>: <what changed>"
 git push
 \`\`\`

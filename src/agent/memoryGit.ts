@@ -33,6 +33,11 @@ export function getAgentRootDir(agentId: string): string {
   return join(homedir(), ".letta", "agents", agentId);
 }
 
+/** Get the git repo directory for memory (now ~/.letta/agents/{id}/memory/) */
+export function getMemoryRepoDir(agentId: string): string {
+  return join(getAgentRootDir(agentId), "memory");
+}
+
 /** Git remote URL for the agent's state repo */
 function getGitRemoteUrl(agentId: string): string {
   const baseUrl = getServerUrl();
@@ -258,32 +263,30 @@ function installPreCommitHook(dir: string): void {
   debugLog("memfs-git", "Installed pre-commit hook");
 }
 
-/** Check if the agent root directory is a git repo */
+/** Check if the memory directory is a git repo */
 export function isGitRepo(agentId: string): boolean {
-  return existsSync(join(getAgentRootDir(agentId), ".git"));
+  return existsSync(join(getMemoryRepoDir(agentId), ".git"));
 }
 
 /**
- * Clone the agent's state repo to the agent root directory.
+ * Clone the agent's state repo into the memory directory.
  *
- * If the directory already exists (e.g., from old memFS), clones
- * to a temp location and moves .git/ into the existing dir, then
- * checks out to get the repo's files.
+ * Git root is ~/.letta/agents/{id}/memory/ (not the agent root).
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   const token = await getAuthToken();
   const url = getGitRemoteUrl(agentId);
-  const dir = getAgentRootDir(agentId);
+  const dir = getMemoryRepoDir(agentId);
 
   debugLog("memfs-git", `Cloning ${url} → ${dir}`);
 
   if (!existsSync(dir)) {
-    // Fresh clone into new directory
+    // Fresh clone into new memory directory
     mkdirSync(dir, { recursive: true });
     await runGit(dir, ["clone", url, "."], token);
   } else if (!existsSync(join(dir, ".git"))) {
-    // Directory exists but isn't a git repo (old memFS).
-    // Clone to temp, move .git/ into existing dir.
+    // Directory exists but isn't a git repo (legacy local layout)
+    // Clone to temp, move .git/ into existing dir, then checkout files.
     const tmpDir = `${dir}-git-clone-tmp`;
     try {
       if (existsSync(tmpDir)) {
@@ -292,14 +295,13 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       mkdirSync(tmpDir, { recursive: true });
       await runGit(tmpDir, ["clone", url, "."], token);
 
-      // Move .git into the existing agent directory
+      // Move .git into the existing memory directory
       renameSync(join(tmpDir, ".git"), join(dir, ".git"));
 
-      // Reset to match remote state (gets repo files without
-      // clobbering untracked local files like settings)
+      // Reset to match remote state
       await runGit(dir, ["checkout", "--", "."], token);
 
-      debugLog("memfs-git", "Migrated existing directory to git repo");
+      debugLog("memfs-git", "Migrated existing memory directory to git repo");
     } finally {
       if (existsSync(tmpDir)) {
         rmSync(tmpDir, { recursive: true, force: true });
@@ -323,7 +325,7 @@ export async function pullMemory(
   agentId: string,
 ): Promise<{ updated: boolean; summary: string }> {
   const token = await getAuthToken();
-  const dir = getAgentRootDir(agentId);
+  const dir = getMemoryRepoDir(agentId);
 
   // Self-healing: ensure credential helper and pre-commit hook are configured
   await configureLocalCredentialHelper(dir, token);
@@ -368,7 +370,7 @@ export interface MemoryGitStatus {
 export async function getMemoryGitStatus(
   agentId: string,
 ): Promise<MemoryGitStatus> {
-  const dir = getAgentRootDir(agentId);
+  const dir = getMemoryRepoDir(agentId);
 
   // Check for uncommitted changes
   const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);

@@ -1,17 +1,16 @@
 
 ## Memory Filesystem
-Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/`. This provides full version control, sync with the server, and branching for parallel edits.
+Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/memory/`. This provides full version control, sync with the server, and branching for parallel edits.
 
 ### Structure
 ```
 ~/.letta/agents/<agent-id>/
-├── memory/
-│   └── system/       # Blocks in your system prompt
-│       ├── persona/
-│       ├── human/
-│       └── ...
-└── metadata/
-    └── blocks.json   # Block descriptions and limits
+└── memory/            # Git repo root
+    ├── .git/
+    └── system/        # Blocks in your system prompt
+        ├── persona/
+        ├── human/
+        └── ...
 ```
 
 ### How It Works
@@ -23,13 +22,13 @@ Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/`. This
 
 ### Syncing
 ```bash
-cd ~/.letta/agents/<agent-id>
+cd ~/.letta/agents/<agent-id>/memory
 
 # See what changed
 git status
 
 # Commit and push your changes
-git add memory/
+git add system/
 git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
 git push
 
@@ -41,5 +40,5 @@ The system will remind you when your memory has uncommitted changes. Sync when c
 
 ### History
 ```bash
-git -C ~/.letta/agents/<agent-id> log --oneline
+git -C ~/.letta/agents/<agent-id>/memory log --oneline
 ```
