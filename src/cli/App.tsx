@@ -9515,10 +9515,12 @@ ${SYSTEM_REMINDER_CLOSE}
   // Handle escape when profile confirmation is pending
   const handleFeedbackSubmit = useCallback(
     async (message: string) => {
+      // Consume command handle BEFORE closing overlay; otherwise closeOverlay()
+      // finishes it as "Feedback dialog dismissed" and we emit a duplicate entry.
+      const overlayCommand = consumeOverlayCommand("feedback");
       closeOverlay();
 
       await withCommandLock(async () => {
-        const overlayCommand = consumeOverlayCommand("feedback");
         const cmd =
           overlayCommand ??
           commandRunner.start("/feedback", "Sending feedback...");
