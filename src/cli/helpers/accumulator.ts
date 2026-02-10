@@ -921,8 +921,8 @@ export function onChunk(
             undefined, // max_context_length not available here
             b.agentId,
             undefined, // conversationId not available here
-          ).catch(() => {
-            // Silently ignore - don't block stream processing
+          ).catch((error) => {
+            debugLog("hooks", "PreCompact hook error (accumulator)", error);
           });
         }
 
