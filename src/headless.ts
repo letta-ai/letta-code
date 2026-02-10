@@ -10,8 +10,8 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
   fetchRunErrorDetail,
+  getPreStreamErrorAction,
   isApprovalPendingError,
-  isConversationBusyError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
@@ -1169,11 +1169,38 @@ ${SYSTEM_REMINDER_CLOSE}
           errorDetail = preStreamError.message;
         }
 
+        const preStreamAction = getPreStreamErrorAction(
+          errorDetail,
+          conversationBusyRetries,
+          CONVERSATION_BUSY_MAX_RETRIES,
+        );
+
+        // Check for pending approval blocking new messages - resolve and retry.
+        // This is distinct from "conversation busy" and needs approval resolution,
+        // not just a timed delay.
+        if (preStreamAction === "resolve_approval_pending") {
+          if (outputFormat === "stream-json") {
+            const recoveryMsg: RecoveryMessage = {
+              type: "recovery",
+              recovery_type: "approval_pending",
+              message:
+                "Detected pending approval conflict on send; resolving before retry",
+              session_id: sessionId,
+              uuid: `recovery-pre-stream-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(recoveryMsg));
+          } else {
+            console.error(
+              "Pending approval detected, resolving before retry...",
+            );
+          }
+
+          await resolveAllPendingApprovals();
+          continue;
+        }
+
         // Check for 409 "conversation busy" error - retry once with delay
-        if (
-          isConversationBusyError(errorDetail) &&
-          conversationBusyRetries < CONVERSATION_BUSY_MAX_RETRIES
-        ) {
+        if (preStreamAction === "retry_conversation_busy") {
           conversationBusyRetries += 1;
 
           // Emit retry message for stream-json mode
@@ -1847,7 +1874,7 @@ ${SYSTEM_REMINDER_CLOSE}
 async function runBidirectionalMode(
   agent: AgentState,
   conversationId: string,
-  _client: Letta,
+  client: Letta,
   _outputFormat: string,
   includePartialMessages: boolean,
 ): Promise<void> {
@@ -1870,6 +1897,130 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+
+  // Resolve pending approvals for this conversation before retrying user input.
+  const resolveAllPendingApprovals = async () => {
+    const { getResumeData } = await import("./agent/check-approval");
+    while (true) {
+      // Re-fetch agent to get latest in-context messages (source of truth for backend)
+      const freshAgent = await client.agents.retrieve(agent.id);
+
+      let resume: Awaited<ReturnType<typeof getResumeData>>;
+      try {
+        resume = await getResumeData(client, freshAgent, conversationId);
+      } catch (error) {
+        // Treat 404/422 as "no approvals" - stale message/conversation state
+        if (
+          error instanceof APIError &&
+          (error.status === 404 || error.status === 422)
+        ) {
+          break;
+        }
+        throw error;
+      }
+
+      const pendingApprovals = resume.pendingApprovals || [];
+      if (pendingApprovals.length === 0) break;
+
+      type Decision =
+        | {
+            type: "approve";
+            approval: {
+              toolCallId: string;
+              toolName: string;
+              toolArgs: string;
+            };
+            reason: string;
+            matchedRule: string;
+          }
+        | {
+            type: "deny";
+            approval: {
+              toolCallId: string;
+              toolName: string;
+              toolArgs: string;
+            };
+            reason: string;
+          };
+
+      const { autoAllowed, autoDenied } = await classifyApprovals(
+        pendingApprovals,
+        {
+          treatAskAsDeny: true,
+          denyReasonForAsk: "Tool requires approval (headless mode)",
+          requireArgsForAutoApprove: true,
+          missingNameReason: "Tool call incomplete - missing name",
+        },
+      );
+
+      const decisions: Decision[] = [
+        ...autoAllowed.map((ac) => ({
+          type: "approve" as const,
+          approval: ac.approval,
+          reason: ac.permission.reason || "Allowed by permission rule",
+          matchedRule:
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? ac.permission.matchedRule
+              : "auto-approved",
+        })),
+        ...autoDenied.map((ac) => {
+          const fallback =
+            "matchedRule" in ac.permission && ac.permission.matchedRule
+              ? `Permission denied: ${ac.permission.matchedRule}`
+              : ac.permission.reason
+                ? `Permission denied: ${ac.permission.reason}`
+                : "Permission denied: Unknown reason";
+          return {
+            type: "deny" as const,
+            approval: ac.approval,
+            reason: ac.denyReason ?? fallback,
+          };
+        }),
+      ];
+
+      const { executeApprovalBatch } = await import(
+        "./agent/approval-execution"
+      );
+      const executedResults = await executeApprovalBatch(decisions);
+
+      const approvalInput: ApprovalCreate = {
+        type: "approval",
+        approvals: executedResults as ApprovalResult[],
+      };
+
+      const approvalMessages: Array<
+        | import("@letta-ai/letta-client/resources/agents/agents").MessageCreate
+        | import("@letta-ai/letta-client/resources/agents/messages").ApprovalCreate
+      > = [approvalInput];
+
+      {
+        const { consumeQueuedSkillContent } = await import(
+          "./tools/impl/skillContentRegistry"
+        );
+        const skillContents = consumeQueuedSkillContent();
+        if (skillContents.length > 0) {
+          approvalMessages.push({
+            role: "user" as const,
+            content: skillContents.map((sc) => ({
+              type: "text" as const,
+              text: sc.content,
+            })),
+          });
+        }
+      }
+
+      const approvalStream = await sendMessageStream(
+        conversationId,
+        approvalMessages,
+        { agentId: agent.id },
+      );
+      await drainStreamWithResume(
+        approvalStream,
+        createBuffers(agent.id),
+        () => {},
+      );
+    }
+  };
 
   // Create readline interface for stdin
   const rl = readline.createInterface({
@@ -2156,10 +2307,54 @@ async function runBidirectionalMode(
             }
           }
 
-          // Send message to agent
-          const stream = await sendMessageStream(conversationId, currentInput, {
-            agentId: agent.id,
-          });
+          // Send message to agent.
+          // Wrap in try-catch to handle pre-stream 409 approval-pending errors.
+          let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+          try {
+            stream = await sendMessageStream(conversationId, currentInput, {
+              agentId: agent.id,
+            });
+          } catch (preStreamError) {
+            let errorDetail = "";
+            if (
+              preStreamError instanceof APIError &&
+              preStreamError.error &&
+              typeof preStreamError.error === "object"
+            ) {
+              const errObj = preStreamError.error as Record<string, unknown>;
+              if (
+                errObj.error &&
+                typeof errObj.error === "object" &&
+                "detail" in errObj.error
+              ) {
+                const nested = errObj.error as Record<string, unknown>;
+                errorDetail =
+                  typeof nested.detail === "string" ? nested.detail : "";
+              }
+              if (!errorDetail && typeof errObj.detail === "string") {
+                errorDetail = errObj.detail;
+              }
+            }
+            if (!errorDetail && preStreamError instanceof Error) {
+              errorDetail = preStreamError.message;
+            }
+
+            if (isApprovalPendingError(errorDetail)) {
+              const recoveryMsg: RecoveryMessage = {
+                type: "recovery",
+                recovery_type: "approval_pending",
+                message:
+                  "Detected pending approval conflict on send; resolving before retry",
+                session_id: sessionId,
+                uuid: `recovery-bidir-${crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(recoveryMsg));
+              await resolveAllPendingApprovals();
+              continue;
+            }
+
+            throw preStreamError;
+          }
           const streamJsonHook: DrainStreamHook = ({
             chunk,
             shouldOutput,
