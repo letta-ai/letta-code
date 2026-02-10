@@ -211,6 +211,7 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName,
   interruptRequested,
   networkPhase,
+  terminalWidth,
 }: {
   streaming: boolean;
   visible: boolean;
@@ -220,6 +221,7 @@ const StreamingStatus = memo(function StreamingStatus({
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
+  terminalWidth: number;
 }) {
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -275,6 +277,24 @@ const StreamingStatus = memo(function StreamingStatus({
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
+  const statusContentWidth = Math.max(0, terminalWidth - 2);
+  const minMessageWidth = 12;
+  const desiredHintWidth = Math.max(18, Math.floor(statusContentWidth * 0.34));
+  const cappedHintWidth = Math.min(44, desiredHintWidth);
+  const hintColumnWidth = Math.max(
+    0,
+    Math.min(
+      cappedHintWidth,
+      Math.max(0, statusContentWidth - minMessageWidth),
+    ),
+  );
+  const maxMessageWidth = Math.max(0, statusContentWidth - hintColumnWidth);
+  const statusLabel = `${agentName ? `${agentName} ` : ""}${thinkingMessage}…`;
+  const statusLabelWidth = Array.from(statusLabel).length;
+  const messageColumnWidth = Math.max(
+    0,
+    Math.min(maxMessageWidth, Math.max(minMessageWidth, statusLabelWidth)),
+  );
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
   // Uses chalk.dim to match reasoning text styling
@@ -321,13 +341,21 @@ const StreamingStatus = memo(function StreamingStatus({
           <Spinner type="layer" />
         </Text>
       </Box>
-      <Box flexGrow={1} flexDirection="row">
-        <ShimmerText
-          boldPrefix={agentName || undefined}
-          message={thinkingMessage}
-          shimmerOffset={shimmerOffset}
-        />
-        <Text>{statusHintText}</Text>
+      <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
+        <Box width={messageColumnWidth} flexShrink={0}>
+          <ShimmerText
+            boldPrefix={agentName || undefined}
+            message={thinkingMessage}
+            shimmerOffset={shimmerOffset}
+            wrap="truncate-end"
+          />
+        </Box>
+        {hintColumnWidth > 0 && (
+          <Box width={hintColumnWidth} flexShrink={0}>
+            <Text wrap="truncate-end">{statusHintText}</Text>
+          </Box>
+        )}
+        <Box flexGrow={1} />
       </Box>
     </Box>
   );
@@ -1002,6 +1030,7 @@ export function Input({
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
+        terminalWidth={columns}
       />
 
       {/* Queue display - show whenever there are queued messages */}
