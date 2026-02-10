@@ -104,13 +104,13 @@ describe("Startup Flow - Flag Conflicts", () => {
     );
   });
 
-  test("--conversation conflicts with --from-af", async () => {
+  test("--conversation conflicts with --import", async () => {
     const result = await runCli(
-      ["--conversation", "conv-123", "--from-af", "test.af"],
+      ["--conversation", "conv-123", "--import", "test.af"],
       { expectExit: 1 },
     );
     expect(result.stderr).toContain(
-      "--conversation cannot be used with --from-af",
+      "--conversation cannot be used with --import",
     );
   });
 
