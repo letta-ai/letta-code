@@ -137,8 +137,12 @@ function buildModelSettings(
     settings = {};
   }
 
-  // Apply max_output_tokens for all providers if specified
-  if (typeof updateArgs?.max_output_tokens === "number") {
+  // Apply max_output_tokens only when provider_type is present.
+  // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
+  if (
+    typeof updateArgs?.max_output_tokens === "number" &&
+    "provider_type" in settings
+  ) {
     (settings as Record<string, unknown>).max_output_tokens =
       updateArgs.max_output_tokens;
   }
@@ -175,6 +179,9 @@ export async function updateAgentLLMConfig(
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
+    ...(typeof updateArgs?.max_output_tokens === "number" && {
+      max_tokens: updateArgs.max_output_tokens,
+    }),
   });
 
   const finalAgent = await client.agents.retrieve(agentId);

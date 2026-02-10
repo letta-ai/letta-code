@@ -3,6 +3,7 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
+import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
 import { MEMORY_TOOL_NAMES } from "../../tools/toolset";
 
 /**
@@ -134,11 +135,7 @@ export function isFancyUITool(name: string): boolean {
  * Other tools (bash, file edits) should respect yolo mode and auto-approve.
  */
 export function alwaysRequiresUserInput(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
+  return isInteractiveApprovalTool(name);
 }
 
 /**
