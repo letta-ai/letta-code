@@ -41,14 +41,14 @@ import {
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
 import { settingsManager } from "./settings-manager";
 import {
+  isHeadlessAutoAllowTool,
+  isInteractiveApprovalTool,
+} from "./tools/interactivePolicy";
+import {
   type ExternalToolDefinition,
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import {
-  isHeadlessAutoAllowTool,
-  isInteractiveApprovalTool,
-} from "./tools/interactivePolicy";
 import type {
   AutoApprovalMessage,
   CanUseToolControlRequest,
