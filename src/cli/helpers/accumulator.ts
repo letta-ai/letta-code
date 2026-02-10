@@ -135,7 +135,7 @@ export type Line =
       // streaming output state (for shell tools during execution)
       streaming?: StreamingState;
     }
-  | { kind: "error"; id: string; text: string }
+  | { kind: "error"; id: string; text: string; color?: string }
   | {
       kind: "event";
       id: string;

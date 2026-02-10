@@ -2446,7 +2446,7 @@ export default function App({
   // Helper to append an error to the transcript
   // Also tracks the error in telemetry so we know an error was shown
   const appendError = useCallback(
-    (message: string, skipTelemetry = false) => {
+    (message: string, skipTelemetry = false, color?: string) => {
       // Defensive: ensure message is always a string (guards against [object Object])
       const text =
         typeof message === "string"
@@ -2460,6 +2460,7 @@ export default function App({
         kind: "error",
         id,
         text,
+        ...(color && { color }),
       });
       buffersRef.current.order.push(id);
       refreshDerived();
@@ -4420,13 +4421,28 @@ export default function App({
                   errorObject,
                   agentIdRef.current,
                 );
-                appendError(errorDetails, true); // Skip telemetry - already tracked above
 
-                // Show appropriate error hint based on stop reason
-                appendError(
-                  getErrorHintForStopReason(stopReasonToHandle, currentModelId),
-                  true,
+                // Encrypted content errors are self-explanatory (include /clear advice)
+                // — skip the generic "Something went wrong?" hint and use a calmer color
+                const isEncryptedContent = errorDetails.includes(
+                  "Use /clear to start a fresh conversation.",
                 );
+                appendError(
+                  errorDetails,
+                  true, // Skip telemetry - already tracked above
+                  isEncryptedContent ? "cyan" : undefined,
+                );
+
+                if (!isEncryptedContent) {
+                  // Show appropriate error hint based on stop reason
+                  appendError(
+                    getErrorHintForStopReason(
+                      stopReasonToHandle,
+                      currentModelId,
+                    ),
+                    true,
+                  );
+                }
               } else {
                 // No error metadata, show generic error with run info
                 appendError(

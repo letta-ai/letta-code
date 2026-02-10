@@ -5,6 +5,7 @@ type ErrorLine = {
   kind: "error";
   id: string;
   text: string;
+  color?: string;
 };
 
 export const ErrorMessage = memo(({ line }: { line: ErrorLine }) => {

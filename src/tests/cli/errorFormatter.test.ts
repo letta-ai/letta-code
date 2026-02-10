@@ -24,8 +24,7 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI error:");
-      expect(result).toContain("could not be verified");
+      expect(result).toContain("OpenAI authentication error:");
       expect(result).toContain("invalid_encrypted_content");
       expect(result).toContain("Use /clear to start a fresh conversation.");
       expect(result).toContain("different OpenAI authentication scope");
@@ -34,7 +33,7 @@ describe("formatErrorDetails", () => {
       expect(result).not.toContain('"run_id"');
     });
 
-    test("pretty-prints the inner OpenAI error fields", () => {
+    test("formats inner error as JSON-like block", () => {
       const errorObject = {
         error: {
           error: {
@@ -45,9 +44,12 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("type: invalid_request_error");
-      expect(result).toContain("code: invalid_encrypted_content");
+      // JSON-like structured format
+      expect(result).toContain('type: "invalid_request_error"');
+      expect(result).toContain('code: "invalid_encrypted_content"');
       expect(result).toContain("organization_id did not match");
+      expect(result).toContain("  {");
+      expect(result).toContain("  }");
     });
 
     test("handles error with direct detail field", () => {
@@ -57,7 +59,7 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI error:");
+      expect(result).toContain("OpenAI authentication error:");
       expect(result).toContain("Use /clear to start a fresh conversation.");
     });
 
@@ -73,7 +75,7 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      expect(result).toContain("OpenAI error:");
+      expect(result).toContain("OpenAI authentication error:");
       expect(result).toContain("Use /clear to start a fresh conversation.");
     });
   });

@@ -217,9 +217,12 @@ function checkEncryptedContentError(e: unknown): string | undefined {
         const innerError = parsed.error || parsed;
         if (innerError.code === "invalid_encrypted_content") {
           return [
-            `OpenAI error: ${innerError.message || "Encrypted content verification failed."}`,
-            `  type: ${innerError.type || "invalid_request_error"}`,
-            `  code: ${innerError.code}`,
+            "OpenAI authentication error:",
+            "  {",
+            `    type: "${innerError.type || "invalid_request_error"}",`,
+            `    code: "${innerError.code}",`,
+            `    message: "${innerError.message || "Encrypted content verification failed."}"`,
+            "  }",
             ENCRYPTED_CONTENT_HINT,
           ].join("\n");
         }
@@ -230,7 +233,7 @@ function checkEncryptedContentError(e: unknown): string | undefined {
   }
 
   return (
-    "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+    "OpenAI authentication error: Encrypted content could not be verified — organization mismatch." +
     ENCRYPTED_CONTENT_HINT
   );
 }
