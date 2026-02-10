@@ -83,6 +83,7 @@ export interface SystemInitMessage extends MessageEnvelope {
   agent_id: string;
   conversation_id: string;
   model: string;
+  reasoning_effort?: string | null;
   tools: string[];
   cwd: string;
   mcp_servers: Array<{ name: string; status: string }>;

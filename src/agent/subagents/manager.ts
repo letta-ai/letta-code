@@ -225,16 +225,34 @@ function recordToolCall(
  * Handle an init event from the subagent stream
  */
 function handleInitEvent(
-  event: { agent_id?: string; conversation_id?: string },
+  event: {
+    agent_id?: string;
+    conversation_id?: string;
+    reasoning_effort?: string | null;
+  },
   state: ExecutionState,
   baseURL: string,
   subagentId: string,
 ): void {
+  const next: Parameters<typeof updateSubagent>[1] = {};
+
   if (event.agent_id) {
     state.agentId = event.agent_id;
     const agentURL = `${baseURL}/agents/${event.agent_id}`;
-    updateSubagent(subagentId, { agentURL });
+    next.agentURL = agentURL;
   }
+
+  if (
+    typeof event.reasoning_effort === "string" ||
+    event.reasoning_effort === null
+  ) {
+    next.reasoningEffort = event.reasoning_effort;
+  }
+
+  if (Object.keys(next).length > 0) {
+    updateSubagent(subagentId, next);
+  }
+
   if (event.conversation_id) {
     state.conversationId = event.conversation_id;
   }
