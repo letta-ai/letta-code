@@ -53,8 +53,12 @@ export async function packageSkills(
           continue;
         }
 
-        // Check if skill exists in known repos (prefer source_url over embedding)
-        const sourceUrl = await findSkillSourceUrl(entry.name);
+        // Check if skill exists in known repos (prefer source_url over embedding).
+        // When an explicit skillsDir is provided, skip network lookup and always
+        // package local files for deterministic behavior (especially in tests).
+        const sourceUrl = skillsDir
+          ? null
+          : await findSkillSourceUrl(entry.name);
 
         const skill: SkillSchema = { name: entry.name };
 

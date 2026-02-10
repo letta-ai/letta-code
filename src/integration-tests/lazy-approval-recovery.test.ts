@@ -33,6 +33,8 @@ interface StreamMessage {
   subtype?: string;
   message_type?: string;
   stop_reason?: string;
+  request_id?: string;
+  request?: { subtype?: string };
   // biome-ignore lint/suspicious/noExplicitAny: index signature for arbitrary JSON fields
   [key: string]: any;
 }
@@ -77,6 +79,8 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
     let errorSeen = false;
     let resultCount = 0;
     let closing = false;
+    let waitingForApprovalControlRequest = false;
+    let pendingToolCallId: string | undefined;
 
     const timeout = setTimeout(() => {
       if (!closing) {
@@ -105,6 +109,39 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
           console.log("MSG:", JSON.stringify(msg, null, 2));
         }
 
+        // Handle permission control requests from headless.
+        // We only deny the can_use_tool request after seeing an approval_request_message
+        // so the test still exercises the pending-approval flow.
+        if (
+          msg.type === "control_request" &&
+          msg.request?.subtype === "can_use_tool" &&
+          waitingForApprovalControlRequest
+        ) {
+          const requestId = msg.request_id;
+          if (requestId) {
+            if (pendingToolCallId && !requestId.endsWith(pendingToolCallId)) {
+              console.log(
+                `Note: control_request id ${requestId} did not match expected tool id ${pendingToolCallId}`,
+              );
+            }
+
+            const denyApproval = JSON.stringify({
+              type: "control_response",
+              response: {
+                request_id: requestId,
+                response: {
+                  behavior: "deny",
+                  message:
+                    "Denied by integration test to simulate stale approval",
+                },
+              },
+            });
+            proc.stdin?.write(`${denyApproval}\n`);
+            waitingForApprovalControlRequest = false;
+          }
+          return;
+        }
+
         // Step 1: Wait for init, then send bash trigger prompt
         if (msg.type === "system" && msg.subtype === "init" && !initReceived) {
           initReceived = true;
@@ -116,23 +153,36 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
           return;
         }
 
-        // Step 2: When we see approval request, send another user message instead
+        // Step 2: When we see approval request, send another user message instead,
+        // then explicitly deny the pending approval so the flow can complete in
+        // headless stream-json mode (which waits for approval responses).
         if (
           msg.type === "message" &&
           msg.message_type === "approval_request_message" &&
           !approvalSeen
         ) {
           approvalSeen = true;
-          // Wait a moment, then send interrupt message (NOT an approval)
+
+          const toolCall = Array.isArray(msg.tool_call)
+            ? msg.tool_call[0]
+            : msg.tool_call;
+          pendingToolCallId =
+            toolCall && typeof toolCall === "object"
+              ? (toolCall as { tool_call_id?: string }).tool_call_id
+              : undefined;
+          waitingForApprovalControlRequest = true;
+
+          // Wait a moment, then send interrupt message (approval deny will be sent
+          // only after we see the corresponding control_request from headless).
           setTimeout(() => {
-            if (!interruptSent) {
-              interruptSent = true;
-              const userMsg = JSON.stringify({
-                type: "user",
-                message: { role: "user", content: INTERRUPT_MESSAGE },
-              });
-              proc.stdin?.write(`${userMsg}\n`);
-            }
+            if (interruptSent) return;
+            interruptSent = true;
+
+            const userMsg = JSON.stringify({
+              type: "user",
+              message: { role: "user", content: INTERRUPT_MESSAGE },
+            });
+            proc.stdin?.write(`${userMsg}\n`);
           }, 500);
           return;
         }

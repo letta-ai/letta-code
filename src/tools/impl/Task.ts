@@ -47,6 +47,60 @@ interface TaskArgs {
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["explore", "general-purpose"]);
 
+type TaskRunResult = {
+  agentId: string;
+  conversationId?: string;
+  report: string;
+  success: boolean;
+  error?: string;
+  totalTokens?: number;
+};
+
+function buildTaskResultHeader(
+  subagentType: string,
+  result: Pick<TaskRunResult, "agentId" | "conversationId">,
+): string {
+  return [
+    `subagent_type=${subagentType}`,
+    result.agentId ? `agent_id=${result.agentId}` : undefined,
+    result.conversationId
+      ? `conversation_id=${result.conversationId}`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function writeTaskTranscriptStart(
+  outputFile: string,
+  description: string,
+  subagentType: string,
+): void {
+  appendToOutputFile(
+    outputFile,
+    `[Task started: ${description}]\n[subagent_type: ${subagentType}]\n\n`,
+  );
+}
+
+function writeTaskTranscriptResult(
+  outputFile: string,
+  result: TaskRunResult,
+  header: string,
+): void {
+  if (result.success) {
+    appendToOutputFile(
+      outputFile,
+      `${header}\n\n${result.report}\n\n[Task completed]\n`,
+    );
+    return;
+  }
+
+  appendToOutputFile(
+    outputFile,
+    `[error] ${result.error || "Subagent execution failed"}\n\n[Task failed]\n`,
+  );
+}
+
 /**
  * Task tool - Launch a specialized subagent to handle complex tasks
  */
@@ -151,10 +205,7 @@ export async function task(args: TaskArgs): Promise<string> {
     backgroundTasks.set(taskId, bgTask);
 
     // Write initial status to output file
-    appendToOutputFile(
-      outputFile,
-      `[Task started: ${description}]\n[subagent_type: ${subagent_type}]\n\n`,
-    );
+    writeTaskTranscriptStart(outputFile, description, subagent_type);
 
     // Fire-and-forget: run subagent without awaiting
     spawnSubagent(
@@ -175,30 +226,13 @@ export async function task(args: TaskArgs): Promise<string> {
         }
 
         // Build output header
-        const header = [
-          `subagent_type=${subagent_type}`,
-          result.agentId ? `agent_id=${result.agentId}` : undefined,
-          result.conversationId
-            ? `conversation_id=${result.conversationId}`
-            : undefined,
-        ]
-          .filter(Boolean)
-          .join(" ");
+        const header = buildTaskResultHeader(subagent_type, result);
 
         // Write result to output file
+        writeTaskTranscriptResult(outputFile, result, header);
         if (result.success) {
-          appendToOutputFile(outputFile, `${header}\n\n${result.report}\n`);
           bgTask.output.push(result.report || "");
-        } else {
-          appendToOutputFile(
-            outputFile,
-            `[error] ${result.error || "Subagent execution failed"}\n`,
-          );
         }
-        appendToOutputFile(
-          outputFile,
-          `\n[Task ${result.success ? "completed" : "failed"}]\n`,
-        );
 
         // Mark subagent as completed in state store
         completeSubagent(subagentId, {
@@ -299,6 +333,12 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Task running in background with ID: ${taskId}\nOutput file: ${outputFile}`;
   }
 
+  // Foreground tasks now also write transcripts so users can inspect full output
+  // even when inline content is truncated.
+  const foregroundTaskId = getNextTaskId();
+  const outputFile = createBackgroundOutputFile(foregroundTaskId);
+  writeTaskTranscriptStart(outputFile, description, subagent_type);
+
   try {
     const result = await spawnSubagent(
       subagent_type,
@@ -331,22 +371,22 @@ export async function task(args: TaskArgs): Promise<string> {
     });
 
     if (!result.success) {
-      return `Error: ${result.error || "Subagent execution failed"}`;
+      const errorMessage = result.error || "Subagent execution failed";
+      const failedResult: TaskRunResult = {
+        ...result,
+        error: errorMessage,
+      };
+      writeTaskTranscriptResult(outputFile, failedResult, "");
+      return `Error: ${errorMessage}\nOutput file: ${outputFile}`;
     }
 
     // Include stable subagent metadata so orchestrators can attribute results.
     // Keep the tool return type as a string for compatibility.
-    const header = [
-      `subagent_type=${subagent_type}`,
-      result.agentId ? `agent_id=${result.agentId}` : undefined,
-      result.conversationId
-        ? `conversation_id=${result.conversationId}`
-        : undefined,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const header = buildTaskResultHeader(subagent_type, result);
 
     const fullOutput = `${header}\n\n${result.report}`;
+    writeTaskTranscriptResult(outputFile, result, header);
+
     const userCwd = process.env.USER_CWD || process.cwd();
 
     // Apply truncation to prevent excessive token usage (same pattern as Bash tool)
@@ -357,7 +397,7 @@ export async function task(args: TaskArgs): Promise<string> {
       { workingDirectory: userCwd, toolName: "Task" },
     );
 
-    return truncatedOutput;
+    return `${truncatedOutput}\nOutput file: ${outputFile}`;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     completeSubagent(subagentId, { success: false, error: errorMessage });
@@ -374,6 +414,10 @@ export async function task(args: TaskArgs): Promise<string> {
       // Silently ignore hook errors
     });
 
-    return `Error: ${errorMessage}`;
+    appendToOutputFile(
+      outputFile,
+      `[error] ${errorMessage}\n\n[Task failed]\n`,
+    );
+    return `Error: ${errorMessage}\nOutput file: ${outputFile}`;
   }
 }

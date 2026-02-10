@@ -543,26 +543,26 @@ export function ModelSelector({
 
   const getCategoryDescription = (cat: ModelCategory) => {
     if (cat === "server-recommended") {
-      return "Recommended models on the server";
+      return "Recommended models currently available for this account";
     }
     if (cat === "server-all") {
-      return "All models on the server";
+      return "All models currently available for this account";
     }
     if (cat === "supported") {
       return isFreeTier
         ? "Upgrade your account to access more models"
-        : "Recommended models on the Letta API";
+        : "Recommended Letta API models currently available for this account";
     }
     if (cat === "byok")
-      return "Recommended models via your API keys (use /connect to add more)";
+      return "Recommended models via your connected API keys (use /connect to add more)";
     if (cat === "byok-all")
-      return "All models via your API keys (use /connect to add more)";
+      return "All models via your connected API keys (use /connect to add more)";
     if (cat === "all") {
       return isFreeTier
         ? "Upgrade your account to access more models"
-        : "All models on the Letta API";
+        : "All Letta API models currently available for this account";
     }
-    return "All models on the Letta API";
+    return "All Letta API models currently available for this account";
   };
 
   // Render tab bar (matches AgentSelector style)
@@ -700,7 +700,7 @@ export function ModelSelector({
           <Text dimColor>
             {"  "}
             {currentList.length} models{isCached ? " · cached" : ""} · R to
-            refresh
+            refresh availability
           </Text>
           <Text dimColor>
             {"  "}Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel

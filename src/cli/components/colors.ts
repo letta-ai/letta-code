@@ -104,7 +104,7 @@ const _colors = {
   },
 
   link: {
-    text: "cyan",
+    text: brandColors.primaryAccentLight,
     url: brandColors.primaryAccent,
   },
 

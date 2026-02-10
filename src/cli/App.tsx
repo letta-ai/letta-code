@@ -247,7 +247,11 @@ import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
 // Used only for terminal resize, not for dialog dismissal (see PR for details)
 const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 const MIN_RESIZE_DELTA = 2;
+const RESIZE_SETTLE_MS = 250;
+const MIN_CLEAR_INTERVAL_MS = 750;
+const STABLE_WIDTH_SETTLE_MS = 180;
 const TOOL_CALL_COMMIT_DEFER_MS = 50;
+const ANIMATION_RESUME_HYSTERESIS_ROWS = 2;
 
 // Eager approval checking is now CONDITIONAL (LET-7101):
 // - Enabled when resuming a session (--resume, --continue, or startupApprovals exist)
@@ -1541,18 +1545,138 @@ export default function App({
   );
 
   // Track terminal dimensions for layout and overflow detection
-  const columns = useTerminalWidth();
+  const rawColumns = useTerminalWidth();
   const terminalRows = useTerminalRows();
-  const prevColumnsRef = useRef(columns);
-  const lastClearedColumnsRef = useRef(columns);
+  const [stableColumns, setStableColumns] = useState(rawColumns);
+  const stableColumnsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const prevColumnsRef = useRef(rawColumns);
+  const lastClearedColumnsRef = useRef(rawColumns);
   const pendingResizeRef = useRef(false);
   const pendingResizeColumnsRef = useRef<number | null>(null);
   const [staticRenderEpoch, setStaticRenderEpoch] = useState(0);
   const resizeClearTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastClearAtRef = useRef(0);
   const isInitialResizeRef = useRef(true);
+  const columns = stableColumns;
+  const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
+
+  useEffect(() => {
+    if (rawColumns === stableColumns) {
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const delta = Math.abs(rawColumns - stableColumns);
+    if (delta >= MIN_RESIZE_DELTA) {
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
+      }
+      setStableColumns(rawColumns);
+      return;
+    }
+
+    if (stableColumnsTimeoutRef.current) {
+      clearTimeout(stableColumnsTimeoutRef.current);
+    }
+    stableColumnsTimeoutRef.current = setTimeout(() => {
+      stableColumnsTimeoutRef.current = null;
+      setStableColumns(rawColumns);
+    }, STABLE_WIDTH_SETTLE_MS);
+  }, [rawColumns, stableColumns]);
+
+  const clearAndRemount = useCallback(
+    (targetColumns: number) => {
+      if (debugFlicker) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:clear-remount] target=${targetColumns} previousCleared=${lastClearedColumnsRef.current} raw=${prevColumnsRef.current}`,
+        );
+      }
+
+      if (
+        typeof process !== "undefined" &&
+        process.stdout &&
+        "write" in process.stdout &&
+        process.stdout.isTTY
+      ) {
+        process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      }
+      setStaticRenderEpoch((epoch) => epoch + 1);
+      lastClearedColumnsRef.current = targetColumns;
+      lastClearAtRef.current = Date.now();
+    },
+    [debugFlicker],
+  );
+
+  const scheduleResizeClear = useCallback(
+    (targetColumns: number) => {
+      if (targetColumns === lastClearedColumnsRef.current) {
+        return;
+      }
+
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+
+      const elapsedSinceClear = Date.now() - lastClearAtRef.current;
+      const rateLimitDelay =
+        elapsedSinceClear >= MIN_CLEAR_INTERVAL_MS
+          ? 0
+          : MIN_CLEAR_INTERVAL_MS - elapsedSinceClear;
+      const delay = Math.max(RESIZE_SETTLE_MS, rateLimitDelay);
+      if (debugFlicker) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:resize-schedule] target=${targetColumns} delay=${delay}ms elapsedSinceClear=${elapsedSinceClear}ms`,
+        );
+      }
+
+      resizeClearTimeout.current = setTimeout(() => {
+        resizeClearTimeout.current = null;
+
+        // If resize changed again while waiting, let the latest schedule win.
+        if (prevColumnsRef.current !== targetColumns) {
+          if (debugFlicker) {
+            // eslint-disable-next-line no-console
+            console.error(
+              `[debug:flicker:resize-skip] stale target=${targetColumns} currentRaw=${prevColumnsRef.current}`,
+            );
+          }
+          return;
+        }
+
+        if (targetColumns === lastClearedColumnsRef.current) {
+          if (debugFlicker) {
+            // eslint-disable-next-line no-console
+            console.error(
+              `[debug:flicker:resize-skip] already-cleared target=${targetColumns}`,
+            );
+          }
+          return;
+        }
+
+        if (debugFlicker) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[debug:flicker:resize-fire] clear target=${targetColumns}`,
+          );
+        }
+        clearAndRemount(targetColumns);
+      }, delay);
+    },
+    [clearAndRemount, debugFlicker],
+  );
+
   useEffect(() => {
     const prev = prevColumnsRef.current;
-    if (columns === prev) return;
+    if (rawColumns === prev) return;
 
     // Clear pending debounced operation on any resize
     if (resizeClearTimeout.current) {
@@ -1563,60 +1687,39 @@ export default function App({
     // Skip initial mount - no clearing needed on first render
     if (isInitialResizeRef.current) {
       isInitialResizeRef.current = false;
-      prevColumnsRef.current = columns;
-      lastClearedColumnsRef.current = columns;
+      prevColumnsRef.current = rawColumns;
+      lastClearedColumnsRef.current = rawColumns;
       return;
     }
 
-    const delta = Math.abs(columns - prev);
+    const delta = Math.abs(rawColumns - prev);
     const isMinorJitter = delta > 0 && delta < MIN_RESIZE_DELTA;
-    if (streaming) {
-      if (isMinorJitter) {
-        prevColumnsRef.current = columns;
-        return;
-      }
+    if (isMinorJitter) {
+      prevColumnsRef.current = rawColumns;
+      return;
+    }
 
+    if (streaming) {
       // Defer clear/remount until streaming ends to avoid Ghostty flicker.
       pendingResizeRef.current = true;
-      pendingResizeColumnsRef.current = columns;
-      prevColumnsRef.current = columns;
+      pendingResizeColumnsRef.current = rawColumns;
+      prevColumnsRef.current = rawColumns;
       return;
     }
 
-    if (columns === lastClearedColumnsRef.current) {
+    if (rawColumns === lastClearedColumnsRef.current) {
       pendingResizeRef.current = false;
       pendingResizeColumnsRef.current = null;
-      prevColumnsRef.current = columns;
+      prevColumnsRef.current = rawColumns;
       return;
     }
 
     // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
-    // Clear and remount must happen together - otherwise Static re-renders on top of existing content
-    const scheduledColumns = columns;
-    resizeClearTimeout.current = setTimeout(() => {
-      resizeClearTimeout.current = null;
-      if (
-        typeof process !== "undefined" &&
-        process.stdout &&
-        "write" in process.stdout &&
-        process.stdout.isTTY
-      ) {
-        process.stdout.write(CLEAR_SCREEN_AND_HOME);
-      }
-      setStaticRenderEpoch((epoch) => epoch + 1);
-      lastClearedColumnsRef.current = scheduledColumns;
-    }, 150);
+    // and keep clear frequency bounded to prevent flash storms.
+    scheduleResizeClear(rawColumns);
 
-    prevColumnsRef.current = columns;
-
-    // Cleanup on unmount
-    return () => {
-      if (resizeClearTimeout.current) {
-        clearTimeout(resizeClearTimeout.current);
-        resizeClearTimeout.current = null;
-      }
-    };
-  }, [columns, streaming]);
+    prevColumnsRef.current = rawColumns;
+  }, [rawColumns, streaming, scheduleResizeClear]);
 
   useEffect(() => {
     if (streaming) {
@@ -1624,7 +1727,7 @@ export default function App({
         clearTimeout(resizeClearTimeout.current);
         resizeClearTimeout.current = null;
         pendingResizeRef.current = true;
-        pendingResizeColumnsRef.current = columns;
+        pendingResizeColumnsRef.current = rawColumns;
       }
       return;
     }
@@ -1638,17 +1741,21 @@ export default function App({
     if (pendingColumns === null) return;
     if (pendingColumns === lastClearedColumnsRef.current) return;
 
-    if (
-      typeof process !== "undefined" &&
-      process.stdout &&
-      "write" in process.stdout &&
-      process.stdout.isTTY
-    ) {
-      process.stdout.write(CLEAR_SCREEN_AND_HOME);
-    }
-    setStaticRenderEpoch((epoch) => epoch + 1);
-    lastClearedColumnsRef.current = pendingColumns;
-  }, [columns, streaming]);
+    scheduleResizeClear(pendingColumns);
+  }, [rawColumns, streaming, scheduleResizeClear]);
+
+  useEffect(() => {
+    return () => {
+      if (resizeClearTimeout.current) {
+        clearTimeout(resizeClearTimeout.current);
+        resizeClearTimeout.current = null;
+      }
+      if (stableColumnsTimeoutRef.current) {
+        clearTimeout(stableColumnsTimeoutRef.current);
+        stableColumnsTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const deferredToolCallCommitsRef = useRef<Map<string, number>>(new Map());
   const [deferredCommitAt, setDeferredCommitAt] = useState<number | null>(null);
@@ -9075,10 +9182,9 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         if (!selectedModel) {
-          const cmd =
-            overlayCommand ??
-            commandRunner.start("/model", `Model not found: ${modelId}`);
-          cmd.fail(`Model not found: ${modelId}`);
+          const output = `Model not found: ${modelId}. Run /model and press R to refresh available models.`;
+          const cmd = overlayCommand ?? commandRunner.start("/model", output);
+          cmd.fail(output);
           return;
         }
         const model = selectedModel;
@@ -9169,10 +9275,18 @@ ${SYSTEM_REMINDER_CLOSE}
         });
       } catch (error) {
         const errorDetails = formatErrorDetails(error, agentId);
+        const modelLabel = selectedModel?.label ?? modelId;
+        const guidance =
+          "Run /model and press R to refresh available models. If the model is still unavailable, choose another model or connect a provider with /connect.";
         const cmd =
           overlayCommand ??
-          commandRunner.start("/model", "Failed to switch model.");
-        cmd.fail(`Failed to switch model: ${errorDetails}`);
+          commandRunner.start(
+            "/model",
+            `Failed to switch model to ${modelLabel}.`,
+          );
+        cmd.fail(
+          `Failed to switch model to ${modelLabel}: ${errorDetails}\n${guidance}`,
+        );
       }
     },
     [
@@ -9448,10 +9562,12 @@ ${SYSTEM_REMINDER_CLOSE}
   // Handle escape when profile confirmation is pending
   const handleFeedbackSubmit = useCallback(
     async (message: string) => {
+      // Consume command handle BEFORE closing overlay; otherwise closeOverlay()
+      // finishes it as "Feedback dialog dismissed" and we emit a duplicate entry.
+      const overlayCommand = consumeOverlayCommand("feedback");
       closeOverlay();
 
       await withCommandLock(async () => {
-        const overlayCommand = consumeOverlayCommand("feedback");
         const cmd =
           overlayCommand ??
           commandRunner.start("/feedback", "Sending feedback...");
@@ -9951,9 +10067,8 @@ Plan file path: ${planFilePath}`;
     getSubagentSnapshot,
   );
 
-  // Overflow detection: disable animations when live content exceeds viewport
-  // This prevents Ink's clearTerminal flicker on every re-render cycle
-  const shouldAnimate = useMemo(() => {
+  // Estimate live area height for overflow detection.
+  const estimatedLiveHeight = useMemo(() => {
     // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {
       if (!text) return 0;
@@ -9995,8 +10110,33 @@ Plan file path: ${planFilePath}`;
 
     const estimatedHeight = liveItemsHeight + subagentsHeight + FIXED_BUFFER;
 
-    return estimatedHeight < terminalRows;
-  }, [liveItems, terminalRows, subagents.length]);
+    return estimatedHeight;
+  }, [liveItems, subagents.length]);
+
+  // Overflow detection with hysteresis: disable quickly on overflow, re-enable
+  // only after we've recovered extra headroom to avoid flap near the boundary.
+  const [shouldAnimate, setShouldAnimate] = useState(
+    () => estimatedLiveHeight < terminalRows,
+  );
+  useEffect(() => {
+    if (terminalRows <= 0) {
+      setShouldAnimate(false);
+      return;
+    }
+
+    const disableThreshold = terminalRows;
+    const resumeThreshold = Math.max(
+      0,
+      terminalRows - ANIMATION_RESUME_HYSTERESIS_ROWS,
+    );
+
+    setShouldAnimate((prev) => {
+      if (prev) {
+        return estimatedLiveHeight < disableThreshold;
+      }
+      return estimatedLiveHeight < resumeThreshold;
+    });
+  }, [estimatedLiveHeight, terminalRows]);
 
   // Commit welcome snapshot once when ready for fresh sessions (no history)
   // Wait for agentProvenance to be available for new agents (continueSession=false)
@@ -10448,6 +10588,8 @@ Plan file path: ${planFilePath}`;
                 restoredInput={restoredInput}
                 onRestoredInputConsumed={() => setRestoredInput(null)}
                 networkPhase={networkPhase}
+                terminalWidth={columns}
+                shouldAnimate={shouldAnimate}
               />
             </Box>
 

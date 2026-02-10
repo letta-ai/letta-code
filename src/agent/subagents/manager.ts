@@ -685,12 +685,15 @@ async function executeSubagent(
         }
       }
 
+      const propagatedError = state.finalError?.trim();
+      const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
+
       return {
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
-        error: stderr || `Subagent exited with code ${exitCode}`,
+        error: propagatedError || fallbackError,
       };
     }
 

@@ -10,7 +10,7 @@
  * if animations should be disabled, then provides this via context.
  */
 
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 interface AnimationContextValue {
   /**
@@ -46,8 +46,10 @@ export function AnimationProvider({
   children,
   shouldAnimate,
 }: AnimationProviderProps) {
+  const contextValue = useMemo(() => ({ shouldAnimate }), [shouldAnimate]);
+
   return (
-    <AnimationContext.Provider value={{ shouldAnimate }}>
+    <AnimationContext.Provider value={contextValue}>
       {children}
     </AnimationContext.Provider>
   );
