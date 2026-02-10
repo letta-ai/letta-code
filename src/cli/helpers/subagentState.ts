@@ -27,6 +27,7 @@ export interface SubagentState {
   durationMs: number;
   error?: string;
   model?: string;
+  reasoningEffort?: string | null;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
@@ -121,6 +122,7 @@ export function registerSubagent(
     toolCalls: [],
     totalTokens: 0,
     durationMs: 0,
+    reasoningEffort: null,
     startTime: Date.now(),
     toolCallId,
     isBackground,

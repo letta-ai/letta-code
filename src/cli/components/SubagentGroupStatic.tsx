@@ -38,6 +38,7 @@ export interface StaticSubagent {
   agentURL: string | null;
   error?: string;
   model?: string;
+  reasoningEffort?: string | null;
   isBackground?: boolean;
 }
 
@@ -63,7 +64,10 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
   const isRunning = agent.status === "running";
   const shouldDim = isRunning && !agent.isBackground;
   const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
-  const modelDisplay = getSubagentModelDisplay(agent.model);
+  const modelDisplay = getSubagentModelDisplay(
+    agent.model,
+    agent.reasoningEffort,
+  );
 
   return (
     <Box flexDirection="column">
@@ -84,6 +88,9 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
           {modelDisplay && (
             <>
               <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+              {modelDisplay.reasoningEffortLabel && (
+                <Text dimColor>{`-${modelDisplay.reasoningEffortLabel}`}</Text>
+              )}
               {modelDisplay.isByokProvider && (
                 <Text
                   color={

@@ -850,6 +850,9 @@ export async function handleHeadlessCommand(
       agent_id: agent.id,
       conversation_id: conversationId,
       model: agent.llm_config?.model ?? "",
+      reasoning_effort: (
+        agent.llm_config as { reasoning_effort?: string | null } | undefined
+      )?.reasoning_effort,
       tools:
         agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [],
       cwd: process.cwd(),
@@ -1862,6 +1865,9 @@ async function runBidirectionalMode(
     agent_id: agent.id,
     conversation_id: conversationId,
     model: agent.llm_config?.model,
+    reasoning_effort: (
+      agent.llm_config as { reasoning_effort?: string | null } | undefined
+    )?.reasoning_effort,
     tools: agent.tools?.map((t) => t.name) || [],
     cwd: process.cwd(),
     uuid: `init-${agent.id}`,

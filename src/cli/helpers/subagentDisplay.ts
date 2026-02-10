@@ -53,6 +53,7 @@ export interface SubagentModelDisplay {
   label: string;
   isByokProvider: boolean;
   isOpenAICodexProvider: boolean;
+  reasoningEffortLabel?: string;
 }
 
 /**
@@ -61,6 +62,7 @@ export interface SubagentModelDisplay {
  */
 export function getSubagentModelDisplay(
   model: string | undefined,
+  reasoningEffort?: string | null,
 ): SubagentModelDisplay | null {
   if (!model) return null;
 
@@ -74,9 +76,28 @@ export function getSubagentModelDisplay(
   const label =
     getModelShortName(normalized) ?? normalized.split("/").pop() ?? normalized;
 
+  const effort = typeof reasoningEffort === "string" ? reasoningEffort : null;
+  const effortLabel =
+    effort === "none" || !effort
+      ? undefined
+      : effort === "minimal"
+        ? "min"
+        : effort === "medium"
+          ? "med"
+          : effort === "med"
+            ? "med"
+            : effort === "low"
+              ? "low"
+              : effort === "high"
+                ? "high"
+                : effort === "xhigh"
+                  ? "xhigh"
+                  : undefined;
+
   return {
     label,
     isByokProvider,
     isOpenAICodexProvider,
+    reasoningEffortLabel: effortLabel,
   };
 }

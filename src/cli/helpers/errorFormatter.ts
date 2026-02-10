@@ -178,9 +178,7 @@ const ENCRYPTED_CONTENT_HINT = [
  * Walk the error object to find the `detail` string containing the encrypted content error.
  * Handles both direct (e.detail) and nested (e.error.error.detail) structures.
  */
-function findEncryptedContentDetail(
-  e: unknown,
-): string | undefined {
+function findEncryptedContentDetail(e: unknown): string | undefined {
   if (typeof e !== "object" || e === null) return undefined;
   const obj = e as Record<string, unknown>;
 
