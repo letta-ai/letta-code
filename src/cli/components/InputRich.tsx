@@ -8,6 +8,7 @@ import SpinnerLib from "ink-spinner";
 import {
   type ComponentType,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -325,7 +326,13 @@ const StreamingStatus = memo(function StreamingStatus({
   const statusHintWidth = Array.from(statusHintPlain).length;
   const maxHintWidth = Math.max(0, statusContentWidth - minMessageWidth);
   const hintColumnWidth = Math.max(0, Math.min(statusHintWidth, maxHintWidth));
-  const messageColumnWidth = Math.max(0, statusContentWidth - hintColumnWidth);
+  const maxMessageWidth = Math.max(0, statusContentWidth - hintColumnWidth);
+  const statusLabel = `${agentName ? `${agentName} ` : ""}${thinkingMessage}…`;
+  const statusLabelWidth = Array.from(statusLabel).length;
+  const messageColumnWidth = Math.max(
+    0,
+    Math.min(maxMessageWidth, Math.max(minMessageWidth, statusLabelWidth)),
+  );
 
   // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
   // Uses chalk.dim to match reasoning text styling
@@ -557,17 +564,17 @@ export function Input({
     }
   }, [restoredInput, value, onRestoredInputConsumed]);
 
-  const handleBangAtEmpty = () => {
+  const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
     setIsBashMode(true);
     return true;
-  };
+  }, [isBashMode]);
 
-  const handleBackspaceAtEmpty = () => {
+  const handleBackspaceAtEmpty = useCallback(() => {
     if (!isBashMode) return false;
     setIsBashMode(false);
     return true;
-  };
+  }, [isBashMode]);
 
   // Reset cursor position after it's been applied
   useEffect(() => {
@@ -920,7 +927,7 @@ export function Input({
     };
   }, []);
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
       return;
@@ -936,9 +943,10 @@ export function Input({
       if (bashRunning) return;
 
       // Add to history if not empty and not a duplicate of the last entry
-      if (previousValue.trim() !== history[history.length - 1]) {
-        setHistory([...history, previousValue]);
-      }
+      setHistory((prev) => {
+        if (previousValue.trim() === prev[prev.length - 1]) return prev;
+        return [...prev, previousValue];
+      });
 
       // Reset history navigation
       setHistoryIndex(-1);
@@ -953,8 +961,11 @@ export function Input({
     }
 
     // Add to history if not empty and not a duplicate of the last entry
-    if (previousValue.trim() && previousValue !== history[history.length - 1]) {
-      setHistory([...history, previousValue]);
+    if (previousValue.trim()) {
+      setHistory((prev) => {
+        if (previousValue === prev[prev.length - 1]) return prev;
+        return [...prev, previousValue];
+      });
     }
 
     // Reset history navigation
@@ -967,63 +978,79 @@ export function Input({
     if (!result.submitted) {
       setValue(previousValue);
     }
-  };
+  }, [
+    isAutocompleteActive,
+    value,
+    isBashMode,
+    bashRunning,
+    onBashSubmit,
+    onSubmit,
+  ]);
 
   // Handle file selection from autocomplete
-  const handleFileSelect = (selectedPath: string) => {
-    // Find the last "@" and replace everything after it with the selected path
-    const atIndex = value.lastIndexOf("@");
-    if (atIndex === -1) return;
+  const handleFileSelect = useCallback(
+    (selectedPath: string) => {
+      // Find the last "@" and replace everything after it with the selected path
+      const atIndex = value.lastIndexOf("@");
+      if (atIndex === -1) return;
 
-    const beforeAt = value.slice(0, atIndex);
-    const afterAt = value.slice(atIndex + 1);
-    const spaceIndex = afterAt.indexOf(" ");
+      const beforeAt = value.slice(0, atIndex);
+      const afterAt = value.slice(atIndex + 1);
+      const spaceIndex = afterAt.indexOf(" ");
 
-    let newValue: string;
-    let newCursorPos: number;
+      let newValue: string;
+      let newCursorPos: number;
 
-    // Replace the query part with the selected path
-    if (spaceIndex === -1) {
-      // No space after @query, replace to end
-      newValue = `${beforeAt}@${selectedPath} `;
-      newCursorPos = newValue.length;
-    } else {
-      // Space exists, replace only the query part
-      const afterQuery = afterAt.slice(spaceIndex);
-      newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
-      newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
-    }
+      // Replace the query part with the selected path
+      if (spaceIndex === -1) {
+        // No space after @query, replace to end
+        newValue = `${beforeAt}@${selectedPath} `;
+        newCursorPos = newValue.length;
+      } else {
+        // Space exists, replace only the query part
+        const afterQuery = afterAt.slice(spaceIndex);
+        newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
+        newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
+      }
 
-    setValue(newValue);
-    setCursorPos(newCursorPos);
-  };
+      setValue(newValue);
+      setCursorPos(newCursorPos);
+    },
+    [value],
+  );
 
   // Handle slash command selection from autocomplete (Enter key - execute)
-  const handleCommandSelect = async (selectedCommand: string) => {
-    // For slash commands, submit immediately when selected via Enter
-    // This provides a better UX - pressing Enter on /model should open the model selector
-    const commandToSubmit = selectedCommand.trim();
+  const handleCommandSelect = useCallback(
+    async (selectedCommand: string) => {
+      // For slash commands, submit immediately when selected via Enter
+      // This provides a better UX - pressing Enter on /model should open the model selector
+      const commandToSubmit = selectedCommand.trim();
 
-    // Add to history if not a duplicate of the last entry
-    if (commandToSubmit && commandToSubmit !== history[history.length - 1]) {
-      setHistory([...history, commandToSubmit]);
-    }
+      // Add to history if not a duplicate of the last entry
+      if (commandToSubmit) {
+        setHistory((prev) => {
+          if (commandToSubmit === prev[prev.length - 1]) return prev;
+          return [...prev, commandToSubmit];
+        });
+      }
 
-    // Reset history navigation
-    setHistoryIndex(-1);
-    setTemporaryInput("");
+      // Reset history navigation
+      setHistoryIndex(-1);
+      setTemporaryInput("");
 
-    setValue(""); // Clear immediately for responsiveness
-    await onSubmit(commandToSubmit);
-  };
+      setValue(""); // Clear immediately for responsiveness
+      await onSubmit(commandToSubmit);
+    },
+    [onSubmit],
+  );
 
   // Handle slash command autocomplete (Tab key - fill text only)
-  const handleCommandAutocomplete = (selectedCommand: string) => {
+  const handleCommandAutocomplete = useCallback((selectedCommand: string) => {
     // Just fill in the command text without executing
     // User can then press Enter to execute or continue typing arguments
     setValue(selectedCommand);
     setCursorPos(selectedCommand.length);
-  };
+  }, []);
 
   // Get display name and color for permission mode (ralph modes take precedence)
   // Memoized to prevent unnecessary footer re-renders
@@ -1082,6 +1109,131 @@ export function Input({
   // Memoized since it only changes when terminal width changes
   const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
 
+  const lowerPane = useMemo(() => {
+    return (
+      <>
+        {/* Queue display - show whenever there are queued messages */}
+        {messageQueue && messageQueue.length > 0 && (
+          <QueuedMessages messages={messageQueue} />
+        )}
+
+        {interactionEnabled ? (
+          <Box flexDirection="column">
+            {/* Top horizontal divider */}
+            <Text
+              dimColor={!isBashMode}
+              color={isBashMode ? colors.bash.border : undefined}
+            >
+              {horizontalLine}
+            </Text>
+
+            {/* Two-column layout for input, matching message components */}
+            <Box flexDirection="row">
+              <Box width={2} flexShrink={0}>
+                <Text
+                  color={isBashMode ? colors.bash.prompt : colors.input.prompt}
+                >
+                  {isBashMode ? "!" : ">"}
+                </Text>
+                <Text> </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <PasteAwareTextInput
+                  value={value}
+                  onChange={setValue}
+                  onSubmit={handleSubmit}
+                  cursorPosition={cursorPos}
+                  onCursorMove={setCurrentCursorPosition}
+                  focus={interactionEnabled && !onEscapeCancel}
+                  onBangAtEmpty={handleBangAtEmpty}
+                  onBackspaceAtEmpty={handleBackspaceAtEmpty}
+                  onPasteError={onPasteError}
+                />
+              </Box>
+            </Box>
+
+            {/* Bottom horizontal divider */}
+            <Text
+              dimColor={!isBashMode}
+              color={isBashMode ? colors.bash.border : undefined}
+            >
+              {horizontalLine}
+            </Text>
+
+            <InputAssist
+              currentInput={value}
+              cursorPosition={currentCursorPosition}
+              onFileSelect={handleFileSelect}
+              onCommandSelect={handleCommandSelect}
+              onCommandAutocomplete={handleCommandAutocomplete}
+              onAutocompleteActiveChange={setIsAutocompleteActive}
+              agentId={agentId}
+              agentName={agentName}
+              serverUrl={serverUrl}
+              workingDirectory={process.cwd()}
+              conversationId={conversationId}
+            />
+
+            <InputFooter
+              ctrlCPressed={ctrlCPressed}
+              escapePressed={escapePressed}
+              isBashMode={isBashMode}
+              modeName={modeInfo?.name ?? null}
+              modeColor={modeInfo?.color ?? null}
+              showExitHint={ralphActive || ralphPending}
+              agentName={agentName}
+              currentModel={currentModel}
+              isOpenAICodexProvider={
+                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+              }
+              isByokProvider={
+                currentModelProvider?.startsWith("lc-") ||
+                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+              }
+              hideFooter={hideFooter}
+              rightColumnWidth={footerRightColumnWidth}
+            />
+          </Box>
+        ) : reserveInputSpace ? (
+          <Box height={inputChromeHeight} />
+        ) : null}
+      </>
+    );
+  }, [
+    messageQueue,
+    interactionEnabled,
+    isBashMode,
+    horizontalLine,
+    contentWidth,
+    value,
+    handleSubmit,
+    cursorPos,
+    onEscapeCancel,
+    handleBangAtEmpty,
+    handleBackspaceAtEmpty,
+    onPasteError,
+    currentCursorPosition,
+    handleFileSelect,
+    handleCommandSelect,
+    handleCommandAutocomplete,
+    agentId,
+    agentName,
+    serverUrl,
+    conversationId,
+    ctrlCPressed,
+    escapePressed,
+    modeInfo?.name,
+    modeInfo?.color,
+    ralphActive,
+    ralphPending,
+    currentModel,
+    currentModelProvider,
+    hideFooter,
+    footerRightColumnWidth,
+    reserveInputSpace,
+    inputChromeHeight,
+  ]);
+
   // If not visible, render nothing but keep component mounted to preserve state
   if (!visible) {
     return null;
@@ -1101,92 +1253,7 @@ export function Input({
         terminalWidth={columns}
         shouldAnimate={shouldAnimate}
       />
-
-      {/* Queue display - show whenever there are queued messages */}
-      {messageQueue && messageQueue.length > 0 && (
-        <QueuedMessages messages={messageQueue} />
-      )}
-
-      {interactionEnabled ? (
-        <Box flexDirection="column">
-          {/* Top horizontal divider */}
-          <Text
-            dimColor={!isBashMode}
-            color={isBashMode ? colors.bash.border : undefined}
-          >
-            {horizontalLine}
-          </Text>
-
-          {/* Two-column layout for input, matching message components */}
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <Text
-                color={isBashMode ? colors.bash.prompt : colors.input.prompt}
-              >
-                {isBashMode ? "!" : ">"}
-              </Text>
-              <Text> </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <PasteAwareTextInput
-                value={value}
-                onChange={setValue}
-                onSubmit={handleSubmit}
-                cursorPosition={cursorPos}
-                onCursorMove={setCurrentCursorPosition}
-                focus={interactionEnabled && !onEscapeCancel}
-                onBangAtEmpty={handleBangAtEmpty}
-                onBackspaceAtEmpty={handleBackspaceAtEmpty}
-                onPasteError={onPasteError}
-              />
-            </Box>
-          </Box>
-
-          {/* Bottom horizontal divider */}
-          <Text
-            dimColor={!isBashMode}
-            color={isBashMode ? colors.bash.border : undefined}
-          >
-            {horizontalLine}
-          </Text>
-
-          <InputAssist
-            currentInput={value}
-            cursorPosition={currentCursorPosition}
-            onFileSelect={handleFileSelect}
-            onCommandSelect={handleCommandSelect}
-            onCommandAutocomplete={handleCommandAutocomplete}
-            onAutocompleteActiveChange={setIsAutocompleteActive}
-            agentId={agentId}
-            agentName={agentName}
-            serverUrl={serverUrl}
-            workingDirectory={process.cwd()}
-            conversationId={conversationId}
-          />
-
-          <InputFooter
-            ctrlCPressed={ctrlCPressed}
-            escapePressed={escapePressed}
-            isBashMode={isBashMode}
-            modeName={modeInfo?.name ?? null}
-            modeColor={modeInfo?.color ?? null}
-            showExitHint={ralphActive || ralphPending}
-            agentName={agentName}
-            currentModel={currentModel}
-            isOpenAICodexProvider={
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-            }
-            isByokProvider={
-              currentModelProvider?.startsWith("lc-") ||
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-            }
-            hideFooter={hideFooter}
-            rightColumnWidth={footerRightColumnWidth}
-          />
-        </Box>
-      ) : reserveInputSpace ? (
-        <Box height={inputChromeHeight} />
-      ) : null}
+      {lowerPane}
     </Box>
   );
 }
