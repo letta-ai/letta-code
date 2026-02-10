@@ -5,14 +5,14 @@
     "": {
       "name": "@letta-ai/letta-code",
       "dependencies": {
-        "@letta-ai/letta-client": "^1.7.6",
+        "@letta-ai/letta-client": "^1.7.8",
         "glob": "^13.0.0",
         "ink-link": "^5.0.0",
         "open": "^10.2.0",
         "sharp": "^0.34.5",
       },
       "devDependencies": {
-        "@types/bun": "latest",
+        "@types/bun": "^1.3.7",
         "@types/diff": "^8.0.0",
         "@types/picomatch": "^4.0.2",
         "@types/react": "^19.2.9",
@@ -91,9 +91,9 @@
 
     "@isaacs/brace-expansion": ["@isaacs/brace-expansion@5.0.0", "", { "dependencies": { "@isaacs/balanced-match": "^4.0.1" } }, "sha512-ZT55BDLV0yv0RBm2czMiZ+SqCGO7AvmOM3G/w2xhVPH+te0aKgFjmBvGlL1dH+ql2tgGO3MVrbb3jCKyvpgnxA=="],
 
-    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.7.6", "", {}, "sha512-C/f03uE3TJdgfHk/8rRBxzWvY0YHCYAlrePHcTd0CRHMo++0TA1OTcgiCF+EFVDVYGzfPSeMpqgAZTNvD9r9GQ=="],
+    "@letta-ai/letta-client": ["@letta-ai/letta-client@1.7.8", "", {}, "sha512-l7BGsAZOI8b+H1RO2IMzMv3P0VXj6Of2wXLCg5LZejOk0dHLLBi2me4WspLg+6zWPGIRJwMRsxmfp4kV9Zzh6g=="],
 
-    "@types/bun": ["@types/bun@1.3.1", "", { "dependencies": { "bun-types": "1.3.1" } }, "sha512-4jNMk2/K9YJtfqwoAa28c8wK+T7nvJFOjxI4h/7sORWcypRNxBpr+TPNaCfVWq70tLCJsqoFwcf0oI0JU/fvMQ=="],
+    "@types/bun": ["@types/bun@1.3.7", "", { "dependencies": { "bun-types": "1.3.7" } }, "sha512-lmNuMda+Z9b7tmhA0tohwy8ZWFSnmQm1UDWXtH5r9F7wZCfkeO3Jx7wKQ1EOiKq43yHts7ky6r8SDJQWRNupkA=="],
 
     "@types/diff": ["@types/diff@8.0.0", "", { "dependencies": { "diff": "*" } }, "sha512-o7jqJM04gfaYrdCecCVMbZhNdG6T1MHg/oQoRFdERLV+4d+V7FijhiEAbFu0Usww84Yijk9yH58U4Jk4HbtzZw=="],
 
@@ -119,7 +119,7 @@
 
     "buffer-crc32": ["buffer-crc32@0.2.13", "", {}, "sha512-VO9Ht/+p3SN7SKWqcrgEzjGbRSJYTx+Q1pTQC0wrWqHx0vpJraQ6GtHx8tvcg1rlK1byhU5gccxgOgj7B0TDkQ=="],
 
-    "bun-types": ["bun-types@1.3.1", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-NMrcy7smratanWJ2mMXdpatalovtxVggkj11bScuWuiOoXTiKIu2eVS1/7qbyI/4yHedtsn175n4Sm4JcdHLXw=="],
+    "bun-types": ["bun-types@1.3.7", "", { "dependencies": { "@types/node": "*" } }, "sha512-qyschsA03Qz+gou+apt6HNl6HnI+sJJLL4wLDke4iugsE6584CMupOtTY1n+2YC9nGVrEKUlTs99jjRLKgWnjQ=="],
 
     "bundle-name": ["bundle-name@4.1.0", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q=="],
 

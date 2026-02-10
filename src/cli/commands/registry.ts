@@ -46,7 +46,7 @@ export const commands: Record<string, Command> = {
   },
   "/skill": {
     desc: "Enter skill creation mode (/skill [description])",
-    order: 14,
+    order: 28, // Advanced feature, moved below visible commands
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
@@ -60,18 +60,10 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
-  "/memory-sync": {
-    desc: "Sync memory blocks with filesystem (requires memfs enabled)",
-    order: 15.5,
-    handler: () => {
-      // Handled specially in App.tsx to run filesystem sync
-      return "Syncing memory filesystem...";
-    },
-  },
   "/memfs": {
-    desc: "Enable/disable filesystem-backed memory (/memfs [enable|disable])",
-    args: "[enable|disable]",
-    order: 15.6,
+    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    args: "[enable|disable|sync|reset]",
+    order: 27.5, // Advanced feature, near /toolset
     handler: () => {
       // Handled specially in App.tsx
       return "Managing memory filesystem...";
@@ -128,11 +120,11 @@ export const commands: Record<string, Command> = {
     },
   },
   "/rename": {
-    desc: "Rename the current agent (/rename <name>)",
+    desc: "Rename agent or conversation (/rename agent|convo <name>)",
     order: 24,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
-      return "Renaming agent...";
+      return "Renaming...";
     },
   },
   "/description": {
@@ -199,6 +191,14 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx to display usage stats
       return "Fetching usage statistics...";
+    },
+  },
+  "/context": {
+    desc: "Show context window usage",
+    order: 33.5,
+    handler: () => {
+      // Handled specially in App.tsx to display context usage
+      return "Fetching context usage...";
     },
   },
   "/feedback": {

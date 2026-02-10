@@ -1,34 +1,65 @@
 
-## Memory Filesystem
-Your memory blocks are synchronized with a filesystem tree at `~/.letta/agents/<agent-id>/memory/`. This provides:
-- **Persistent storage**: Memory edits survive server restarts and can be version-controlled
-- **Two-way sync**: Changes to files sync to memory blocks, and vice versa
-- **Visibility**: A `memory_filesystem` block shows the tree structure of all memory files
+## Memory Filesystem (memFS)
+
+Your memory blocks are mirrored as Markdown files on disk at:
+`~/.letta/agents/<agent-id>/memory/`
+
+This provides:
+- **Persistent storage**: memory edits survive restarts and can be version-controlled
+- **Two-way sync**: edits in files sync to memory blocks, and edits in blocks sync to files
+- **Visibility**: a `memory_filesystem` block shows the current on-disk tree
 
 ### Structure
+
 ```
 ~/.letta/agents/<agent-id>/memory/
-├── system/           # System prompt memory blocks (attached to agent)
-│   ├── persona/      # Your identity and approach
-│   ├── human.md      # What you know about the user
+├── system/              # Attached system blocks (in system prompt)
+│   ├── persona/         # Namespaced blocks (e.g. persona/git_safety.md)
+│   ├── human.md
 │   └── ...
-├── user/             # User notes (detached blocks, not in system prompt)
-│   └── ...
-└── .sync-state.json  # Internal sync state (do not edit)
+├── <label>.md           # Detached blocks live at the memory root (NOT in system prompt)
+└── .sync-state.json     # Internal sync state (do not edit)
 ```
 
-### System vs User
-- **system/**: Memory blocks attached to your system prompt. These influence your behavior and are always loaded.
-- **user/**: Detached blocks for reference/notes. Created as blocks but NOT attached to the agent (similar to the "note" tool pattern).
 
-### Sync Behavior
-- **Startup**: Automatic sync when the CLI starts
-- **After memory edits**: Automatic sync after using memory tools
-- **Manual**: Run `/memory-sync` to sync on demand
-- **Conflicts**: If both file and block changed, you'll be prompted to choose which version to keep
+### Label mapping
 
-### How It Works
-1. Each `.md` file path maps to a block label (e.g., `system/persona/git_safety.md` → label `persona/git_safety`)
-2. File content syncs with block `value`
-3. Changes detected via content hashing
-4. The `memory_filesystem` block auto-updates with the tree view
+- A file path maps to a block label by stripping the `.md` extension and using `/` as the separator.
+  - Example: `system/persona/git_safety.md` → label `persona/git_safety`
+  - Example: `human_notes.md` → label `human_notes`
+
+### Sync behavior
+
+- **Startup**: automatic sync when the CLI starts
+- **After memory edits**: automatic sync after using memory tools
+- **Manual**: `/memfs sync` triggers an interactive sync inside the CLI UI
+
+### Git-like memFS commands (inspect/resolve)
+
+When you need to inspect status, view diffs, or resolve conflicts non-interactively, use the CLI subcommands:
+
+```bash
+letta memfs status [--agent <id>]
+letta memfs diff [--agent <id>]
+letta memfs resolve --resolutions '<JSON>' [--agent <id>]
+```
+
+- Requires agent id via `--agent`/`--agent-id` or `LETTA_AGENT_ID`
+- Output is **JSON only**
+- `letta memfs diff` writes a Markdown diff file and returns its `diffPath` in JSON
+
+### Conflicts
+
+A **conflict** occurs when **both** the file and the corresponding block were modified since the last sync.
+
+- Non-conflicting changes (only one side changed) are auto-resolved on the next sync
+- If conflicts are detected, you will receive a system reminder with conflicting labels
+- Use `letta memfs diff` to review both versions, then resolve each label to either:
+  - `"file"` (keep the on-disk Markdown file)
+  - `"block"` (keep the in-API block value)
+
+### Read-only blocks
+
+Some blocks are read-only in the API (e.g., certain system-managed blocks). For read-only blocks:
+- Sync is **API → file** only
+- File edits for those blocks are ignored

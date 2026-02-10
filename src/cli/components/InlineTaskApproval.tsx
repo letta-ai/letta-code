@@ -1,9 +1,10 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type Props = {
   taskInfo: {
@@ -23,14 +24,6 @@ type Props = {
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
-
-/**
- * Truncate text to max length with ellipsis
- */
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 3)}...`;
-}
 
 /**
  * InlineTaskApproval - Renders Task tool approval UI inline with pretty formatting
@@ -116,6 +109,17 @@ export const InlineTaskApproval = memo(
         }
         if (key.escape) {
           onCancel?.();
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApprove();
+          return;
+        }
+        if (input === "2" && allowPersistence) {
+          onApproveAlways("session");
+          return;
         }
       },
       { isActive: isFocused },
@@ -129,8 +133,8 @@ export const InlineTaskApproval = memo(
     const memoizedTaskContent = useMemo(() => {
       const { subagentType, description, prompt, model } = taskInfo;
 
-      // Truncate prompt if too long (show first ~200 chars)
-      const truncatedPrompt = truncate(prompt, 300);
+      // Show full prompt - users need to see what the task will do
+      const truncatedPrompt = prompt;
 
       return (
         <>

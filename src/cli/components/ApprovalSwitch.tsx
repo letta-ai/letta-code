@@ -67,6 +67,7 @@ type Props = {
   isFocused?: boolean;
   approveAlwaysText?: string;
   allowPersistence?: boolean;
+  showPreview?: boolean;
 
   // Special handlers for ExitPlanMode
   onPlanApprove?: (acceptEdits: boolean) => void;
@@ -209,6 +210,7 @@ export const ApprovalSwitch = memo(
     onEnterPlanModeReject,
     precomputedDiff,
     allDiffs,
+    showPreview = true,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -245,6 +247,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            showPreview={showPreview}
           />
         );
       }
@@ -264,6 +267,7 @@ export const ApprovalSwitch = memo(
             isFocused={isFocused}
             approveAlwaysText={approveAlwaysText}
             allowPersistence={allowPersistence}
+            showPreview={showPreview}
           />
         );
       }
@@ -285,16 +289,20 @@ export const ApprovalSwitch = memo(
     }
 
     // 5. AskUserQuestion → InlineQuestionApproval
+    // Guard: only render specialized UI if questions are valid, otherwise fall through
+    // to InlineGenericApproval (matches pattern for Bash/Task with malformed args)
     if (toolName === "AskUserQuestion" && onQuestionSubmit) {
       const questions = getQuestions(approval);
-      return (
-        <InlineQuestionApproval
-          questions={questions}
-          onSubmit={onQuestionSubmit}
-          onCancel={onCancel}
-          isFocused={isFocused}
-        />
-      );
+      if (questions.length > 0) {
+        return (
+          <InlineQuestionApproval
+            questions={questions}
+            onSubmit={onQuestionSubmit}
+            onCancel={onCancel}
+            isFocused={isFocused}
+          />
+        );
+      }
     }
 
     // 6. Task tool → InlineTaskApproval
@@ -328,6 +336,7 @@ export const ApprovalSwitch = memo(
         isFocused={isFocused}
         approveAlwaysText={approveAlwaysText}
         allowPersistence={allowPersistence}
+        showPreview={showPreview}
       />
     );
   },

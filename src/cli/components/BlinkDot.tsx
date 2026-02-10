@@ -1,7 +1,7 @@
-import { Text } from "ink";
 import { memo, useEffect, useState } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 /**
  * A blinking dot indicator for running/pending states.

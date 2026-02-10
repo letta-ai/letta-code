@@ -5,6 +5,64 @@ const LETTA_USAGE_URL = "https://app.letta.com/settings/organization/usage";
 const LETTA_AGENTS_URL =
   "https://app.letta.com/projects/default-project/agents";
 
+function extractReasonList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((reason): reason is string => typeof reason === "string")
+    .map((reason) => reason.toLowerCase());
+}
+
+function getErrorReasons(e: APIError): string[] {
+  const reasons = new Set<string>();
+
+  const errorBody = e.error;
+  if (errorBody && typeof errorBody === "object") {
+    const body = errorBody as Record<string, unknown>;
+
+    for (const reason of extractReasonList(body.reasons)) {
+      reasons.add(reason);
+    }
+
+    if (body.error && typeof body.error === "object") {
+      const nested = body.error as Record<string, unknown>;
+      for (const reason of extractReasonList(nested.reasons)) {
+        reasons.add(reason);
+      }
+    }
+  }
+
+  // Fallback: infer known reasons from message text.
+  const message = e.message?.toLowerCase() ?? "";
+  for (const knownReason of [
+    "not-enough-credits",
+    "model-unknown",
+    "byok-not-available-on-free-tier",
+    "free-usage-exceeded",
+    "premium-usage-exceeded",
+    "standard-usage-exceeded",
+    "basic-usage-exceeded",
+    "context-window-size-not-supported",
+    "agents-limit-exceeded",
+    "exceeded-quota",
+  ]) {
+    if (message.includes(knownReason)) {
+      reasons.add(knownReason);
+    }
+  }
+
+  return Array.from(reasons);
+}
+
+function hasErrorReason(
+  e: APIError,
+  reason: string,
+  reasons?: string[],
+): boolean {
+  const allReasons = reasons ?? getErrorReasons(e);
+  return allReasons.includes(reason.toLowerCase());
+}
+
 /**
  * Check if the error is a rate limit error (429 with exceeded-quota)
  * Returns the timeToQuotaResetMs if it's a rate limit error, undefined otherwise
@@ -94,53 +152,127 @@ function getResourceLimitMessage(e: APIError): string | undefined {
 /**
  * Check if the error is an agent limit error (429 with agents-limit-exceeded)
  */
-function isAgentLimitError(e: APIError): boolean {
+function isAgentLimitError(e: APIError, reasons?: string[]): boolean {
   if (e.status !== 429) return false;
-
-  const errorBody = e.error;
-  if (errorBody && typeof errorBody === "object") {
-    if ("reasons" in errorBody && Array.isArray(errorBody.reasons)) {
-      if (errorBody.reasons.includes("agents-limit-exceeded")) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return hasErrorReason(e, "agents-limit-exceeded", reasons);
 }
 
 /**
  * Check if the error is a credit exhaustion error (402 with not-enough-credits)
  */
-function isCreditExhaustedError(e: APIError): boolean {
+function isCreditExhaustedError(e: APIError, reasons?: string[]): boolean {
   // Check status code
   if (e.status !== 402) return false;
+  return hasErrorReason(e, "not-enough-credits", reasons);
+}
 
-  // Check for "not-enough-credits" in various places it could appear
-  const errorBody = e.error;
-  if (errorBody && typeof errorBody === "object") {
-    // Check reasons array: {"error":"Rate limited","reasons":["not-enough-credits"]}
-    if ("reasons" in errorBody && Array.isArray(errorBody.reasons)) {
-      if (errorBody.reasons.includes("not-enough-credits")) {
-        return true;
+const ENCRYPTED_CONTENT_HINT = [
+  "",
+  "This occurs when the conversation contains messages with encrypted",
+  "reasoning from a different OpenAI authentication scope (e.g. switching",
+  "between ChatGPT OAuth and an OpenAI API key).",
+  "Use /clear to start a new conversation.",
+].join("\n");
+
+/**
+ * Walk the error object to find the `detail` string containing the encrypted content error.
+ * Handles both direct (e.detail) and nested (e.error.error.detail) structures.
+ */
+function findEncryptedContentDetail(e: unknown): string | undefined {
+  if (typeof e !== "object" || e === null) return undefined;
+  const obj = e as Record<string, unknown>;
+
+  // Check direct: e.detail
+  if (
+    typeof obj.detail === "string" &&
+    obj.detail.includes("invalid_encrypted_content")
+  ) {
+    return obj.detail;
+  }
+
+  // Check nested: e.error.error.detail or e.error.detail
+  if (obj.error && typeof obj.error === "object") {
+    const errObj = obj.error as Record<string, unknown>;
+    if (errObj.error && typeof errObj.error === "object") {
+      const inner = errObj.error as Record<string, unknown>;
+      if (
+        typeof inner.detail === "string" &&
+        inner.detail.includes("invalid_encrypted_content")
+      ) {
+        return inner.detail;
       }
     }
-    // Check nested error.reasons
-    if ("error" in errorBody && typeof errorBody.error === "object") {
-      const nested = errorBody.error as Record<string, unknown>;
-      if ("reasons" in nested && Array.isArray(nested.reasons)) {
-        if (nested.reasons.includes("not-enough-credits")) {
-          return true;
-        }
-      }
+    if (
+      typeof errObj.detail === "string" &&
+      errObj.detail.includes("invalid_encrypted_content")
+    ) {
+      return errObj.detail;
     }
   }
 
-  // Also check the message for "not-enough-credits" as a fallback
-  if (e.message?.includes("not-enough-credits")) {
-    return true;
+  return undefined;
+}
+
+/**
+ * Check if the error contains an encrypted content organization mismatch from OpenAI/ChatGPT.
+ * This occurs when switching between ChatGPT OAuth and OpenAI API key auth,
+ * leaving encrypted reasoning tokens from a different auth scope in the conversation.
+ */
+function checkEncryptedContentError(e: unknown): string | undefined {
+  // Walk the object structure first (cheap) before falling back to stringify
+  const detail = findEncryptedContentDetail(e);
+  if (!detail) {
+    // Fallback: stringify for edge cases (e.g. plain string errors)
+    try {
+      const errorStr = typeof e === "string" ? e : JSON.stringify(e);
+      if (!errorStr.includes("invalid_encrypted_content")) return undefined;
+    } catch {
+      return undefined;
+    }
+    // Detected via stringify but couldn't extract detail — return generic message
+    return (
+      "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+      ENCRYPTED_CONTENT_HINT
+    );
   }
 
-  return false;
+  // Try to parse the embedded JSON from the detail string for pretty-printing
+  try {
+    const jsonStart = detail.indexOf("{");
+    if (jsonStart >= 0) {
+      const parsed = JSON.parse(detail.slice(jsonStart));
+      const innerError = parsed.error || parsed;
+      if (innerError.code === "invalid_encrypted_content") {
+        const msg = String(
+          innerError.message || "Encrypted content verification failed.",
+        ).replaceAll('"', '\\"');
+        return [
+          "OpenAI error:",
+          "  {",
+          `    type: "${innerError.type || "invalid_request_error"}",`,
+          `    code: "${innerError.code}",`,
+          `    message: "${msg}"`,
+          "  }",
+          ENCRYPTED_CONTENT_HINT,
+        ].join("\n");
+      }
+    }
+  } catch {
+    // Fall through to generic message
+  }
+
+  return (
+    "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+    ENCRYPTED_CONTENT_HINT
+  );
+}
+
+/**
+ * Returns true if the error is an OpenAI encrypted content org mismatch.
+ * Used by callers to skip generic error hints for this self-explanatory error.
+ */
+export function isEncryptedContentError(e: unknown): boolean {
+  return findEncryptedContentDetail(e) !== undefined;
 }
 
 /**
@@ -157,8 +289,14 @@ export function formatErrorDetails(
 ): string {
   let runId: string | undefined;
 
+  // Check for OpenAI encrypted content org mismatch before anything else
+  const encryptedContentMsg = checkEncryptedContentError(e);
+  if (encryptedContentMsg) return encryptedContentMsg;
+
   // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
+    const reasons = getErrorReasons(e);
+
     // Check for rate limit error first - provide a friendly message with reset time
     const rateLimitResetMs = getRateLimitResetMs(e);
     if (rateLimitResetMs !== undefined) {
@@ -170,7 +308,7 @@ export function formatErrorDetails(
     }
 
     // Check for agent limit error (free tier agent count limit)
-    if (isAgentLimitError(e)) {
+    if (isAgentLimitError(e, reasons)) {
       const { billingTier } = getErrorContext();
 
       if (billingTier?.toLowerCase() === "free") {
@@ -179,6 +317,14 @@ export function formatErrorDetails(
 
       // Fallback for paid tiers (shouldn't normally hit this, but just in case)
       return `You've reached your agent limit. Delete agents at: ${LETTA_AGENTS_URL}\nOr check your plan at: ${LETTA_USAGE_URL}`;
+    }
+
+    if (hasErrorReason(e, "model-unknown", reasons)) {
+      return `The selected model is not currently available for this account or provider. Run /model and press R to refresh available models, then choose an available model or connect a provider with /connect.`;
+    }
+
+    if (hasErrorReason(e, "context-window-size-not-supported", reasons)) {
+      return `The selected context window is not supported for this model. Switch models with /model or pick a model with a larger context window.`;
     }
 
     // Check for resource limit error (e.g., "You have reached your limit for agents")
@@ -191,16 +337,26 @@ export function formatErrorDetails(
     }
 
     // Check for credit exhaustion error - provide a friendly message
-    if (isCreditExhaustedError(e)) {
-      const { billingTier, modelDisplayName } = getErrorContext();
+    if (isCreditExhaustedError(e, reasons)) {
+      return `Your account is out of credits for hosted inference. Add credits, enable auto-recharge, or upgrade at ${LETTA_USAGE_URL}. You can also connect your own provider keys with /connect.`;
+    }
 
-      // Free plan users get a special message about BYOK and free models
-      if (billingTier?.toLowerCase() === "free") {
-        const modelInfo = modelDisplayName ? ` (${modelDisplayName})` : "";
-        return `Selected hosted model${modelInfo} not available on Free plan. Switch to a free model with /model (glm-4.7 or minimax-m2.1), upgrade your account at ${LETTA_USAGE_URL}, or connect your own API keys with /connect.`;
-      }
+    if (
+      hasErrorReason(e, "premium-usage-exceeded", reasons) ||
+      hasErrorReason(e, "standard-usage-exceeded", reasons) ||
+      hasErrorReason(e, "basic-usage-exceeded", reasons)
+    ) {
+      return `You've reached your hosted model usage limit. View your plan and usage at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
+    }
 
-      return `Your account is out of credits. Redeem additional credits or configure auto-recharge on your account page: ${LETTA_USAGE_URL}`;
+    if (hasErrorReason(e, "byok-not-available-on-free-tier", reasons)) {
+      const { modelDisplayName } = getErrorContext();
+      const modelInfo = modelDisplayName ? ` (${modelDisplayName})` : "";
+      return `Selected BYOK model${modelInfo} is not available on the Free plan. Switch to a free hosted model with /model (glm-4.7 or minimax-m2.1), or upgrade at ${LETTA_USAGE_URL}.`;
+    }
+
+    if (hasErrorReason(e, "free-usage-exceeded", reasons)) {
+      return `You've reached the Free plan hosted model usage limit. Switch to free hosted models with /model (glm-4.7 or minimax-m2.1), upgrade at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
     }
     // Check for nested error structure: e.error.error
     if (e.error && typeof e.error === "object" && "error" in e.error) {

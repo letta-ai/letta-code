@@ -1,8 +1,9 @@
-import { Box, Text, Transform } from "ink";
+import { Box, Transform } from "ink";
 import type React from "react";
 import stringWidth from "string-width";
 import { colors, hexToBgAnsi } from "./colors.js";
 import { InlineMarkdown } from "./InlineMarkdownRenderer.js";
+import { Text } from "./Text";
 
 interface MarkdownDisplayProps {
   text: string;

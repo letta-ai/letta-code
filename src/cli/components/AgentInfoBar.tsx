@@ -1,10 +1,11 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import Link from "ink-link";
 import { memo, useMemo } from "react";
 import { DEFAULT_AGENT_NAME } from "../../constants";
 import { settingsManager } from "../../settings-manager";
 import { getVersion } from "../../version";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 interface AgentInfoBarProps {
   agentId?: string;
@@ -42,32 +43,30 @@ export const AgentInfoBar = memo(function AgentInfoBar({
     return null;
   }
 
+  // Alien ASCII art lines (4 lines tall, with 2-char indent + extra space before text)
+  const alienLines = ["   ▗▖▗▖   ", "  ▙█▜▛█▟  ", "  ▝▜▛▜▛▘  ", "          "];
+
   return (
     <Box flexDirection="column">
       {/* Blank line after commands */}
       <Box height={1} />
 
-      {/* Discord/version info */}
+      {/* Version and Discord/feedback info */}
       <Box>
         <Text>
-          {"  "}Having issues? Report bugs with /feedback or{" "}
+          {"  "}Letta Code v{getVersion()} · Report bugs with /feedback or{" "}
           <Link url="https://discord.gg/letta">
-            <Text>join our Discord ↗</Text>
+            <Text>on Discord ↗</Text>
           </Link>
-        </Text>
-      </Box>
-      <Box>
-        <Text>
-          {"  "}Version: Letta Code v{getVersion()}
         </Text>
       </Box>
 
       {/* Blank line before agent info */}
       <Box height={1} />
 
-      {/* Agent name and links */}
+      {/* Alien + Agent name */}
       <Box>
-        <Text>{"  "}</Text>
+        <Text color={colors.footer.agentName}>{alienLines[0]}</Text>
         <Text bold color={colors.footer.agentName}>
           {agentName || "Unnamed"}
         </Text>
@@ -78,35 +77,43 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         ) : (
           <Text color="gray"> (type /pin to pin agent)</Text>
         )}
+      </Box>
+
+      {/* Alien + Links */}
+      <Box>
+        <Text color={colors.footer.agentName}>{alienLines[1]}</Text>
         {isCloudUser && adeUrl && !isTmux && (
           <>
-            <Text dimColor> · </Text>
             <Link url={adeUrl}>
               <Text>Open in ADE ↗</Text>
             </Link>
+            <Text dimColor>· </Text>
           </>
         )}
         {isCloudUser && adeUrl && isTmux && (
-          <Text dimColor> · Open in ADE: {adeUrl}</Text>
+          <Text dimColor>Open in ADE: {adeUrl} · </Text>
         )}
         {isCloudUser && (
-          <>
-            <Text dimColor> · </Text>
-            <Link url="https://app.letta.com/settings/organization/usage">
-              <Text>View usage ↗</Text>
-            </Link>
-          </>
+          <Link url="https://app.letta.com/settings/organization/usage">
+            <Text>View usage ↗</Text>
+          </Link>
         )}
-        {!isCloudUser && <Text dimColor> · {serverUrl}</Text>}
+        {!isCloudUser && <Text dimColor>{serverUrl}</Text>}
       </Box>
-      {/* Agent ID and conversation ID on separate line */}
+
+      {/* Alien + Agent ID */}
       <Box>
-        <Text dimColor>
-          {"  "}
-          {agentId}
-        </Text>
-        {conversationId && conversationId !== "default" && (
-          <Text dimColor> · {conversationId}</Text>
+        <Text color={colors.footer.agentName}>{alienLines[2]}</Text>
+        <Text dimColor>{agentId}</Text>
+      </Box>
+
+      {/* Phantom alien row + Conversation ID */}
+      <Box>
+        <Text>{alienLines[3]}</Text>
+        {conversationId && conversationId !== "default" ? (
+          <Text dimColor>{conversationId}</Text>
+        ) : (
+          <Text dimColor>default conversation</Text>
         )}
       </Box>
     </Box>

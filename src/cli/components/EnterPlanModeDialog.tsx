@@ -1,7 +1,8 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type Props = {
   onApprove: () => void;

@@ -9,18 +9,18 @@ import type {
   HookExecutionResult,
   NotificationHookInput,
   PermissionRequestHookInput,
+  PostToolUseFailureHookInput,
   PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
   SessionEndHookInput,
   SessionStartHookInput,
-  SetupHookInput,
   StopHookInput,
   SubagentStopHookInput,
   UserPromptSubmitHookInput,
 } from "./types";
 
-export { clearHooksCache } from "./loader";
+export { areHooksDisabled, clearHooksCache } from "./loader";
 // Re-export types for convenience
 export * from "./types";
 
@@ -72,6 +72,8 @@ export async function runPostToolUseHooks(
   toolCallId?: string,
   workingDirectory: string = process.cwd(),
   agentId?: string,
+  precedingReasoning?: string,
+  precedingAssistantMessage?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent(
     "PostToolUse",
@@ -90,10 +92,63 @@ export async function runPostToolUseHooks(
     tool_call_id: toolCallId,
     tool_result: toolResult,
     agent_id: agentId,
+    preceding_reasoning: precedingReasoning,
+    preceding_assistant_message: precedingAssistantMessage,
   };
 
   // Run in parallel since PostToolUse cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
+}
+
+/**
+ * Run PostToolUseFailure hooks after a tool has failed
+ * These run in parallel and cannot block (tool already failed)
+ * Stderr from hooks with exit code 2 is fed back to the agent
+ */
+export async function runPostToolUseFailureHooks(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  errorMessage: string,
+  errorType?: string,
+  toolCallId?: string,
+  workingDirectory: string = process.cwd(),
+  agentId?: string,
+  precedingReasoning?: string,
+  precedingAssistantMessage?: string,
+): Promise<HookExecutionResult> {
+  const hooks = await getHooksForEvent(
+    "PostToolUseFailure",
+    toolName,
+    workingDirectory,
+  );
+  if (hooks.length === 0) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
+  const input: PostToolUseFailureHookInput = {
+    event_type: "PostToolUseFailure",
+    working_directory: workingDirectory,
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_call_id: toolCallId,
+    error_message: errorMessage,
+    error_type: errorType,
+    agent_id: agentId,
+    preceding_reasoning: precedingReasoning,
+    preceding_assistant_message: precedingAssistantMessage,
+  };
+
+  // Run in parallel since PostToolUseFailure cannot block
+  // Use standard executeHooksParallel - feedback collected on exit 2
+  const result = await executeHooksParallel(hooks, input, workingDirectory);
+
+  // PostToolUseFailure never actually blocks (tool already failed)
+  return {
+    blocked: false,
+    errored: result.errored,
+    feedback: result.feedback,
+    results: result.results,
+  };
 }
 
 /**
@@ -135,6 +190,7 @@ export async function runPermissionRequestHooks(
 /**
  * Run UserPromptSubmit hooks before processing a user's prompt
  * Can block the prompt from being processed
+ * Skips execution for slash commands (e.g., /help, /clear)
  */
 export async function runUserPromptSubmitHooks(
   prompt: string,
@@ -143,6 +199,11 @@ export async function runUserPromptSubmitHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
+  // Skip hooks for slash commands - they don't trigger agent execution
+  if (isCommand) {
+    return { blocked: false, errored: false, feedback: [], results: [] };
+  }
+
   const hooks = await getHooksForEvent(
     "UserPromptSubmit",
     undefined,
@@ -202,6 +263,9 @@ export async function runStopHooks(
   messageCount?: number,
   toolCallCount?: number,
   workingDirectory: string = process.cwd(),
+  precedingReasoning?: string,
+  assistantMessage?: string,
+  userMessage?: string,
 ): Promise<HookExecutionResult> {
   const hooks = await getHooksForEvent("Stop", undefined, workingDirectory);
   if (hooks.length === 0) {
@@ -214,6 +278,9 @@ export async function runStopHooks(
     stop_reason: stopReason,
     message_count: messageCount,
     tool_call_count: toolCallCount,
+    preceding_reasoning: precedingReasoning,
+    assistant_message: assistantMessage,
+    user_message: userMessage,
   };
 
   // Run sequentially - Stop can block
@@ -291,28 +358,9 @@ export async function runPreCompactHooks(
 }
 
 /**
- * Run Setup hooks when CLI is invoked with init flags
- */
-export async function runSetupHooks(
-  initType: "init" | "init-only" | "maintenance",
-  workingDirectory: string = process.cwd(),
-): Promise<HookExecutionResult> {
-  const hooks = await getHooksForEvent("Setup", undefined, workingDirectory);
-  if (hooks.length === 0) {
-    return { blocked: false, errored: false, feedback: [], results: [] };
-  }
-
-  const input: SetupHookInput = {
-    event_type: "Setup",
-    working_directory: workingDirectory,
-    init_type: initType,
-  };
-
-  return executeHooks(hooks, input, workingDirectory);
-}
-
-/**
  * Run SessionStart hooks when a session begins
+ * Unlike other hooks, SessionStart collects stdout (not stderr) on exit 2
+ * to inject context into the first user message
  */
 export async function runSessionStartHooks(
   isNewSession: boolean,
@@ -339,7 +387,23 @@ export async function runSessionStartHooks(
     conversation_id: conversationId,
   };
 
-  return executeHooks(hooks, input, workingDirectory);
+  // Run hooks sequentially (SessionStart shouldn't block, but we collect feedback)
+  const result = await executeHooks(hooks, input, workingDirectory);
+
+  // For SessionStart, collect stdout from all hooks regardless of exit code
+  const feedback: string[] = [];
+  for (const hookResult of result.results) {
+    if (hookResult.stdout?.trim()) {
+      feedback.push(hookResult.stdout.trim());
+    }
+  }
+
+  return {
+    blocked: false, // SessionStart never blocks
+    errored: result.errored,
+    feedback,
+    results: result.results,
+  };
 }
 
 /**

@@ -15,10 +15,10 @@ This skill helps you find other agents on the same Letta server.
 - You need to find an agent ID for memory migration
 - You found an agent_id via message search and need details about that agent
 
-## Script Usage
+## CLI Usage
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts [options]
+letta agents list [options]
 ```
 
 ### Options
@@ -39,7 +39,7 @@ npx tsx <SKILL_DIR>/scripts/find-agents.ts [options]
 Agents created by Letta Code are tagged with `origin:letta-code`. To find only Letta Code agents:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
+letta agents list --tags "origin:letta-code"
 ```
 
 This is useful when the user is looking for agents they've worked with in Letta Code CLI sessions.
@@ -49,39 +49,39 @@ This is useful when the user is looking for agents they've worked with in Letta 
 If the user has agents created outside Letta Code (via ADE, SDK, etc.), search without the tag filter:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts
+letta agents list
 ```
 
 ## Examples
 
 **List all agents (up to 20):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts
+letta agents list
 ```
 
 **Find agent by exact name:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --name "ProjectX-v1"
+letta agents list --name "ProjectX-v1"
 ```
 
 **Search agents by name (fuzzy):**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --query "project"
+letta agents list --query "project"
 ```
 
 **Find only Letta Code agents:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "origin:letta-code"
+letta agents list --tags "origin:letta-code"
 ```
 
 **Find agents with multiple tags:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --tags "frontend,production" --match-all-tags
+letta agents list --tags "frontend,production" --match-all-tags
 ```
 
 **Include memory blocks in results:**
 ```bash
-npx tsx <SKILL_DIR>/scripts/find-agents.ts --query "project" --include-blocks
+letta agents list --query "project" --include-blocks
 ```
 
 ## Output
@@ -105,11 +105,11 @@ If you need to find which agent worked on a specific topic:
 1. Load both skills: `searching-messages` and `finding-agents`
 2. Search messages across all agents:
    ```bash
-   search-messages.ts --query "topic" --all-agents --limit 10
+   letta messages search --query "topic" --all-agents --limit 10
    ```
 3. Note the `agent_id` values from matching messages
 4. Get agent details:
    ```bash
-   find-agents.ts --query "partial-name"
+   letta agents list --query "partial-name"
    ```
    Or use the agent_id directly in the Letta API

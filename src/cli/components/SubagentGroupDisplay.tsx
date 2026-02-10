@@ -15,10 +15,14 @@
  * SubagentGroupStatic instead (a pure props-based snapshot with no hooks).
  */
 
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import { useAnimation } from "../contexts/AnimationContext.js";
-import { formatStats, getTreeChars } from "../helpers/subagentDisplay.js";
+import {
+  formatStats,
+  getSubagentModelDisplay,
+  getTreeChars,
+} from "../helpers/subagentDisplay.js";
 import {
   getSnapshot,
   type SubagentState,
@@ -28,6 +32,7 @@ import {
 import { useTerminalWidth } from "../hooks/useTerminalWidth.js";
 import { BlinkDot } from "./BlinkDot.js";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 function formatToolArgs(argsStr: string): string {
   try {
@@ -71,11 +76,13 @@ const AgentRow = memo(
     const contentWidth = Math.max(0, columns - gutterWidth);
 
     const isRunning = agent.status === "pending" || agent.status === "running";
+    const shouldDim = isRunning && !agent.isBackground;
     const stats = formatStats(
       agent.toolCalls.length,
       agent.totalTokens,
       isRunning,
     );
+    const modelDisplay = getSubagentModelDisplay(agent.model);
     const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
     // Condensed mode: simplified view to reduce re-renders when overflowing
@@ -93,12 +100,29 @@ const AgentRow = memo(
                 {"   "}
                 {treeChar}{" "}
               </Text>
-              <Text bold>{agent.description}</Text>
+              <Text bold={!shouldDim} dimColor={shouldDim}>
+                {agent.description}
+              </Text>
               <Text dimColor>
                 {" · "}
                 {agent.type.toLowerCase()}
-                {agent.model ? ` · ${agent.model}` : ""}
               </Text>
+              {modelDisplay && (
+                <>
+                  <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+                  {modelDisplay.isByokProvider && (
+                    <Text
+                      color={
+                        modelDisplay.isOpenAICodexProvider
+                          ? "#74AA9C"
+                          : "yellow"
+                      }
+                    >
+                      {" ▲"}
+                    </Text>
+                  )}
+                </>
+              )}
             </Text>
           </Box>
           {/* Simple status line */}
@@ -110,8 +134,12 @@ const AgentRow = memo(
             <Text dimColor>{"   "}</Text>
             {agent.status === "error" ? (
               <Text color={colors.subagent.error}>Error</Text>
+            ) : isComplete ? (
+              <Text dimColor>Done</Text>
+            ) : agent.isBackground ? (
+              <Text dimColor>Running in the background</Text>
             ) : (
-              <Text dimColor>{isComplete ? "Done" : "Running..."}</Text>
+              <Text dimColor>Running...</Text>
             )}
           </Box>
         </Box>
@@ -128,11 +156,28 @@ const AgentRow = memo(
               {"   "}
               {treeChar}{" "}
             </Text>
-            <Text bold>{agent.description}</Text>
+            <Text bold={!shouldDim} dimColor={shouldDim}>
+              {agent.description}
+            </Text>
             <Text dimColor>
               {" · "}
               {agent.type.toLowerCase()}
-              {agent.model ? ` · ${agent.model}` : ""}
+            </Text>
+            {modelDisplay && (
+              <>
+                <Text dimColor>{` · ${modelDisplay.label}`}</Text>
+                {modelDisplay.isByokProvider && (
+                  <Text
+                    color={
+                      modelDisplay.isOpenAICodexProvider ? "#74AA9C" : "yellow"
+                    }
+                  >
+                    {" ▲"}
+                  </Text>
+                )}
+              </>
+            )}
+            <Text dimColor>
               {" · "}
               {stats}
             </Text>
@@ -196,6 +241,14 @@ const AgentRow = memo(
                 </Text>
               </Box>
             </>
+          ) : agent.isBackground ? (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   Running in the background"}</Text>
+            </>
           ) : lastTool ? (
             <>
               <Text color={colors.subagent.treeChar}>
@@ -232,16 +285,16 @@ interface GroupHeaderProps {
 
 const GroupHeader = memo(
   ({ count, allCompleted, hasErrors, expanded }: GroupHeaderProps) => {
-    const statusText = allCompleted
-      ? `Ran ${count} subagent${count !== 1 ? "s" : ""}`
-      : `Running ${count} subagent${count !== 1 ? "s" : ""}…`;
-
     const hint = expanded ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
 
-    // Use error color for dot if any subagent errored
     const dotColor = hasErrors
       ? colors.subagent.error
       : colors.subagent.completed;
+    const runningDotColor = hasErrors
+      ? colors.subagent.error
+      : colors.tool.pending;
+    const label = allCompleted ? "Ran" : "Running";
+    const suffix = count !== 1 ? "agents" : "agent";
 
     return (
       <Box flexDirection="row">
@@ -249,10 +302,13 @@ const GroupHeader = memo(
           <Text color={dotColor}>●</Text>
         ) : (
           // BlinkDot now gets shouldAnimate from AnimationContext
-          <BlinkDot color={colors.subagent.header} />
+          <BlinkDot color={runningDotColor} />
         )}
-        <Text color={colors.subagent.header}> {statusText} </Text>
-        <Text color={colors.subagent.hint}>{hint}</Text>
+        <Text>
+          {" "}
+          {label} <Text bold>{count}</Text> {suffix}
+        </Text>
+        <Text color={colors.subagent.hint}> {hint}</Text>
       </Box>
     );
   },

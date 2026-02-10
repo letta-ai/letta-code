@@ -56,7 +56,6 @@ Community maintained packages are available for Arch Linux users on the [AUR](ht
 ```bash
 yay -S letta-code # release
 yay -S letta-code-git # nightly
-yay -S letta-code-bin # prebuilt release
 ```
 
 ---

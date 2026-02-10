@@ -1,6 +1,7 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import type { ReactNode } from "react";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 interface AutocompleteBoxProps {
   /** Optional header text shown at top of autocomplete */

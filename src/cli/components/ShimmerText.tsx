@@ -1,13 +1,19 @@
 import chalk from "chalk";
-import { Text } from "ink";
 import { memo } from "react";
 import { colors } from "./colors.js";
+import { Text } from "./Text";
 
 interface ShimmerTextProps {
   color?: string;
   boldPrefix?: string;
   message: string;
   shimmerOffset: number;
+  wrap?:
+    | "wrap"
+    | "truncate"
+    | "truncate-start"
+    | "truncate-middle"
+    | "truncate-end";
 }
 
 export const ShimmerText = memo(function ShimmerText({
@@ -15,6 +21,7 @@ export const ShimmerText = memo(function ShimmerText({
   boldPrefix,
   message,
   shimmerOffset,
+  wrap,
 }: ShimmerTextProps) {
   const fullText = `${boldPrefix ? `${boldPrefix} ` : ""}${message}…`;
   const prefixLength = boldPrefix ? boldPrefix.length + 1 : 0; // +1 for space
@@ -36,5 +43,5 @@ export const ShimmerText = memo(function ShimmerText({
     })
     .join("");
 
-  return <Text>{shimmerText}</Text>;
+  return <Text wrap={wrap}>{shimmerText}</Text>;
 });

@@ -1,9 +1,10 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { memo, useState } from "react";
 import { useProgressIndicator } from "../hooks/useProgressIndicator";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { useTextInputCursor } from "../hooks/useTextInputCursor";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 type Props = {
   onApprove: () => void;
@@ -99,6 +100,17 @@ export const StaticPlanApproval = memo(
         }
         if (key.escape) {
           onKeepPlanning("User cancelled");
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApproveAndAcceptEdits();
+          return;
+        }
+        if (input === "2") {
+          onApprove();
+          return;
         }
       },
       { isActive: isFocused },

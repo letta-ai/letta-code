@@ -1,9 +1,10 @@
-import { Text } from "ink";
 import { memo } from "react";
 import stringWidth from "string-width";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
+import { Text } from "./Text";
 
 type UserLine = {
   kind: "user";
@@ -156,6 +157,11 @@ function renderBlock(
 export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(1, columns - 2);
+  const cleanedText = extractTaskNotificationsForDisplay(line.text).cleanedText;
+  const displayText = cleanedText.trim();
+  if (!displayText) {
+    return null;
+  }
 
   // Build combined ANSI code for background + optional foreground
   const { background, text: textColor } = colors.userMessage;
@@ -164,23 +170,20 @@ export const UserMessage = memo(({ line }: { line: UserLine }) => {
   const colorAnsi = bgAnsi + fgAnsi;
 
   // Split into system-reminder blocks and user content blocks
-  const blocks = splitSystemReminderBlocks(line.text);
+  const blocks = splitSystemReminderBlocks(displayText);
 
   const allLines: string[] = [];
 
   for (const block of blocks) {
     if (!block.text.trim()) continue;
-
-    // Add blank line between blocks (not before first)
     if (allLines.length > 0) {
       allLines.push("");
     }
-
     const blockLines = renderBlock(
       block.text,
       contentWidth,
       columns,
-      !block.isSystemReminder, // highlight user content, not system-reminder
+      !block.isSystemReminder,
       colorAnsi,
     );
     allLines.push(...blockLines);

@@ -10,6 +10,7 @@ import {
 import {
   type HookCommand,
   HookExitCode,
+  type PostToolUseFailureHookInput,
   type PostToolUseHookInput,
   type PreToolUseHookInput,
   type SessionStartHookInput,
@@ -159,6 +160,46 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
       expect(result.stdout).toBe("PreToolUse");
+    });
+
+    test("receives LETTA_AGENT_ID environment variable when agent_id is provided", async () => {
+      const hook: HookCommand = {
+        type: "command",
+        command: "echo $LETTA_AGENT_ID",
+      };
+
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: {},
+        agent_id: "agent-test-12345",
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      expect(result.stdout).toBe("agent-test-12345");
+    });
+
+    test("LETTA_AGENT_ID is not set when agent_id is not provided", async () => {
+      const hook: HookCommand = {
+        type: "command",
+        command: 'echo "agent_id:$' + '{LETTA_AGENT_ID:-empty}"',
+      };
+
+      const input: PreToolUseHookInput = {
+        event_type: "PreToolUse",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: {},
+        // Note: agent_id is not provided
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      expect(result.stdout).toBe("agent_id:empty");
     });
   });
 
@@ -429,6 +470,53 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       expect(parsed.event_type).toBe("SessionStart");
       expect(parsed.is_new_session).toBe(true);
       expect(parsed.agent_name).toBe("Test Agent");
+    });
+
+    test("handles PostToolUseFailure input with error details", async () => {
+      const hook: HookCommand = { type: "command", command: "cat" };
+
+      const input: PostToolUseFailureHookInput = {
+        event_type: "PostToolUseFailure",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: { command: "echho hello" },
+        tool_call_id: "call-123",
+        error_message: "zsh:1: command not found: echho",
+        error_type: "tool_error",
+        agent_id: "agent-456",
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed.event_type).toBe("PostToolUseFailure");
+      expect(parsed.tool_name).toBe("Bash");
+      expect(parsed.error_message).toBe("zsh:1: command not found: echho");
+      expect(parsed.error_type).toBe("tool_error");
+      expect(parsed.tool_input.command).toBe("echho hello");
+    });
+
+    test("PostToolUseFailure hook can provide feedback via stderr with exit 0", async () => {
+      const hook: HookCommand = {
+        type: "command",
+        command: "echo 'Suggestion: check spelling of command' >&2 && exit 0",
+      };
+
+      const input: PostToolUseFailureHookInput = {
+        event_type: "PostToolUseFailure",
+        working_directory: tempDir,
+        tool_name: "Bash",
+        tool_input: { command: "echho hello" },
+        error_message: "command not found: echho",
+        error_type: "tool_error",
+      };
+
+      const result = await executeHookCommand(hook, input, tempDir);
+
+      // Exit 0 = success, stderr should still be captured
+      expect(result.exitCode).toBe(HookExitCode.ALLOW);
+      expect(result.stderr).toBe("Suggestion: check spelling of command");
     });
   });
 

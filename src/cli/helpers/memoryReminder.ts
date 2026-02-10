@@ -60,6 +60,8 @@ export function parseMemoryPreference(
   answers: Record<string, string>,
 ): boolean {
   for (const q of questions) {
+    // Skip malformed questions (LLM might send invalid data)
+    if (!q.question) continue;
     const questionLower = q.question.toLowerCase();
     const headerLower = q.header?.toLowerCase() || "";
 

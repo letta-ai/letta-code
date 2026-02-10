@@ -15,15 +15,11 @@ This skill helps you search through past conversations to recall context that ma
 - You want to verify what was said before about a topic
 - You need to find which agent discussed a specific topic (use with `finding-agents` skill)
 
-## Script Usage
-
-The scripts are located in the `scripts/` subdirectory of this skill. Use the **Skill Directory** path shown above when loading this skill.
+## CLI Usage
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/search-messages.ts --query <text> [options]
+letta messages search --query <text> [options]
 ```
-
-Replace `<SKILL_DIR>` with the actual path from the `# Skill Directory:` line at the top of this loaded skill.
 
 ### Options
 
@@ -35,7 +31,8 @@ Replace `<SKILL_DIR>` with the actual path from the `# Skill Directory:` line at
 | `--end-date <date>` | Filter messages before this date (ISO format) |
 | `--limit <n>` | Max results (default: 10) |
 | `--all-agents` | Search all agents, not just current agent |
-| `--agent-id <id>` | Explicit agent ID (for manual testing) |
+| `--agent <id>` | Explicit agent ID (overrides LETTA_AGENT_ID) |
+| `--agent-id <id>` | Alias for `--agent` |
 
 ### Search Modes
 
@@ -43,12 +40,12 @@ Replace `<SKILL_DIR>` with the actual path from the `# Skill Directory:` line at
 - **vector**: Semantic similarity search (good for conceptual matches)
 - **fts**: Full-text search (good for exact phrases)
 
-## Companion Script: get-messages.ts
+## Companion Command: messages list
 
 Use this to expand around a found needle by message ID cursor:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/get-messages.ts [options]
+letta messages list [options]
 ```
 
 | Option | Description |
@@ -57,7 +54,8 @@ npx tsx <SKILL_DIR>/scripts/get-messages.ts [options]
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
-| `--agent-id <id>` | Explicit agent ID |
+| `--agent <id>` | Explicit agent ID (overrides LETTA_AGENT_ID) |
+| `--agent-id <id>` | Alias for `--agent` |
 
 ## Search Strategies
 
@@ -67,19 +65,19 @@ Use when you need full conversation context around a specific topic:
 
 1. **Find the needle** - Search with keywords to discover relevant messages:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/search-messages.ts --query "flicker inline approval" --limit 5
+   letta messages search --query "flicker inline approval" --limit 5
    ```
 
 2. **Note the message_id** - Find the most relevant result and copy its `message_id`
 
 3. **Expand before** - Get messages leading up to the needle:
    ```bash
-   npx tsx <SKILL_DIR>/scripts/get-messages.ts --before "message-xyz" --limit 10
+   letta messages list --before "message-xyz" --limit 10
    ```
 
 4. **Expand after** - Get messages following the needle (use `--order asc` for chronological):
    ```bash
-   npx tsx <SKILL_DIR>/scripts/get-messages.ts --after "message-xyz" --order asc --limit 10
+   letta messages list --after "message-xyz" --order asc --limit 10
    ```
 
 ### Strategy 2: Date-Bounded Search
@@ -87,7 +85,7 @@ Use when you need full conversation context around a specific topic:
 Use when you know approximately when something was discussed:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/search-messages.ts --query "topic" --start-date "2025-12-31T00:00:00Z" --end-date "2025-12-31T23:59:59Z" --limit 15
+letta messages search --query "topic" --start-date "2025-12-31T00:00:00Z" --end-date "2025-12-31T23:59:59Z" --limit 15
 ```
 
 Results are sorted by relevance within the date window.
@@ -97,7 +95,7 @@ Results are sorted by relevance within the date window.
 Use when you're not sure what you're looking for:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/search-messages.ts --query "vague topic" --mode vector --limit 10
+letta messages search --query "vague topic" --mode vector --limit 10
 ```
 
 Vector mode finds semantically similar messages even without exact keyword matches.
@@ -107,7 +105,7 @@ Vector mode finds semantically similar messages even without exact keyword match
 Use with `--all-agents` to search across all agents and identify which one discussed a topic:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/search-messages.ts --query "authentication refactor" --all-agents --limit 10
+letta messages search --query "authentication refactor" --all-agents --limit 10
 ```
 
 Results include `agent_id` for each message. Use this to:

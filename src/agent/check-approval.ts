@@ -159,7 +159,10 @@ export async function getResumeData(
           try {
             const backfill = await client.conversations.messages.list(
               conversationId,
-              { limit: MESSAGE_HISTORY_LIMIT, order: "desc" },
+              {
+                limit: MESSAGE_HISTORY_LIMIT,
+                order: "desc",
+              },
             );
             return {
               pendingApproval: null,

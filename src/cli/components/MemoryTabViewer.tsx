@@ -1,11 +1,12 @@
 import type { Block } from "@letta-ai/letta-client/resources/agents/blocks";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useState } from "react";
 import { getClient } from "../../agent/client";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { Text } from "./Text";
 
 // Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
@@ -123,9 +124,9 @@ export function MemoryTabViewer({
     }
   });
 
-  // Render tab bar
+  // Render tab bar (no gap - spacing is handled by padding in each label)
   const renderTabBar = () => (
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
+    <Box flexDirection="row" flexWrap="wrap">
       {displayBlocks.map((block, index) => {
         const isActive = index === selectedTabIndex;
         return (

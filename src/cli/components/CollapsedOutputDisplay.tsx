@@ -1,7 +1,8 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { MarkdownDisplay } from "./MarkdownDisplay";
+import { Text } from "./Text";
 
 const DEFAULT_COLLAPSED_LINES = 3;
 const PREFIX_WIDTH = 5; // "  ⎿  " or "     "
@@ -9,6 +10,7 @@ const PREFIX_WIDTH = 5; // "  ⎿  " or "     "
 interface CollapsedOutputDisplayProps {
   output: string; // Full output from completion
   maxLines?: number; // Max lines to show before collapsing (Infinity = show all)
+  maxChars?: number; // Max chars to show before clipping
 }
 
 /**
@@ -21,12 +23,24 @@ export const CollapsedOutputDisplay = memo(
   ({
     output,
     maxLines = DEFAULT_COLLAPSED_LINES,
+    maxChars,
   }: CollapsedOutputDisplayProps) => {
     const columns = useTerminalWidth();
     const contentWidth = Math.max(0, columns - PREFIX_WIDTH);
 
+    let displayOutput = output;
+    let clippedByChars = false;
+    if (
+      typeof maxChars === "number" &&
+      maxChars > 0 &&
+      output.length > maxChars
+    ) {
+      displayOutput = `${output.slice(0, maxChars)}…`;
+      clippedByChars = true;
+    }
+
     // Keep empty lines for accurate display (don't filter them out)
-    const lines = output.split("\n");
+    const lines = displayOutput.split("\n");
     // Remove trailing empty line from final newline
     if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop();
@@ -71,6 +85,17 @@ export const CollapsedOutputDisplay = memo(
             </Box>
             <Box flexGrow={1} width={contentWidth}>
               <Text dimColor>… +{hiddenCount} lines</Text>
+            </Box>
+          </Box>
+        )}
+        {/* Character clipping hint */}
+        {clippedByChars && (
+          <Box flexDirection="row">
+            <Box width={PREFIX_WIDTH} flexShrink={0}>
+              <Text>{"     "}</Text>
+            </Box>
+            <Box flexGrow={1} width={contentWidth}>
+              <Text dimColor>… output clipped</Text>
             </Box>
           </Box>
         )}

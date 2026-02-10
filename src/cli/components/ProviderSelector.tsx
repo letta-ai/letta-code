@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type AuthMethod,
@@ -17,6 +17,7 @@ import {
 } from "../../utils/aws-credentials";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 
@@ -28,7 +29,7 @@ type ViewState =
   | { type: "profileSelect"; provider: ByokProvider }
   | { type: "options"; provider: ByokProvider; providerId: string };
 
-type ValidationState = "idle" | "validating" | "valid" | "invalid";
+type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -219,6 +220,7 @@ export function ProviderSelector({
 
     // If already validated, save
     if (validationState === "valid") {
+      setValidationState("saving");
       try {
         await createOrUpdateProvider(
           provider.providerType,
@@ -285,6 +287,7 @@ export function ProviderSelector({
 
     // If already validated, save
     if (validationState === "valid") {
+      setValidationState("saving");
       try {
         await createOrUpdateProvider(
           provider.providerType,
@@ -603,11 +606,13 @@ export function ProviderSelector({
     const statusText =
       validationState === "validating"
         ? " (validating...)"
-        : validationState === "valid"
-          ? " (key validated!)"
-          : validationState === "invalid"
-            ? ` (invalid key${validationError ? `: ${validationError}` : ""})`
-            : "";
+        : validationState === "saving"
+          ? " (saving & syncing models...)"
+          : validationState === "valid"
+            ? " (key validated!)"
+            : validationState === "invalid"
+              ? ` (invalid key${validationError ? `: ${validationError}` : ""})`
+              : "";
 
     const statusColor =
       validationState === "valid"
@@ -617,9 +622,11 @@ export function ProviderSelector({
           : undefined;
 
     const footerText =
-      validationState === "valid"
-        ? "Enter to save · Esc cancel"
-        : "Enter to validate · Esc cancel";
+      validationState === "saving"
+        ? "Saving provider..."
+        : validationState === "valid"
+          ? "Enter to save · Esc cancel"
+          : "Enter to validate · Esc cancel";
 
     return (
       <>
@@ -632,7 +639,12 @@ export function ProviderSelector({
         <Box flexDirection="row">
           <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
           <Text>{apiKeyInput ? maskApiKey(apiKeyInput) : "(enter key)"}</Text>
-          <Text color={statusColor} dimColor={validationState === "validating"}>
+          <Text
+            color={statusColor}
+            dimColor={
+              validationState === "validating" || validationState === "saving"
+            }
+          >
             {statusText}
           </Text>
         </Box>
@@ -810,11 +822,13 @@ export function ProviderSelector({
     const statusText =
       validationState === "validating"
         ? " (validating...)"
-        : validationState === "valid"
-          ? " (credentials validated!)"
-          : validationState === "invalid"
-            ? ` (invalid${validationError ? `: ${validationError}` : ""})`
-            : "";
+        : validationState === "saving"
+          ? " (saving & syncing models...)"
+          : validationState === "valid"
+            ? " (credentials validated!)"
+            : validationState === "invalid"
+              ? ` (invalid${validationError ? `: ${validationError}` : ""})`
+              : "";
 
     const statusColor =
       validationState === "valid"
@@ -826,11 +840,13 @@ export function ProviderSelector({
     const hasAuthMethods = "authMethods" in provider && provider.authMethods;
     const escText = hasAuthMethods ? "Esc back" : "Esc cancel";
     const footerText =
-      validationState === "valid"
-        ? `Enter to save · ${escText}`
-        : allFilled
-          ? `Enter to validate · Tab/↑↓ navigate · ${escText}`
-          : `Tab/↑↓ navigate · ${escText}`;
+      validationState === "saving"
+        ? "Saving provider..."
+        : validationState === "valid"
+          ? `Enter to save · ${escText}`
+          : allFilled
+            ? `Enter to validate · Tab/↑↓ navigate · ${escText}`
+            : `Tab/↑↓ navigate · ${escText}`;
 
     // Build title - include auth method name if present
     const title = authMethod
@@ -883,7 +899,9 @@ export function ProviderSelector({
           <Box marginTop={1}>
             <Text
               color={statusColor}
-              dimColor={validationState === "validating"}
+              dimColor={
+                validationState === "validating" || validationState === "saving"
+              }
             >
               {"  "}
               {statusText}

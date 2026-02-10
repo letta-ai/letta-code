@@ -1,6 +1,7 @@
 // src/permissions/analyzer.ts
 // Analyze tool executions and recommend appropriate permission rules
 
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 export interface ApprovalContext {
@@ -226,9 +227,144 @@ function containsDangerousCommand(command: string): boolean {
   return false;
 }
 
+type SkillSourceLabel = "project" | "agent-scoped" | "global" | "bundled";
+
+interface SkillScriptInfo {
+  source: SkillSourceLabel;
+  skillName: string;
+  skillRootPath: string;
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizePathSeparators(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function parseAbsoluteCommandPaths(command: string): string[] {
+  const normalized = command.replace(/\\"/g, '"').replace(/\\'/g, "'");
+  const candidates: string[] = [];
+
+  // Prefer explicit quoted paths first.
+  const quotedRegex = /["']((?:[A-Za-z]:)?\/[^"']+)["']/g;
+  let quotedMatch: RegExpExecArray | null = quotedRegex.exec(normalized);
+  while (quotedMatch) {
+    if (quotedMatch[1]) {
+      candidates.push(normalizePathSeparators(quotedMatch[1]));
+    }
+    quotedMatch = quotedRegex.exec(normalized);
+  }
+
+  // Also scan whitespace-delimited tokens (handles cd && command chains).
+  const tokens = normalized.split(/\s+/);
+  for (const token of tokens) {
+    const cleaned = token
+      .replace(/^["'`([{]+/, "")
+      .replace(/["'`),;|\]}]+$/g, "");
+    if (/^(?:[A-Za-z]:)?\//.test(cleaned)) {
+      candidates.push(normalizePathSeparators(cleaned));
+    }
+  }
+
+  // Preserve first-seen order while de-duplicating.
+  return Array.from(new Set(candidates));
+}
+
+function detectSkillScript(
+  command: string,
+  workingDir: string,
+): SkillScriptInfo | null {
+  const pathCandidates = parseAbsoluteCommandPaths(command);
+  if (pathCandidates.length === 0) {
+    return null;
+  }
+
+  const normalizedWorkingDir = normalizePathSeparators(workingDir).replace(
+    /\/$/,
+    "",
+  );
+  const normalizedHomeDir = normalizePathSeparators(homedir()).replace(
+    /\/$/,
+    "",
+  );
+
+  const detect = (
+    source: SkillSourceLabel,
+    regex: RegExp,
+  ): SkillScriptInfo | null => {
+    for (const candidate of pathCandidates) {
+      const match = candidate.match(regex);
+      if (!match?.[1]) {
+        continue;
+      }
+      const skillName = match[1];
+      const skillRootPath = match[0].replace(/\/scripts\/$/, "");
+      return { source, skillName, skillRootPath };
+    }
+    return null;
+  };
+
+  const projectRegex = new RegExp(
+    `^${escapeRegex(normalizedWorkingDir)}/\\.skills/(.+?)/scripts/`,
+  );
+  const projectSkill = detect("project", projectRegex);
+  if (projectSkill) {
+    return projectSkill;
+  }
+
+  const agentRegex = new RegExp(
+    `^${escapeRegex(normalizedHomeDir)}/\\.letta/agents/[^/]+/skills/(.+?)/scripts/`,
+  );
+  const agentSkill = detect("agent-scoped", agentRegex);
+  if (agentSkill) {
+    return agentSkill;
+  }
+
+  const globalRegex = new RegExp(
+    `^${escapeRegex(normalizedHomeDir)}/\\.letta/skills/(.+?)/scripts/`,
+  );
+  const globalSkill = detect("global", globalRegex);
+  if (globalSkill) {
+    return globalSkill;
+  }
+
+  const bundledSkill = detect(
+    "bundled",
+    /\/skills\/builtin\/([^/]+)\/scripts\//,
+  );
+  if (bundledSkill) {
+    return bundledSkill;
+  }
+
+  return null;
+}
+
+function buildSkillScriptRule(command: string, skillRootPath: string): string {
+  const normalizedCommand = normalizePathSeparators(command).trim();
+  const rootIndex = normalizedCommand.indexOf(skillRootPath);
+  if (rootIndex === -1) {
+    return `Bash(${normalizedCommand})`;
+  }
+
+  const rulePrefix = normalizedCommand.slice(
+    0,
+    rootIndex + skillRootPath.length,
+  );
+  return `Bash(${rulePrefix}:*)`;
+}
+
+function getSkillApprovalText(
+  source: SkillSourceLabel,
+  skillName: string,
+): string {
+  return `Yes, and don't ask again for scripts in ${source} skill '${skillName}'`;
+}
+
 function analyzeBashApproval(
   command: string,
-  _workingDir: string,
+  workingDir: string,
 ): ApprovalContext {
   const parts = command.trim().split(/\s+/);
   const baseCommand = parts[0] || "";
@@ -259,6 +395,19 @@ function analyzeBashApproval(
       defaultScope: "session",
       allowPersistence: false,
       safetyLevel: "dangerous",
+    };
+  }
+
+  const skillScript = detectSkillScript(command, workingDir);
+  if (skillScript) {
+    const { source, skillName, skillRootPath } = skillScript;
+    return {
+      recommendedRule: buildSkillScriptRule(command, skillRootPath),
+      ruleDescription: `scripts in ${source} skill '${skillName}'`,
+      approveAlwaysText: getSkillApprovalText(source, skillName),
+      defaultScope: "project",
+      allowPersistence: true,
+      safetyLevel: "moderate",
     };
   }
 

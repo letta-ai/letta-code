@@ -2,23 +2,23 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import { join } from "node:path";
 import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
+  getDefaultModel,
   getModelUpdateArgs,
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
-import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 /**
  * Describes where a memory block came from
@@ -120,8 +120,8 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use default model
-    modelHandle = "anthropic/claude-sonnet-4-5-20250929";
+    // Use default model from models.json
+    modelHandle = getDefaultModel();
   }
 
   const client = await getClient();
@@ -238,34 +238,6 @@ export async function createAgent(
     }
   }
 
-  // Resolve absolute path for skills directory
-  const resolvedSkillsDirectory =
-    options.skillsDirectory || join(process.cwd(), SKILLS_DIR);
-
-  // Discover skills from .skills directory and populate skills memory block
-  try {
-    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
-
-    // Log any errors encountered during skill discovery
-    if (errors.length > 0) {
-      console.warn("Errors encountered during skill discovery:");
-      for (const error of errors) {
-        console.warn(`  ${error.path}: ${error.message}`);
-      }
-    }
-
-    // Find and update the skills memory block with discovered skills
-    const skillsBlock = filteredMemoryBlocks.find((b) => b.label === "skills");
-    if (skillsBlock) {
-      const formatted = formatSkillsForMemory(skills, resolvedSkillsDirectory);
-      skillsBlock.value = formatted;
-    }
-  } catch (error) {
-    console.warn(
-      `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   // Track provenance: which blocks were created
   // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
@@ -281,10 +253,11 @@ export async function createAgent(
   }
 
   // Get the model's context window from its configuration (if known)
-  // For unknown models (e.g., from self-hosted servers), don't set a context window
-  // and let the server use its default
+  // First try models.json, then fall back to API-cached context window for BYOK models
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
-  const contextWindow = modelUpdateArgs?.context_window as number | undefined;
+  const contextWindow =
+    (modelUpdateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
 
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is
@@ -305,8 +278,9 @@ export async function createAgent(
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
   // - block_ids: references to existing blocks (for shared memory)
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const tags = ["origin:letta-code"];
-  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+  if (isSubagent) {
     tags.push("role:subagent");
   }
 
@@ -328,6 +302,7 @@ export async function createAgent(
     // Referenced block IDs (existing blocks to attach)
     block_ids: referencedBlockIds.length > 0 ? referencedBlockIds : undefined,
     tags,
+    ...(isSubagent && { hidden: true }),
     // should be default off, but just in case
     include_base_tools: false,
     include_base_tool_rules: false,

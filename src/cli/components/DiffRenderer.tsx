@@ -1,8 +1,9 @@
 import { relative } from "node:path";
 import * as Diff from "diff";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 // Helper to format path as relative with ../
 /**

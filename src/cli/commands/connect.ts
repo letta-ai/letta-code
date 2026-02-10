@@ -19,12 +19,17 @@ import {
   removeMinimaxProvider,
 } from "../../providers/minimax-provider";
 import {
-  checkOpenAICodexEligibility,
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
   OPENAI_CODEX_PROVIDER_NAME,
   removeOpenAICodexProvider,
 } from "../../providers/openai-codex-provider";
+import {
+  createOrUpdateOpenrouterProvider,
+  getOpenrouterProvider,
+  OPENROUTER_PROVIDER_NAME,
+  removeOpenrouterProvider,
+} from "../../providers/openrouter-provider";
 import {
   createOrUpdateZaiProvider,
   getZaiProvider,
@@ -43,6 +48,12 @@ function uid(prefix: string) {
 // Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
+let activeCommandId: string | null = null;
+
+export function setActiveCommandId(id: string | null): void {
+  activeCommandId = id;
+}
+
 // Context passed to connect handlers
 export interface ConnectCommandContext {
   buffersRef: { current: Buffers };
@@ -60,17 +71,22 @@ function addCommandResult(
   success: boolean,
   phase: "running" | "finished" = "finished",
 ): string {
-  const cmdId = uid("cmd");
+  const cmdId = activeCommandId ?? uid("cmd");
+  const existing = buffersRef.current.byId.get(cmdId);
+  const nextInput =
+    existing && existing.kind === "command" ? existing.input : input;
   const line: CommandLine = {
     kind: "command",
     id: cmdId,
-    input,
+    input: nextInput,
     output,
     phase,
     ...(phase === "finished" && { success }),
   };
   buffersRef.current.byId.set(cmdId, line);
-  buffersRef.current.order.push(cmdId);
+  if (!buffersRef.current.order.includes(cmdId)) {
+    buffersRef.current.order.push(cmdId);
+  }
   refreshDerived();
   return cmdId;
 }
@@ -85,10 +101,13 @@ function updateCommandResult(
   success: boolean,
   phase: "running" | "finished" = "finished",
 ): void {
+  const existing = buffersRef.current.byId.get(cmdId);
+  const nextInput =
+    existing && existing.kind === "command" ? existing.input : input;
   const line: CommandLine = {
     kind: "command",
     id: cmdId,
-    input,
+    input: nextInput,
     output,
     phase,
     ...(phase === "finished" && { success }),
@@ -120,7 +139,7 @@ export async function handleConnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex             - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>     - Connect to zAI with your API key\n  \u2022 minimax <api_key> - Connect to MiniMax with your API key\n  \u2022 bedrock <method>  - Connect to AWS Bedrock (iam/profile/default)",
+      "Usage: /connect <provider> [options]\n\nAvailable providers:\n  \u2022 codex               - Connect via OAuth to authenticate with ChatGPT Plus/Pro\n  \u2022 zai <api_key>       - Connect to zAI with your API key\n  \u2022 minimax <api_key>   - Connect to MiniMax with your API key\n  \u2022 openrouter <api_key> - Connect to OpenRouter with your API key\n  \u2022 bedrock <method>    - Connect to AWS Bedrock (iam/profile/default)",
       false,
     );
     return;
@@ -130,13 +149,14 @@ export async function handleConnect(
     provider !== "codex" &&
     provider !== "zai" &&
     provider !== "minimax" &&
+    provider !== "openrouter" &&
     provider !== "bedrock"
   ) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai, minimax, bedrock\nUsage: /connect <provider> [options]`,
+      `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, zai, minimax, openrouter, bedrock\nUsage: /connect <provider> [options]`,
       false,
     );
     return;
@@ -151,6 +171,12 @@ export async function handleConnect(
   // MiniMax is handled separately in App.tsx, but add a fallback just in case
   if (provider === "minimax") {
     await handleConnectMinimax(ctx, msg);
+    return;
+  }
+
+  // OpenRouter is handled here
+  if (provider === "openrouter") {
+    await handleConnectOpenrouter(ctx, msg);
     return;
   }
 
@@ -198,28 +224,7 @@ async function handleConnectCodex(
   );
 
   try {
-    // 1. Check eligibility before starting OAuth flow
-    const eligibility = await checkOpenAICodexEligibility();
-    if (!eligibility.eligible) {
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
-          `This feature is only available for Letta Pro or Enterprise customers.\n` +
-          `Current plan: ${eligibility.billing_tier}\n\n` +
-          `To upgrade your plan, visit:\n\n` +
-          `  https://app.letta.com/settings/organization/usage\n\n` +
-          `If you have an OpenAI API key, you can use it directly by setting:\n` +
-          `  export OPENAI_API_KEY=your-key`,
-        false,
-        "finished",
-      );
-      return;
-    }
-
-    // 2. Start OAuth flow - generate PKCE and authorization URL
+    // 1. Start OAuth flow - generate PKCE and authorization URL
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -369,21 +374,8 @@ async function handleConnectCodex(
     // Clear any partial state
     settingsManager.clearOAuthState();
 
-    // Check if this is a plan upgrade requirement error from provider creation
     const errorMessage = getErrorMessage(error);
-
-    let displayMessage: string;
-    if (errorMessage === "PLAN_UPGRADE_REQUIRED") {
-      displayMessage =
-        `\u2717 ChatGPT OAuth requires a Pro or Enterprise plan\n\n` +
-        `This feature is only available for Letta Pro or Enterprise customers.\n` +
-        `To upgrade your plan, visit:\n\n` +
-        `  https://app.letta.com/settings/organization/usage\n\n` +
-        `If you have an OpenAI API key, you can use it directly by setting:\n` +
-        `  export OPENAI_API_KEY=your-key`;
-    } else {
-      displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
-    }
+    const displayMessage = `\u2717 Failed to connect: ${errorMessage}`;
 
     updateCommandResult(
       ctx.buffersRef,
@@ -631,7 +623,7 @@ export async function handleDisconnect(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai, minimax, bedrock",
+      "Usage: /disconnect <provider>\n\nAvailable providers: codex, claude, zai, minimax, openrouter, bedrock",
       false,
     );
     return;
@@ -646,6 +638,12 @@ export async function handleDisconnect(
   // Handle /disconnect minimax
   if (provider === "minimax") {
     await handleDisconnectMinimax(ctx, msg);
+    return;
+  }
+
+  // Handle /disconnect openrouter
+  if (provider === "openrouter") {
+    await handleDisconnectOpenrouter(ctx, msg);
     return;
   }
 
@@ -672,7 +670,7 @@ export async function handleDisconnect(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai, minimax, bedrock\nUsage: /disconnect <provider>`,
+    `Error: Unknown provider "${provider}"\n\nAvailable providers: codex, claude, zai, minimax, openrouter, bedrock\nUsage: /disconnect <provider>`,
     false,
   );
 }
@@ -949,6 +947,138 @@ export async function handleConnectZai(
       cmdId,
       msg,
       `\u2717 Failed to create Zai provider: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /connect openrouter command
+ * Usage: /connect openrouter <api_key>
+ *
+ * Creates the lc-openrouter provider with the provided API key
+ */
+export async function handleConnectOpenrouter(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  const parts = msg.trim().split(/\s+/);
+  // Join all remaining parts in case the API key got split
+  const apiKey = parts.slice(2).join("");
+
+  // If no API key provided, show usage
+  if (!apiKey || apiKey.length === 0) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Usage: /connect openrouter <api_key>\n\n" +
+        "Connect to OpenRouter by providing your API key.\n\n" +
+        "Get your API key at https://openrouter.ai/keys\n\n" +
+        "Example: /connect openrouter sk-or-v1-...",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Creating OpenRouter provider...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Create or update the OpenRouter provider with the API key
+    await createOrUpdateOpenrouterProvider(apiKey);
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2713 Successfully connected to OpenRouter!\n\n` +
+        `Provider '${OPENROUTER_PROVIDER_NAME}' created in Letta.\n\n` +
+        `The models are populated in /model \u2192 "All Available Models"`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2717 Failed to create OpenRouter provider: ${getErrorMessage(error)}`,
+      false,
+      "finished",
+    );
+  } finally {
+    ctx.setCommandRunning(false);
+  }
+}
+
+/**
+ * Handle /disconnect openrouter
+ */
+async function handleDisconnectOpenrouter(
+  ctx: ConnectCommandContext,
+  msg: string,
+): Promise<void> {
+  // Check if OpenRouter provider exists
+  const existing = await getOpenrouterProvider();
+  if (!existing) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      "Not currently connected to OpenRouter.\n\nUse /connect openrouter <api_key> to connect.",
+      false,
+    );
+    return;
+  }
+
+  // Show running status
+  const cmdId = addCommandResult(
+    ctx.buffersRef,
+    ctx.refreshDerived,
+    msg,
+    "Disconnecting from OpenRouter...",
+    true,
+    "running",
+  );
+
+  ctx.setCommandRunning(true);
+
+  try {
+    // Remove provider from Letta
+    await removeOpenrouterProvider();
+
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2713 Disconnected from OpenRouter.\n\n` +
+        `Provider '${OPENROUTER_PROVIDER_NAME}' removed from Letta.`,
+      true,
+      "finished",
+    );
+  } catch (error) {
+    updateCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      cmdId,
+      msg,
+      `\u2717 Failed to disconnect from OpenRouter: ${getErrorMessage(error)}`,
       false,
       "finished",
     );

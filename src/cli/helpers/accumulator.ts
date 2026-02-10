@@ -7,6 +7,10 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
 import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import { debugLog } from "../../utils/debug";
+import { extractCompactionSummary } from "./backfill";
+import type { ContextTracker } from "./contextTracker";
+import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -133,13 +137,31 @@ export type Line =
     }
   | { kind: "error"; id: string; text: string }
   | {
+      kind: "event";
+      id: string;
+      eventType: string;
+      eventData: Record<string, unknown>;
+      // Compaction events have additional fields populated when summary_message arrives
+      phase: "running" | "finished";
+      summary?: string;
+      stats?: {
+        trigger?: string;
+        contextTokensBefore?: number;
+        contextTokensAfter?: number;
+        contextWindow?: number;
+        messagesCountBefore?: number;
+        messagesCountAfter?: number;
+      };
+    }
+  | {
       kind: "command";
       id: string;
       input: string;
       output: string;
-      phase?: "running" | "finished";
+      phase?: "running" | "waiting" | "finished";
       success?: boolean;
       dimOutput?: boolean;
+      preformatted?: boolean;
     }
   | {
       kind: "bash_command";
@@ -155,6 +177,13 @@ export type Line =
       kind: "status";
       id: string;
       lines: string[]; // Multi-line status message with arrow formatting
+    }
+  | {
+      kind: "trajectory_summary";
+      id: string;
+      durationMs: number;
+      stepCount: number;
+      verb: string;
     }
   | { kind: "separator"; id: string };
 
@@ -181,6 +210,8 @@ export type Buffers = {
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
   abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
+  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
+  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -194,6 +225,8 @@ export type Buffers = {
   splitCounters: Map<string, number>; // tracks split count per original otid
   // Track server-side tool calls for hook triggering (toolCallId -> info)
   serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Track if this run has pending approvals (used to gate server tool phases)
+  approvalsPending: boolean;
   // Agent ID for passing to hooks (needed for server-side tools like memory)
   agentId?: string;
 };
@@ -219,6 +252,7 @@ export function createBuffers(agentId?: string): Buffers {
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
+    approvalsPending: false,
     agentId,
   };
 }
@@ -243,6 +277,15 @@ function markAsFinished(b: Buffers, id: string) {
     const updatedLine = { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
     // console.log(`[MARK_FINISHED] Successfully marked ${id} as finished`);
+
+    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
+    if (line.kind === "reasoning" && "text" in line && line.text) {
+      b.lastReasoning = line.text;
+    }
+    // Track last assistant message for hooks (PostToolUse will include it)
+    if (line.kind === "assistant" && "text" in line && line.text) {
+      b.lastAssistantMessage = line.text;
+    }
   } else {
     // console.log(`[MARK_FINISHED] Did NOT mark ${id} as finished (conditions not met)`);
   }
@@ -278,8 +321,7 @@ export function markCurrentLineAsFinished(b: Buffers) {
     // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
     return;
   }
-  // Try both the plain otid and the -tool suffix (in case of collision workaround)
-  const prev = b.byId.get(b.lastOtid) || b.byId.get(`${b.lastOtid}-tool`);
+  const prev = b.byId.get(b.lastOtid);
   // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
   if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
     // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
@@ -350,6 +392,7 @@ function getStringProp(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : undefined;
 }
+
 function extractTextPart(v: unknown): string {
   if (typeof v === "string") return v;
   if (Array.isArray(v)) {
@@ -421,7 +464,11 @@ function trySplitContent(
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+export function onChunk(
+  b: Buffers,
+  chunk: LettaStreamingResponse,
+  ctx?: ContextTracker,
+) {
   // Skip processing if stream was interrupted mid-turn. handleInterrupt already
   // rendered the cancellation state, so we should ignore any buffered chunks
   // that arrive before drainStream exits.
@@ -494,27 +541,40 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       break;
     }
 
-    case "tool_call_message":
-    case "approval_request_message": {
-      /* POST-FIX VERSION (what this should look like after backend fix):
-      const id = chunk.otid;
+    case "user_message": {
+      // Use otid if available, fall back to id (server sends otid: null for summary messages)
+      const chunkWithId = chunk as LettaStreamingResponse & { id?: string };
+      const id = chunk.otid || chunkWithId.id;
+      if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, id);
 
-      if (!id) break;
+      // Extract text content from the user message
+      const rawText = extractTextPart(chunk.content);
+      if (!rawText) break;
 
-      const toolCall = chunk.tool_call || (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0 ? chunk.tool_calls[0] : null);
-      const toolCallId = toolCall?.tool_call_id;
-      const name = toolCall?.name;
-      const argsText = toolCall?.arguments;
+      // Check if this is a compaction summary message (old format embedded in user_message)
+      const compactionSummary = extractCompactionSummary(rawText);
+      if (compactionSummary) {
+        // Render as a finished compaction event
+        ensure(b, id, () => ({
+          kind: "event",
+          id,
+          eventType: "compaction",
+          eventData: {},
+          phase: "finished",
+          summary: compactionSummary,
+        }));
+      }
+      // If not a summary, ignore it (user messages aren't rendered during streaming)
+      break;
+    }
 
-      // Record correlation: toolCallId → line id (otid)
-      if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
-      */
-
-      let id = chunk.otid;
-      // console.log(`[TOOL_CALL] Received ${chunk.message_type} with otid=${id}, toolCallId=${chunk.tool_call?.tool_call_id}, name=${chunk.tool_call?.name}`);
+    case "tool_call_message":
+    case "approval_request_message": {
+      // Handle otid transition (mark previous line as finished)
+      handleOtidTransition(b, chunk.otid ?? undefined);
 
       // Use deprecated tool_call or new tool_calls array
       const toolCall =
@@ -522,80 +582,62 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
           ? chunk.tool_calls[0]
           : null);
+      if (!toolCall || !toolCall.tool_call_id) break;
 
-      const toolCallId = toolCall?.tool_call_id;
-      const name = toolCall?.name;
-      const argsText = toolCall?.arguments;
+      const toolCallId = toolCall.tool_call_id;
+      const name = toolCall.name;
+      const argsText = toolCall.arguments;
 
-      // ========== START BACKEND BUG WORKAROUND (Remove after OTID fix) ==========
-      // Bug: Backend sends same otid for reasoning and tool_call, and multiple otids for same tool_call
-
-      // Check if we already have a line for this toolCallId (prevents duplicates)
-      if (toolCallId && b.toolCallIdToLineId.has(toolCallId)) {
-        // Update the existing line instead of creating a new one
-        const existingId = b.toolCallIdToLineId.get(toolCallId);
-        if (existingId) {
-          id = existingId;
-        }
-
-        // Handle otid transition for tracking purposes
-        handleOtidTransition(b, chunk.otid ?? undefined);
-      } else {
-        // Check if this otid is already used by another line
-        if (id && b.byId.has(id)) {
-          const existing = b.byId.get(id);
-          if (existing && existing.kind === "reasoning") {
-            // Mark the reasoning as finished before we create the tool_call
-            markAsFinished(b, id);
-            // Use a different ID for the tool_call to avoid overwriting the reasoning
-            id = `${id}-tool`;
-          } else if (existing && existing.kind === "tool_call") {
-            // Parallel tool calls: same otid, different tool_call_id
-            // Create unique ID for this parallel tool using its tool_call_id
-            if (toolCallId) {
-              id = `${id}-${toolCallId.slice(-8)}`;
-            } else {
-              // Fallback: append timestamp
-              id = `${id}-${Date.now().toString(36)}`;
-            }
-          }
-        }
-        // ========== END BACKEND BUG WORKAROUND ==========
-
-        // This part stays after fix:
-        // Handle otid transition (mark previous line as finished)
-        // This must happen BEFORE the break, so reasoning gets finished even when tool has no otid
-        handleOtidTransition(b, id ?? undefined);
-
-        if (!id) {
-          // console.log(`[TOOL_CALL] No otid, breaking`);
-          break;
-        }
-
-        // Record correlation: toolCallId → line id (otid) for future updates
-        if (toolCallId) b.toolCallIdToLineId.set(toolCallId, id);
+      // Use tool_call_id as the stable line id (server guarantees uniqueness).
+      const id = b.toolCallIdToLineId.get(toolCallId) ?? toolCallId;
+      if (!b.toolCallIdToLineId.has(toolCallId)) {
+        b.toolCallIdToLineId.set(toolCallId, id);
       }
 
-      // Early exit if no valid id
-      if (!id) break;
-
-      // Tool calls should be "ready" (blinking) while pending execution
-      // Only approval requests explicitly set to "ready", but regular tool calls should also blink
-      const desiredPhase = "ready";
-      const line = ensure<ToolCallLine>(b, id, () => ({
+      // Tool calls start in "streaming" (static grey) while args stream in.
+      // Approval requests move to "ready" (blinking), server tools move to
+      // "running" once args are complete.
+      const desiredPhase = "streaming";
+      let line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
-        toolCallId: toolCallId ?? undefined,
+        toolCallId,
         name: name ?? undefined,
         phase: desiredPhase,
       }));
+
+      // If additional metadata arrives later (e.g., name), update the line.
+      if ((name && !line.name) || line.toolCallId !== toolCallId) {
+        line = {
+          ...line,
+          toolCallId,
+          name: line.name ?? name ?? undefined,
+        };
+        b.byId.set(id, line);
+      }
 
       // If this is an approval request and the line already exists, bump phase to ready
       if (
         chunk.message_type === "approval_request_message" &&
         line.phase !== "finished"
       ) {
-        b.byId.set(id, { ...line, phase: "ready" });
+        b.approvalsPending = true;
+        line = { ...line, phase: "ready" };
+        b.byId.set(id, line);
+
+        // Downgrade any server tools to streaming while approvals are pending.
+        for (const [toolCallId] of b.serverToolCalls) {
+          const serverLineId = b.toolCallIdToLineId.get(toolCallId);
+          if (!serverLineId) continue;
+          const serverLine = b.byId.get(serverLineId);
+          if (
+            serverLine &&
+            serverLine.kind === "tool_call" &&
+            serverLine.phase === "running"
+          ) {
+            b.byId.set(serverLineId, { ...serverLine, phase: "streaming" });
+          }
+        }
       }
 
       // if argsText is not empty, add it to the line (immutable update)
@@ -605,6 +647,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           ...line,
           argsText: (line.argsText || "") + argsText,
         };
+        line = updatedLine;
         b.byId.set(id, updatedLine);
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
@@ -639,7 +682,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             toolCallId,
             undefined,
             b.agentId,
-          ).catch(() => {});
+          ).catch((error) => {
+            debugLog("hooks", "PreToolUse hook error (accumulator)", error);
+          });
         }
       }
 
@@ -717,6 +762,12 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               // Args parsing failed
             }
 
+            // Get and clear preceding reasoning/message for hook
+            const precedingReasoning = b.lastReasoning;
+            const precedingAssistantMessage = b.lastAssistantMessage;
+            b.lastReasoning = undefined;
+            b.lastAssistantMessage = undefined;
+
             runPostToolUseHooks(
               serverToolInfo.toolName,
               parsedArgs,
@@ -727,7 +778,11 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               toolCallId,
               undefined,
               b.agentId,
-            ).catch(() => {});
+              precedingReasoning,
+              precedingAssistantMessage,
+            ).catch((error) => {
+              debugLog("hooks", "PostToolUse hook error (accumulator)", error);
+            });
 
             b.serverToolCalls.delete(toolCallId);
           }
@@ -748,14 +803,122 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
       }
+      // Use context_tokens from SDK (estimate of tokens in context window)
+      if (ctx) {
+        const usageChunk = chunk as typeof chunk & { context_tokens?: number };
+        if (usageChunk.context_tokens !== undefined) {
+          ctx.lastContextTokens = usageChunk.context_tokens;
+          // Track history for time-series display
+          const compacted = ctx.pendingCompaction;
+          if (compacted) ctx.pendingCompaction = false;
+          ctx.contextTokensHistory.push({
+            timestamp: Date.now(),
+            tokens: usageChunk.context_tokens,
+            turnId: ctx.currentTurnId,
+            ...(compacted ? { compacted: true } : {}),
+          });
+          // Cap history length to avoid unbounded growth
+          if (ctx.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
+            ctx.contextTokensHistory = ctx.contextTokensHistory.slice(
+              -MAX_CONTEXT_HISTORY,
+            );
+          }
+        }
+      }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
       }
       break;
     }
 
-    default:
-      break; // ignore ping/etc
+    default: {
+      // Handle new compaction message types (when include_compaction_messages=true)
+      // These are not yet in the SDK types, so we handle them via string comparison
+      const msgType = chunk.message_type as string | undefined;
+
+      if (msgType === "summary_message") {
+        // Use otid if available, fall back to id
+        const summaryChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          summary?: string;
+          compaction_stats?: {
+            trigger?: string;
+            context_tokens_before?: number;
+            context_tokens_after?: number;
+            context_window?: number;
+            messages_count_before?: number;
+            messages_count_after?: number;
+          };
+        };
+        const summaryText = summaryChunk.summary || "";
+        const stats = summaryChunk.compaction_stats;
+
+        // Find the most recent compaction event line and update it with summary and stats
+        for (let i = b.order.length - 1; i >= 0; i--) {
+          const orderId = b.order[i];
+          if (!orderId) continue;
+          const line = b.byId.get(orderId);
+          if (line?.kind === "event" && line.eventType === "compaction") {
+            line.phase = "finished";
+            line.summary = summaryText;
+            if (stats) {
+              line.stats = {
+                trigger: stats.trigger,
+                contextTokensBefore: stats.context_tokens_before,
+                contextTokensAfter: stats.context_tokens_after,
+                contextWindow: stats.context_window,
+                messagesCountBefore: stats.messages_count_before,
+                messagesCountAfter: stats.messages_count_after,
+              };
+            }
+            break;
+          }
+        }
+
+        // Flag so the next usage_statistics entry is marked as post-compaction.
+        // Set here (not in event_message) because summary_message arrives after
+        // compaction completes, guaranteeing the next usage_statistics has the
+        // reduced token count.
+        if (ctx) {
+          ctx.pendingCompaction = true;
+          ctx.pendingSkillsReinject = true;
+        }
+        break;
+      }
+
+      if (msgType === "event_message") {
+        // Use otid if available, fall back to id
+        const eventChunk = chunk as LettaStreamingResponse & {
+          id?: string;
+          otid?: string;
+          event_type?: string;
+          event_data?: Record<string, unknown>;
+        };
+        const id = eventChunk.otid || eventChunk.id;
+        if (!id) break;
+
+        // Handle otid transition (mark previous line as finished)
+        handleOtidTransition(b, id);
+
+        const eventType = eventChunk.event_type || "unknown";
+        ensure(b, id, () => ({
+          kind: "event",
+          id,
+          eventType,
+          eventData: eventChunk.event_data || {},
+          phase: "running",
+        }));
+
+        // Note: pendingCompaction is set in summary_message (not here) because
+        // usage_statistics for the step that triggered compaction can arrive after
+        // this event_message, and we want to mark the first POST-compaction entry.
+        break;
+      }
+
+      // ignore ping/etc
+      break;
+    }
   }
 }
 

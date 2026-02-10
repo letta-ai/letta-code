@@ -1,11 +1,14 @@
 // src/cli/components/HooksManager.tsx
 // Interactive TUI for managing hooks configuration
 
-import { Box, Text, useInput } from "ink";
-import { memo, useCallback, useEffect, useState } from "react";
+import { Box, useInput } from "ink";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
+  type HookCommand,
   type HookEvent,
   type HookMatcher,
+  isCommandHook,
+  isPromptHook,
   isToolEvent,
   type SimpleHookEvent,
   type SimpleHookMatcher,
@@ -18,14 +21,18 @@ import {
   countTotalHooks,
   type HookMatcherWithSource,
   type HookWithSource,
+  isUserHooksDisabled,
   loadMatchersWithSource,
   loadSimpleMatchersWithSource,
   removeHook,
   type SaveLocation,
+  setHooksDisabled,
 } from "../../hooks/writer";
+import { settingsManager } from "../../settings-manager";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { Text } from "./Text";
 
 // Box drawing characters
 const BOX_TOP_LEFT = "╭";
@@ -34,6 +41,21 @@ const BOX_BOTTOM_LEFT = "╰";
 const BOX_BOTTOM_RIGHT = "╯";
 const BOX_HORIZONTAL = "─";
 const BOX_VERTICAL = "│";
+
+/**
+ * Get a display label for a hook (command or prompt).
+ * For prompt hooks, returns just the prompt text (without prefix).
+ */
+function getHookDisplayLabel(hook: HookCommand | undefined): string {
+  if (!hook) return "";
+  if (isCommandHook(hook)) {
+    return hook.command;
+  }
+  if (isPromptHook(hook)) {
+    return `${hook.prompt.slice(0, 40)}${hook.prompt.length > 40 ? "..." : ""}`;
+  }
+  return "";
+}
 
 interface HooksManagerProps {
   onClose: () => void;
@@ -52,13 +74,13 @@ type Screen =
 const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "PreToolUse", description: "Before tool execution" },
   { event: "PostToolUse", description: "After tool execution" },
+  { event: "PostToolUseFailure", description: "After tool execution fails" },
   { event: "PermissionRequest", description: "When permission is requested" },
   { event: "UserPromptSubmit", description: "When user submits a prompt" },
   { event: "Notification", description: "When notifications are sent" },
   { event: "Stop", description: "When the agent finishes responding" },
   { event: "SubagentStop", description: "When a subagent completes" },
   { event: "PreCompact", description: "Before context compaction" },
-  { event: "Setup", description: "When invoked with --init flags" },
   { event: "SessionStart", description: "When a session starts" },
   { event: "SessionEnd", description: "When a session ends" },
 ];
@@ -145,6 +167,9 @@ export const HooksManager = memo(function HooksManager({
   // Dynamic tool names from agent
   const [toolNames, setToolNames] = useState<string[]>(FALLBACK_TOOL_NAMES);
 
+  // Track whether all hooks are disabled
+  const [hooksDisabled, setHooksDisabledState] = useState(isUserHooksDisabled);
+
   // Fetch agent tools on mount
   useEffect(() => {
     if (!agentId) return;
@@ -188,9 +213,30 @@ export const HooksManager = memo(function HooksManager({
   // Refresh counts - called when hooks change
   const refreshCounts = useCallback(() => {
     setTotalHooks(countTotalHooks());
+    setHooksDisabledState(isUserHooksDisabled());
   }, []);
 
-  // Load total hooks count on mount and when returning to events screen
+  // Track if initial settings load has been done
+  const initialLoadDone = useRef(false);
+
+  // Ensure settings are loaded before counting hooks (runs once on mount)
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
+    const loadSettings = async () => {
+      try {
+        await settingsManager.loadProjectSettings();
+        await settingsManager.loadLocalProjectSettings();
+      } catch {
+        // Settings may already be loaded or not available
+      }
+      refreshCounts();
+    };
+    loadSettings();
+  }, [refreshCounts]);
+
+  // Refresh counts when returning to events screen
   useEffect(() => {
     if (screen === "events") {
       refreshCounts();
@@ -267,6 +313,13 @@ export const HooksManager = memo(function HooksManager({
     setSelectedIndex(0);
   }, [deleteHookIndex, selectedEvent, hooks, loadHooks, refreshCounts]);
 
+  // Handle toggling the "disable all hooks" setting
+  const handleToggleDisableAll = useCallback(() => {
+    const newValue = !hooksDisabled;
+    setHooksDisabled(newValue);
+    setHooksDisabledState(newValue);
+  }, [hooksDisabled]);
+
   useInput((input, key) => {
     // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
@@ -276,17 +329,26 @@ export const HooksManager = memo(function HooksManager({
 
     // Handle each screen
     if (screen === "events") {
+      // Total items: 1 (disable toggle) + HOOK_EVENTS.length
+      const totalItems = 1 + HOOK_EVENTS.length;
+
       if (key.upArrow) {
         setSelectedIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setSelectedIndex((prev) => Math.min(HOOK_EVENTS.length - 1, prev + 1));
+        setSelectedIndex((prev) => Math.min(totalItems - 1, prev + 1));
       } else if (key.return) {
-        const selected = HOOK_EVENTS[selectedIndex];
-        if (selected) {
-          setSelectedEvent(selected.event);
-          loadHooks(selected.event);
-          setScreen("hooks-list");
-          setSelectedIndex(0);
+        if (selectedIndex === 0) {
+          // Toggle "disable all hooks"
+          handleToggleDisableAll();
+        } else {
+          // Select a hook event (index is shifted by 1)
+          const selected = HOOK_EVENTS[selectedIndex - 1];
+          if (selected) {
+            setSelectedEvent(selected.event);
+            loadHooks(selected.event);
+            setScreen("hooks-list");
+            setSelectedIndex(0);
+          }
         }
       } else if (key.escape) {
         onClose();
@@ -372,20 +434,45 @@ export const HooksManager = memo(function HooksManager({
 
   // Render Events List
   if (screen === "events") {
+    const disableToggleSelected = selectedIndex === 0;
+    const disableToggleLabel = hooksDisabled
+      ? "Enable all hooks"
+      : "Disable all hooks";
+    const titleBase = " Hooks";
+    const titleSuffix = hooksDisabled ? " (disabled)" : "";
+    const hooksCountText = `${totalHooks} hooks `;
+    const titlePadding =
+      boxWidth -
+      titleBase.length -
+      titleSuffix.length -
+      hooksCountText.length -
+      2;
+
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text>{boxTop(boxWidth)}</Text>
         <Text>
-          {boxLine(
-            ` Hooks${" ".repeat(boxWidth - 20)}${totalHooks} hooks `,
-            boxWidth,
-          )}
+          {BOX_VERTICAL}
+          {titleBase}
+          <Text color="red">{titleSuffix}</Text>
+          {" ".repeat(Math.max(0, titlePadding))}
+          {hooksCountText}
+          {BOX_VERTICAL}
         </Text>
         <Text>{boxBottom(boxWidth)}</Text>
         <Text> </Text>
 
+        {/* Disable all hooks toggle - first item */}
+        <Text>
+          <Text color={disableToggleSelected ? colors.input.prompt : undefined}>
+            {disableToggleSelected ? "❯" : " "} 1.
+          </Text>
+          <Text dimColor> {disableToggleLabel}</Text>
+        </Text>
+
+        {/* Hook events */}
         {HOOK_EVENTS.map((item, index) => {
-          const isSelected = index === selectedIndex;
+          const isSelected = index + 1 === selectedIndex;
           const hookCount = countHooksForEvent(item.event);
           const prefix = isSelected ? "❯" : " ";
           const countStr = hookCount > 0 ? ` (${hookCount})` : "";
@@ -393,7 +480,7 @@ export const HooksManager = memo(function HooksManager({
           return (
             <Text key={item.event}>
               <Text color={isSelected ? colors.input.prompt : undefined}>
-                {prefix} {index + 1}. {item.event}
+                {prefix} {index + 2}. {item.event}
               </Text>
               <Text dimColor> - {item.description}</Text>
               <Text color="yellow">{countStr}</Text>
@@ -463,10 +550,12 @@ export const HooksManager = memo(function HooksManager({
           const matcherPattern = isToolMatcher
             ? (hook as HookMatcherWithSource).matcher || "*"
             : null;
-          // Both types have hooks array
-          const command = "hooks" in hook ? hook.hooks[0]?.command || "" : "";
+          // Both types have hooks array - get display label for first hook
+          const firstHook = "hooks" in hook ? hook.hooks[0] : undefined;
+          const command = getHookDisplayLabel(firstHook);
           const truncatedCommand =
             command.length > 50 ? `${command.slice(0, 47)}...` : command;
+          const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
           return (
             <Text key={`${hook.source}-${index}`}>
@@ -479,6 +568,7 @@ export const HooksManager = memo(function HooksManager({
               ) : (
                 <Text> </Text>
               )}
+              {isPrompt && <Text color={colors.status.processing}>✦ </Text>}
               <Text dimColor>{truncatedCommand}</Text>
             </Text>
           );
@@ -621,8 +711,10 @@ export const HooksManager = memo(function HooksManager({
     const matcherPattern = isToolMatcher
       ? (hook as HookMatcherWithSource).matcher || "*"
       : null;
-    // Both types have hooks array
-    const command = hook && "hooks" in hook ? hook.hooks[0]?.command : "";
+    // Both types have hooks array - get display label for first hook
+    const firstHook = hook && "hooks" in hook ? hook.hooks[0] : undefined;
+    const command = getHookDisplayLabel(firstHook);
+    const isPrompt = firstHook ? isPromptHook(firstHook) : false;
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -632,7 +724,16 @@ export const HooksManager = memo(function HooksManager({
         <Text> </Text>
 
         {matcherPattern !== null && <Text>Matcher: {matcherPattern}</Text>}
-        <Text>Command: {command}</Text>
+        <Text>
+          {isPrompt ? (
+            <>
+              Hook: <Text color={colors.status.processing}>✦ </Text>
+              {command}
+            </>
+          ) : (
+            <>Command: {command}</>
+          )}
+        </Text>
         <Text>Source: {hook ? getSourceLabel(hook.source) : ""}</Text>
         <Text> </Text>
 

@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { memo } from "react";
 import type { AdvancedDiffSuccess } from "../helpers/diff";
 import { parsePatchOperations } from "../helpers/formatArgsDisplay";
@@ -7,6 +7,7 @@ import { AdvancedDiffRenderer } from "./AdvancedDiffRenderer";
 import { colors } from "./colors";
 import { BashPreview } from "./previews/BashPreview";
 import { PlanPreview } from "./previews/PlanPreview";
+import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";

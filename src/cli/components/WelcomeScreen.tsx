@@ -1,8 +1,7 @@
 import { homedir } from "node:os";
 import type { Letta } from "@letta-ai/letta-client";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useEffect, useState } from "react";
-
 import type { AgentProvenance } from "../../agent/create";
 import { getModelDisplayName } from "../../agent/model";
 import { settingsManager } from "../../settings-manager";
@@ -10,6 +9,7 @@ import { getVersion } from "../../version";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { AnimatedLogo } from "./AnimatedLogo";
 import { colors } from "./colors";
+import { Text } from "./Text";
 
 /**
  * Convert absolute path to use ~ for home directory
@@ -57,6 +57,7 @@ async function getAuthMethod(): Promise<"url" | "api-key" | "oauth"> {
 }
 
 type LoadingState =
+  | "loading_profiles"
   | "assembling"
   | "importing"
   | "initializing"
@@ -116,7 +117,10 @@ export function WelcomeScreen({
     <Box flexDirection="row" marginTop={1}>
       {/* Left column: Logo */}
       <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
-        <AnimatedLogo color={colors.welcome.accent} />
+        <AnimatedLogo
+          color={colors.welcome.accent}
+          animate={loadingState !== "ready"}
+        />
       </Box>
 
       {/* Right column: Text info */}
@@ -146,6 +150,8 @@ function getLoadingMessage(
   continueSession: boolean,
 ): string {
   switch (loadingState) {
+    case "loading_profiles":
+      return "Loading pinned agents...";
     case "initializing":
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
