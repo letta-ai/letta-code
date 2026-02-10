@@ -855,7 +855,7 @@ export const ToolCallMessage = memo(
           line.phase === "finished" &&
           line.resultText &&
           line.resultOk !== false && (
-            <CollapsedOutputDisplay output={line.resultText} />
+            <CollapsedOutputDisplay output={line.resultText} maxChars={300} />
           )}
 
         {/* Tool result for non-shell tools or shell tool errors */}
