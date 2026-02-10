@@ -1169,6 +1169,31 @@ ${SYSTEM_REMINDER_CLOSE}
           errorDetail = preStreamError.message;
         }
 
+        // Check for pending approval blocking new messages - resolve and retry.
+        // The server returns a distinct 409 when a run is waiting for approval
+        // vs when a run is actively processing. Resolve the stale approval
+        // instead of just waiting.
+        if (isApprovalPendingError(errorDetail)) {
+          if (outputFormat === "stream-json") {
+            const recoveryMsg: RecoveryMessage = {
+              type: "recovery",
+              recovery_type: "approval_pending",
+              message:
+                "Detected pending approval conflict on send; resolving before retry",
+              session_id: sessionId,
+              uuid: `recovery-pre-stream-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(recoveryMsg));
+          } else {
+            console.error(
+              "Pending approval detected, resolving before retry...",
+            );
+          }
+
+          await resolveAllPendingApprovals();
+          continue;
+        }
+
         // Check for 409 "conversation busy" error - retry once with delay
         if (
           isConversationBusyError(errorDetail) &&
@@ -2156,10 +2181,58 @@ async function runBidirectionalMode(
             }
           }
 
-          // Send message to agent
-          const stream = await sendMessageStream(conversationId, currentInput, {
-            agentId: agent.id,
-          });
+          // Send message to agent.
+          // Wrap in try-catch to handle pre-stream 409 errors (pending approval,
+          // conversation busy) the same way the one-shot path does.
+          let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+          try {
+            stream = await sendMessageStream(conversationId, currentInput, {
+              agentId: agent.id,
+            });
+          } catch (preStreamError) {
+            // Extract error detail
+            let errorDetail = "";
+            if (
+              preStreamError instanceof APIError &&
+              preStreamError.error &&
+              typeof preStreamError.error === "object"
+            ) {
+              const errObj = preStreamError.error as Record<string, unknown>;
+              if (
+                errObj.error &&
+                typeof errObj.error === "object" &&
+                "detail" in errObj.error
+              ) {
+                const nested = errObj.error as Record<string, unknown>;
+                errorDetail =
+                  typeof nested.detail === "string" ? nested.detail : "";
+              }
+              if (!errorDetail && typeof errObj.detail === "string") {
+                errorDetail = errObj.detail;
+              }
+            }
+            if (!errorDetail && preStreamError instanceof Error) {
+              errorDetail = preStreamError.message;
+            }
+
+            // Pending approval -- resolve and retry
+            if (isApprovalPendingError(errorDetail)) {
+              const recoveryMsg: RecoveryMessage = {
+                type: "recovery",
+                recovery_type: "approval_pending",
+                message:
+                  "Detected pending approval conflict on send; resolving before retry",
+                session_id: sessionId,
+                uuid: `recovery-bidir-${crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(recoveryMsg));
+              await resolveAllPendingApprovals();
+              continue;
+            }
+
+            // All other pre-stream errors propagate
+            throw preStreamError;
+          }
           const streamJsonHook: DrainStreamHook = ({
             chunk,
             shouldOutput,
