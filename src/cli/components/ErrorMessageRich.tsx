@@ -7,7 +7,6 @@ type ErrorLine = {
   kind: "error";
   id: string;
   text: string;
-  color?: string;
 };
 
 /**
@@ -22,15 +21,13 @@ export const ErrorMessage = memo(({ line }: { line: ErrorLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);
 
-  const color = line.color || "yellow";
-
   return (
     <Box flexDirection="row">
       <Box width={2} flexShrink={0}>
-        <Text color={color}>⚠</Text>
+        <Text color="yellow">⚠</Text>
       </Box>
       <Box flexGrow={1} width={contentWidth}>
-        <Text color={color}>{line.text}</Text>
+        <Text color="yellow">{line.text}</Text>
       </Box>
     </Box>
   );

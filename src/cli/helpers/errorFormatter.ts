@@ -198,44 +198,60 @@ function findEncryptedContentDetail(
  * leaving encrypted reasoning tokens from a different auth scope in the conversation.
  */
 function checkEncryptedContentError(e: unknown): string | undefined {
-  // Quick detection: stringify and check for the error code
-  let errorStr: string;
-  try {
-    errorStr = typeof e === "string" ? e : JSON.stringify(e);
-  } catch {
-    return undefined;
-  }
-  if (!errorStr.includes("invalid_encrypted_content")) return undefined;
-
-  // Try to extract and parse the inner OpenAI error from the detail string
+  // Walk the object structure first (cheap) before falling back to stringify
   const detail = findEncryptedContentDetail(e);
-  if (detail) {
+  if (!detail) {
+    // Fallback: stringify for edge cases (e.g. plain string errors)
     try {
-      const jsonStart = detail.indexOf("{");
-      if (jsonStart >= 0) {
-        const parsed = JSON.parse(detail.slice(jsonStart));
-        const innerError = parsed.error || parsed;
-        if (innerError.code === "invalid_encrypted_content") {
-          return [
-            "OpenAI error:",
-            "  {",
-            `    type: "${innerError.type || "invalid_request_error"}",`,
-            `    code: "${innerError.code}",`,
-            `    message: "${innerError.message || "Encrypted content verification failed."}"`,
-            "  }",
-            ENCRYPTED_CONTENT_HINT,
-          ].join("\n");
-        }
-      }
+      const errorStr = typeof e === "string" ? e : JSON.stringify(e);
+      if (!errorStr.includes("invalid_encrypted_content")) return undefined;
     } catch {
-      // Fall through to generic message
+      return undefined;
     }
+    // Detected via stringify but couldn't extract detail — return generic message
+    return (
+      "OpenAI error: Encrypted content could not be verified — organization mismatch." +
+      ENCRYPTED_CONTENT_HINT
+    );
+  }
+
+  // Try to parse the embedded JSON from the detail string for pretty-printing
+  try {
+    const jsonStart = detail.indexOf("{");
+    if (jsonStart >= 0) {
+      const parsed = JSON.parse(detail.slice(jsonStart));
+      const innerError = parsed.error || parsed;
+      if (innerError.code === "invalid_encrypted_content") {
+        const msg = String(
+          innerError.message || "Encrypted content verification failed.",
+        ).replaceAll('"', '\\"');
+        return [
+          "OpenAI error:",
+          "  {",
+          `    type: "${innerError.type || "invalid_request_error"}",`,
+          `    code: "${innerError.code}",`,
+          `    message: "${msg}"`,
+          "  }",
+          ENCRYPTED_CONTENT_HINT,
+        ].join("\n");
+      }
+    }
+  } catch {
+    // Fall through to generic message
   }
 
   return (
     "OpenAI error: Encrypted content could not be verified — organization mismatch." +
     ENCRYPTED_CONTENT_HINT
   );
+}
+
+/**
+ * Returns true if the error is an OpenAI encrypted content org mismatch.
+ * Used by callers to skip generic error hints for this self-explanatory error.
+ */
+export function isEncryptedContentError(e: unknown): boolean {
+  return findEncryptedContentDetail(e) !== undefined;
 }
 
 /**

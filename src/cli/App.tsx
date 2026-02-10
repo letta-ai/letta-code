@@ -179,7 +179,10 @@ import {
   parsePatchToAdvancedDiff,
 } from "./helpers/diff";
 import { setErrorContext } from "./helpers/errorContext";
-import { formatErrorDetails } from "./helpers/errorFormatter";
+import {
+  formatErrorDetails,
+  isEncryptedContentError,
+} from "./helpers/errorFormatter";
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
@@ -2446,7 +2449,7 @@ export default function App({
   // Helper to append an error to the transcript
   // Also tracks the error in telemetry so we know an error was shown
   const appendError = useCallback(
-    (message: string, skipTelemetry = false, color?: string) => {
+    (message: string, skipTelemetry = false) => {
       // Defensive: ensure message is always a string (guards against [object Object])
       const text =
         typeof message === "string"
@@ -2460,7 +2463,6 @@ export default function App({
         kind: "error",
         id,
         text,
-        ...(color && { color }),
       });
       buffersRef.current.order.push(id);
       refreshDerived();
@@ -4424,12 +4426,9 @@ export default function App({
 
                 // Encrypted content errors are self-explanatory (include /clear advice)
                 // — skip the generic "Something went wrong?" hint
-                const isEncryptedContent = errorDetails.includes(
-                  "/clear to start a new conversation.",
-                );
                 appendError(errorDetails, true); // Skip telemetry - already tracked above
 
-                if (!isEncryptedContent) {
+                if (!isEncryptedContentError(errorObject)) {
                   // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
