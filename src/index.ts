@@ -1482,7 +1482,7 @@ async function main(): Promise<void> {
         // Priority 1: Import from AgentFile template (local file or registry)
         if (fromAfFile) {
           setLoadingState("importing");
-          let result;
+          let result: { agent: AgentState; skills?: string[] };
 
           if (isRegistryImport) {
             // Import from letta-ai/agent-file registry

@@ -285,7 +285,10 @@ export async function importAgentFromRegistry(
   const afContent = await response.text();
 
   // Write to a temp file
-  const tempPath = join(tmpdir(), `letta-import-${author}-${name}-${Date.now()}.af`);
+  const tempPath = join(
+    tmpdir(),
+    `letta-import-${author}-${name}-${Date.now()}.af`,
+  );
   await writeFile(tempPath, afContent, "utf-8");
 
   try {
