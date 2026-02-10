@@ -8,6 +8,7 @@ import SpinnerLib from "ink-spinner";
 import {
   type ComponentType,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -37,6 +38,7 @@ const Spinner = SpinnerLib as ComponentType<{ type?: string }>;
 
 // Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
+const FOOTER_WIDTH_STREAMING_DELTA = 2;
 
 function truncateEnd(value: string, maxChars: number): string {
   if (maxChars <= 0) return "";
@@ -122,7 +124,7 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider,
   isByokProvider,
   hideFooter,
-  terminalWidth,
+  rightColumnWidth,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -135,19 +137,39 @@ const InputFooter = memo(function InputFooter({
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
   hideFooter: boolean;
-  terminalWidth: number;
+  rightColumnWidth: number;
 }) {
   const hideFooterContent = hideFooter;
-  const rightColumnWidth = Math.max(
-    28,
-    Math.min(72, Math.floor(terminalWidth * 0.45)),
-  );
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
   const displayAgentName = truncateEnd(agentName || "Unnamed", maxAgentChars);
   const byokExtraChars = isByokProvider ? 2 : 0; // " ▲"
   const reservedChars = displayAgentName.length + byokExtraChars + 4;
   const maxModelChars = Math.max(8, rightColumnWidth - reservedChars);
   const displayModel = truncateEnd(currentModel ?? "unknown", maxModelChars);
+  const rightTextLength =
+    displayAgentName.length + displayModel.length + byokExtraChars + 3;
+  const rightPrefixSpaces = Math.max(0, rightColumnWidth - rightTextLength);
+  const rightLabel = useMemo(() => {
+    const parts: string[] = [];
+    parts.push(" ".repeat(rightPrefixSpaces));
+    parts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
+    parts.push(chalk.dim(" ["));
+    parts.push(chalk.dim(displayModel));
+    if (isByokProvider) {
+      parts.push(chalk.dim(" "));
+      parts.push(
+        isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
+      );
+    }
+    parts.push(chalk.dim("]"));
+    return parts.join("");
+  }, [
+    rightPrefixSpaces,
+    displayAgentName,
+    displayModel,
+    isByokProvider,
+    isOpenAICodexProvider,
+  ]);
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -178,24 +200,11 @@ const InputFooter = memo(function InputFooter({
           <Text dimColor>Press / for commands</Text>
         )}
       </Box>
-      <Box width={rightColumnWidth} flexShrink={0} justifyContent="flex-end">
+      <Box width={rightColumnWidth} flexShrink={0}>
         {hideFooterContent ? (
-          <Text> </Text>
+          <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : (
-          <Text wrap="truncate-end">
-            <Text color={colors.footer.agentName}>{displayAgentName}</Text>
-            <Text dimColor>{" ["}</Text>
-            <Text dimColor>{displayModel}</Text>
-            {isByokProvider ? (
-              <>
-                <Text dimColor> </Text>
-                <Text color={isOpenAICodexProvider ? "#74AA9C" : "yellow"}>
-                  ▲
-                </Text>
-              </>
-            ) : null}
-            <Text dimColor>{"]"}</Text>
-          </Text>
+          <Text>{rightLabel}</Text>
         )}
       </Box>
     </Box>
@@ -212,6 +221,7 @@ const StreamingStatus = memo(function StreamingStatus({
   interruptRequested,
   networkPhase,
   terminalWidth,
+  shouldAnimate,
 }: {
   streaming: boolean;
   visible: boolean;
@@ -222,13 +232,14 @@ const StreamingStatus = memo(function StreamingStatus({
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
   terminalWidth: number;
+  shouldAnimate: boolean;
 }) {
   const [shimmerOffset, setShimmerOffset] = useState(-3);
   const [elapsedMs, setElapsedMs] = useState(0);
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!streaming || !visible) return;
+    if (!streaming || !visible || !shouldAnimate) return;
 
     const id = setInterval(() => {
       setShimmerOffset((prev) => {
@@ -241,7 +252,13 @@ const StreamingStatus = memo(function StreamingStatus({
     }, 120); // Speed of shimmer animation
 
     return () => clearInterval(id);
-  }, [streaming, thinkingMessage, visible, agentName]);
+  }, [streaming, thinkingMessage, visible, agentName, shouldAnimate]);
+
+  useEffect(() => {
+    if (!shouldAnimate) {
+      setShimmerOffset(-3);
+    }
+  }, [shouldAnimate]);
 
   // Elapsed time tracking
   useEffect(() => {
@@ -279,15 +296,36 @@ const StreamingStatus = memo(function StreamingStatus({
   const showErrorArrow = networkArrow === "↑\u0338";
   const statusContentWidth = Math.max(0, terminalWidth - 2);
   const minMessageWidth = 12;
-  const desiredHintWidth = Math.max(18, Math.floor(statusContentWidth * 0.34));
-  const cappedHintWidth = Math.min(44, desiredHintWidth);
-  const hintColumnWidth = Math.max(
-    0,
-    Math.min(
-      cappedHintWidth,
-      Math.max(0, statusContentWidth - minMessageWidth),
-    ),
-  );
+  const statusHintParts = useMemo(() => {
+    const parts: string[] = [];
+    if (shouldShowElapsed) {
+      parts.push(elapsedLabel);
+    }
+    if (shouldShowTokenCount) {
+      parts.push(
+        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
+      );
+    } else if (showErrorArrow) {
+      parts.push(networkArrow);
+    }
+    return parts;
+  }, [
+    shouldShowElapsed,
+    elapsedLabel,
+    shouldShowTokenCount,
+    estimatedTokens,
+    networkArrow,
+    showErrorArrow,
+  ]);
+  const statusHintSuffix = statusHintParts.length
+    ? ` · ${statusHintParts.join(" · ")}`
+    : "";
+  const statusHintPlain = interruptRequested
+    ? ` (interrupting${statusHintSuffix})`
+    : ` (esc to interrupt${statusHintSuffix})`;
+  const statusHintWidth = Array.from(statusHintPlain).length;
+  const maxHintWidth = Math.max(0, statusContentWidth - minMessageWidth);
+  const hintColumnWidth = Math.max(0, Math.min(statusHintWidth, maxHintWidth));
   const maxMessageWidth = Math.max(0, statusContentWidth - hintColumnWidth);
   const statusLabel = `${agentName ? `${agentName} ` : ""}${thinkingMessage}…`;
   const statusLabelWidth = Array.from(statusLabel).length;
@@ -302,33 +340,14 @@ const StreamingStatus = memo(function StreamingStatus({
   const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
-    const parts: string[] = [];
-    if (shouldShowElapsed) {
-      parts.push(elapsedLabel);
-    }
-    if (shouldShowTokenCount) {
-      parts.push(
-        `${formatCompact(estimatedTokens)}${networkArrow ? ` ${networkArrow}` : ""}`,
-      );
-    } else if (showErrorArrow) {
-      parts.push(networkArrow);
-    }
-    const suffix = `${parts.length > 0 ? ` · ${parts.join(" · ")}` : ""})`;
+    const suffix = `${statusHintSuffix})`;
     if (interruptRequested) {
       return hintColor(` (interrupting${suffix}`);
     }
     return (
       hintColor(" (") + hintBold("esc") + hintColor(` to interrupt${suffix}`)
     );
-  }, [
-    shouldShowElapsed,
-    elapsedLabel,
-    shouldShowTokenCount,
-    estimatedTokens,
-    interruptRequested,
-    networkArrow,
-    showErrorArrow,
-  ]);
+  }, [interruptRequested, statusHintSuffix]);
 
   if (!streaming || !visible) {
     return null;
@@ -338,7 +357,7 @@ const StreamingStatus = memo(function StreamingStatus({
     <Box flexDirection="row" marginBottom={1}>
       <Box width={2} flexShrink={0}>
         <Text color={colors.status.processing}>
-          <Spinner type="layer" />
+          {shouldAnimate ? <Spinner type="layer" /> : "●"}
         </Text>
       </Box>
       <Box width={statusContentWidth} flexShrink={0} flexDirection="row">
@@ -346,7 +365,7 @@ const StreamingStatus = memo(function StreamingStatus({
           <ShimmerText
             boldPrefix={agentName || undefined}
             message={thinkingMessage}
-            shimmerOffset={shimmerOffset}
+            shimmerOffset={shouldAnimate ? shimmerOffset : -3}
             wrap="truncate-end"
           />
         </Box>
@@ -403,6 +422,7 @@ export function Input({
   onRestoredInputConsumed,
   networkPhase = null,
   terminalWidth,
+  shouldAnimate = true,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -437,6 +457,7 @@ export function Input({
   onRestoredInputConsumed?: () => void;
   networkPhase?: "upload" | "download" | "error" | null;
   terminalWidth: number;
+  shouldAnimate?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -462,6 +483,60 @@ export function Input({
     return Math.max(1, getVisualLines(value, contentWidth).length);
   }, [value, contentWidth]);
   const inputChromeHeight = inputRowLines + 3; // top divider + input rows + bottom divider + footer
+  const computedFooterRightColumnWidth = useMemo(
+    () => Math.max(28, Math.min(72, Math.floor(columns * 0.45))),
+    [columns],
+  );
+  const [footerRightColumnWidth, setFooterRightColumnWidth] = useState(
+    computedFooterRightColumnWidth,
+  );
+  const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
+
+  useEffect(() => {
+    if (!streaming) {
+      setFooterRightColumnWidth(computedFooterRightColumnWidth);
+      return;
+    }
+
+    // While streaming, keep the right column width stable to avoid occasional
+    // right-edge jitter. Allow significant shrink (terminal got smaller),
+    // defer growth until streaming ends.
+    if (computedFooterRightColumnWidth >= footerRightColumnWidth) {
+      const growthDelta =
+        computedFooterRightColumnWidth - footerRightColumnWidth;
+      if (debugFlicker && growthDelta >= FOOTER_WIDTH_STREAMING_DELTA) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:footer-width] defer growth ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${growthDelta})`,
+        );
+      }
+      return;
+    }
+
+    const shrinkDelta = footerRightColumnWidth - computedFooterRightColumnWidth;
+    if (shrinkDelta < FOOTER_WIDTH_STREAMING_DELTA) {
+      if (debugFlicker && shrinkDelta > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[debug:flicker:footer-width] ignore minor shrink ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${shrinkDelta})`,
+        );
+      }
+      return;
+    }
+
+    if (debugFlicker) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[debug:flicker:footer-width] shrink ${footerRightColumnWidth} -> ${computedFooterRightColumnWidth} (delta=${shrinkDelta})`,
+      );
+    }
+    setFooterRightColumnWidth(computedFooterRightColumnWidth);
+  }, [
+    streaming,
+    computedFooterRightColumnWidth,
+    footerRightColumnWidth,
+    debugFlicker,
+  ]);
 
   // Command history
   const [history, setHistory] = useState<string[]>([]);
@@ -489,17 +564,17 @@ export function Input({
     }
   }, [restoredInput, value, onRestoredInputConsumed]);
 
-  const handleBangAtEmpty = () => {
+  const handleBangAtEmpty = useCallback(() => {
     if (isBashMode) return false;
     setIsBashMode(true);
     return true;
-  };
+  }, [isBashMode]);
 
-  const handleBackspaceAtEmpty = () => {
+  const handleBackspaceAtEmpty = useCallback(() => {
     if (!isBashMode) return false;
     setIsBashMode(false);
     return true;
-  };
+  }, [isBashMode]);
 
   // Reset cursor position after it's been applied
   useEffect(() => {
@@ -852,7 +927,7 @@ export function Input({
     };
   }, []);
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
       return;
@@ -868,9 +943,10 @@ export function Input({
       if (bashRunning) return;
 
       // Add to history if not empty and not a duplicate of the last entry
-      if (previousValue.trim() !== history[history.length - 1]) {
-        setHistory([...history, previousValue]);
-      }
+      setHistory((prev) => {
+        if (previousValue.trim() === prev[prev.length - 1]) return prev;
+        return [...prev, previousValue];
+      });
 
       // Reset history navigation
       setHistoryIndex(-1);
@@ -885,8 +961,11 @@ export function Input({
     }
 
     // Add to history if not empty and not a duplicate of the last entry
-    if (previousValue.trim() && previousValue !== history[history.length - 1]) {
-      setHistory([...history, previousValue]);
+    if (previousValue.trim()) {
+      setHistory((prev) => {
+        if (previousValue === prev[prev.length - 1]) return prev;
+        return [...prev, previousValue];
+      });
     }
 
     // Reset history navigation
@@ -899,63 +978,79 @@ export function Input({
     if (!result.submitted) {
       setValue(previousValue);
     }
-  };
+  }, [
+    isAutocompleteActive,
+    value,
+    isBashMode,
+    bashRunning,
+    onBashSubmit,
+    onSubmit,
+  ]);
 
   // Handle file selection from autocomplete
-  const handleFileSelect = (selectedPath: string) => {
-    // Find the last "@" and replace everything after it with the selected path
-    const atIndex = value.lastIndexOf("@");
-    if (atIndex === -1) return;
+  const handleFileSelect = useCallback(
+    (selectedPath: string) => {
+      // Find the last "@" and replace everything after it with the selected path
+      const atIndex = value.lastIndexOf("@");
+      if (atIndex === -1) return;
 
-    const beforeAt = value.slice(0, atIndex);
-    const afterAt = value.slice(atIndex + 1);
-    const spaceIndex = afterAt.indexOf(" ");
+      const beforeAt = value.slice(0, atIndex);
+      const afterAt = value.slice(atIndex + 1);
+      const spaceIndex = afterAt.indexOf(" ");
 
-    let newValue: string;
-    let newCursorPos: number;
+      let newValue: string;
+      let newCursorPos: number;
 
-    // Replace the query part with the selected path
-    if (spaceIndex === -1) {
-      // No space after @query, replace to end
-      newValue = `${beforeAt}@${selectedPath} `;
-      newCursorPos = newValue.length;
-    } else {
-      // Space exists, replace only the query part
-      const afterQuery = afterAt.slice(spaceIndex);
-      newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
-      newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
-    }
+      // Replace the query part with the selected path
+      if (spaceIndex === -1) {
+        // No space after @query, replace to end
+        newValue = `${beforeAt}@${selectedPath} `;
+        newCursorPos = newValue.length;
+      } else {
+        // Space exists, replace only the query part
+        const afterQuery = afterAt.slice(spaceIndex);
+        newValue = `${beforeAt}@${selectedPath}${afterQuery}`;
+        newCursorPos = beforeAt.length + selectedPath.length + 1; // After the path
+      }
 
-    setValue(newValue);
-    setCursorPos(newCursorPos);
-  };
+      setValue(newValue);
+      setCursorPos(newCursorPos);
+    },
+    [value],
+  );
 
   // Handle slash command selection from autocomplete (Enter key - execute)
-  const handleCommandSelect = async (selectedCommand: string) => {
-    // For slash commands, submit immediately when selected via Enter
-    // This provides a better UX - pressing Enter on /model should open the model selector
-    const commandToSubmit = selectedCommand.trim();
+  const handleCommandSelect = useCallback(
+    async (selectedCommand: string) => {
+      // For slash commands, submit immediately when selected via Enter
+      // This provides a better UX - pressing Enter on /model should open the model selector
+      const commandToSubmit = selectedCommand.trim();
 
-    // Add to history if not a duplicate of the last entry
-    if (commandToSubmit && commandToSubmit !== history[history.length - 1]) {
-      setHistory([...history, commandToSubmit]);
-    }
+      // Add to history if not a duplicate of the last entry
+      if (commandToSubmit) {
+        setHistory((prev) => {
+          if (commandToSubmit === prev[prev.length - 1]) return prev;
+          return [...prev, commandToSubmit];
+        });
+      }
 
-    // Reset history navigation
-    setHistoryIndex(-1);
-    setTemporaryInput("");
+      // Reset history navigation
+      setHistoryIndex(-1);
+      setTemporaryInput("");
 
-    setValue(""); // Clear immediately for responsiveness
-    await onSubmit(commandToSubmit);
-  };
+      setValue(""); // Clear immediately for responsiveness
+      await onSubmit(commandToSubmit);
+    },
+    [onSubmit],
+  );
 
   // Handle slash command autocomplete (Tab key - fill text only)
-  const handleCommandAutocomplete = (selectedCommand: string) => {
+  const handleCommandAutocomplete = useCallback((selectedCommand: string) => {
     // Just fill in the command text without executing
     // User can then press Enter to execute or continue typing arguments
     setValue(selectedCommand);
     setCursorPos(selectedCommand.length);
-  };
+  }, []);
 
   // Get display name and color for permission mode (ralph modes take precedence)
   // Memoized to prevent unnecessary footer re-renders
@@ -1014,6 +1109,131 @@ export function Input({
   // Memoized since it only changes when terminal width changes
   const horizontalLine = useMemo(() => "─".repeat(columns), [columns]);
 
+  const lowerPane = useMemo(() => {
+    return (
+      <>
+        {/* Queue display - show whenever there are queued messages */}
+        {messageQueue && messageQueue.length > 0 && (
+          <QueuedMessages messages={messageQueue} />
+        )}
+
+        {interactionEnabled ? (
+          <Box flexDirection="column">
+            {/* Top horizontal divider */}
+            <Text
+              dimColor={!isBashMode}
+              color={isBashMode ? colors.bash.border : undefined}
+            >
+              {horizontalLine}
+            </Text>
+
+            {/* Two-column layout for input, matching message components */}
+            <Box flexDirection="row">
+              <Box width={2} flexShrink={0}>
+                <Text
+                  color={isBashMode ? colors.bash.prompt : colors.input.prompt}
+                >
+                  {isBashMode ? "!" : ">"}
+                </Text>
+                <Text> </Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <PasteAwareTextInput
+                  value={value}
+                  onChange={setValue}
+                  onSubmit={handleSubmit}
+                  cursorPosition={cursorPos}
+                  onCursorMove={setCurrentCursorPosition}
+                  focus={interactionEnabled && !onEscapeCancel}
+                  onBangAtEmpty={handleBangAtEmpty}
+                  onBackspaceAtEmpty={handleBackspaceAtEmpty}
+                  onPasteError={onPasteError}
+                />
+              </Box>
+            </Box>
+
+            {/* Bottom horizontal divider */}
+            <Text
+              dimColor={!isBashMode}
+              color={isBashMode ? colors.bash.border : undefined}
+            >
+              {horizontalLine}
+            </Text>
+
+            <InputAssist
+              currentInput={value}
+              cursorPosition={currentCursorPosition}
+              onFileSelect={handleFileSelect}
+              onCommandSelect={handleCommandSelect}
+              onCommandAutocomplete={handleCommandAutocomplete}
+              onAutocompleteActiveChange={setIsAutocompleteActive}
+              agentId={agentId}
+              agentName={agentName}
+              serverUrl={serverUrl}
+              workingDirectory={process.cwd()}
+              conversationId={conversationId}
+            />
+
+            <InputFooter
+              ctrlCPressed={ctrlCPressed}
+              escapePressed={escapePressed}
+              isBashMode={isBashMode}
+              modeName={modeInfo?.name ?? null}
+              modeColor={modeInfo?.color ?? null}
+              showExitHint={ralphActive || ralphPending}
+              agentName={agentName}
+              currentModel={currentModel}
+              isOpenAICodexProvider={
+                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+              }
+              isByokProvider={
+                currentModelProvider?.startsWith("lc-") ||
+                currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
+              }
+              hideFooter={hideFooter}
+              rightColumnWidth={footerRightColumnWidth}
+            />
+          </Box>
+        ) : reserveInputSpace ? (
+          <Box height={inputChromeHeight} />
+        ) : null}
+      </>
+    );
+  }, [
+    messageQueue,
+    interactionEnabled,
+    isBashMode,
+    horizontalLine,
+    contentWidth,
+    value,
+    handleSubmit,
+    cursorPos,
+    onEscapeCancel,
+    handleBangAtEmpty,
+    handleBackspaceAtEmpty,
+    onPasteError,
+    currentCursorPosition,
+    handleFileSelect,
+    handleCommandSelect,
+    handleCommandAutocomplete,
+    agentId,
+    agentName,
+    serverUrl,
+    conversationId,
+    ctrlCPressed,
+    escapePressed,
+    modeInfo?.name,
+    modeInfo?.color,
+    ralphActive,
+    ralphPending,
+    currentModel,
+    currentModelProvider,
+    hideFooter,
+    footerRightColumnWidth,
+    reserveInputSpace,
+    inputChromeHeight,
+  ]);
+
   // If not visible, render nothing but keep component mounted to preserve state
   if (!visible) {
     return null;
@@ -1031,93 +1251,9 @@ export function Input({
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
         terminalWidth={columns}
+        shouldAnimate={shouldAnimate}
       />
-
-      {/* Queue display - show whenever there are queued messages */}
-      {messageQueue && messageQueue.length > 0 && (
-        <QueuedMessages messages={messageQueue} />
-      )}
-
-      {interactionEnabled ? (
-        <Box flexDirection="column">
-          {/* Top horizontal divider */}
-          <Text
-            dimColor={!isBashMode}
-            color={isBashMode ? colors.bash.border : undefined}
-          >
-            {horizontalLine}
-          </Text>
-
-          {/* Two-column layout for input, matching message components */}
-          <Box flexDirection="row">
-            <Box width={2} flexShrink={0}>
-              <Text
-                color={isBashMode ? colors.bash.prompt : colors.input.prompt}
-              >
-                {isBashMode ? "!" : ">"}
-              </Text>
-              <Text> </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <PasteAwareTextInput
-                value={value}
-                onChange={setValue}
-                onSubmit={handleSubmit}
-                cursorPosition={cursorPos}
-                onCursorMove={setCurrentCursorPosition}
-                focus={interactionEnabled && !onEscapeCancel}
-                onBangAtEmpty={handleBangAtEmpty}
-                onBackspaceAtEmpty={handleBackspaceAtEmpty}
-                onPasteError={onPasteError}
-              />
-            </Box>
-          </Box>
-
-          {/* Bottom horizontal divider */}
-          <Text
-            dimColor={!isBashMode}
-            color={isBashMode ? colors.bash.border : undefined}
-          >
-            {horizontalLine}
-          </Text>
-
-          <InputAssist
-            currentInput={value}
-            cursorPosition={currentCursorPosition}
-            onFileSelect={handleFileSelect}
-            onCommandSelect={handleCommandSelect}
-            onCommandAutocomplete={handleCommandAutocomplete}
-            onAutocompleteActiveChange={setIsAutocompleteActive}
-            agentId={agentId}
-            agentName={agentName}
-            serverUrl={serverUrl}
-            workingDirectory={process.cwd()}
-            conversationId={conversationId}
-          />
-
-          <InputFooter
-            ctrlCPressed={ctrlCPressed}
-            escapePressed={escapePressed}
-            isBashMode={isBashMode}
-            modeName={modeInfo?.name ?? null}
-            modeColor={modeInfo?.color ?? null}
-            showExitHint={ralphActive || ralphPending}
-            agentName={agentName}
-            currentModel={currentModel}
-            isOpenAICodexProvider={
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-            }
-            isByokProvider={
-              currentModelProvider?.startsWith("lc-") ||
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
-            }
-            hideFooter={hideFooter}
-            terminalWidth={columns}
-          />
-        </Box>
-      ) : reserveInputSpace ? (
-        <Box height={inputChromeHeight} />
-      ) : null}
+      {lowerPane}
     </Box>
   );
 }
