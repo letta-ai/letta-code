@@ -6877,6 +6877,15 @@ export default function App({
           }
 
           if (subcommand === "enable") {
+            // memfs requires Letta Cloud (git memfs not supported on self-hosted)
+            const serverUrl = getServerUrl();
+            if (!serverUrl.includes("api.letta.com")) {
+              cmd.fail(
+                "Memory filesystem is only available on Letta Cloud (api.letta.com).",
+              );
+              return { submitted: true };
+            }
+
             updateMemorySyncCommand(
               cmdId,
               "Enabling memory filesystem...",
@@ -7041,9 +7050,25 @@ export default function App({
               // 3. Update settings
               settingsManager.setMemfsEnabled(agentId, false);
 
+              // 4. Remove git-memory-enabled tag from agent
+              const { removeGitMemoryTag } = await import("../agent/memoryGit");
+              await removeGitMemoryTag(agentId);
+
+              // 5. Move local memory dir to /tmp (backup, not delete)
+              let backupInfo = "";
+              const memoryDir = getMemoryFilesystemRoot(agentId);
+              if (existsSync(memoryDir)) {
+                const backupDir = join(
+                  tmpdir(),
+                  `letta-memfs-disable-${agentId}-${Date.now()}`,
+                );
+                renameSync(memoryDir, backupDir);
+                backupInfo = `\nLocal files backed up to ${backupDir}`;
+              }
+
               updateMemorySyncCommand(
                 cmdId,
-                "Memory filesystem disabled. Memory tool re-attached.\nFiles on disk have been kept.",
+                `Memory filesystem disabled. Memory tool re-attached.${backupInfo}`,
                 true,
                 msg,
               );

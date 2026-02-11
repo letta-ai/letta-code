@@ -14,7 +14,7 @@ import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
-import { getClient } from "./agent/client";
+import { getClient, getServerUrl } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
@@ -236,7 +236,6 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
-  let isNewlyCreatedAgent = false;
   let specifiedAgentId = values.agent as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
   const useDefaultConv = values.default as boolean | undefined;
@@ -542,7 +541,6 @@ export async function handleHeadlessCommand(
     }
 
     agent = result.agent;
-    isNewlyCreatedAgent = true;
 
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
@@ -584,7 +582,6 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
-    isNewlyCreatedAgent = true;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -681,27 +678,23 @@ export async function handleHeadlessCommand(
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
-  // Apply memfs flag if specified, or enable by default for new agents
-  // In headless mode, also enable for --agent since users expect full functionality
+  // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
   if (memfsFlag) {
+    // memfs requires Letta Cloud (git memfs not supported on self-hosted)
+    const serverUrl = getServerUrl();
+    if (!serverUrl.includes("api.letta.com")) {
+      console.error(
+        "--memfs is only available on Letta Cloud (api.letta.com).",
+      );
+      process.exit(1);
+    }
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, false);
-  } else if (isNewlyCreatedAgent && !isSubagent) {
-    // Enable memfs by default for newly created agents (but not subagents)
-    settingsManager.setMemfsEnabled(agent.id, true);
-  } else if (specifiedAgentId && !isSubagent) {
-    // Enable memfs by default when using --agent in headless mode
-    settingsManager.setMemfsEnabled(agent.id, true);
   }
 
   // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (
-    memfsFlag ||
-    noMemfsFlag ||
-    (isNewlyCreatedAgent && !isSubagent) ||
-    (specifiedAgentId && !isSubagent)
-  ) {
+  if (memfsFlag || noMemfsFlag) {
     const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
     await updateAgentSystemPromptMemfs(
       agent.id,
