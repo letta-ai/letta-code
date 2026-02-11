@@ -6877,6 +6877,15 @@ export default function App({
           }
 
           if (subcommand === "enable") {
+            // memfs requires Letta Cloud (git memfs not supported on self-hosted)
+            const serverUrl = getServerUrl();
+            if (!serverUrl.includes("api.letta.com")) {
+              cmd.fail(
+                "Memory filesystem is only available on Letta Cloud (api.letta.com).",
+              );
+              return { submitted: true };
+            }
+
             updateMemorySyncCommand(
               cmdId,
               "Enabling memory filesystem...",
