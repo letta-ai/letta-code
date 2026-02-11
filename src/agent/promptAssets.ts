@@ -13,6 +13,7 @@ import lettaGeminiPrompt from "./prompts/letta_gemini.md";
 
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
+import memoryReflectionReminder from "./prompts/memory_reflection_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -33,6 +34,7 @@ export const PLAN_MODE_REMINDER = planModeReminder;
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
+export const MEMORY_REFLECTION_REMINDER = memoryReflectionReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 

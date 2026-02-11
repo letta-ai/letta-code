@@ -1,0 +1,16 @@
+<system-reminder>
+MEMORY REFLECTION: It's time to reflect on the recent conversation and update your memory.
+
+Before launching, check if a reflection task is already in-flight (look for a prior background Task with subagent_type "reflection" that hasn't sent a completion notification yet). If one is still running, skip this.
+
+Otherwise, execute this tool call immediately:
+
+Task({
+  subagent_type: "reflection",
+  run_in_background: true,
+  description: "Reflect on recent conversations",
+  prompt: "Review recent conversation history and update memory files with important information worth preserving."
+})
+
+This runs in the background and won't interrupt your current work. After launching (or skipping), continue with whatever the user asked you to do.
+</system-reminder>
