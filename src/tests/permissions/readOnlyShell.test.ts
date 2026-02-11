@@ -248,7 +248,8 @@ describe("isReadOnlyShellCommand", () => {
 
 describe("isMemoryDirCommand", () => {
   const AGENT_ID = "agent-test-abc123";
-  const home = homedir();
+  // Normalize to forward slashes for shell command strings (even on Windows)
+  const home = homedir().replace(/\\/g, "/");
   const memDir = `${home}/.letta/agents/${AGENT_ID}/memory`;
   const worktreeDir = `${home}/.letta/agents/${AGENT_ID}/memory-worktrees`;
 
