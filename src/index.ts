@@ -1698,7 +1698,10 @@ async function main(): Promise<void> {
         }
 
         // When memfs is being enabled, detach old API-based memory tools
-        if (settingsManager.isMemfsEnabled(agent.id) && (memfsFlag || (isNewlyCreatedAgent && !isSubagent))) {
+        if (
+          settingsManager.isMemfsEnabled(agent.id) &&
+          (memfsFlag || (isNewlyCreatedAgent && !isSubagent))
+        ) {
           const { detachMemoryTools } = await import("./tools/toolset");
           await detachMemoryTools(agent.id);
         }
