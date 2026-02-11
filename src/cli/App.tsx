@@ -233,6 +233,7 @@ import {
 import {
   isFileEditTool,
   isFileWriteTool,
+  isMemoryTool,
   isPatchTool,
   isShellTool,
 } from "./helpers/toolNameMapping";
@@ -2693,8 +2694,7 @@ export default function App({
     for (const line of buffersRef.current.byId.values()) {
       if (line.kind !== "tool_call") continue;
       if (!line.toolCallId || !line.name) continue;
-      if (line.name !== "memory" && line.name !== "memory_apply_patch")
-        continue;
+      if (!isMemoryTool(line.name)) continue;
       if (memorySyncProcessedToolCallsRef.current.has(line.toolCallId))
         continue;
       newToolCallIds.push(line.toolCallId);

@@ -4,6 +4,7 @@
  */
 
 import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+import { MEMORY_TOOL_NAMES } from "../../tools/toolset";
 
 /**
  * Maps internal tool names to user-friendly display names.
@@ -141,7 +142,7 @@ export function alwaysRequiresUserInput(name: string): boolean {
  * Checks if a tool is a memory tool (server-side memory management)
  */
 export function isMemoryTool(name: string): boolean {
-  return name === "memory" || name === "memory_apply_patch";
+  return MEMORY_TOOL_NAMES.has(name);
 }
 
 /**
