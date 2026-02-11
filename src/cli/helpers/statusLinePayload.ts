@@ -1,5 +1,4 @@
 import { getVersion } from "../../version";
-import type { StatusLineFieldSupport } from "./statusLineSchema";
 
 export interface StatusLinePayloadBuildInput {
   modelId?: string | null;
@@ -159,10 +158,4 @@ export function buildStatusLinePayload(
       terminal_width: input.terminalWidth ?? null,
     },
   };
-}
-
-export function formatSupportLabel(support: StatusLineFieldSupport): string {
-  if (support === "native") return "native";
-  if (support === "derived") return "derived";
-  return "unsupported";
 }
