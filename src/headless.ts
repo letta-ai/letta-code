@@ -18,11 +18,7 @@ import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
-import {
-  ensureMemoryFilesystemBlock,
-  syncMemoryFilesystem,
-  updateMemoryFilesystemBlock,
-} from "./agent/memoryFilesystem";
+
 import { sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs } from "./agent/model";
 import { SessionStats } from "./agent/stats";
@@ -713,22 +709,26 @@ export async function handleHeadlessCommand(
     );
   }
 
-  // Sync filesystem-backed memory before creating conversations (only if memfs is enabled)
+  // Git-backed memory: clone or pull on startup (only if memfs is enabled)
   if (settingsManager.isMemfsEnabled(agent.id)) {
     try {
-      await ensureMemoryFilesystemBlock(agent.id);
-      const syncResult = await syncMemoryFilesystem(agent.id);
-      if (syncResult.conflicts.length > 0) {
-        console.error(
-          `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
-        );
-        process.exit(1);
+      const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
+        "./agent/memoryGit"
+      );
+      if (!isGitRepo(agent.id)) {
+        await cloneMemoryRepo(agent.id);
+      } else {
+        const result = await pullMemory(agent.id);
+        if (result.summary.includes("CONFLICT")) {
+          console.error(
+            "Memory has merge conflicts. Run in interactive mode to resolve.",
+          );
+          process.exit(1);
+        }
       }
-      await updateMemoryFilesystemBlock(agent.id);
-      // Note: Sync summary intentionally not logged in headless mode to keep output clean
     } catch (error) {
       console.error(
-        `Memory filesystem sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       process.exit(1);
     }

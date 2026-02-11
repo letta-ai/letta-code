@@ -11,7 +11,6 @@ import {
   getMemoryFilesystemRoot,
   getMemorySystemDir,
   labelFromRelativePath,
-  parseBlockFromFileContent,
   renderMemoryFilesystemTree,
 } from "../../agent/memoryFilesystem";
 
@@ -91,111 +90,8 @@ function createMockClient(options: {
   };
 }
 
-describe("parseBlockFromFileContent", () => {
-  test("parses frontmatter with label, description, and limit", () => {
-    const content = `---
-label: persona/soul
-description: Who I am and what I value
-limit: 30000
----
-
-My persona content here.`;
-
-    const result = parseBlockFromFileContent(content, "default-label");
-
-    expect(result.label).toBe("persona/soul");
-    expect(result.description).toBe("Who I am and what I value");
-    expect(result.limit).toBe(30000);
-    expect(result.value).toBe("My persona content here.");
-  });
-
-  test("uses default label when frontmatter label is missing", () => {
-    const content = `---
-description: Some description
----
-
-Content here.`;
-
-    const result = parseBlockFromFileContent(content, "my-default-label");
-
-    expect(result.label).toBe("my-default-label");
-    expect(result.description).toBe("Some description");
-  });
-
-  test("generates description from label when frontmatter description is missing", () => {
-    const content = `---
-label: test/block
----
-
-Content here.`;
-
-    const result = parseBlockFromFileContent(content, "default");
-
-    expect(result.label).toBe("test/block");
-    expect(result.description).toBe("Memory block: test/block");
-  });
-
-  test("uses default limit when frontmatter limit is missing or invalid", () => {
-    const content = `---
-label: test
-limit: invalid
----
-
-Content.`;
-
-    const result = parseBlockFromFileContent(content, "default");
-
-    expect(result.limit).toBe(20000);
-  });
-
-  test("handles content without frontmatter", () => {
-    const content = "Just plain content without frontmatter.";
-
-    const result = parseBlockFromFileContent(content, "fallback-label");
-
-    expect(result.label).toBe("fallback-label");
-    expect(result.description).toBe("Memory block: fallback-label");
-    expect(result.limit).toBe(20000);
-    expect(result.value).toBe("Just plain content without frontmatter.");
-  });
-
-  test("sets read_only from frontmatter", () => {
-    const content = `---
-label: test/block
-read_only: true
----
-
-Read-only content.`;
-
-    const result = parseBlockFromFileContent(content, "default");
-
-    expect(result.read_only).toBe(true);
-  });
-
-  test("sets read_only for known read-only labels", () => {
-    const content = `---
-label: memory_filesystem
----
-
-Filesystem content.`;
-
-    const result = parseBlockFromFileContent(content, "memory_filesystem");
-
-    expect(result.read_only).toBe(true);
-  });
-
-  test("does not set read_only for regular blocks", () => {
-    const content = `---
-label: persona/soul
----
-
-Regular content.`;
-
-    const result = parseBlockFromFileContent(content, "persona/soul");
-
-    expect(result.read_only).toBeUndefined();
-  });
-});
+// parseBlockFromFileContent tests removed - YAML frontmatter no longer
+// used with git-backed memory (files contain raw block content).
 
 describe("labelFromRelativePath", () => {
   test("converts simple filename to label", () => {
