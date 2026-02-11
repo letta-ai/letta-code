@@ -682,7 +682,6 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Apply memfs flag if specified, or enable by default for new agents
-  // In headless mode, also enable for --agent since users expect full functionality
   if (memfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
@@ -690,18 +689,10 @@ export async function handleHeadlessCommand(
   } else if (isNewlyCreatedAgent && !isSubagent) {
     // Enable memfs by default for newly created agents (but not subagents)
     settingsManager.setMemfsEnabled(agent.id, true);
-  } else if (specifiedAgentId && !isSubagent) {
-    // Enable memfs by default when using --agent in headless mode
-    settingsManager.setMemfsEnabled(agent.id, true);
   }
 
   // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (
-    memfsFlag ||
-    noMemfsFlag ||
-    (isNewlyCreatedAgent && !isSubagent) ||
-    (specifiedAgentId && !isSubagent)
-  ) {
+  if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
     const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
     await updateAgentSystemPromptMemfs(
       agent.id,
