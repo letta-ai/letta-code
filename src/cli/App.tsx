@@ -9353,6 +9353,11 @@ ${SYSTEM_REMINDER_CLOSE}
                     step_count: stats.usage.stepCount,
                     prompt_tokens: stats.usage.promptTokens,
                     completion_tokens: stats.usage.completionTokens,
+                    total_tokens: stats.usage.totalTokens,
+                    cached_input_tokens: stats.usage.cachedInputTokens,
+                    cache_write_tokens: stats.usage.cacheWriteTokens,
+                    reasoning_tokens: stats.usage.reasoningTokens,
+                    context_tokens: stats.usage.contextTokens,
                   };
                 })(),
                 agent_info: {

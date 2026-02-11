@@ -4,8 +4,10 @@ export interface UsageStats {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  cachedTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
   reasoningTokens: number;
+  contextTokens?: number;
   stepCount: number;
 }
 
@@ -47,8 +49,10 @@ export class SessionStats {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
-      cachedTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       reasoningTokens: 0,
+      contextTokens: undefined,
       stepCount: 0,
     };
     this.lastUsageSnapshot = { ...this.usage };
@@ -78,14 +82,19 @@ export class SessionStats {
         nextUsage.completionTokens - prevUsage.completionTokens,
       ),
       totalTokens: Math.max(0, nextUsage.totalTokens - prevUsage.totalTokens),
-      cachedTokens: Math.max(
+      cachedInputTokens: Math.max(
         0,
-        nextUsage.cachedTokens - prevUsage.cachedTokens,
+        nextUsage.cachedInputTokens - prevUsage.cachedInputTokens,
+      ),
+      cacheWriteTokens: Math.max(
+        0,
+        nextUsage.cacheWriteTokens - prevUsage.cacheWriteTokens,
       ),
       reasoningTokens: Math.max(
         0,
         nextUsage.reasoningTokens - prevUsage.reasoningTokens,
       ),
+      contextTokens: nextUsage.contextTokens,
       stepCount: Math.max(0, nextUsage.stepCount - prevUsage.stepCount),
     };
 
@@ -172,8 +181,10 @@ export class SessionStats {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
-      cachedTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       reasoningTokens: 0,
+      contextTokens: undefined,
       stepCount: 0,
     };
     this.lastUsageSnapshot = { ...this.usage };
