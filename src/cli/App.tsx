@@ -10576,6 +10576,7 @@ Plan file path: ${planFilePath}`;
                 terminalWidth={columns}
                 shouldAnimate={shouldAnimate}
                 statusLineText={statusLine.text || undefined}
+                statusLineRight={statusLine.rightText || undefined}
                 statusLinePadding={statusLine.padding || 0}
               />
             </Box>

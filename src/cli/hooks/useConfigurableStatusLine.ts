@@ -37,8 +37,12 @@ export interface StatusLineInputs {
   triggerVersion: number;
 }
 
+/** ASCII Record Separator used to split left/right column output. */
+const RS = "\x1e";
+
 export interface StatusLineState {
   text: string;
+  rightText: string;
   active: boolean;
   executing: boolean;
   lastError: string | null;
@@ -69,6 +73,7 @@ export function useConfigurableStatusLine(
   inputs: StatusLineInputs,
 ): StatusLineState {
   const [text, setText] = useState("");
+  const [rightText, setRightText] = useState("");
   const [active, setActive] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -108,6 +113,7 @@ export function useConfigurableStatusLine(
       configRef.current = null;
       setActive(false);
       setText("");
+      setRightText("");
       setPadding(0);
       return null;
     }
@@ -145,7 +151,14 @@ export function useConfigurableStatusLine(
       if (ac.signal.aborted) return;
 
       if (result.ok) {
-        setText(result.text);
+        const rsIdx = result.text.indexOf(RS);
+        if (rsIdx >= 0) {
+          setText(result.text.slice(0, rsIdx));
+          setRightText(result.text.slice(rsIdx + 1));
+        } else {
+          setText(result.text);
+          setRightText("");
+        }
         setLastError(null);
       } else {
         setLastError(result.error ?? "Unknown error");
@@ -211,5 +224,5 @@ export function useConfigurableStatusLine(
     currentDirectory,
   ]);
 
-  return { text, active, executing, lastError, padding };
+  return { text, rightText, active, executing, lastError, padding };
 }

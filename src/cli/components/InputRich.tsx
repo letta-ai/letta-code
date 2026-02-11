@@ -4,10 +4,12 @@ import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
 import { Box, useInput } from "ink";
+import Link from "ink-link";
 import SpinnerLib from "ink-spinner";
 import {
   type ComponentType,
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -108,6 +110,85 @@ function findCursorLine(
   };
 }
 
+// Matches OSC 8 hyperlink sequences: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
+const OSC8_REGEX = /\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
+
+function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  const regex = new RegExp(OSC8_REGEX.source, "g");
+
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(line)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(
+        <Text key={`${keyPrefix}-${lastIndex}`}>
+          {line.slice(lastIndex, match.index)}
+        </Text>,
+      );
+    }
+    const url = match[1];
+    const display = match[2];
+    parts.push(
+      <Link key={`${keyPrefix}-${match.index}`} url={url!}>
+        <Text>{display}</Text>
+      </Link>,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < line.length) {
+    parts.push(
+      <Text key={`${keyPrefix}-${lastIndex}`}>{line.slice(lastIndex)}</Text>,
+    );
+  }
+  if (parts.length === 0) {
+    parts.push(<Text key={keyPrefix}>{line}</Text>);
+  }
+  return parts;
+}
+
+function StatusLineContent({
+  text,
+  padding,
+  modeName,
+  modeColor,
+  showExitHint,
+}: {
+  text: string;
+  padding: number;
+  modeName: string | null;
+  modeColor: string | null;
+  showExitHint: boolean;
+}) {
+  const lines = text.split("\n");
+  const paddingStr = padding > 0 ? " ".repeat(padding) : "";
+  const parts: ReactNode[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      parts.push("\n");
+    }
+    if (paddingStr) {
+      parts.push(paddingStr);
+    }
+    parts.push(...parseOsc8Line(lines[i]!, `l${i}`));
+  }
+  return (
+    <Text wrap="wrap">
+      <Text dimColor>{parts}</Text>
+      {modeName && modeColor && (
+        <>
+          {"\n"}
+          <Text color={modeColor}>⏵⏵ {modeName}</Text>
+          <Text color={modeColor} dimColor>
+            {" "}
+            (shift+tab to {showExitHint ? "exit" : "cycle"})
+          </Text>
+        </>
+      )}
+    </Text>
+  );
+}
+
 /**
  * Memoized footer component to prevent re-renders during high-frequency
  * shimmer/timer updates. Only updates when its specific props change.
@@ -125,6 +206,9 @@ const InputFooter = memo(function InputFooter({
   isByokProvider,
   hideFooter,
   rightColumnWidth,
+  statusLineText,
+  statusLineRight,
+  statusLinePadding,
 }: {
   ctrlCPressed: boolean;
   escapePressed: boolean;
@@ -138,6 +222,9 @@ const InputFooter = memo(function InputFooter({
   isByokProvider: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
+  statusLineText?: string;
+  statusLineRight?: string;
+  statusLinePadding?: number;
 }) {
   const hideFooterContent = hideFooter;
   const maxAgentChars = Math.max(10, Math.floor(rightColumnWidth * 0.45));
@@ -188,6 +275,14 @@ const InputFooter = memo(function InputFooter({
               (backspace to exit)
             </Text>
           </Text>
+        ) : statusLineText ? (
+          <StatusLineContent
+            text={statusLineText}
+            padding={statusLinePadding ?? 0}
+            modeName={modeName}
+            modeColor={modeColor}
+            showExitHint={showExitHint}
+          />
         ) : modeName && modeColor ? (
           <Text>
             <Text color={modeColor}>⏵⏵ {modeName}</Text>
@@ -200,9 +295,20 @@ const InputFooter = memo(function InputFooter({
           <Text dimColor>Press / for commands</Text>
         )}
       </Box>
-      <Box width={rightColumnWidth} flexShrink={0}>
+      <Box
+        flexDirection={statusLineRight && !hideFooterContent ? "column" : undefined}
+        alignItems={statusLineRight && !hideFooterContent ? "flex-end" : undefined}
+        width={statusLineRight && !hideFooterContent ? undefined : rightColumnWidth}
+        flexShrink={0}
+      >
         {hideFooterContent ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
+        ) : statusLineRight ? (
+          statusLineRight.split("\n").map((line, i) => (
+            <Text key={`r-${i}`} dimColor wrap="truncate-end">
+              {parseOsc8Line(line, `r${i}`)}
+            </Text>
+          ))
         ) : (
           <Text>{rightLabel}</Text>
         )}
@@ -424,6 +530,7 @@ export function Input({
   terminalWidth,
   shouldAnimate = true,
   statusLineText,
+  statusLineRight,
   statusLinePadding = 0,
 }: {
   visible?: boolean;
@@ -461,6 +568,7 @@ export function Input({
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLineText?: string;
+  statusLineRight?: string;
   statusLinePadding?: number;
 }) {
   const [value, setValue] = useState("");
@@ -1178,19 +1286,6 @@ export function Input({
               conversationId={conversationId}
             />
 
-            {statusLineText && !hideFooter
-              ? statusLineText.split("\n").map((line, index) => (
-                  <Box
-                    key={`${index}-${line}`}
-                    marginLeft={2 + statusLinePadding}
-                  >
-                    <Text dimColor wrap="wrap">
-                      {line}
-                    </Text>
-                  </Box>
-                ))
-              : null}
-
             <InputFooter
               ctrlCPressed={ctrlCPressed}
               escapePressed={escapePressed}
@@ -1207,8 +1302,11 @@ export function Input({
                 currentModelProvider?.startsWith("lc-") ||
                 currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
               }
-              hideFooter={hideFooter || !!statusLineText}
+              hideFooter={hideFooter}
               rightColumnWidth={footerRightColumnWidth}
+              statusLineText={statusLineText}
+              statusLineRight={statusLineRight}
+              statusLinePadding={statusLinePadding}
             />
           </Box>
         ) : reserveInputSpace ? (
@@ -1250,6 +1348,7 @@ export function Input({
     reserveInputSpace,
     inputChromeHeight,
     statusLineText,
+    statusLineRight,
     statusLinePadding,
   ]);
 
