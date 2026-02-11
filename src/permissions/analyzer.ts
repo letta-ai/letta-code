@@ -74,6 +74,17 @@ export function analyzeApprovalContext(
         workingDirectory,
       );
 
+    case "Task":
+    case "task":
+      return {
+        recommendedRule: "Task",
+        ruleDescription: "subagent operations",
+        approveAlwaysText: "Yes, allow subagent operations during this session",
+        defaultScope: "session",
+        allowPersistence: true,
+        safetyLevel: "moderate",
+      };
+
     default:
       return analyzeDefaultApproval(toolName);
   }

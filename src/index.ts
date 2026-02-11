@@ -4,7 +4,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
-import { getClient } from "./agent/client";
+import { getClient, getServerUrl } from "./agent/client";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
@@ -1477,7 +1477,6 @@ async function main(): Promise<void> {
         const { getModelUpdateArgs } = await import("./agent/model");
 
         let agent: AgentState | null = null;
-        let isNewlyCreatedAgent = false;
 
         // Priority 1: Import from AgentFile template (local file or registry)
         if (fromAfFile) {
@@ -1505,7 +1504,6 @@ async function main(): Promise<void> {
           }
 
           agent = result.agent;
-          isNewlyCreatedAgent = true;
           setAgentProvenance({
             isNew: true,
             blocks: [],
@@ -1608,7 +1606,6 @@ async function main(): Promise<void> {
             baseTools,
           );
           agent = result.agent;
-          isNewlyCreatedAgent = true;
           setAgentProvenance(result.provenance);
         }
 
@@ -1686,19 +1683,30 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory);
 
-        // Apply memfs flag if specified, or enable by default for new agents
+        // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         if (memfsFlag) {
+          // memfs requires Letta Cloud (git memfs not supported on self-hosted)
+          const serverUrl = getServerUrl();
+          if (!serverUrl.includes("api.letta.com")) {
+            console.error(
+              "--memfs is only available on Letta Cloud (api.letta.com).",
+            );
+            process.exit(1);
+          }
           settingsManager.setMemfsEnabled(agent.id, true);
         } else if (noMemfsFlag) {
           settingsManager.setMemfsEnabled(agent.id, false);
-        } else if (isNewlyCreatedAgent && !isSubagent) {
-          // Enable memfs by default for newly created agents (but not subagents)
-          settingsManager.setMemfsEnabled(agent.id, true);
+        }
+
+        // When memfs is being enabled via flag, detach old API-based memory tools
+        if (settingsManager.isMemfsEnabled(agent.id) && memfsFlag) {
+          const { detachMemoryTools } = await import("./tools/toolset");
+          await detachMemoryTools(agent.id);
         }
 
         // Ensure agent's system prompt includes/excludes memfs section to match setting
-        if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
+        if (memfsFlag || noMemfsFlag) {
           const { updateAgentSystemPromptMemfs } = await import(
             "./agent/modify"
           );
@@ -1706,6 +1714,17 @@ async function main(): Promise<void> {
             agent.id,
             settingsManager.isMemfsEnabled(agent.id),
           );
+        }
+
+        // Git-backed memory: ensure tag + repo are set up
+        if (settingsManager.isMemfsEnabled(agent.id)) {
+          const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } = await import(
+            "./agent/memoryGit"
+          );
+          await addGitMemoryTag(agent.id);
+          if (!isGitRepo(agent.id)) {
+            await cloneMemoryRepo(agent.id);
+          }
         }
 
         // Check if we're resuming an existing agent

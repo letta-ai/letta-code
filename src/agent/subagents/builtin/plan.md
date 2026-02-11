@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Planning agent that breaks down complex tasks into actionable steps
-tools: Glob, Grep, Read, LS, BashOutput
+tools: Glob, Grep, Read, LS, TaskOutput
 model: opus
 memoryBlocks: all
 mode: stateless

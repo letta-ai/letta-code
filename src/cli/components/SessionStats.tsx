@@ -47,6 +47,12 @@ export function formatUsageStats({
     `Total duration (API):  ${formatDuration(stats.totalApiMs)}`,
     `Total duration (wall): ${formatDuration(stats.totalWallMs)}`,
     `Session usage:         ${stats.usage.stepCount} steps, ${formatCompact(stats.usage.promptTokens)} input, ${formatCompact(stats.usage.completionTokens)} output`,
+    `Token details:         ${formatCompact(stats.usage.totalTokens)} total, ${formatCompact(stats.usage.cachedInputTokens)} cached_input, ${formatCompact(stats.usage.cacheWriteTokens)} cache_write, ${formatCompact(stats.usage.reasoningTokens)} reasoning`,
+    ...(stats.usage.contextTokens !== undefined
+      ? [
+          `Latest context:       ${formatCompact(stats.usage.contextTokens)} tokens`,
+        ]
+      : []),
     "",
   ];
 

@@ -220,8 +220,10 @@ export type Buffers = {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-    cachedTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
     reasoningTokens: number;
+    contextTokens?: number;
     stepCount: number;
   };
   // Aggressive static promotion: split streaming content at paragraph boundaries
@@ -249,7 +251,8 @@ export function createBuffers(agentId?: string): Buffers {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
-      cachedTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       reasoningTokens: 0,
       stepCount: 0,
     },
@@ -807,10 +810,40 @@ export function onChunk(
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
       }
+      if (
+        chunk.cached_input_tokens !== undefined &&
+        chunk.cached_input_tokens !== null
+      ) {
+        b.usage.cachedInputTokens += chunk.cached_input_tokens;
+      }
+      if (
+        chunk.cache_write_tokens !== undefined &&
+        chunk.cache_write_tokens !== null
+      ) {
+        b.usage.cacheWriteTokens += chunk.cache_write_tokens;
+      }
+      if (
+        chunk.reasoning_tokens !== undefined &&
+        chunk.reasoning_tokens !== null
+      ) {
+        b.usage.reasoningTokens += chunk.reasoning_tokens;
+      }
+      const usageChunk = chunk as typeof chunk & {
+        context_tokens?: number | null;
+      };
+      if (
+        usageChunk.context_tokens !== undefined &&
+        usageChunk.context_tokens !== null
+      ) {
+        // context_tokens is a snapshot metric, not additive.
+        b.usage.contextTokens = usageChunk.context_tokens;
+      }
       // Use context_tokens from SDK (estimate of tokens in context window)
       if (ctx) {
-        const usageChunk = chunk as typeof chunk & { context_tokens?: number };
-        if (usageChunk.context_tokens !== undefined) {
+        if (
+          usageChunk.context_tokens !== undefined &&
+          usageChunk.context_tokens !== null
+        ) {
           ctx.lastContextTokens = usageChunk.context_tokens;
           // Track history for time-series display
           const compacted = ctx.pendingCompaction;
@@ -921,8 +954,8 @@ export function onChunk(
             undefined, // max_context_length not available here
             b.agentId,
             undefined, // conversationId not available here
-          ).catch(() => {
-            // Silently ignore - don't block stream processing
+          ).catch((error) => {
+            debugLog("hooks", "PreCompact hook error (accumulator)", error);
           });
         }
 

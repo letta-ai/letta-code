@@ -24,8 +24,11 @@ export interface SessionEndData {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  cached_input_tokens?: number;
   cached_tokens?: number;
+  cache_write_tokens?: number;
   reasoning_tokens?: number;
+  context_tokens?: number;
   step_count?: number;
 }
 
@@ -74,8 +77,10 @@ class TelemetryManager {
       promptTokens: number;
       completionTokens: number;
       totalTokens: number;
-      cachedTokens: number;
+      cachedInputTokens: number;
+      cacheWriteTokens: number;
       reasoningTokens: number;
+      contextTokens?: number;
       stepCount: number;
     };
   };
@@ -213,8 +218,10 @@ class TelemetryManager {
         promptTokens: number;
         completionTokens: number;
         totalTokens: number;
-        cachedTokens: number;
+        cachedInputTokens: number;
+        cacheWriteTokens: number;
         reasoningTokens: number;
+        contextTokens?: number;
         stepCount: number;
       };
     },
@@ -267,8 +274,10 @@ class TelemetryManager {
         promptTokens: number;
         completionTokens: number;
         totalTokens: number;
-        cachedTokens: number;
+        cachedInputTokens: number;
+        cacheWriteTokens: number;
         reasoningTokens: number;
+        contextTokens?: number;
         stepCount: number;
       };
     },
@@ -302,8 +311,11 @@ class TelemetryManager {
       prompt_tokens: sessionStats?.usage.promptTokens,
       completion_tokens: sessionStats?.usage.completionTokens,
       total_tokens: sessionStats?.usage.totalTokens,
-      cached_tokens: sessionStats?.usage.cachedTokens,
+      cached_input_tokens: sessionStats?.usage.cachedInputTokens,
+      cached_tokens: sessionStats?.usage.cachedInputTokens,
+      cache_write_tokens: sessionStats?.usage.cacheWriteTokens,
       reasoning_tokens: sessionStats?.usage.reasoningTokens,
+      context_tokens: sessionStats?.usage.contextTokens,
       step_count: sessionStats?.usage.stepCount,
     };
     this.track("session_end", data);

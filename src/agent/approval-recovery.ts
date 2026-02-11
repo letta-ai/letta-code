@@ -5,9 +5,10 @@ import { getClient } from "./client";
 // This is a specific subtype of desync - server HAS approvals but with different IDs
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 
-// Error when trying to SEND message but server has pending approval waiting
-// This is the CONFLICT error - opposite of desync
-const APPROVAL_PENDING_DETAIL_FRAGMENT = "cannot send a new message";
+// Error when trying to SEND message but server has pending approval waiting.
+// Use an approval-specific fragment to avoid matching conversation-busy errors,
+// which may also include "cannot send a new message".
+const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
 
 // Error when conversation is busy (another request is being processed)
 // This is a 409 CONFLICT when trying to send while a run is active
@@ -63,6 +64,51 @@ export function isApprovalPendingError(detail: unknown): boolean {
 export function isConversationBusyError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
+}
+
+export type PreStreamConflictKind =
+  | "approval_pending"
+  | "conversation_busy"
+  | null;
+
+export type PreStreamErrorAction =
+  | "resolve_approval_pending"
+  | "retry_conversation_busy"
+  | "rethrow";
+
+/**
+ * Classify pre-stream 409 conflict details so callers can route recovery logic.
+ */
+export function classifyPreStreamConflict(
+  detail: unknown,
+): PreStreamConflictKind {
+  if (isApprovalPendingError(detail)) return "approval_pending";
+  if (isConversationBusyError(detail)) return "conversation_busy";
+  return null;
+}
+
+/**
+ * Determine pre-stream recovery action for one-shot headless sends.
+ */
+export function getPreStreamErrorAction(
+  detail: unknown,
+  conversationBusyRetries: number,
+  maxConversationBusyRetries: number,
+): PreStreamErrorAction {
+  const kind = classifyPreStreamConflict(detail);
+
+  if (kind === "approval_pending") {
+    return "resolve_approval_pending";
+  }
+
+  if (
+    kind === "conversation_busy" &&
+    conversationBusyRetries < maxConversationBusyRetries
+  ) {
+    return "retry_conversation_busy";
+  }
+
+  return "rethrow";
 }
 
 export async function fetchRunErrorDetail(
