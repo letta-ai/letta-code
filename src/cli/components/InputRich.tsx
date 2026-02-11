@@ -1184,7 +1184,7 @@ export function Input({
                     key={`${index}-${line}`}
                     marginLeft={2 + statusLinePadding}
                   >
-                    <Text dimColor wrap="truncate-end">
+                    <Text dimColor wrap="wrap">
                       {line}
                     </Text>
                   </Box>
