@@ -88,8 +88,8 @@ export const CollapsedOutputDisplay = memo(
             </Box>
           </Box>
         )}
-        {/* Character clipping hint */}
-        {clippedByChars && (
+        {/* Character clipping hint (only if not already showing line count) */}
+        {clippedByChars && hiddenCount === 0 && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>
               <Text>{"     "}</Text>
