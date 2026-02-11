@@ -1697,6 +1697,12 @@ async function main(): Promise<void> {
           settingsManager.setMemfsEnabled(agent.id, true);
         }
 
+        // When memfs is being enabled, detach old API-based memory tools
+        if (settingsManager.isMemfsEnabled(agent.id) && (memfsFlag || (isNewlyCreatedAgent && !isSubagent))) {
+          const { detachMemoryTools } = await import("./tools/toolset");
+          await detachMemoryTools(agent.id);
+        }
+
         // Ensure agent's system prompt includes/excludes memfs section to match setting
         if (memfsFlag || noMemfsFlag || (isNewlyCreatedAgent && !isSubagent)) {
           const { updateAgentSystemPromptMemfs } = await import(
