@@ -143,17 +143,17 @@ export const InlineTaskApproval = memo(
 
           {/* Header */}
           <Text bold color={colors.approval.header}>
-            Run Task?
+            Dispatch subagent?
           </Text>
 
           {/* Task details */}
           <Box paddingLeft={2} flexDirection="column" marginTop={1}>
             {/* Subagent type */}
             <Box flexDirection="row">
-              <Box width={12} flexShrink={0}>
+              <Box width={13} flexShrink={0}>
                 <Text dimColor>Type:</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
+              <Box flexGrow={1} width={contentWidth - 13}>
                 <Text wrap="wrap" color={colors.subagent.header}>
                   {subagentType}
                 </Text>
@@ -163,10 +163,10 @@ export const InlineTaskApproval = memo(
             {/* Model (if specified) */}
             {model && (
               <Box flexDirection="row">
-                <Box width={12} flexShrink={0}>
+                <Box width={13} flexShrink={0}>
                   <Text dimColor>Model:</Text>
                 </Box>
-                <Box flexGrow={1} width={contentWidth - 12}>
+                <Box flexGrow={1} width={contentWidth - 13}>
                   <Text wrap="wrap" dimColor>
                     {model}
                   </Text>
@@ -176,20 +176,20 @@ export const InlineTaskApproval = memo(
 
             {/* Description */}
             <Box flexDirection="row">
-              <Box width={12} flexShrink={0}>
+              <Box width={13} flexShrink={0}>
                 <Text dimColor>Description:</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
+              <Box flexGrow={1} width={contentWidth - 13}>
                 <Text wrap="wrap">{description}</Text>
               </Box>
             </Box>
 
             {/* Prompt */}
             <Box flexDirection="row" marginTop={1}>
-              <Box width={12} flexShrink={0}>
+              <Box width={13} flexShrink={0}>
                 <Text dimColor>Prompt:</Text>
               </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
+              <Box flexGrow={1} width={contentWidth - 13}>
                 <Text wrap="wrap" dimColor>
                   {truncatedPrompt}
                 </Text>
@@ -209,7 +209,7 @@ export const InlineTaskApproval = memo(
 
     // Generate "always" text for Task tool
     const alwaysText =
-      approveAlwaysText || "Yes, allow Task operations during this session";
+      approveAlwaysText || "Yes, allow subagent operations during this session";
 
     return (
       <Box flexDirection="column">
