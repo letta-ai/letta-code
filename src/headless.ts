@@ -1860,9 +1860,22 @@ ${SYSTEM_REMINDER_CLOSE}
     lastToolResult?.resultText ||
     "No assistant response found";
 
+  const stats = sessionStats.getSnapshot();
+  const usage = {
+    prompt_tokens: stats.usage.promptTokens,
+    completion_tokens: stats.usage.completionTokens,
+    total_tokens: stats.usage.totalTokens,
+    step_count: stats.usage.stepCount,
+    cached_input_tokens: stats.usage.cachedInputTokens,
+    cache_write_tokens: stats.usage.cacheWriteTokens,
+    reasoning_tokens: stats.usage.reasoningTokens,
+    ...(stats.usage.contextTokens !== undefined && {
+      context_tokens: stats.usage.contextTokens,
+    }),
+  };
+
   // Output based on format
   if (outputFormat === "json") {
-    const stats = sessionStats.getSnapshot();
     const output = {
       type: "result",
       subtype: "success",
@@ -1873,17 +1886,11 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
-      usage: {
-        prompt_tokens: stats.usage.promptTokens,
-        completion_tokens: stats.usage.completionTokens,
-        total_tokens: stats.usage.totalTokens,
-      },
+      usage,
     };
     console.log(JSON.stringify(output, null, 2));
   } else if (outputFormat === "stream-json") {
     // Output final result event
-    const stats = sessionStats.getSnapshot();
-
     // Collect all run_ids from buffers
     const allRunIds = new Set<string>();
     for (const line of toLines(buffers)) {
@@ -1910,11 +1917,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agent_id: agent.id,
       conversation_id: conversationId,
       run_ids: Array.from(allRunIds),
-      usage: {
-        prompt_tokens: stats.usage.promptTokens,
-        completion_tokens: stats.usage.completionTokens,
-        total_tokens: stats.usage.totalTokens,
-      },
+      usage,
       uuid: resultUuid,
     };
     console.log(JSON.stringify(resultEvent));
