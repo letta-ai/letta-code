@@ -330,6 +330,7 @@ const NON_STATE_COMMANDS = new Set([
   "/search",
   "/memory",
   "/feedback",
+  "/export",
   "/download",
 ]);
 
@@ -6752,11 +6753,11 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /download command - download agent file
-        if (msg.trim() === "/download") {
+        // Special handling for /export command (also accepts legacy /download)
+        if (msg.trim() === "/export" || msg.trim() === "/download") {
           const cmd = commandRunner.start(
             msg.trim(),
-            "Downloading agent file...",
+            "Exporting agent file...",
           );
 
           setCommandRunning(true);
@@ -6824,7 +6825,7 @@ export default function App({
             writeFileSync(fileName, JSON.stringify(fileContent, null, 2));
 
             // Build success message
-            let summary = `AgentFile downloaded to ${fileName}`;
+            let summary = `AgentFile exported to ${fileName}`;
             if (skills.length > 0) {
               summary += `\n📦 Included ${skills.length} skill(s): ${skills.map((s) => s.name).join(", ")}`;
             }

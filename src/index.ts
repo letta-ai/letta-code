@@ -78,7 +78,7 @@ OPTIONS
   --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
   --sleeptime           Enable sleeptime memory management (only for new agents)
-  --from-af <path>      Create agent from an AgentFile (.af) template
+  --import <path>       Create agent from an AgentFile (.af) template
                         Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
   --no-memfs            Disable memory filesystem for this agent
@@ -439,6 +439,7 @@ async function main(): Promise<void> {
         skills: { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
+        import: { type: "string" },
 
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
@@ -554,7 +555,9 @@ async function main(): Promise<void> {
   const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
-  const fromAfFile = values["from-af"] as string | undefined;
+  const fromAfFile =
+    (values.import as string | undefined) ??
+    (values["from-af"] as string | undefined);
   const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
 
   // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
@@ -694,7 +697,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (fromAfFile) {
-      console.error("Error: --conversation cannot be used with --from-af");
+      console.error("Error: --conversation cannot be used with --import");
       process.exit(1);
     }
     if (shouldResume) {
@@ -723,24 +726,24 @@ async function main(): Promise<void> {
     }
   }
 
-  // Validate --from-af flag
+  // Validate --import flag (also accepts legacy --from-af)
   // Detect if it's a registry handle (e.g., @author/name) or a local file path
   let isRegistryImport = false;
   if (fromAfFile) {
     if (specifiedAgentId) {
-      console.error("Error: --from-af cannot be used with --agent");
+      console.error("Error: --import cannot be used with --agent");
       process.exit(1);
     }
     if (specifiedAgentName) {
-      console.error("Error: --from-af cannot be used with --name");
+      console.error("Error: --import cannot be used with --name");
       process.exit(1);
     }
     if (shouldResume) {
-      console.error("Error: --from-af cannot be used with --resume");
+      console.error("Error: --import cannot be used with --resume");
       process.exit(1);
     }
     if (forceNew) {
-      console.error("Error: --from-af cannot be used with --new");
+      console.error("Error: --import cannot be used with --new");
       process.exit(1);
     }
 
@@ -753,7 +756,7 @@ async function main(): Promise<void> {
       const parts = normalized.split("/");
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
         console.error(
-          `Error: Invalid registry handle "${fromAfFile}". Use format: @author/agentname`,
+          `Error: Invalid registry handle "${fromAfFile}". Use format: letta --import @author/agentname`,
         );
         process.exit(1);
       }

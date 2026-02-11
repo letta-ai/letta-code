@@ -100,9 +100,9 @@ describe("Startup Flow - Invalid Inputs", () => {
     { timeout: 70000 },
   );
 
-  test("--from-af with nonexistent file shows error", async () => {
+  test("--import with nonexistent file shows error", async () => {
     const result = await runCli(
-      ["--from-af", "/nonexistent/path/agent.af", "-p", "test"],
+      ["--import", "/nonexistent/path/agent.af", "-p", "test"],
       { expectExit: 1 },
     );
     expect(result.stderr).toContain("not found");
