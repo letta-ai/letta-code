@@ -224,7 +224,6 @@ import {
 import {
   isFileEditTool,
   isFileWriteTool,
-  isMemoryTool,
   isPatchTool,
   isShellTool,
 } from "./helpers/toolNameMapping";
