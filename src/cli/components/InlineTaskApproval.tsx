@@ -148,48 +148,25 @@ export const InlineTaskApproval = memo(
 
           {/* Task details */}
           <Box paddingLeft={2} flexDirection="column" marginTop={1}>
-            {/* Subagent type */}
+            {/* Type — Description (with optional model) */}
             <Box flexDirection="row">
-              <Box width={13} flexShrink={0}>
-                <Text dimColor>Type:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 13}>
-                <Text wrap="wrap" color={colors.subagent.header}>
-                  {subagentType}
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  <Text bold color={colors.subagent.header}>
+                    {subagentType}
+                  </Text>
+                  <Text dimColor>
+                    {" — "}
+                    {description}
+                    {model ? ` (${model})` : ""}
+                  </Text>
                 </Text>
               </Box>
             </Box>
 
-            {/* Model (if specified) */}
-            {model && (
-              <Box flexDirection="row">
-                <Box width={13} flexShrink={0}>
-                  <Text dimColor>Model:</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth - 13}>
-                  <Text wrap="wrap" dimColor>
-                    {model}
-                  </Text>
-                </Box>
-              </Box>
-            )}
-
-            {/* Description */}
-            <Box flexDirection="row">
-              <Box width={13} flexShrink={0}>
-                <Text dimColor>Description:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 13}>
-                <Text wrap="wrap">{description}</Text>
-              </Box>
-            </Box>
-
             {/* Prompt */}
-            <Box flexDirection="row" marginTop={1}>
-              <Box width={13} flexShrink={0}>
-                <Text dimColor>Prompt:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 13}>
+            <Box marginTop={1}>
+              <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap" dimColor>
                   {truncatedPrompt}
                 </Text>
