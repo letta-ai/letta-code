@@ -73,17 +73,17 @@ class TelemetryManager {
   private sessionStatsGetter?: () => {
     totalWallMs: number;
     totalApiMs: number;
-      usage: {
-        promptTokens: number;
-        completionTokens: number;
-        totalTokens: number;
-        cachedInputTokens: number;
-        cacheWriteTokens: number;
-        reasoningTokens: number;
-        contextTokens?: number;
-        stepCount: number;
-      };
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      cachedInputTokens: number;
+      cacheWriteTokens: number;
+      reasoningTokens: number;
+      contextTokens?: number;
+      stepCount: number;
     };
+  };
 
   constructor() {
     this.sessionId = this.generateSessionId();

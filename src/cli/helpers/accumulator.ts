@@ -810,13 +810,22 @@ export function onChunk(
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
       }
-      if (chunk.cached_input_tokens !== undefined && chunk.cached_input_tokens !== null) {
+      if (
+        chunk.cached_input_tokens !== undefined &&
+        chunk.cached_input_tokens !== null
+      ) {
         b.usage.cachedInputTokens += chunk.cached_input_tokens;
       }
-      if (chunk.cache_write_tokens !== undefined && chunk.cache_write_tokens !== null) {
+      if (
+        chunk.cache_write_tokens !== undefined &&
+        chunk.cache_write_tokens !== null
+      ) {
         b.usage.cacheWriteTokens += chunk.cache_write_tokens;
       }
-      if (chunk.reasoning_tokens !== undefined && chunk.reasoning_tokens !== null) {
+      if (
+        chunk.reasoning_tokens !== undefined &&
+        chunk.reasoning_tokens !== null
+      ) {
         b.usage.reasoningTokens += chunk.reasoning_tokens;
       }
       const usageChunk = chunk as typeof chunk & {
