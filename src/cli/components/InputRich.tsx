@@ -1207,7 +1207,7 @@ export function Input({
                 currentModelProvider?.startsWith("lc-") ||
                 currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
               }
-              hideFooter={hideFooter}
+              hideFooter={hideFooter || !!statusLineText}
               rightColumnWidth={footerRightColumnWidth}
             />
           </Box>
