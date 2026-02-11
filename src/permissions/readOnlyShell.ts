@@ -289,34 +289,48 @@ function extractDashCArgument(tokens: string[]): string | undefined {
 function getAllowedMemoryPrefixes(agentId: string): string[] {
   const home = homedir();
   const prefixes: string[] = [
-    resolve(home, ".letta", "agents", agentId, "memory"),
-    resolve(home, ".letta", "agents", agentId, "memory-worktrees"),
+    normalizeSeparators(resolve(home, ".letta", "agents", agentId, "memory")),
+    normalizeSeparators(
+      resolve(home, ".letta", "agents", agentId, "memory-worktrees"),
+    ),
   ];
   const parentId = process.env.LETTA_PARENT_AGENT_ID;
   if (parentId && parentId !== agentId) {
     prefixes.push(
-      resolve(home, ".letta", "agents", parentId, "memory"),
-      resolve(home, ".letta", "agents", parentId, "memory-worktrees"),
+      normalizeSeparators(
+        resolve(home, ".letta", "agents", parentId, "memory"),
+      ),
+      normalizeSeparators(
+        resolve(home, ".letta", "agents", parentId, "memory-worktrees"),
+      ),
     );
   }
   return prefixes;
 }
 
 /**
+ * Normalize a path to forward slashes (for consistent comparison on Windows).
+ */
+function normalizeSeparators(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
  * Resolve a path that may contain ~ or $HOME to an absolute path.
+ * Always returns forward slashes for cross-platform consistency.
  */
 function expandPath(p: string): string {
   const home = homedir();
   if (p.startsWith("~/")) {
-    return resolve(home, p.slice(2));
+    return normalizeSeparators(resolve(home, p.slice(2)));
   }
   if (p.startsWith("$HOME/")) {
-    return resolve(home, p.slice(6));
+    return normalizeSeparators(resolve(home, p.slice(6)));
   }
   if (p.startsWith('"$HOME/')) {
-    return resolve(home, p.slice(7).replace(/"$/, ""));
+    return normalizeSeparators(resolve(home, p.slice(7).replace(/"$/, "")));
   }
-  return resolve(p);
+  return normalizeSeparators(resolve(p));
 }
 
 /**
