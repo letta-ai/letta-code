@@ -517,6 +517,11 @@ function buildSubagentArgs(
     args.push("--max-turns", String(maxTurns));
   }
 
+  // Pre-load skills specified in the subagent config
+  if (config.skills.length > 0) {
+    args.push("--pre-load-skills", config.skills.join(","));
+  }
+
   return args;
 }
 
@@ -552,7 +557,7 @@ async function executeSubagent(
   }
 
   try {
-    const cliArgs = buildSubagentArgs(
+    let cliArgs = buildSubagentArgs(
       type,
       config,
       model,
@@ -566,14 +571,19 @@ async function executeSubagent(
     // Use the same binary as the current process, with fallbacks:
     // 1. LETTA_CODE_BIN env var (explicit override)
     // 2. Current process argv[1] if it's a .js file (built letta.js)
-    // 3. ./letta.js if running from dev (src/index.ts)
+    // 3. Dev mode: use process.execPath (bun) with the .ts script as first arg
     // 4. "letta" (global install)
     const currentScript = process.argv[1] || "";
-    const lettaCmd =
+    let lettaCmd =
       process.env.LETTA_CODE_BIN ||
       (currentScript.endsWith(".js") ? currentScript : null) ||
-      (currentScript.includes("src/index.ts") ? "./letta.js" : null) ||
       "letta";
+    // In dev mode (running .ts file via bun), use the runtime binary directly
+    // and prepend the script path to the CLI args
+    if (currentScript.endsWith(".ts") && !process.env.LETTA_CODE_BIN) {
+      lettaCmd = process.execPath; // e.g., /path/to/bun
+      cliArgs = [currentScript, ...cliArgs];
+    }
     // Pass parent agent ID so subagents can access parent's context (e.g., search history)
     let parentAgentId: string | undefined;
     try {
