@@ -1,7 +1,7 @@
 ---
 name: recall
 description: Search conversation history to recall past discussions, decisions, and context
-tools: Bash, Read, BashOutput
+tools: Bash, Read, TaskOutput
 model: opus
 memoryBlocks: none
 mode: stateless

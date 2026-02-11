@@ -239,7 +239,7 @@ class PermissionModeManager {
         }
 
         // Allow Task tool with read-only subagent types
-        // These subagents only have access to read-only tools (Glob, Grep, Read, LS, BashOutput)
+        // These subagents only have access to read-only tools (Glob, Grep, Read, LS, TaskOutput)
         const readOnlySubagentTypes = new Set([
           "explore",
           "Explore",
