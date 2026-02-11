@@ -7,25 +7,6 @@ import { buildShellLaunchers } from "../../tools/impl/shellLaunchers";
 /** Maximum stdout bytes collected (4 KB). */
 const MAX_STDOUT_BYTES = 4096;
 
-/** Payload sent as JSON to the status-line command's stdin. */
-export interface StatusLinePayload {
-  agent_id?: string;
-  agent_name?: string | null;
-  conversation_id?: string;
-  session_id?: string;
-  model?: string | null;
-  provider?: string | null;
-  context_window?: number;
-  streaming?: boolean;
-  permission_mode?: string;
-  trajectory_tokens?: number;
-  session_tokens?: number;
-  session_duration_ms?: number;
-  working_directory?: string;
-  network_phase?: string | null;
-  terminal_width?: number;
-}
-
 /** Result returned by executeStatusLineCommand. */
 export interface StatusLineResult {
   text: string;
@@ -43,7 +24,7 @@ export interface StatusLineResult {
  */
 export async function executeStatusLineCommand(
   command: string,
-  payload: StatusLinePayload,
+  payload: unknown,
   options: {
     timeout: number;
     signal?: AbortSignal;
@@ -183,7 +164,11 @@ function runWithLauncher(
       child.stdout.on("data", (data: Buffer) => {
         if (stdoutBytes < MAX_STDOUT_BYTES) {
           const remaining = MAX_STDOUT_BYTES - stdoutBytes;
-          const chunk = data.toString("utf-8", 0, Math.min(data.length, remaining));
+          const chunk = data.toString(
+            "utf-8",
+            0,
+            Math.min(data.length, remaining),
+          );
           stdout += chunk;
           stdoutBytes += data.length;
         }

@@ -26,12 +26,22 @@ export interface SessionRef {
 
 /**
  * Configuration for a user-defined status line command.
- * The command receives JSON on stdin and outputs text to display in the CLI footer.
+ *
+ * Claude-compatible fields:
+ * - type, command, padding
+ *
+ * Letta extensions:
+ * - timeout, debounceMs, refreshIntervalMs
+ * - interval (legacy alias for refreshIntervalMs)
  */
 export interface StatusLineConfig {
+  type?: "command";
   command: string; // Shell command (receives JSON stdin, outputs text)
-  interval?: number; // Polling interval ms (default 10000, min 1000)
+  padding?: number; // Left padding for status line output
   timeout?: number; // Execution timeout ms (default 5000, max 30000)
+  debounceMs?: number; // Debounce for event-driven refreshes (default 300)
+  refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
+  interval?: number; // Legacy alias for refreshIntervalMs
   disabled?: boolean; // Disable at this level
 }
 
@@ -541,6 +551,7 @@ class SettingsManager {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
+        statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);

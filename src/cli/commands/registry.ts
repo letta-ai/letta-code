@@ -227,7 +227,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/statusline": {
-    desc: "Configure status line (show|set|clear|test|enable|disable)",
+    desc: "Configure status line (help|show|set|clear|test|enable|disable)",
     args: "[subcommand]",
     order: 36.5,
     handler: () => {

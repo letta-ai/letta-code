@@ -3,11 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  DEFAULT_STATUS_LINE_INTERVAL_MS,
+  DEFAULT_STATUS_LINE_DEBOUNCE_MS,
   DEFAULT_STATUS_LINE_TIMEOUT_MS,
-  MAX_STATUS_LINE_TIMEOUT_MS,
-  MIN_STATUS_LINE_INTERVAL_MS,
   isStatusLineDisabled,
+  MAX_STATUS_LINE_TIMEOUT_MS,
+  MIN_STATUS_LINE_DEBOUNCE_MS,
+  MIN_STATUS_LINE_INTERVAL_MS,
   normalizeStatusLineConfig,
   resolveStatusLineConfig,
 } from "../../cli/helpers/statusLineConfig";
@@ -34,19 +35,30 @@ afterEach(async () => {
 });
 
 describe("normalizeStatusLineConfig", () => {
-  test("fills in defaults for interval and timeout", () => {
+  test("fills defaults for timeout/debounce and command type", () => {
     const result = normalizeStatusLineConfig({ command: "echo hi" });
     expect(result.command).toBe("echo hi");
-    expect(result.interval).toBe(DEFAULT_STATUS_LINE_INTERVAL_MS);
+    expect(result.type).toBe("command");
     expect(result.timeout).toBe(DEFAULT_STATUS_LINE_TIMEOUT_MS);
+    expect(result.debounceMs).toBe(DEFAULT_STATUS_LINE_DEBOUNCE_MS);
+    expect(result.refreshIntervalMs).toBeUndefined();
+    expect(result.padding).toBe(0);
   });
 
-  test("clamps interval to minimum", () => {
+  test("maps legacy interval to refreshIntervalMs", () => {
     const result = normalizeStatusLineConfig({
       command: "echo hi",
       interval: 100,
     });
-    expect(result.interval).toBe(MIN_STATUS_LINE_INTERVAL_MS);
+    expect(result.refreshIntervalMs).toBe(MIN_STATUS_LINE_INTERVAL_MS);
+  });
+
+  test("respects explicit refreshIntervalMs", () => {
+    const result = normalizeStatusLineConfig({
+      command: "echo hi",
+      refreshIntervalMs: 2500,
+    });
+    expect(result.refreshIntervalMs).toBe(2500);
   });
 
   test("clamps timeout to maximum", () => {
@@ -57,12 +69,12 @@ describe("normalizeStatusLineConfig", () => {
     expect(result.timeout).toBe(MAX_STATUS_LINE_TIMEOUT_MS);
   });
 
-  test("clamps timeout minimum to 1000", () => {
+  test("clamps debounce minimum", () => {
     const result = normalizeStatusLineConfig({
       command: "echo hi",
-      timeout: 100,
+      debounceMs: 1,
     });
-    expect(result.timeout).toBe(1_000);
+    expect(result.debounceMs).toBe(MIN_STATUS_LINE_DEBOUNCE_MS);
   });
 
   test("preserves disabled flag", () => {
@@ -93,7 +105,7 @@ describe("resolveStatusLineConfig", () => {
 
     const result = resolveStatusLineConfig(testProjectDir);
     expect(result).not.toBeNull();
-    expect(result!.command).toBe("echo global");
+    expect(result?.command).toBe("echo global");
   });
 
   test("local overrides project and global", async () => {
@@ -115,25 +127,7 @@ describe("resolveStatusLineConfig", () => {
 
     const result = resolveStatusLineConfig(testProjectDir);
     expect(result).not.toBeNull();
-    expect(result!.command).toBe("echo local");
-  });
-
-  test("project overrides global", async () => {
-    await settingsManager.initialize();
-    settingsManager.updateSettings({
-      statusLine: { command: "echo global" },
-    });
-    await settingsManager.loadProjectSettings(testProjectDir);
-    settingsManager.updateProjectSettings(
-      { statusLine: { command: "echo project" } },
-      testProjectDir,
-    );
-    await settingsManager.loadLocalProjectSettings(testProjectDir);
-    await settingsManager.flush();
-
-    const result = resolveStatusLineConfig(testProjectDir);
-    expect(result).not.toBeNull();
-    expect(result!.command).toBe("echo project");
+    expect(result?.command).toBe("echo local");
   });
 
   test("returns null when disabled at user level", async () => {

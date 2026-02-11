@@ -1,4 +1,3 @@
-// src/cli/helpers/statusLineConfig.ts
 // Config resolution for user-defined status line commands.
 // Precedence: local project > project > global settings.
 
@@ -6,7 +5,7 @@ import type { StatusLineConfig } from "../../settings-manager";
 import { settingsManager } from "../../settings-manager";
 import { debugLog } from "../../utils/debug";
 
-/** Default polling interval (10 seconds). */
+/** Legacy/default polling interval (10 seconds). Used for legacy `interval` mapping. */
 export const DEFAULT_STATUS_LINE_INTERVAL_MS = 10_000;
 
 /** Minimum allowed polling interval (1 second). */
@@ -18,22 +17,59 @@ export const DEFAULT_STATUS_LINE_TIMEOUT_MS = 5_000;
 /** Maximum allowed execution timeout (30 seconds). */
 export const MAX_STATUS_LINE_TIMEOUT_MS = 30_000;
 
+/** Default trigger debounce (300ms, Claude-compatible behavior). */
+export const DEFAULT_STATUS_LINE_DEBOUNCE_MS = 300;
+
+/** Minimum allowed debounce. */
+export const MIN_STATUS_LINE_DEBOUNCE_MS = 50;
+
+/** Maximum allowed debounce. */
+export const MAX_STATUS_LINE_DEBOUNCE_MS = 5_000;
+
+/** Maximum allowed padding. */
+export const MAX_STATUS_LINE_PADDING = 16;
+
+export interface NormalizedStatusLineConfig {
+  type: "command";
+  command: string;
+  padding: number;
+  timeout: number;
+  debounceMs: number;
+  refreshIntervalMs?: number;
+  disabled?: boolean;
+}
+
 /**
- * Clamp interval and timeout to valid ranges, filling in defaults.
+ * Clamp status line config to valid ranges and fill defaults.
  */
 export function normalizeStatusLineConfig(
   config: StatusLineConfig,
-): Required<Omit<StatusLineConfig, "disabled">> & { disabled?: boolean } {
+): NormalizedStatusLineConfig {
+  const intervalRaw = config.refreshIntervalMs ?? config.interval;
+  const refreshIntervalMs =
+    intervalRaw === undefined
+      ? undefined
+      : Math.max(MIN_STATUS_LINE_INTERVAL_MS, intervalRaw);
+
   return {
+    type: "command",
     command: config.command,
-    interval: Math.max(
-      MIN_STATUS_LINE_INTERVAL_MS,
-      config.interval ?? DEFAULT_STATUS_LINE_INTERVAL_MS,
+    padding: Math.max(
+      0,
+      Math.min(MAX_STATUS_LINE_PADDING, config.padding ?? 0),
     ),
     timeout: Math.min(
       MAX_STATUS_LINE_TIMEOUT_MS,
       Math.max(1_000, config.timeout ?? DEFAULT_STATUS_LINE_TIMEOUT_MS),
     ),
+    debounceMs: Math.max(
+      MIN_STATUS_LINE_DEBOUNCE_MS,
+      Math.min(
+        MAX_STATUS_LINE_DEBOUNCE_MS,
+        config.debounceMs ?? DEFAULT_STATUS_LINE_DEBOUNCE_MS,
+      ),
+    ),
+    ...(refreshIntervalMs !== undefined && { refreshIntervalMs }),
     ...(config.disabled !== undefined && { disabled: config.disabled }),
   };
 }
@@ -92,9 +128,7 @@ export function isStatusLineDisabled(
  */
 export function resolveStatusLineConfig(
   workingDirectory: string = process.cwd(),
-): (Required<Omit<StatusLineConfig, "disabled">> & {
-  disabled?: boolean;
-}) | null {
+): NormalizedStatusLineConfig | null {
   try {
     if (isStatusLineDisabled(workingDirectory)) return null;
 

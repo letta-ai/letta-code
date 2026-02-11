@@ -424,6 +424,7 @@ export function Input({
   terminalWidth,
   shouldAnimate = true,
   statusLineText,
+  statusLinePadding = 0,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -460,6 +461,7 @@ export function Input({
   terminalWidth: number;
   shouldAnimate?: boolean;
   statusLineText?: string;
+  statusLinePadding?: number;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -1176,13 +1178,18 @@ export function Input({
               conversationId={conversationId}
             />
 
-            {statusLineText && !hideFooter ? (
-              <Box marginLeft={2}>
-                <Text dimColor wrap="truncate-end">
-                  {statusLineText}
-                </Text>
-              </Box>
-            ) : null}
+            {statusLineText && !hideFooter
+              ? statusLineText.split("\n").map((line, index) => (
+                  <Box
+                    key={`${index}-${line}`}
+                    marginLeft={2 + statusLinePadding}
+                  >
+                    <Text dimColor wrap="truncate-end">
+                      {line}
+                    </Text>
+                  </Box>
+                ))
+              : null}
 
             <InputFooter
               ctrlCPressed={ctrlCPressed}
@@ -1243,6 +1250,7 @@ export function Input({
     reserveInputSpace,
     inputChromeHeight,
     statusLineText,
+    statusLinePadding,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state
