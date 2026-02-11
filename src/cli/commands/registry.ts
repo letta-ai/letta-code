@@ -135,12 +135,12 @@ export const commands: Record<string, Command> = {
       return "Updating description...";
     },
   },
-  "/download": {
-    desc: "Download AgentFile (.af)",
+  "/export": {
+    desc: "Export AgentFile (.af)",
     order: 26,
     handler: () => {
       // Handled specially in App.tsx to access agent ID and client
-      return "Downloading agent file...";
+      return "Exporting agent file...";
     },
   },
   "/toolset": {
@@ -401,6 +401,13 @@ export const commands: Record<string, Command> = {
     hidden: true, // Alias for /agents (opens to Pinned tab)
     handler: () => {
       return "Opening agent browser...";
+    },
+  },
+  "/download": {
+    desc: "Export AgentFile (.af)",
+    hidden: true, // Legacy alias for /export
+    handler: () => {
+      return "Exporting agent file...";
     },
   },
 };
