@@ -437,6 +437,7 @@ async function main(): Promise<void> {
         "include-partial-messages": { type: "boolean" },
         "from-agent": { type: "string" },
         skills: { type: "string" },
+        "pre-load-skills": { type: "string" },
         sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
         import: { type: "string" },

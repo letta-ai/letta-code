@@ -118,6 +118,7 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
+      "pre-load-skills": { type: "string" },
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
@@ -264,6 +265,7 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
 
   // Parse and validate max-turns if provided
@@ -1103,6 +1105,32 @@ ${SYSTEM_REMINDER_CLOSE}
       const skillsReminder = formatSkillsAsSystemReminder(skills);
       if (skillsReminder) {
         pushPart(skillsReminder);
+      }
+
+      // Pre-load specific skills' full content (used by subagents with skills: field)
+      if (preLoadSkillsRaw) {
+        const { readFile: readFileAsync } = await import("node:fs/promises");
+        const skillIds = preLoadSkillsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const loadedContents: string[] = [];
+        for (const skillId of skillIds) {
+          const skill = skills.find((s) => s.id === skillId);
+          if (skill?.path) {
+            try {
+              const content = await readFileAsync(skill.path, "utf-8");
+              loadedContents.push(`<${skillId}>\n${content}\n</${skillId}>`);
+            } catch {
+              // Skill file not readable, skip
+            }
+          }
+        }
+        if (loadedContents.length > 0) {
+          pushPart(
+            `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
+          );
+        }
       }
     } catch {
       // Skills discovery failed, skip
