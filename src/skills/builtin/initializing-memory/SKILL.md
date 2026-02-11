@@ -1,11 +1,11 @@
 ---
 name: initializing-memory
-description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory blocks.
+description: Comprehensive guide for initializing or reorganizing agent memory. Load this skill when running /init, when the user asks you to set up your memory, or when you need guidance on creating effective memory files.
 ---
 
 # Memory Initialization Request
 
-The user has requested that you initialize or reorganize your memory state. You have access to the `memory` tool which allows you to create, edit, and manage memory blocks.
+The user has requested that you initialize or reorganize your memory. Your memory is a filesystem — files under `system/` are rendered in-context every turn, while all file metadata is always visible in the filesystem tree. Files outside `system/` (e.g. `reference/`, `history/`) are accessible via tools when needed.
 
 ## Your Goal: Explode Into 15-25 Hierarchical Files
 
@@ -18,40 +18,25 @@ Your goal is to **explode** memory into a **deeply hierarchical structure of 15-
 | **Total files** | 15-25 (aim for ~20) |
 | **Max lines per file** | ~40 lines (split if larger) |
 | **Hierarchy depth** | 2-3 levels using `/` naming (e.g., `project/tooling/bun.md`) |
-| **Nesting requirement** | Every new block MUST be nested under a parent using `/` |
+| **Nesting requirement** | Every new file MUST be nested under a parent using `/` |
 
 **Anti-patterns to avoid:**
 - ❌ Ending with only 3-5 large files
-- ❌ Flat naming (all blocks at top level)
-- ❌ Mega-blocks with 10+ sections
-- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+- ❌ Flat naming (all files at top level)
+- ❌ Mega-files with 10+ sections
 
 ## Memory Filesystem Integration
 
-If the memory filesystem feature is enabled (check your `memory_filesystem` block), your memory blocks are synchronized with actual files at `~/.letta/agents/<agent-id>/memory/`. The actual path with your agent ID is provided in the system reminder above when you run `/init`.
+Your memory is a git-backed filesystem at `~/.letta/agents/<agent-id>/`. The actual path with your agent ID is provided in the system reminder above when you run `/init`. The filesystem tree is always visible in your system prompt via the `memory_filesystem` section.
 
-This changes how you should approach initialization:
-
-**With memory filesystem enabled (MANDATORY approach):**
-- Memory blocks are stored as `.md` files in a directory hierarchy
-- You can use bash commands (`ls`, `mkdir`, `mv`) to organize memory files
-- File paths map to block labels using `/` for hierarchy (e.g., `system/persona/behavior.md` → label `persona/behavior`)
-- You MUST create a **deeply hierarchical file structure** - flat naming is NOT acceptable
-- Think in terms of directories and subdirectories to organize information
-- **Target: 15-25 files total** - if you create fewer than 15 files, you haven't split enough
-
-**Directory structure:**
-```
-~/.letta/agents/<agent-id>/memory/
-├── system/              # Attached to your system prompt (always loaded)
-│   ├── persona/         # Behavioral adaptations
-│   ├── human.md         # User information
-│   ├── project/         # Project-specific info
-│   └── ...
-├── notes.md             # Detached block at root (on-demand)
-└── archive/             # Detached blocks can be nested too
-    └── ...
-```
+**How memory works:**
+- Memory is stored as `.md` files with YAML frontmatter (`description`, `limit`)
+- Files under `system/` are rendered in-context every turn — keep these small and high-signal
+- Files outside `system/` (e.g. `reference/`, `history/`) are accessible via tools when needed
+- The filesystem tree (all file paths + metadata) is always visible regardless of location
+- You can use bash commands (`ls`, `mkdir`, `mv`, `git`) to organize files
+- You MUST create a **deeply hierarchical file structure** — flat naming is NOT acceptable
+- **Target: 15-25 files in system/**, with additional reference files outside as needed
 
 **MANDATORY principles for hierarchical organization:**
 
@@ -64,48 +49,39 @@ This changes how you should approach initialization:
 
 **Anti-patterns to avoid:**
 - ❌ Creating only 3-5 large files
-- ❌ Flat naming (all blocks at top level like `project-commands.md`)
-- ❌ Mega-blocks with 10+ sections
-- ❌ Single-level hierarchy (only `project.md`, `human.md`)
+- ❌ Flat naming (all files at top level like `project-commands.md`)
+- ❌ Mega-files with 10+ sections
 
 **Rules:**
 - Use **2-3 levels of nesting** for ALL files (e.g., `project/tooling/bun.md`)
 - Keep files **focused and small** (~40 lines max per file)
-- Create **index files** that point to children (e.g., `project.md` lists `project/architecture.md`, `project/tooling.md`)
 - Use **descriptive paths** that make sense when you see just the filename
 - Split when a file has **2+ concepts** (be aggressive)
 
 **Example target structure (what success looks like):**
 
-Starting from default memory blocks, you should end with something like this:
+Starting from default memory files, you should end with something like this:
 
 ```
 system/
-├── human.md                      # Index: points to children
 ├── human/
-│   ├── background.md             # Who they are
-│   ├── prefs.md                  # Index for preferences
-│   ├── prefs/
-│   │   ├── communication.md      # How they like to communicate
-│   │   ├── coding_style.md       # Code formatting preferences
-│   │   └── review_style.md       # PR/code review preferences
-│   └── context.md                # Current project context
-├── project.md                    # Index: points to children
+│   ├── identity.md               # Who they are
+│   ├── context.md                # Current project context
+│   └── prefs/
+│       ├── communication.md      # How they like to communicate
+│       ├── coding_style.md       # Code formatting preferences
+│       └── workflow.md           # How they work
 ├── project/
 │   ├── overview.md               # What the project is
+│   ├── gotchas.md                # Footguns and warnings
 │   ├── architecture.md           # System design
-│   ├── tooling.md                # Index for tooling
-│   ├── tooling/
-│   │   ├── bun.md                # Bun-specific notes
-│   │   ├── testing.md            # Test framework details
-│   │   └── linting.md            # Linter configuration
 │   ├── conventions.md            # Code conventions
-│   └── gotchas.md                # Footguns and warnings
-├── persona.md                    # Index: points to children
+│   └── tooling/
+│       ├── testing.md            # Test framework details
+│       └── linting.md            # Linter configuration
 └── persona/
     ├── role.md                   # Agent's role definition
-    ├── behavior.md               # How to behave
-    └── constraints.md            # What not to do
+    └── behavior.md               # How to behave
 ```
 
 This example has **~20 files** with **3 levels of hierarchy**. Your output should look similar.
@@ -117,11 +93,11 @@ This approach makes memory more **scannable**, **maintainable**, and **shareable
 **Important**: You are a Letta Code agent, which is fundamentally different from typical AI coding assistants. Letta Code agents are **stateful** - users expect to work with the same agent over extended periods, potentially for the entire lifecycle of a project or even longer. Your memory is not just a convenience; it's how you get better over time and maintain continuity across sessions.
 
 This command may be run in different scenarios:
-- **Fresh agent**: You may have default memory blocks that were created when you were initialized
+- **Fresh agent**: You may have default memory files that were created when you were initialized
 - **Existing agent**: You may have been working with the user for a while, and they want you to reorganize or significantly update your memory structure
-- **Shared blocks**: Some memory blocks may be shared across multiple agents - be careful about modifying these
+- **Shared files**: Some memory files may be shared across multiple agents - be careful about modifying these
 
-Before making changes, use the `memory` tool to inspect your current memory blocks and understand what already exists.
+Before making changes, use the `memory` tool to inspect your current memory files and understand what already exists.
 
 ## What Coding Agents Should Remember
 
@@ -146,24 +122,24 @@ Important historical context that informs current decisions:
 - "The auth system was refactored in v2.0 - old patterns are deprecated"
 - "User prefers verbose explanations when debugging"
 
-Note: For historical recall, you may also have access to `conversation_search` which can search past conversations. Memory blocks are for distilled, important information worth persisting permanently.
+Note: For historical recall, you may also have access to `conversation_search` which can search past conversations. Memory files are for distilled, important information worth persisting permanently.
 
 ## Memory Scope Considerations
 
 Consider whether information is:
 
-**Project-scoped** (store in `project` block):
+**Project-scoped** (store in `system/project/`):
 - Build commands, test commands, lint configuration
 - Project architecture and key directories
 - Team conventions specific to this codebase
 - Technology stack and framework choices
 
-**User-scoped** (store in `human` block):
+**User-scoped** (store in `system/human/`):
 - Personal coding preferences that apply across projects
 - Communication style preferences
 - General workflow habits
 
-**Session/Task-scoped** (consider separate blocks like `ticket` or `context`):
+**Session/Task-scoped** (consider separate files like `system/current/ticket.md`):
 - Current branch or ticket being worked on
 - Debugging context for an ongoing investigation
 - Temporary notes about a specific task
@@ -171,22 +147,22 @@ Consider whether information is:
 ## Recommended Memory Structure
 
 **Understanding system/ vs root level (with memory filesystem):**
-- **system/**: Memory blocks attached to your system prompt - always loaded and influence your behavior
+- **system/**: Files rendered in your system prompt every turn — always loaded and influence your behavior
   - Use for: Current work context, active preferences, project conventions you need constantly
   - Examples: `persona`, `human`, `project`, active `ticket` or `context`
-- **Root level** (outside system/): Detached blocks - not in system prompt but available via tools
+- **Root level** (outside system/): Not in system prompt but file paths are visible in the tree and contents are accessible via tools
   - Use for: Historical information, archived decisions, reference material, completed investigations
   - Examples: `notes.md`, `archive/old-project.md`, `research/findings.md`
 
 **Rule of thumb**: If you need to see it every time you respond → `system/`. If it's reference material you'll look up occasionally → root level.
 
-### Core Blocks (Usually Present in system/)
+### Core Files (Usually Present in system/)
 
 **`persona`**: Your behavioral guidelines that augment your base system prompt.
 - Your system prompt already contains comprehensive instructions for how to code and behave
-- The persona block is for **learned adaptations** - things you discover about how the user wants you to behave
+- The persona files are for **learned adaptations** - things you discover about how the user wants you to behave
 - Examples: "User said never use emojis", "User prefers terse responses", "Always explain reasoning before making changes"
-- This block may start empty and grow over time as you learn the user's preferences
+- These files may start empty and grow over time as you learn the user's preferences
 - **With memfs**: Can be split into `persona/behavior.md`, `persona/constraints.md`, etc.
 
 **`project`**: Project-specific information, conventions, and commands
@@ -200,12 +176,12 @@ Consider whether information is:
 - Working style and communication preferences
 - **With memfs**: Can be split into `human/background.md`, `human/prefs/communication.md`, `human/prefs/coding_style.md`, etc.
 
-### Optional Blocks (Create as Needed)
+### Optional Files (Create as Needed)
 
 **`ticket`** or **`task`**: Scratchpad for current work item context.
 - **Important**: This is different from the TODO or Plan tools!
 - TODO/Plan tools track active task lists and implementation plans (structured lists of what to do)
-- A ticket/task memory block is a **scratchpad** for pinned context that should stay visible
+- A ticket/task file is a **scratchpad** for pinned context that should stay visible in system/
 - Examples: Linear ticket ID and URL, Jira issue key, branch name, PR number, relevant links
 - Information that's useful to keep in context but doesn't fit in a TODO list
 - **Location**: Usually in `system/` if you want it always visible, or root level if it's reference material
@@ -222,22 +198,17 @@ Consider whether information is:
 - **Location**: `system/` for currently relevant decisions, root level for historical archive
 - **With memfs**: Could organize as `project/decisions/architecture.md`, `project/decisions/tech_stack.md`
 
-## Writing Good Memory Blocks
+## Writing Good Memory Files
 
-**This is critical**: In the future, you (or a future version of yourself) will only see three things about each memory block:
-1. The **label** (name)
-2. The **description**
-3. The **value** (content)
-
-The reasoning you have *right now* about why you're creating a block will be lost. Your future self won't easily remember this initialization conversation (it can be searched, but it will no longer be in-context). Therefore:
+Each `.md` file has YAML frontmatter (`description`, `limit`) and content. Your future self sees the file path, frontmatter description, and content — but NOT the reasoning from this conversation. Therefore:
 
 **Labels should be:**
 - Clear and descriptive (e.g., `project-conventions` not `stuff`)
 - Consistent in style (e.g., all lowercase with hyphens)
 
 **Descriptions are especially important:**
-- Explain *what* this block is for and *when* to use it
-- Explain *how* this block should influence your behavior
+- Explain *what* this file is for and *when* to use it
+- Explain *how* this file should influence your behavior
 - Write as if explaining to a future version of yourself who has no context
 - Good: "User's coding style preferences that should be applied to all code I write or review. Update when user expresses new preferences."
 - Bad: "Preferences"
@@ -247,18 +218,18 @@ The reasoning you have *right now* about why you're creating a block will be los
 - Updated regularly to stay relevant
 - Pruned of outdated information
 
-Think of memory block descriptions as documentation for your future self. The better you write them now, the more effective you'll be in future sessions.
+Think of memory file descriptions as documentation for your future self. The better you write them now, the more effective you'll be in future sessions.
 
 ## Research Depth
 
 You can ask the user if they want a standard or deep research initialization:
 
 **Standard initialization** (~5-20 tool calls):
-- Inspect existing memory blocks
+- Inspect existing memory files
 - Scan README, package.json/config files, AGENTS.md, CLAUDE.md
 - Review git status and recent commits (from context below)
 - Explore key directories and understand project structure
-- Create/update your memory block structure to contain the essential information you need to know about the user, your behavior (learned preferences), the project you're working in, and any other information that will help you be an effective collaborator.
+- Create/update your memory file structure to contain the essential information you need to know about the user, your behavior (learned preferences), the project you're working in, and any other information that will help you be an effective collaborator.
 
 **Deep research initialization** (~100+ tool calls):
 - Everything in standard initialization, plus:
@@ -267,7 +238,7 @@ You can ask the user if they want a standard or deep research initialization:
 - Analyze commit message conventions and branching strategy
 - Explore multiple directories and understand architecture thoroughly
 - Search for and read key source files to understand patterns
-- Create multiple specialized memory blocks
+- Create multiple specialized memory files
 - May involve multiple rounds of exploration
 
 **What deep research can uncover:**
@@ -291,15 +262,16 @@ If the user says "take as long as you need" or explicitly wants deep research, u
 - Config files (.eslintrc, tsconfig.json, .prettierrc)
 - CI/CD configs (.github/workflows/, .gitlab-ci.yml)
 
-**Git-based research** (if in a git repo):
-- `git log --oneline -20` - Recent commit history and patterns
-- `git branch -a` - Branching strategy
-- `git log --format="%s" -50 | head -20` - Commit message conventions
-- `git shortlog -sn --all | head -10` - Main contributors
-- `git log --format="%an <%ae>" | sort -u` - Contributors with emails (more reliable for deduplication)
-- Recent PRs or merge commits for context on ongoing work
+**Historical session research** (Claude Code / Codex) — **only if user approved**:
 
-**Important: Deduplicate contributors!** Git groups by exact author string, so the same person may appear multiple times with different names (e.g., "jsmith" and "John Smith" are likely the same person). Use emails to deduplicate, and apply common sense - usernames often match parts of full names.
+If the user said "Yes" to the historical sessions question, follow the **Historical Session Analysis** section below after completing project research. If they chose "Skip", skip it entirely.
+
+**Git research:**
+- `git log --oneline -20` — recent history
+- `git branch -a` — branching strategy
+- `git log --format="%s" -50 | head -20` — commit conventions
+- `git shortlog -sn --all | head -10` — main contributors
+- `git log --format="%an <%ae>" | sort -u` — contributors with emails (deduplicate by email, not name)
 
 ## How to Do Thorough Research
 
@@ -337,15 +309,17 @@ You should ask these questions at the start (bundle them together in one AskUser
 1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Workflow style**: "How proactive should I be?" (auto-commit vs ask-first)
-5. **Communication style**: "Terse or detailed responses?"
-6. **Any specific rules**: "Rules I should always follow?"
+4. **Historical sessions** (include this question if history data was found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
+5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
+6. **Communication style**: "Terse or detailed responses?"
+7. **Any specific rules**: "Rules I should always follow?"
 
 **Why these matter:**
 - Identity lets you correlate git history to the user (their commits, PRs, coding style)
 - Related repos provide crucial context (many projects span multiple repos)
-- Workflow/communication style should be stored in the `human` block
-- Rules go in `persona` block
+- Historical sessions from Claude Code/Codex can reveal preferences, communication style, and project knowledge — but processing them is expensive (parallel subagents, multiple LLM calls), so always ask first
+- Workflow/communication style should be stored in `system/human/prefs/`
+- Rules go in `system/persona/`
 
 ### What NOT to ask
 
@@ -356,13 +330,13 @@ You should ask these questions at the start (bundle them together in one AskUser
 
 **During execution**, be autonomous. Make reasonable choices and proceed.
 
-## Memory Block Strategy
+## Memory File Strategy
 
 ### Hierarchical Organization (MANDATORY with Memory Filesystem)
 
 **With memory filesystem enabled, you MUST organize memory as a deeply nested file hierarchy using bash commands:**
 
-**NEVER create flat blocks** like `project-overview.md`, `project-commands.md`. Instead, create deeply nested structures with `/` naming:
+**NEVER create flat files** like `project-overview.md`, `project-commands.md`. Instead, create deeply nested structures with `/` naming:
 
 ```bash
 # Create the hierarchy
@@ -370,21 +344,19 @@ mkdir -p ~/.letta/agents/<agent-id>/memory/system/project/tooling
 mkdir -p ~/.letta/agents/<agent-id>/memory/system/human/prefs
 
 # Files will be:
-# system/project.md           (index file)
 # system/project/overview.md
 # system/project/commands.md
 # system/project/tooling/testing.md
-# system/human.md             (index file)
-# system/human/background.md
+# system/human/identity.md
 # system/human/prefs/communication.md
 ```
 
 **Naming convention (MANDATORY):**
 - **Every new file MUST use `/` naming** - no flat files allowed
 - Use `/` for hierarchy: `project/tooling/testing` (not `project-tooling-testing`)
-- Block label derives from file path: `system/project/overview.md` → label `project/overview`
+- File path determines the memory label: `system/project/overview.md` → label `project/overview`
 - Keep files small and focused (~40 lines max)
-- Create index files (`project.md`, `human.md`) that list children with "Related blocks" section
+- Use **descriptive frontmatter** — the `description` field helps your future self understand each file's purpose
 
 **Checkpoint before proceeding:**
 Count your proposed files. **If you have fewer than 15 files, go back and split more aggressively.**
@@ -397,15 +369,15 @@ Count your proposed files. **If you have fewer than 15 files, go back and split 
 
 ### Split Aggressively - Target 15-25 Files
 
-**Don't create monolithic blocks.** Your goal is **15-25 total files**. Be aggressive about splitting:
+**Don't create monolithic files.** Your goal is **15-25 total files**. Be aggressive about splitting:
 
 **Split when:**
-- A block has **40+ lines** (lower threshold than typical)
-- A block has **2+ distinct concepts** (not 3+, be aggressive)
+- A file has **40+ lines** (lower threshold than typical)
+- A file has **2+ distinct concepts** (not 3+, be aggressive)
 - A section could stand alone as its own file
 - You can name the extracted content with a clear `/` path
 
-If a block is getting long (>40 lines), split it:
+If a file is getting long (>40 lines), split it:
 
 **Without memory filesystem** (flat naming - acceptable but not ideal):
 - `project-overview`: High-level description, tech stack, repo links
@@ -415,7 +387,6 @@ If a block is getting long (>40 lines), split it:
 - `project-gotchas`: Footguns, things to watch out for
 
 **With memory filesystem** (MANDATORY hierarchical naming with `/`):
-- `project.md`: Index file listing all children
 - `project/overview`: High-level description, tech stack, repo links
 - `project/commands`: Build, test, lint, dev commands
 - `project/conventions`: Commit style, PR process, code style
@@ -434,51 +405,55 @@ Why this matters:
 - Deep research can take many turns and millions of tokens
 - Context windows overflow and trigger rolling summaries
 - If you wait until the end to write memory, you may lose important details
-- Write findings to memory blocks as you discover them
+- Write findings to memory files as you discover them
 
 Good pattern:
-1. Create block structure early (even with placeholder content)
-2. Update blocks after each research phase
+1. Create file structure early (even with placeholder content)
+2. Update files after each research phase
 3. Refine and consolidate at the end
 
-Remember, your memory tool allows you to easily add, edit, and remove blocks. There's no reason to wait until you "know everything" to write memory. Treat your memory blocks as a living scratchpad.
+There's no reason to wait until you "know everything" to write memory. Treat your memory files as a living scratchpad.
 
 ### Initialize ALL Relevant Blocks
 
-Don't just update a single memory block. Based on your upfront questions, also update:
+Don't just update a single memory file. Based on your upfront questions, also update:
 
 - **`human`**: Store the user's identity, workflow preferences, communication style
 - **`persona`**: Store rules the user wants you to follow, behavioral adaptations
-- **`project-*`**: Split project info across multiple focused blocks
+- **`project/*`**: Split project info across multiple focused files
 
-And add memory blocks that you think make sense to add (e.g., `project-architecture`, `project-conventions`, `project-gotchas`, etc, or even splitting the `human` block into more focused blocks, or even multiple blocks for multiple users).
+And add memory files that you think make sense to add (e.g., `project/architecture`, `project/conventions`, `project/gotchas`, or splitting `human/` into more focused files, or separate files for multiple users).
 
 ## Your Task
 
-1. **Check memory filesystem status**: Look for the `memory_filesystem` block to see if the filesystem feature is enabled. This determines whether you should organize memory hierarchically.
+1. **Check memory filesystem status**: Look for the `memory_filesystem` section in your system prompt to confirm the filesystem is enabled.
 
-2. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it.
+2. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null` to see if Claude Code or Codex history exists. You need this result BEFORE asking upfront questions so you know whether to include the history question.
 
-3. **Inspect existing memory**: 
+3. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it. **If history data exists (from step 2), you MUST include the historical sessions question.**
+
+4. **Inspect existing memory**: 
    - If memfs enabled: Use `ls -la ~/.letta/agents/<agent-id>/memory/system/` to see the file structure
-   - Otherwise: Use memory tools to inspect existing blocks
+   - Otherwise: Use memory tools to inspect existing files
    - Analyze what exists and what needs improvement
 
-4. **Identify the user**: From git logs and their answer, figure out who they are and store in `human` block. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
+5. **Identify the user**: From git logs and their answer, figure out who they are and store in `system/human/`. If relevant, ask questions to gather information about their preferences that will help you be a useful assistant to them.
 
-5. **Update human/persona early**: Based on answers, update your memory blocks eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
+6. **Update human/persona early**: Based on answers, update your memory files eagerly before diving into project research. You can always change them as you go, you're not locked into any memory configuration.
 
-6. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
+7. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
 
-7. **Create/update memory structure**:
+8. **Historical session analysis (if approved)**: If the user approved Claude Code / Codex history analysis in step 3, follow the **Historical Session Analysis** section below. This launches parallel subagents to process history data and synthesize findings into memory. Skip this step if the user chose "Skip".
+
+9. **Create/update memory structure** (can happen incrementally alongside steps 7-8):
    - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
      - Use `mkdir -p` to create subdirectories (2-3 levels deep)
-     - Create `.md` files for memory blocks using `/` naming
+     - Create `.md` files for memory files using `/` naming
      - **Target 15-25 total files** - be aggressive about splitting
      - Use nested paths like `project/tooling/testing.md` (never flat like `project-testing.md`)
-     - Create index files (`project.md`, `human.md`) with "Related blocks" sections
      - **Every new file MUST be nested** under a parent using `/`
-   - **Without memfs**: Use memory tools to create/update blocks with hierarchical naming
+     - **Every new file MUST be nested** under a parent using `/`
+   - **Without memfs**: Use memory tools to create/update files with hierarchical naming
    - **Don't wait until the end** - write findings as you go
    
    **Checkpoint verification:**
@@ -487,38 +462,40 @@ And add memory blocks that you think make sense to add (e.g., `project-architect
    - Check maximum depth: `find ~/.letta/agents/<agent-id>/memory/system/ -type f | awk -F/ '{print NF}' | sort -n | tail -1`
    - **Should be 2-3 levels deep** minimum
 
-8. **Organize incrementally**:
+10. **Organize incrementally**:
    - Start with a basic structure
    - Add detail as you research
    - Refine organization as patterns emerge
    - Split large files into smaller, focused ones
 
-9. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
+11. **Reflect and review**: See "Reflection Phase" below - this is critical for deep research.
 
-10. **Ask user if done**: Check if they're satisfied or want you to continue refining.
+12. **Ask user if done**: Check if they're satisfied or want you to continue refining.
+
+13. **Push memory**: Once the user is satisfied, commit and push your memory repo so changes are synced to the server.
 
 ## Reflection Phase (Critical for Deep Research)
 
-Before finishing, you MUST do a reflection step. **Your memory blocks are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
+Before finishing, you MUST do a reflection step. **Your memory files are visible to you in your system prompt right now.** Look at them carefully and ask yourself:
 
 1. **File count check**: 
    - Count your memory files: `ls ~/.letta/agents/<agent-id>/memory/system/ | wc -l`
    - **Do you have 15-25 files?** If not, you haven't split enough
-   - Too few files means blocks are too large - split more aggressively
+   - Too few files means they're too large - split more aggressively
 
 2. **Hierarchy check**:
    - Are ALL new files using `/` naming? (e.g., `project/tooling/bun.md`)
    - Do you have 2-3 levels of nesting minimum?
    - Are there any flat files like `project-commands.md`? **These should be nested**
 
-3. **Redundancy check**: Are there blocks with overlapping content? Either literally overlapping (due to errors while making memory edits), or semantically/conceptually overlapping?
+3. **Redundancy check**: Are there files with overlapping content? Either literally overlapping (due to errors while editing), or semantically/conceptually overlapping?
 
-4. **Completeness check**: Did you actually update ALL relevant blocks? For example:
+4. **Completeness check**: Did you actually update ALL relevant files? For example:
    - Did you update `human` with the user's identity and preferences?
    - Did you update `persona` with behavioral rules they expressed?
-   - Or did you only update project blocks and forget the rest?
+   - Or did you only update project files and forget the rest?
 
-5. **Quality check**: Are there typos, formatting issues, or unclear descriptions in your blocks?
+5. **Quality check**: Are there typos, formatting issues, or unclear frontmatter descriptions?
 
 6. **Structure check**: Would this make sense to your future self? Is anything missing? Is anything redundant?
 
@@ -529,7 +506,7 @@ This gives the user a chance to provide feedback or ask for adjustments before y
 
 ## Working with Memory Filesystem (Practical Guide)
 
-If the memory filesystem feature is enabled, here's how to work with it during initialization:
+Here's how to work with the memory filesystem during initialization:
 
 ### Inspecting Current Structure
 
@@ -594,27 +571,6 @@ mv ~/.letta/agents/<agent-id>/memory/system/project/tooling.md \
    ~/.letta/agents/<agent-id>/memory/system/project/tooling/overview.md
 ```
 
-### Creating Index Files
-
-Index files help navigate the hierarchy:
-
-```markdown
-# project.md (index file)
-
-## Project: [Project Name]
-
-This is the main project memory block. See specialized blocks for details:
-
-## Related blocks
-- `project/overview` - High-level description and tech stack
-- `project/commands` - Build, test, lint commands
-- `project/tooling` - Development tools index
-  - `project/tooling/testing` - Test framework details
-  - `project/tooling/linting` - Linter configuration
-- `project/architecture` - System design and structure
-- `project/gotchas` - Important warnings and footguns
-```
-
 ### Final Checklist (Verify Before Submitting)
 
 Before you tell the user you're done, confirm:
@@ -624,18 +580,141 @@ Before you tell the user you're done, confirm:
 - [ ] **Hierarchy is 2-3 levels deep** — e.g., `project/tooling/bun.md`, not just `project.md`
 - [ ] **No file exceeds ~40 lines** — Split larger files
 - [ ] **Each file has one concept** — If 2+ topics, split into 2+ files
-- [ ] **Parent files have "Related blocks" sections** — Index files point to children
-- [ ] **Verify sync**: After creating files, check they appear in your memory blocks
+- [ ] **Every file has real content** — No empty or pointer-only files
+- [ ] **Verify sync**: After creating files, check they appear in your memory files
 
 **If you have fewer than 15 files, you haven't split enough. Go back and split more.**
 
 ### Best Practices
 
-1. **Check memfs status first**: Look for `memory_filesystem` block before deciding on organization strategy
+1. **Check memfs status first**: Look for `memory_filesystem` section in your system prompt
 2. **Start with directories**: Create the directory structure before populating files
 3. **Use short paths**: Aim for 2-3 levels (e.g., `project/tooling/testing`, not `project/dev/tools/testing/setup`)
 4. **Keep files focused**: Each file should cover one concept (~40 lines max)
-5. **Create indexes**: Top-level files (`project.md`) should list children with "Related blocks"
+5. **Every file should have real content** — no empty or pointer-only files
 6. **Be aggressive about splitting**: If in doubt, split. Too many small files is better than too few large ones.
 
 Remember: Good memory management is an investment. The effort you put into organizing your memory now will pay dividends as you work with this user over time.
+
+## Historical Session Analysis (Optional)
+
+This section runs only if the user approved during upfront questions. It uses parallel `history-analyzer` subagents to process Claude Code and/or Codex history into memory. The subagents automatically have the `migrating-from-codex-and-claude-code` skill loaded for data access.
+
+**Architecture:** Parallel worker subagents each process a slice of the history data (on their own git branch in the memory repo), then a synthesis agent merges all branches and updates memory. The workers serve the same goals as the rest of this initialization skill — understanding the user, their preferences, communication style, project context, and anything that makes the agent more effective. Split data however makes sense — by date range, by source (Claude vs Codex), or both.
+
+**Prerequisites:**
+- `letta.js` must be built (`bun run build`) — subagents spawn via this binary
+- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
+
+### Step 1: Detect Data, Plan Splits, and Pre-split Files
+
+```bash
+ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+wc -l ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+```
+
+Split the data across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
+
+**Pre-split the JSONL files by line count** so each worker reads only its chunk. This is simpler than date-based splitting and guarantees evenly-sized chunks:
+
+```bash
+SPLIT_DIR=/tmp/history-splits
+mkdir -p "$SPLIT_DIR"
+NUM_WORKERS=3  # adjust based on data volume
+
+# Split Claude history into even chunks
+LINES=$(wc -l < ~/.claude/history.jsonl)
+CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
+split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
+
+# Split Codex history (if it exists and is large enough to warrant splitting)
+if [ -f ~/.codex/history.jsonl ]; then
+  LINES=$(wc -l < ~/.codex/history.jsonl)
+  if [ "$LINES" -gt 100 ]; then
+    CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
+    split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
+  else
+    cp ~/.codex/history.jsonl "$SPLIT_DIR/codex-aa"
+  fi
+fi
+
+# Rename to .jsonl for clarity
+for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
+
+# Verify even splits
+wc -l "$SPLIT_DIR"/*.jsonl
+```
+
+This is critical for performance — workers read a small pre-filtered file instead of scanning the full history on every query.
+
+### Step 2: Launch Workers in Parallel
+
+Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-split chunk, directly updates memory files, and commits. Workers do NOT merge.
+
+```
+Task({
+  subagent_type: "history-analyzer",
+  description: "Process chunk [N] of [SOURCE] history",
+  prompt: `## Assignment
+- **Memory dir**: [MEMORY_DIR]
+- **History chunk**: /tmp/history-splits/[claude-aa.jsonl | codex-aa.jsonl]
+- **Source format**: [Claude (.timestamp ms, .display) | Codex (.ts seconds, .text)]
+- **Session files**: [~/.claude/projects/ | ~/.codex/sessions/]
+`
+})
+```
+
+### Step 3: Merge Worker Branches and Curate Memory (you do this yourself)
+
+After all workers complete, **you** (the main agent) merge their branches back into main and then **review, curate, and reorganize** the resulting memory. This is critical — workers produce raw output that needs editorial judgment.
+
+**3a. Merge branches:**
+
+```bash
+cd [MEMORY_DIR]
+for branch in $(git branch | grep migration-); do
+  git merge $branch --no-edit -m "merge: $branch"
+done
+```
+
+If there are merge conflicts, read both versions and keep the most complete content. Resolve them yourself — it's just text.
+
+**3b. Review and curate merged memory:**
+
+After merging, **read every file in `system/`** and apply editorial judgment:
+
+- **Only high-signal, actionable information belongs in `system/`** — this is rendered in-context every turn and directly affects token cost and response quality
+- **Move supplementary/reference content to `reference/`** — detailed history, evidence, examples, verbose context that's useful but not needed every turn
+- **Deduplicate across workers** — multiple workers may have written overlapping or redundant content to the same files. Consolidate into clean, non-repetitive content
+- **Reformat for scannability** — bullet points, short lines, no walls of text. Your future self needs to parse this instantly
+- **Delete low-value content** — if something isn't clearly useful for day-to-day work, remove it. Less is more in `system/`
+
+**3c. Reorganize file structure if needed:**
+
+Workers may have created files that don't fit the ideal hierarchy, or put too much into `system/`. Fix this:
+
+- Split oversized files (>40 lines) into focused sub-files
+- Move reference-quality content (detailed history, background context, evidence trails) to `reference/`
+- Ensure `system/` contains only what you genuinely need in-context: identity, active preferences, current project context, behavioral rules, gotchas
+- Merge near-duplicate files that cover the same topic
+
+**Rule of thumb**: If removing a file from `system/` wouldn't hurt your next 10 responses, it belongs in `reference/`.
+
+**3d. Clean up worktrees and branches:**
+
+```bash
+for w in $(dirname [MEMORY_DIR])/memory-worktrees/migration-*; do
+  git worktree remove "$w" 2>/dev/null
+done
+git branch -d $(git branch | grep migration-)
+git push
+```
+
+### Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
+| Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
+| Merge conflict during synthesis | Workers touched overlapping files | Resolve by checking `git log` for context |
+| Auth fails on push ("repository not found") | Credential helper broken | Use `http.extraHeader` (see syncing-memory-filesystem skill) |
