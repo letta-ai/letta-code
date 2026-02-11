@@ -73,8 +73,8 @@ const PARALLEL_SAFE_TOOLS = new Set([
   "conversation_search",
   "web_search",
   "fetch_webpage",
-  // Background shell output (read-only check)
-  "BashOutput",
+  // Background task output (read-only check)
+  "TaskOutput",
   // Task spawns independent subagents
   "Task",
   // Plan mode tools (no parameters, no file operations)

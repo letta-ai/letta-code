@@ -400,15 +400,15 @@ function matchesPattern(
 
 /**
  * Subagent types that are read-only and safe to auto-approve.
- * These only have access to read-only tools (Glob, Grep, Read, LS, BashOutput).
+ * These only have access to read-only tools (Glob, Grep, Read, LS, TaskOutput).
  * See: src/agent/subagents/builtin/*.md for definitions
  */
 const READ_ONLY_SUBAGENT_TYPES = new Set([
-  "explore", // Codebase exploration - Glob, Grep, Read, LS, BashOutput
+  "explore", // Codebase exploration - Glob, Grep, Read, LS, TaskOutput
   "Explore",
-  "plan", // Planning agent - Glob, Grep, Read, LS, BashOutput
+  "plan", // Planning agent - Glob, Grep, Read, LS, TaskOutput
   "Plan",
-  "recall", // Conversation history search - Skill, Bash, Read, BashOutput
+  "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
 ]);
 
@@ -428,7 +428,7 @@ function getDefaultDecision(
     "Glob",
     "Grep",
     "TodoWrite",
-    "BashOutput",
+    "TaskOutput",
     "LS",
     // Codex toolset (snake_case) - tools that don't require approval
     "read_file",

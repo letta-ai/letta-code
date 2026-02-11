@@ -31,7 +31,7 @@ const toolsets: ToolsetOption[] = [
     description: "Toolset optimized for Claude models",
     tools: [
       "Bash",
-      "BashOutput",
+      "TaskOutput",
       "Edit",
       "Glob",
       "Grep",
