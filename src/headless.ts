@@ -95,6 +95,7 @@ export async function handleHeadlessCommand(
       continue: { type: "boolean", short: "c" },
       resume: { type: "boolean", short: "r" },
       conversation: { type: "string" },
+      "memfs-conflict-resolution": { type: "string" },
       default: { type: "boolean" }, // Alias for --conv default
       "new-agent": { type: "boolean" },
       new: { type: "boolean" }, // Deprecated - kept for helpful error message
@@ -270,6 +271,7 @@ export async function handleHeadlessCommand(
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
+  const memfsConflictResolution = values["memfs-conflict-resolution"] as string | undefined;
 
   // Parse and validate max-turns if provided
   let maxTurns: number | undefined;
@@ -283,6 +285,18 @@ export async function handleHeadlessCommand(
     }
     maxTurns = parsed;
   }
+
+  // Validate memfs-conflict-resolution if provided
+if (memfsConflictResolution !== undefined) {
+  // TODO: Implement "time" with proper timestamp comparison if needed
+  const validStrategies = ["server", "local", "fail"];
+  if (!validStrategies.includes(memfsConflictResolution)) {
+    console.error(
+      `Error: Invalid --memfs-conflict-resolution "${memfsConflictResolution}". Valid options: server, local, fail`,
+    );
+    process.exit(1);
+  }
+}
 
   // Handle --conv {agent-id} shorthand: --conv agent-xyz → --agent agent-xyz --conv default
   if (specifiedConversationId?.startsWith("agent-")) {
@@ -717,13 +731,45 @@ export async function handleHeadlessCommand(
   if (settingsManager.isMemfsEnabled(agent.id)) {
     try {
       await ensureMemoryFilesystemBlock(agent.id);
-      const syncResult = await syncMemoryFilesystem(agent.id);
+      let syncResult = await syncMemoryFilesystem(agent.id);
       if (syncResult.conflicts.length > 0) {
-        console.error(
-          `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
-        );
-        process.exit(1);
+        const strategy = memfsConflictResolution || "fail";
+        if (strategy === "fail") {
+          // Default behavior: exit on conflict
+          console.error(
+            `Memory filesystem sync conflicts detected (${syncResult.conflicts.length}). Run in interactive mode to resolve.`,
+          );
+          process.exit(1);
+        }
+        // Auto-resolve conflicts based on strategy
+        const resolutions: Array<{ label: string; resolution: "file" | "block" }> = [];
+        for (const conflict of syncResult.conflicts) {
+          let resolution: "file" | "block";
+          
+          if (strategy === "local") {
+            resolution = "file";
+          } else if (strategy === "server") {
+            resolution = "block";
+          } else {
+            resolution = "file"; // Fallback
+          }
+          
+          resolutions.push({
+            label: conflict.label,
+            resolution,
+          });
+        }
+        // Retry sync with resolutions
+        syncResult = await syncMemoryFilesystem(agent.id, { resolutions });
+        // Log what we did (only in non-json output modes for cleaner logs)
+        const outputFormatValue = (values["output-format"] as string | undefined) || "text";
+        if (outputFormatValue !== "json" && outputFormatValue !== "stream-json") {
+          console.error(
+            `Resolved ${resolutions.length} memfs conflict${resolutions.length === 1 ? "" : "s"} using strategy: ${strategy}`,
+          );
+        }
       }
+
       await updateMemoryFilesystemBlock(agent.id);
       // Note: Sync summary intentionally not logged in headless mode to keep output clean
     } catch (error) {

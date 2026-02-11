@@ -443,6 +443,7 @@ async function main(): Promise<void> {
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
         "max-turns": { type: "string" },
+        "memfs-conflict-resolution": { type: "string" },
       },
       strict: true,
       allowPositionals: true,
