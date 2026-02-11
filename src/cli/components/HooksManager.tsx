@@ -99,7 +99,7 @@ const FALLBACK_TOOL_NAMES = [
   "Skill",
   "EnterPlanMode",
   "ExitPlanMode",
-  "BashOutput",
+  "TaskOutput",
   "KillBash",
 ];
 

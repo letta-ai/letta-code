@@ -1,7 +1,7 @@
 ---
 name: reflection
 description: Background agent that reflects on recent conversations and updates memory files
-tools: Read, Edit, Write, Glob, Grep, Bash, BashOutput
+tools: Read, Edit, Write, Glob, Grep, Bash, TaskOutput
 model: sonnet-4.5
 memoryBlocks: none
 skills: searching-messages
