@@ -117,16 +117,12 @@ const DEFAULT_SETTINGS: Settings = {
   tokenStreaming: false,
   showCompactions: false,
   enableSleeptime: false,
+  conversationSwitchAlertEnabled: false,
   sessionContextEnabled: true,
-<<<<<<< HEAD
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionBehavior: "reminder",
   reflectionStepCount: 25,
-=======
-  conversationSwitchAlertEnabled: false,
-  memoryReminderInterval: 5, // number = prompt memory check every N turns
->>>>>>> 7e6e2c4 (make optional and pass full message context)
   globalSharedBlockIds: {},
 };
 
