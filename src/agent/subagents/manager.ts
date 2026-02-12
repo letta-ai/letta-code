@@ -58,6 +58,9 @@ interface ExecutionState {
   resultStats: { durationMs: number; totalTokens: number } | null;
   displayedToolCalls: Set<string>;
   pendingToolCalls: Map<string, { name: string; args: string }>;
+  assistantTextByOtid: Map<string, string>;
+  lastAssistantOtid: string | null;
+  lastAssistantUnkeyed: string | null;
 }
 
 // ============================================================================
@@ -293,6 +296,81 @@ function handleAutoApprovalEvent(
   }
 }
 
+function extractTextPart(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (
+        part &&
+        typeof part === "object" &&
+        "text" in part &&
+        typeof (part as { text?: unknown }).text === "string"
+      ) {
+        return (part as { text: string }).text;
+      }
+      return "";
+    })
+    .join("");
+}
+
+function handleAssistantMessageEvent(
+  event: {
+    otid?: string;
+    content?: unknown;
+  },
+  state: ExecutionState,
+): void {
+  const delta = extractTextPart(event.content);
+  if (!delta) return;
+
+  const otid = event.otid;
+  if (!otid) {
+    const prev = state.lastAssistantUnkeyed || "";
+    state.lastAssistantUnkeyed = `${prev}${delta}`;
+    return;
+  }
+
+  const prev = state.assistantTextByOtid.get(otid) || "";
+  state.assistantTextByOtid.set(otid, `${prev}${delta}`);
+  state.lastAssistantOtid = otid;
+}
+
+function getStreamedAssistantResult(state: ExecutionState): string | null {
+  if (state.lastAssistantOtid) {
+    const text = state.assistantTextByOtid.get(state.lastAssistantOtid)?.trim();
+    if (text) return text;
+  }
+
+  const unkeyed = state.lastAssistantUnkeyed?.trim();
+  return unkeyed || null;
+}
+
+export function pickPreferredSubagentResult(
+  terminalResult: string | undefined,
+  streamedAssistantResult: string | null,
+): string {
+  const finalResult = (terminalResult || "").trim();
+  const streamed = (streamedAssistantResult || "").trim();
+
+  if (!finalResult) return streamed;
+  if (!streamed) return finalResult;
+
+  const looksLikePhaseOrStepHeader = /^(phase|step)\s+\d+:/i.test(finalResult);
+  const looksTruncatedRelativeToStream =
+    finalResult.length < 220 &&
+    streamed.length >= 400 &&
+    streamed.length > finalResult.length * 2;
+
+  if (looksLikePhaseOrStepHeader || looksTruncatedRelativeToStream) {
+    return streamed;
+  }
+
+  return finalResult;
+}
+
 /**
  * Handle a result event
  */
@@ -306,7 +384,11 @@ function handleResultEvent(
   state: ExecutionState,
   subagentId: string,
 ): void {
-  state.finalResult = event.result || "";
+  const streamedAssistantResult = getStreamedAssistantResult(state);
+  state.finalResult = pickPreferredSubagentResult(
+    event.result,
+    streamedAssistantResult,
+  );
   state.resultStats = {
     durationMs: event.duration_ms || 0,
     totalTokens: event.usage?.total_tokens || 0,
@@ -358,6 +440,9 @@ function processStreamEvent(
         break;
 
       case "message":
+        if (event.message_type === "assistant_message") {
+          handleAssistantMessageEvent(event, state);
+        }
         if (event.message_type === "approval_request_message") {
           handleApprovalRequestEvent(event, state);
         }
@@ -633,6 +718,9 @@ async function executeSubagent(
       resultStats: null,
       displayedToolCalls: new Set(),
       pendingToolCalls: new Map(),
+      assistantTextByOtid: new Map(),
+      lastAssistantOtid: null,
+      lastAssistantUnkeyed: null,
     };
 
     // Create readline interface to parse JSON events line by line
