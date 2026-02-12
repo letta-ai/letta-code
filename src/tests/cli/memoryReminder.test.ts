@@ -8,6 +8,7 @@ import {
   buildMemoryReminder,
   getReflectionSettings,
   reflectionSettingsToLegacyMode,
+  shouldFireStepCountTrigger,
 } from "../../cli/helpers/memoryReminder";
 import { settingsManager } from "../../settings-manager";
 
@@ -143,5 +144,29 @@ describe("memoryReminder", () => {
 
     const reminder = await buildCompactionMemoryReminder("agent-1");
     expect(reminder).toBe(MEMORY_REFLECTION_REMINDER);
+  });
+
+  test("evaluates step-count trigger based on effective settings", () => {
+    expect(
+      shouldFireStepCountTrigger(10, {
+        trigger: "step-count",
+        behavior: "auto-launch",
+        stepCount: 5,
+      }),
+    ).toBe(true);
+    expect(
+      shouldFireStepCountTrigger(10, {
+        trigger: "step-count",
+        behavior: "reminder",
+        stepCount: 6,
+      }),
+    ).toBe(false);
+    expect(
+      shouldFireStepCountTrigger(10, {
+        trigger: "off",
+        behavior: "reminder",
+        stepCount: 5,
+      }),
+    ).toBe(false);
   });
 });
