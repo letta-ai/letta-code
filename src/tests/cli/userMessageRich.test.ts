@@ -18,4 +18,13 @@ describe("splitSystemReminderBlocks", () => {
     expect(blocks.some((b) => b.text.includes("before"))).toBe(true);
     expect(blocks.some((b) => b.text.includes("after"))).toBe(true);
   });
+
+  test("detects legacy system-alert blocks as system context", () => {
+    const blocks = splitSystemReminderBlocks(
+      "before\n<system-alert>alert</system-alert>\nafter",
+    );
+
+    expect(blocks.some((b) => b.isSystemReminder)).toBe(true);
+    expect(blocks.some((b) => b.text.includes("<system-alert>"))).toBe(true);
+  });
 });

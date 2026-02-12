@@ -1,6 +1,11 @@
 import { memo } from "react";
 import stringWidth from "string-width";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import {
+  SYSTEM_ALERT_CLOSE,
+  SYSTEM_ALERT_OPEN,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import { extractTaskNotificationsForDisplay } from "../helpers/taskNotifications";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors, hexToBgAnsi, hexToFgAnsi } from "./colors";
@@ -53,15 +58,20 @@ export function splitSystemReminderBlocks(
   text: string,
 ): Array<{ text: string; isSystemReminder: boolean }> {
   const blocks: Array<{ text: string; isSystemReminder: boolean }> = [];
-  const tagOpen = SYSTEM_REMINDER_OPEN;
-  const tagClose = SYSTEM_REMINDER_CLOSE;
+  const tags = [
+    { open: SYSTEM_REMINDER_OPEN, close: SYSTEM_REMINDER_CLOSE },
+    { open: SYSTEM_ALERT_OPEN, close: SYSTEM_ALERT_CLOSE }, // legacy
+  ];
 
   let remaining = text;
 
   while (remaining.length > 0) {
-    const openIdx = remaining.indexOf(tagOpen);
+    const nextTag = tags
+      .map((tag) => ({ ...tag, idx: remaining.indexOf(tag.open) }))
+      .filter((tag) => tag.idx >= 0)
+      .sort((a, b) => a.idx - b.idx)[0];
 
-    if (openIdx === -1) {
+    if (!nextTag) {
       // No more system-reminder tags, rest is user content
       if (remaining.trim()) {
         blocks.push({ text: remaining.trim(), isSystemReminder: false });
@@ -70,7 +80,7 @@ export function splitSystemReminderBlocks(
     }
 
     // Find the closing tag
-    const closeIdx = remaining.indexOf(tagClose, openIdx);
+    const closeIdx = remaining.indexOf(nextTag.close, nextTag.idx);
     if (closeIdx === -1) {
       // Malformed/incomplete tag - treat the whole remainder as literal user text.
       const literal = remaining.trim();
@@ -81,18 +91,21 @@ export function splitSystemReminderBlocks(
     }
 
     // Content before the tag is user content
-    if (openIdx > 0) {
-      const before = remaining.slice(0, openIdx).trim();
+    if (nextTag.idx > 0) {
+      const before = remaining.slice(0, nextTag.idx).trim();
       if (before) {
         blocks.push({ text: before, isSystemReminder: false });
       }
     }
 
     // Extract the full system-reminder block (including tags)
-    const sysBlock = remaining.slice(openIdx, closeIdx + tagClose.length);
+    const sysBlock = remaining.slice(
+      nextTag.idx,
+      closeIdx + nextTag.close.length,
+    );
     blocks.push({ text: sysBlock, isSystemReminder: true });
 
-    remaining = remaining.slice(closeIdx + tagClose.length);
+    remaining = remaining.slice(closeIdx + nextTag.close.length);
   }
 
   return blocks;
