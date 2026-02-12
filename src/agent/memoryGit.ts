@@ -433,3 +433,25 @@ export async function addGitMemoryTag(agentId: string): Promise<void> {
     );
   }
 }
+
+/**
+ * Remove the git-memory-enabled tag from an agent.
+ */
+export async function removeGitMemoryTag(agentId: string): Promise<void> {
+  const client = await getClient();
+  try {
+    const agent = await client.agents.retrieve(agentId);
+    const tags = agent.tags || [];
+    if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
+      await client.agents.update(agentId, {
+        tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
+      });
+      debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);
+    }
+  } catch (err) {
+    debugWarn(
+      "memfs-git",
+      `Failed to remove git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}

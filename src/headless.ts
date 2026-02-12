@@ -14,7 +14,7 @@ import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
-import { getClient } from "./agent/client";
+import { getClient, getServerUrl } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
@@ -118,6 +118,7 @@ export async function handleHeadlessCommand(
       "permission-mode": { type: "string" },
       yolo: { type: "boolean" },
       skills: { type: "string" },
+      "pre-load-skills": { type: "string" },
       sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
@@ -236,7 +237,6 @@ export async function handleHeadlessCommand(
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
-  let isNewlyCreatedAgent = false;
   let specifiedAgentId = values.agent as string | undefined;
   let specifiedConversationId = values.conversation as string | undefined;
   const useDefaultConv = values.default as boolean | undefined;
@@ -265,6 +265,7 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
+  const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
 
   // Parse and validate max-turns if provided
@@ -542,7 +543,6 @@ export async function handleHeadlessCommand(
     }
 
     agent = result.agent;
-    isNewlyCreatedAgent = true;
 
     // Display extracted skills summary
     if (result.skills && result.skills.length > 0) {
@@ -584,7 +584,6 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
-    isNewlyCreatedAgent = true;
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
@@ -681,27 +680,23 @@ export async function handleHeadlessCommand(
 
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
-  // Apply memfs flag if specified, or enable by default for new agents
-  // In headless mode, also enable for --agent since users expect full functionality
+  // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
   if (memfsFlag) {
+    // memfs requires Letta Cloud (git memfs not supported on self-hosted)
+    const serverUrl = getServerUrl();
+    if (!serverUrl.includes("api.letta.com")) {
+      console.error(
+        "--memfs is only available on Letta Cloud (api.letta.com).",
+      );
+      process.exit(1);
+    }
     settingsManager.setMemfsEnabled(agent.id, true);
   } else if (noMemfsFlag) {
     settingsManager.setMemfsEnabled(agent.id, false);
-  } else if (isNewlyCreatedAgent && !isSubagent) {
-    // Enable memfs by default for newly created agents (but not subagents)
-    settingsManager.setMemfsEnabled(agent.id, true);
-  } else if (specifiedAgentId && !isSubagent) {
-    // Enable memfs by default when using --agent in headless mode
-    settingsManager.setMemfsEnabled(agent.id, true);
   }
 
   // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (
-    memfsFlag ||
-    noMemfsFlag ||
-    (isNewlyCreatedAgent && !isSubagent) ||
-    (specifiedAgentId && !isSubagent)
-  ) {
+  if (memfsFlag || noMemfsFlag) {
     const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
     await updateAgentSystemPromptMemfs(
       agent.id,
@@ -1110,6 +1105,32 @@ ${SYSTEM_REMINDER_CLOSE}
       const skillsReminder = formatSkillsAsSystemReminder(skills);
       if (skillsReminder) {
         pushPart(skillsReminder);
+      }
+
+      // Pre-load specific skills' full content (used by subagents with skills: field)
+      if (preLoadSkillsRaw) {
+        const { readFile: readFileAsync } = await import("node:fs/promises");
+        const skillIds = preLoadSkillsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const loadedContents: string[] = [];
+        for (const skillId of skillIds) {
+          const skill = skills.find((s) => s.id === skillId);
+          if (skill?.path) {
+            try {
+              const content = await readFileAsync(skill.path, "utf-8");
+              loadedContents.push(`<${skillId}>\n${content}\n</${skillId}>`);
+            } catch {
+              // Skill file not readable, skip
+            }
+          }
+        }
+        if (loadedContents.length > 0) {
+          pushPart(
+            `<loaded_skills>\n${loadedContents.join("\n\n")}\n</loaded_skills>`,
+          );
+        }
       }
     } catch {
       // Skills discovery failed, skip
@@ -1860,9 +1881,22 @@ ${SYSTEM_REMINDER_CLOSE}
     lastToolResult?.resultText ||
     "No assistant response found";
 
+  const stats = sessionStats.getSnapshot();
+  const usage = {
+    prompt_tokens: stats.usage.promptTokens,
+    completion_tokens: stats.usage.completionTokens,
+    total_tokens: stats.usage.totalTokens,
+    step_count: stats.usage.stepCount,
+    cached_input_tokens: stats.usage.cachedInputTokens,
+    cache_write_tokens: stats.usage.cacheWriteTokens,
+    reasoning_tokens: stats.usage.reasoningTokens,
+    ...(stats.usage.contextTokens !== undefined && {
+      context_tokens: stats.usage.contextTokens,
+    }),
+  };
+
   // Output based on format
   if (outputFormat === "json") {
-    const stats = sessionStats.getSnapshot();
     const output = {
       type: "result",
       subtype: "success",
@@ -1873,17 +1907,11 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
-      usage: {
-        prompt_tokens: stats.usage.promptTokens,
-        completion_tokens: stats.usage.completionTokens,
-        total_tokens: stats.usage.totalTokens,
-      },
+      usage,
     };
     console.log(JSON.stringify(output, null, 2));
   } else if (outputFormat === "stream-json") {
     // Output final result event
-    const stats = sessionStats.getSnapshot();
-
     // Collect all run_ids from buffers
     const allRunIds = new Set<string>();
     for (const line of toLines(buffers)) {
@@ -1910,11 +1938,7 @@ ${SYSTEM_REMINDER_CLOSE}
       agent_id: agent.id,
       conversation_id: conversationId,
       run_ids: Array.from(allRunIds),
-      usage: {
-        prompt_tokens: stats.usage.promptTokens,
-        completion_tokens: stats.usage.completionTokens,
-        total_tokens: stats.usage.totalTokens,
-      },
+      usage,
       uuid: resultUuid,
     };
     console.log(JSON.stringify(resultEvent));

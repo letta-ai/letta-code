@@ -75,9 +75,9 @@ All subsequent file operations target the worktree:
 
 ### Phase 2: Review Recent Conversation History
 
-Use the `searching-messages` skill (pre-loaded in
-`<loaded_skills>`) to search via `letta messages search`
-and `letta messages list`.
+Use `letta messages search` and `letta messages list`
+(documented in `<loaded_skills>` below) to search the
+parent agent's conversation history.
 
 **Sliding window through recent history:**
 

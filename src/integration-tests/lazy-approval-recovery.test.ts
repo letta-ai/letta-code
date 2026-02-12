@@ -80,6 +80,17 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
     let resultCount = 0;
     let closing = false;
     let pendingToolCallId: string | undefined;
+    let promptAttempts = 0;
+
+    const sendPrompt = () => {
+      if (promptAttempts >= 3) return;
+      promptAttempts++;
+      const userMsg = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: BASH_TRIGGER_PROMPT },
+      });
+      proc.stdin?.write(`${userMsg}\n`);
+    };
 
     const timeout = setTimeout(() => {
       if (!closing) {
@@ -153,11 +164,7 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
         // Step 1: Wait for init, then send bash trigger prompt
         if (msg.type === "system" && msg.subtype === "init" && !initReceived) {
           initReceived = true;
-          const userMsg = JSON.stringify({
-            type: "user",
-            message: { role: "user", content: BASH_TRIGGER_PROMPT },
-          });
-          proc.stdin?.write(`${userMsg}\n`);
+          sendPrompt();
           return;
         }
 
@@ -217,6 +224,11 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
         // Track results and complete once we prove the pending-approval flow unblocks.
         if (msg.type === "result") {
           resultCount++;
+          // If model responded without calling a tool, retry prompt (up to 3 attempts)
+          if (!approvalSeen && promptAttempts < 3) {
+            sendPrompt();
+            return;
+          }
           if (resultCount >= 1 && !approvalSeen) {
             cleanup();
             resolve({ messages, success: false, errorSeen });
