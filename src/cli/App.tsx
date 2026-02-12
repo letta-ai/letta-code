@@ -1165,6 +1165,8 @@ export default function App({
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
+  // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
+  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(null);
   // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -2263,6 +2265,8 @@ export default function App({
           } else {
             setCurrentModelId(agentModelHandle || null);
           }
+          // Store full handle for API calls (e.g., compaction)
+          setCurrentModelHandle(agentModelHandle || null);
 
           // Derive toolset from agent's model (not persisted, computed on resume)
           if (agentModelHandle) {
@@ -5952,13 +5956,38 @@ export default function App({
         }
 
         // Special handling for /compact command - summarize conversation history
-        if (msg.trim() === "/compact") {
+        // Supports: /compact, /compact all, /compact sliding_window
+        if (msg.trim().startsWith("/compact")) {
+          const parts = msg.trim().split(/\s+/);
+          const modeArg = parts[1] as
+            | "all"
+            | "sliding_window"
+            | undefined;
+          const validModes = ["all", "sliding_window"];
+
+          // Validate mode if provided
+          if (modeArg && !validModes.includes(modeArg)) {
+            const cmdId = uid("cmd");
+            buffersRef.current.byId.set(cmdId, {
+              kind: "command",
+              id: cmdId,
+              input: msg,
+              output: `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`,
+              phase: "finished",
+              success: false,
+            });
+            buffersRef.current.order.push(cmdId);
+            refreshDerived();
+            return { submitted: true };
+          }
+
           const cmdId = uid("cmd");
+          const modeDisplay = modeArg ? ` (mode: ${modeArg})` : "";
           buffersRef.current.byId.set(cmdId, {
             kind: "command",
             id: cmdId,
             input: msg,
-            output: "Compacting conversation history...",
+            output: `Compacting conversation history${modeDisplay}...`,
             phase: "running",
           });
           buffersRef.current.order.push(cmdId);
@@ -5991,18 +6020,36 @@ export default function App({
             }
 
             const client = await getClient();
+
+            // Compute model handle from llmConfig
+            const modelHandle = llmConfig?.model_endpoint_type && llmConfig?.model
+              ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+              : llmConfig?.model || null;
+
+            // Build compaction settings if mode was specified
+            // Pass mode-specific prompt to override any agent defaults
+            const compactParams = modeArg && modelHandle
+              ? {
+                  compaction_settings: {
+                    mode: modeArg,
+                    model: modelHandle,
+                  },
+                }
+              : undefined;
+
             // Use agent-level compact API for "default" conversation,
             // otherwise use conversation-level API
             const result =
               conversationIdRef.current === "default"
-                ? await client.agents.messages.compact(agentId)
+                ? await client.agents.messages.compact(agentId, compactParams)
                 : await client.conversations.messages.compact(
                     conversationIdRef.current,
+                    compactParams,
                   );
 
             // Format success message with before/after counts and summary
             const outputLines = [
-              `Compaction completed. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
+              `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
               "",
               `Summary: ${result.summary}`,
             ];
