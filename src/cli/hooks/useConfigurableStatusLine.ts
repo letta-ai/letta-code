@@ -110,6 +110,9 @@ export function useConfigurableStatusLine(
 
     if (!config) {
       configRef.current = null;
+      // Abort any in-flight execution so stale results don't surface.
+      abortRef.current?.abort();
+      abortRef.current = null;
       setActive(false);
       setText("");
       setRightText("");

@@ -5847,9 +5847,12 @@ export default function App({
 
         // Special handling for /statusline command
         if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
-          const parts = trimmed.slice("/statusline".length).trim().split(/\s+/);
-          const sub = parts[0] || "show";
-          const rest = parts.slice(1).join(" ");
+          const rawArgs = trimmed.slice("/statusline".length).trim();
+          const spaceIdx = rawArgs.indexOf(" ");
+          const sub =
+            spaceIdx === -1 ? rawArgs || "show" : rawArgs.slice(0, spaceIdx);
+          const rest =
+            spaceIdx === -1 ? "" : rawArgs.slice(spaceIdx + 1).trim();
           const cmd = commandRunner.start(trimmed, "Managing status line...");
 
           (async () => {
@@ -5896,9 +5899,12 @@ export default function App({
                   cmd.finish("Usage: /statusline set <command> [-l|-p]", false);
                   return;
                 }
-                const isLocal = rest.endsWith(" -l");
-                const isProject = rest.endsWith(" -p");
-                const command = rest.replace(/\s+-(l|p)$/, "");
+                const scopeMatch = rest.match(/\s+-(l|p)$/);
+                const command = scopeMatch
+                  ? rest.slice(0, scopeMatch.index)
+                  : rest;
+                const isLocal = scopeMatch?.[1] === "l";
+                const isProject = scopeMatch?.[1] === "p";
                 const config = { command };
                 if (isLocal) {
                   settingsManager.updateLocalProjectSettings(
@@ -5907,6 +5913,7 @@ export default function App({
                   );
                   cmd.finish(`Status line set (local): ${command}`, true);
                 } else if (isProject) {
+                  await settingsManager.loadProjectSettings(wd);
                   settingsManager.updateProjectSettings(
                     { statusLine: config },
                     wd,
@@ -5926,6 +5933,7 @@ export default function App({
                   );
                   cmd.finish("Status line cleared (local)", true);
                 } else if (isProject) {
+                  await settingsManager.loadProjectSettings(wd);
                   settingsManager.updateProjectSettings(
                     { statusLine: undefined },
                     wd,
@@ -5987,12 +5995,17 @@ export default function App({
                 cmd.finish("Status line disabled", true);
               } else if (sub === "enable") {
                 const current = settingsManager.getSettings().statusLine;
-                if (current) {
+                if (!current?.command) {
+                  cmd.finish(
+                    "No status line configured. Use /statusline set <command> first.",
+                    false,
+                  );
+                } else {
                   settingsManager.updateSettings({
                     statusLine: { ...current, disabled: false },
                   });
+                  cmd.finish("Status line enabled", true);
                 }
-                cmd.finish("Status line enabled", true);
               } else {
                 cmd.finish(
                   `Unknown subcommand: ${sub}. Use help|show|set|clear|test|enable|disable`,
