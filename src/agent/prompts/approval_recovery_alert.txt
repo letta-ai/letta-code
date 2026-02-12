@@ -1,1 +1,1 @@
-<system-alert>Automated keep-alive ping. Ignore this message and continue from where you stopped.</system-alert>
+<system-reminder>Automated keep-alive ping. Ignore this message and continue from where you stopped.</system-reminder>

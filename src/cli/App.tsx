@@ -53,6 +53,8 @@ import { SessionStats } from "../agent/stats";
 import {
   INTERRUPTED_BY_USER,
   MEMFS_CONFLICT_CHECK_INTERVAL,
+  SYSTEM_ALERT_CLOSE,
+  SYSTEM_ALERT_OPEN,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "../constants";
@@ -714,6 +716,10 @@ function stripSystemReminders(text: string): string {
         `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
         "g",
       ),
+      "",
+    )
+    .replace(
+      new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
       "",
     )
     .trim();
@@ -1537,6 +1543,9 @@ export default function App({
   const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
     null,
   );
+  // Non-null only when the previous turn was explicitly interrupted by the user.
+  // Used to gate recovery alert injection to true user-interrupt retries.
+  const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't
   // Incremented when userCancelledRef is reset while messages are queued
@@ -3008,13 +3017,22 @@ export default function App({
         setNetworkPhase("upload");
         abortControllerRef.current = new AbortController();
 
-        // Recover interrupted message: if cache contains ONLY user messages, prepend them
+        // Recover interrupted message only after explicit user interrupt:
+        // if cache contains ONLY user messages, prepend them.
         // Note: type="message" is a local discriminator (not in SDK types) to distinguish from approvals
         const originalInput = currentInput;
         const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
           (m) => m.type === "message" && m.role === "user",
         );
-        if (cacheIsAllUserMsgs && lastSentInputRef.current) {
+        const canInjectInterruptRecovery =
+          pendingInterruptRecoveryConversationIdRef.current !== null &&
+          pendingInterruptRecoveryConversationIdRef.current ===
+            conversationIdRef.current;
+        if (
+          cacheIsAllUserMsgs &&
+          lastSentInputRef.current &&
+          canInjectInterruptRecovery
+        ) {
           currentInput = [
             ...lastSentInputRef.current,
             ...currentInput.map((m) =>
@@ -3031,12 +3049,14 @@ export default function App({
                 : m,
             ),
           ];
+          pendingInterruptRecoveryConversationIdRef.current = null;
           // Cache old + new for chained recovery
           lastSentInputRef.current = [
             ...lastSentInputRef.current,
             ...originalInput,
           ];
         } else {
+          pendingInterruptRecoveryConversationIdRef.current = null;
           lastSentInputRef.current = originalInput;
         }
 
@@ -3242,7 +3262,8 @@ export default function App({
                               c.type === "text" &&
                               "text" in c &&
                               typeof c.text === "string" &&
-                              !c.text.includes(SYSTEM_REMINDER_OPEN),
+                              !c.text.includes(SYSTEM_REMINDER_OPEN) &&
+                              !c.text.includes(SYSTEM_ALERT_OPEN),
                           )
                           .map((c) => c.text)
                           .join("\n");
@@ -3483,6 +3504,7 @@ export default function App({
             conversationBusyRetriesRef.current = 0;
             lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
             lastSentInputRef.current = null; // Clear - no recovery needed
+            pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Get last assistant message, user message, and reasoning for Stop hook
             const lastAssistant = Array.from(
@@ -3696,6 +3718,7 @@ export default function App({
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
             lastSentInputRef.current = null; // Clear - message was received by server
+            pendingInterruptRecoveryConversationIdRef.current = null;
 
             // Use new approvals array, fallback to legacy approval for backward compat
             const approvalsToProcess =
@@ -4219,7 +4242,8 @@ export default function App({
                           c.type === "text" &&
                           "text" in c &&
                           typeof c.text === "string" &&
-                          !c.text.includes(SYSTEM_REMINDER_OPEN),
+                          !c.text.includes(SYSTEM_REMINDER_OPEN) &&
+                          !c.text.includes(SYSTEM_ALERT_OPEN),
                       )
                       .map((c) => c.text)
                       .join("\n");
@@ -4735,6 +4759,8 @@ export default function App({
         abortControllerRef.current = null;
       }
 
+      pendingInterruptRecoveryConversationIdRef.current =
+        conversationIdRef.current;
       userCancelledRef.current = true; // Prevent dequeue
       setStreaming(false);
       setIsExecutingTool(false);
@@ -4786,6 +4812,8 @@ export default function App({
       }
 
       // Set cancellation flag to prevent processConversation from starting
+      pendingInterruptRecoveryConversationIdRef.current =
+        conversationIdRef.current;
       userCancelledRef.current = true;
 
       // Increment generation to mark any in-flight processConversation as stale.
@@ -4880,6 +4908,8 @@ export default function App({
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }
+        pendingInterruptRecoveryConversationIdRef.current =
+          conversationIdRef.current;
       } catch (e) {
         const errorDetails = formatErrorDetails(e, agentId);
         appendError(`Failed to interrupt stream: ${errorDetails}`);
@@ -8003,7 +8033,7 @@ ${SYSTEM_REMINDER_CLOSE}
           plan: "Read-only mode. Focus on exploration and planning.",
           bypassPermissions: "All tools auto-approved. Bias toward action.",
         };
-        permissionModeAlert = `<system-alert>Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}</system-alert>\n\n`;
+        permissionModeAlert = `${SYSTEM_REMINDER_OPEN}Permission mode changed to: ${currentMode}. ${modeDescriptions[currentMode]}${SYSTEM_REMINDER_CLOSE}\n\n`;
         lastNotifiedModeRef.current = currentMode;
       }
 

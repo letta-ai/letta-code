@@ -5,7 +5,12 @@ import type {
   Message,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import {
+  SYSTEM_ALERT_CLOSE,
+  SYSTEM_ALERT_OPEN,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 import type { Buffers } from "./accumulator";
 import { extractTaskNotificationsForDisplay } from "./taskNotifications";
 
@@ -41,13 +46,17 @@ function normalizeLineEndings(s: string): string {
   return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
-function removeSystemReminderBlocks(text: string): string {
+function removeSystemContextBlocks(text: string): string {
   return text
     .replace(
       new RegExp(
         `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
         "g",
       ),
+      "",
+    )
+    .replace(
+      new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
       "",
     )
     .trim();
@@ -102,7 +111,7 @@ function renderUserContentParts(
   // Parts are joined with newlines so each appears as a separate line
   if (typeof parts === "string") {
     const normalized = normalizeLineEndings(parts);
-    return clip(removeSystemReminderBlocks(normalized), CLIP_CHAR_LIMIT_TEXT);
+    return clip(removeSystemContextBlocks(normalized), CLIP_CHAR_LIMIT_TEXT);
   }
 
   const rendered: string[] = [];
@@ -111,7 +120,7 @@ function renderUserContentParts(
       const text = p.text || "";
       // Normalize line endings (\r\n and \r -> \n) to prevent terminal garbling
       const normalized = normalizeLineEndings(text);
-      const withoutSystemReminders = removeSystemReminderBlocks(normalized);
+      const withoutSystemReminders = removeSystemContextBlocks(normalized);
       if (!withoutSystemReminders) continue;
       rendered.push(clip(withoutSystemReminders, CLIP_CHAR_LIMIT_TEXT));
     } else if (p.type === "image") {

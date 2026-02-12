@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "../../cli/helpers/accumulator";
 import { backfillBuffers } from "../../cli/helpers/backfill";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
+import {
+  SYSTEM_ALERT_CLOSE,
+  SYSTEM_ALERT_OPEN,
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+} from "../../constants";
 
 function userMessage(
   id: string,
@@ -64,5 +69,21 @@ describe("backfill system-reminder handling", () => {
 
     expect(buffers.byId.get("u3")).toBeUndefined();
     expect(buffers.order).toHaveLength(0);
+  });
+
+  test("hides legacy system-alert blocks from backfill", () => {
+    const buffers = createBuffers();
+    const history = [
+      userMessage(
+        "u4",
+        `${SYSTEM_ALERT_OPEN}The user interrupted the active stream.${SYSTEM_ALERT_CLOSE}\n\nhello :D`,
+      ),
+    ];
+
+    backfillBuffers(buffers, history);
+
+    const line = buffers.byId.get("u4");
+    expect(line?.kind).toBe("user");
+    expect(line && "text" in line ? line.text : "").toBe("hello :D");
   });
 });
