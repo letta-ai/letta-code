@@ -37,7 +37,7 @@ describe("statusLineHelp", () => {
       padding: 0,
       timeout: 5000,
       debounceMs: 300,
-      refreshIntervalMs: null,
+      refreshIntervalMs: undefined,
     });
 
     expect(output).not.toContain("/Users/someuser/");

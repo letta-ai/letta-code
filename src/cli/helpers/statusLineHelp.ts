@@ -65,7 +65,7 @@ export function formatStatusLineHelp(
     '    "refreshIntervalMs": 10000',
     "  }",
     "",
-    "  type               must be \"command\"",
+    '  type               must be "command"',
     "  command            shell command to execute",
     "  padding            left padding in spaces (default 0, max 16)",
     "  timeout            command timeout in ms (default 5000, max 30000)",

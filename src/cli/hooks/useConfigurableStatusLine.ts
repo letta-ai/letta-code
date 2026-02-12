@@ -6,7 +6,6 @@
 // - Optional polling when refreshIntervalMs is configured
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { areHooksDisabled } from "../../hooks/loader";
 import {
   type NormalizedStatusLineConfig,
   resolveStatusLineConfig,
@@ -109,7 +108,7 @@ export function useConfigurableStatusLine(
     const workingDirectory = inputsRef.current.currentDirectory;
     const config = resolveStatusLineConfig(workingDirectory);
 
-    if (!config || areHooksDisabled(workingDirectory)) {
+    if (!config) {
       configRef.current = null;
       setActive(false);
       setText("");

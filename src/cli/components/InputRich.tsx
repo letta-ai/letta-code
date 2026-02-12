@@ -111,6 +111,7 @@ function findCursorLine(
 }
 
 // Matches OSC 8 hyperlink sequences: \x1b]8;;URL\x1b\DISPLAY\x1b]8;;\x1b\
+// biome-ignore lint/suspicious/noControlCharactersInRegex: OSC 8 escape sequences require \x1b
 const OSC8_REGEX = /\x1b\]8;;([^\x1b]*)\x1b\\([^\x1b]*)\x1b\]8;;\x1b\\/g;
 
 function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
@@ -118,8 +119,7 @@ function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
   let lastIndex = 0;
   const regex = new RegExp(OSC8_REGEX.source, "g");
 
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(line)) !== null) {
+  for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
     if (match.index > lastIndex) {
       parts.push(
         <Text key={`${keyPrefix}-${lastIndex}`}>
@@ -127,10 +127,10 @@ function parseOsc8Line(line: string, keyPrefix: string): ReactNode[] {
         </Text>,
       );
     }
-    const url = match[1];
-    const display = match[2];
+    const url = match[1] ?? "";
+    const display = match[2] ?? "";
     parts.push(
-      <Link key={`${keyPrefix}-${match.index}`} url={url!}>
+      <Link key={`${keyPrefix}-${match.index}`} url={url}>
         <Text>{display}</Text>
       </Link>,
     );
@@ -170,7 +170,7 @@ function StatusLineContent({
     if (paddingStr) {
       parts.push(paddingStr);
     }
-    parts.push(...parseOsc8Line(lines[i]!, `l${i}`));
+    parts.push(...parseOsc8Line(lines[i] ?? "", `l${i}`));
   }
   return (
     <Text wrap="wrap">
@@ -296,17 +296,23 @@ const InputFooter = memo(function InputFooter({
         )}
       </Box>
       <Box
-        flexDirection={statusLineRight && !hideFooterContent ? "column" : undefined}
-        alignItems={statusLineRight && !hideFooterContent ? "flex-end" : undefined}
-        width={statusLineRight && !hideFooterContent ? undefined : rightColumnWidth}
+        flexDirection={
+          statusLineRight && !hideFooterContent ? "column" : undefined
+        }
+        alignItems={
+          statusLineRight && !hideFooterContent ? "flex-end" : undefined
+        }
+        width={
+          statusLineRight && !hideFooterContent ? undefined : rightColumnWidth
+        }
         flexShrink={0}
       >
         {hideFooterContent ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : statusLineRight ? (
-          statusLineRight.split("\n").map((line, i) => (
-            <Text key={`r-${i}`} dimColor wrap="truncate-end">
-              {parseOsc8Line(line, `r${i}`)}
+          statusLineRight.split("\n").map((line) => (
+            <Text key={line} dimColor wrap="truncate-end">
+              {parseOsc8Line(line, line)}
             </Text>
           ))
         ) : (
