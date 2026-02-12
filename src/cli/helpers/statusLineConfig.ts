@@ -34,6 +34,7 @@ export interface NormalizedStatusLineConfig {
   debounceMs: number;
   refreshIntervalMs?: number;
   disabled?: boolean;
+  prompt?: string;
 }
 
 /**
@@ -67,6 +68,7 @@ export function normalizeStatusLineConfig(
     ),
     ...(refreshIntervalMs !== undefined && { refreshIntervalMs }),
     ...(config.disabled !== undefined && { disabled: config.disabled }),
+    ...(config.prompt !== undefined && { prompt: config.prompt }),
   };
 }
 
@@ -162,5 +164,53 @@ export function resolveStatusLineConfig(
       error,
     );
     return null;
+  }
+}
+
+/**
+ * Resolve the prompt character from status line settings.
+ * Independent of whether a `command` is configured.
+ *
+ * Precedence: local project > project > global.
+ * Returns `">"` when no prompt is configured at any level.
+ */
+export function resolvePromptChar(
+  workingDirectory: string = process.cwd(),
+): string {
+  try {
+    // Local project settings (highest priority)
+    try {
+      const local =
+        settingsManager.getLocalProjectSettings(workingDirectory)?.statusLine;
+      if (local?.prompt !== undefined) return local.prompt;
+    } catch {
+      // Not loaded
+    }
+
+    // Project settings
+    try {
+      const project =
+        settingsManager.getProjectSettings(workingDirectory)?.statusLine;
+      if (project?.prompt !== undefined) return project.prompt;
+    } catch {
+      // Not loaded
+    }
+
+    // Global settings
+    try {
+      const global = settingsManager.getSettings().statusLine;
+      if (global?.prompt !== undefined) return global.prompt;
+    } catch {
+      // Not initialized
+    }
+
+    return ">";
+  } catch (error) {
+    debugLog(
+      "statusline",
+      "resolvePromptChar: Failed to resolve prompt",
+      error,
+    );
+    return ">";
   }
 }

@@ -205,7 +205,10 @@ import {
 } from "./helpers/queuedMessageParts";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { resolveStatusLineConfig } from "./helpers/statusLineConfig";
+import {
+  resolvePromptChar,
+  resolveStatusLineConfig,
+} from "./helpers/statusLineConfig";
 import { formatStatusLineHelp } from "./helpers/statusLineHelp";
 import { buildStatusLinePayload } from "./helpers/statusLinePayload";
 import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
@@ -5994,6 +5997,8 @@ export default function App({
                 lines.push(
                   `Effective: ${effective ? `command="${effective.command}" refreshInterval=${effective.refreshIntervalMs ?? "off"} timeout=${effective.timeout}ms debounce=${effective.debounceMs}ms padding=${effective.padding}` : "(inactive)"}`,
                 );
+                const effectivePrompt = resolvePromptChar(wd);
+                lines.push(`Prompt: "${effectivePrompt}"`);
                 cmd.finish(lines.join("\n"), true);
               } else if (sub === "set") {
                 if (!rest) {
@@ -10980,6 +10985,7 @@ Plan file path: ${planFilePath}`;
                 statusLineText={statusLine.text || undefined}
                 statusLineRight={statusLine.rightText || undefined}
                 statusLinePadding={statusLine.padding || 0}
+                statusLinePrompt={statusLine.prompt}
               />
             </Box>
 
