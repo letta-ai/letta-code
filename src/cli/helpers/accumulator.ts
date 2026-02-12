@@ -238,6 +238,12 @@ export type Buffers = {
   pendingToolByRun: Map<string, string>; // temporary id per run until real id
   toolCallIdToLineId: Map<string, string>;
   lastOtid: string | null; // Track the last otid to detect transitions
+  // Alias maps to keep assistant deltas on one line when streams mix id/otid.
+  assistantCanonicalByMessageId: Map<string, string>;
+  assistantCanonicalByOtid: Map<string, string>;
+  // Alias maps to keep reasoning deltas on one line when streams mix id/otid.
+  reasoningCanonicalByMessageId: Map<string, string>;
+  reasoningCanonicalByOtid: Map<string, string>;
   pendingRefresh?: boolean; // Track throttled refresh state
   interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
   commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
@@ -273,6 +279,10 @@ export function createBuffers(agentId?: string): Buffers {
     pendingToolByRun: new Map(),
     toolCallIdToLineId: new Map(),
     lastOtid: null,
+    assistantCanonicalByMessageId: new Map(),
+    assistantCanonicalByOtid: new Map(),
+    reasoningCanonicalByMessageId: new Map(),
+    reasoningCanonicalByOtid: new Map(),
     commitGeneration: 0,
     abortGeneration: 0,
     usage: {
@@ -441,6 +451,107 @@ function extractTextPart(v: unknown): string {
   return "";
 }
 
+function resolveAssistantLineId(
+  b: Buffers,
+  chunk: LettaStreamingResponse & { id?: string; otid?: string },
+): string | undefined {
+  const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
+  const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
+
+  const canonicalFromMessageId = messageId
+    ? b.assistantCanonicalByMessageId.get(messageId)
+    : undefined;
+  const canonicalFromOtid = otid
+    ? b.assistantCanonicalByOtid.get(otid)
+    : undefined;
+
+  let canonical =
+    canonicalFromMessageId || canonicalFromOtid || messageId || otid;
+  if (!canonical) return undefined;
+
+  // If both aliases exist but disagree, prefer the one that already has a line.
+  if (
+    canonicalFromMessageId &&
+    canonicalFromOtid &&
+    canonicalFromMessageId !== canonicalFromOtid
+  ) {
+    const messageLineExists = b.byId.has(canonicalFromMessageId);
+    const otidLineExists = b.byId.has(canonicalFromOtid);
+
+    if (messageLineExists && !otidLineExists) {
+      canonical = canonicalFromMessageId;
+    } else if (otidLineExists && !messageLineExists) {
+      canonical = canonicalFromOtid;
+    } else {
+      canonical = canonicalFromMessageId;
+    }
+
+    debugLog(
+      "accumulator",
+      `Assistant id/otid alias conflict resolved to ${canonical}`,
+    );
+  }
+
+  if (messageId) {
+    b.assistantCanonicalByMessageId.set(messageId, canonical);
+  }
+  if (otid) {
+    b.assistantCanonicalByOtid.set(otid, canonical);
+  }
+
+  return canonical;
+}
+
+function resolveReasoningLineId(
+  b: Buffers,
+  chunk: LettaStreamingResponse & { id?: string; otid?: string },
+): string | undefined {
+  const messageId = typeof chunk.id === "string" ? chunk.id : undefined;
+  const otid = typeof chunk.otid === "string" ? chunk.otid : undefined;
+
+  const canonicalFromMessageId = messageId
+    ? b.reasoningCanonicalByMessageId.get(messageId)
+    : undefined;
+  const canonicalFromOtid = otid
+    ? b.reasoningCanonicalByOtid.get(otid)
+    : undefined;
+
+  let canonical =
+    canonicalFromMessageId || canonicalFromOtid || messageId || otid;
+  if (!canonical) return undefined;
+
+  if (
+    canonicalFromMessageId &&
+    canonicalFromOtid &&
+    canonicalFromMessageId !== canonicalFromOtid
+  ) {
+    const messageLineExists = b.byId.has(canonicalFromMessageId);
+    const otidLineExists = b.byId.has(canonicalFromOtid);
+
+    if (messageLineExists && !otidLineExists) {
+      canonical = canonicalFromMessageId;
+    } else if (otidLineExists && !messageLineExists) {
+      canonical = canonicalFromOtid;
+    } else {
+      canonical = canonicalFromMessageId;
+    }
+
+    debugLog(
+      "accumulator",
+      `Reasoning id/otid alias conflict resolved to ${canonical}`,
+    );
+  }
+
+  if (messageId) {
+    b.reasoningCanonicalByMessageId.set(messageId, canonical);
+  }
+  if (otid) {
+    b.reasoningCanonicalByOtid.set(otid, canonical);
+  }
+
+  return canonical;
+}
+
 /**
  * Attempts to split content at a paragraph boundary for aggressive static promotion.
  * If split found, creates a committed line for "before" and updates original with "after".
@@ -518,7 +629,11 @@ export function onChunk(
 
   switch (chunk.message_type) {
     case "reasoning_message": {
-      const id = chunk.otid;
+      const chunkWithIds = chunk as LettaStreamingResponse & {
+        id?: string;
+        otid?: string;
+      };
+      const id = resolveReasoningLineId(b, chunkWithIds);
       // console.log(`[REASONING] Received chunk with otid=${id}, delta="${chunk.reasoning?.substring(0, 50)}..."`);
       if (!id) {
         // console.log(`[REASONING] No otid, breaking`);
@@ -550,7 +665,13 @@ export function onChunk(
     }
 
     case "assistant_message": {
-      const id = chunk.otid;
+      const chunkWithIds = chunk as LettaStreamingResponse & {
+        id?: string;
+        otid?: string;
+      };
+      // Resolve to a stable line id across mixed streams where some chunks
+      // have only id, only otid, or both.
+      const id = resolveAssistantLineId(b, chunkWithIds);
       if (!id) break;
 
       // Handle otid transition (mark previous line as finished)
