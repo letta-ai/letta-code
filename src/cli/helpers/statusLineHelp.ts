@@ -1,41 +1,12 @@
-import type { NormalizedStatusLineConfig } from "./statusLineConfig";
 import {
   STATUSLINE_DERIVED_FIELDS,
   STATUSLINE_NATIVE_FIELDS,
-  type StatusLineFieldSpec,
 } from "./statusLineSchema";
 
-function formatFieldList(fields: StatusLineFieldSpec[]): string {
-  if (fields.length === 0) return "  (none)";
-  return fields
-    .map((field) => {
-      if (!field.note) return `  - ${field.path}`;
-      return `  - ${field.path} — ${field.note}`;
-    })
-    .join("\n");
-}
+export function formatStatusLineHelp(): string {
+  const allFields = [...STATUSLINE_NATIVE_FIELDS, ...STATUSLINE_DERIVED_FIELDS];
+  const fieldList = allFields.map((f) => `  - ${f.path}`).join("\n");
 
-function formatConfigSummary(
-  config: NormalizedStatusLineConfig | null,
-): string {
-  if (!config) {
-    return "  (inactive)";
-  }
-
-  const command = config.command.replace(/\/Users\/[^/]+\//g, "~/");
-  return [
-    `  type: ${config.type}`,
-    `  command: ${command}`,
-    `  timeout: ${config.timeout}ms`,
-    `  debounceMs: ${config.debounceMs}ms`,
-    `  refreshIntervalMs: ${config.refreshIntervalMs ?? "off"}`,
-    `  padding: ${config.padding}`,
-  ].join("\n");
-}
-
-export function formatStatusLineHelp(
-  effectiveConfig: NormalizedStatusLineConfig | null,
-): string {
   return [
     "/statusline help",
     "",
@@ -73,14 +44,7 @@ export function formatStatusLineHelp(
     "  refreshIntervalMs  optional polling interval in ms (off by default)",
     "  interval           legacy alias for refreshIntervalMs",
     "",
-    "  Effective config:",
-    formatConfigSummary(effectiveConfig),
-    "",
-    "INPUT FIELDS (via JSON stdin)",
-    "native",
-    formatFieldList(STATUSLINE_NATIVE_FIELDS),
-    "",
-    "derived",
-    formatFieldList(STATUSLINE_DERIVED_FIELDS),
+    "INPUT (via JSON stdin)",
+    fieldList,
   ].join("\n");
 }

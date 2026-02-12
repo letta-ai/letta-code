@@ -5800,8 +5800,7 @@ export default function App({
             try {
               const wd = process.cwd();
               if (sub === "help") {
-                const effective = resolveStatusLineConfig(wd);
-                cmd.finish(formatStatusLineHelp(effective), true, true);
+                cmd.finish(formatStatusLineHelp(), true, true);
               } else if (sub === "show") {
                 // Display config from all levels + resolved effective
                 const lines: string[] = [];
