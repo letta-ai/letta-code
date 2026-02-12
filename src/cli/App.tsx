@@ -1459,6 +1459,12 @@ export default function App({
   // Track if we've sent the session context for this CLI session
   const hasSentSessionContextRef = useRef(false);
 
+  // Track if we've set the conversation summary for this new conversation
+  // Initialized to true for resumed conversations (they already have context)
+  const hasSetConversationSummaryRef = useRef(resumedExistingConversation);
+  // Store first user query for conversation summary
+  const firstUserQueryRef = useRef<string | null>(null);
+
   // Track skills injection state (LET-7353)
   const discoveredSkillsRef = useRef<import("../agent/skills").Skill[] | null>(
     null,
@@ -3543,6 +3549,29 @@ export default function App({
               setNeedsEagerApprovalCheck(false);
             }
 
+            // Set conversation summary from first user query for new conversations
+            if (
+              !hasSetConversationSummaryRef.current &&
+              firstUserQueryRef.current &&
+              conversationIdRef.current !== "default"
+            ) {
+              hasSetConversationSummaryRef.current = true;
+              const client = await getClient();
+              client.conversations
+                .update(conversationIdRef.current, {
+                  summary: firstUserQueryRef.current,
+                })
+                .catch((err) => {
+                  // Silently ignore - not critical
+                  if (process.env.DEBUG) {
+                    console.error(
+                      "[DEBUG] Failed to set conversation summary:",
+                      err,
+                    );
+                  }
+                });
+            }
+
             const trajectorySnapshot = sessionStatsRef.current.endTrajectory();
             setTrajectoryTokenBase(0);
             setTrajectoryElapsedBaseMs(0);
@@ -5499,6 +5528,18 @@ export default function App({
           "user",
           currentModelId || "unknown",
         );
+      }
+
+      // Capture first user query for conversation summary (before any async work)
+      // Only for new conversations, non-commands, and if we haven't captured yet
+      if (
+        !hasSetConversationSummaryRef.current &&
+        firstUserQueryRef.current === null &&
+        !isSystemOnly &&
+        userTextForInput.length > 0 &&
+        !userTextForInput.startsWith("/")
+      ) {
+        firstUserQueryRef.current = userTextForInput.slice(0, 100);
       }
 
       // Block submission if waiting for explicit user action (approvals)
