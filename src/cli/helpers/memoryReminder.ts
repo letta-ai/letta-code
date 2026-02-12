@@ -167,6 +167,17 @@ export function getMemoryReminderMode(): MemoryReminderMode {
   return reflectionSettingsToLegacyMode(getReflectionSettings());
 }
 
+export function shouldFireStepCountTrigger(
+  turnCount: number,
+  settings: ReflectionSettings = getReflectionSettings(),
+): boolean {
+  if (settings.trigger !== "step-count") {
+    return false;
+  }
+  const stepCount = normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
+  return turnCount > 0 && turnCount % stepCount === 0;
+}
+
 async function buildMemfsAwareMemoryReminder(
   agentId: string,
   trigger: "interval" | "compaction",
@@ -221,12 +232,7 @@ export async function buildMemoryReminder(
     return "";
   }
 
-  if (
-    turnCount > 0 &&
-    turnCount %
-      normalizeStepCount(reflectionSettings.stepCount, DEFAULT_STEP_COUNT) ===
-      0
-  ) {
+  if (shouldFireStepCountTrigger(turnCount, reflectionSettings)) {
     debugLog(
       "memory",
       `Turn-based memory reminder fired (turn ${turnCount}, interval ${reflectionSettings.stepCount}, agent ${agentId})`,

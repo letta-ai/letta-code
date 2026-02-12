@@ -77,6 +77,9 @@ const AgentRow = memo(
 
     const isRunning = agent.status === "pending" || agent.status === "running";
     const shouldDim = isRunning && !agent.isBackground;
+    const showStats = !(agent.isBackground && isRunning);
+    const hideBackgroundStatusLine =
+      agent.isBackground && isRunning && !agent.agentURL;
     const stats = formatStats(
       agent.toolCalls.length,
       agent.totalTokens,
@@ -126,22 +129,24 @@ const AgentRow = memo(
             </Text>
           </Box>
           {/* Simple status line */}
-          <Box flexDirection="row">
-            <Text color={colors.subagent.treeChar}>
-              {"   "}
-              {continueChar}
-            </Text>
-            <Text dimColor>{"   "}</Text>
-            {agent.status === "error" ? (
-              <Text color={colors.subagent.error}>Error</Text>
-            ) : isComplete ? (
-              <Text dimColor>Done</Text>
-            ) : agent.isBackground ? (
-              <Text dimColor>Running in the background</Text>
-            ) : (
-              <Text dimColor>Running...</Text>
-            )}
-          </Box>
+          {!hideBackgroundStatusLine && (
+            <Box flexDirection="row">
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   "}</Text>
+              {agent.status === "error" ? (
+                <Text color={colors.subagent.error}>Error</Text>
+              ) : isComplete ? (
+                <Text dimColor>Done</Text>
+              ) : agent.isBackground ? (
+                <Text dimColor>Running in the background</Text>
+              ) : (
+                <Text dimColor>Running...</Text>
+              )}
+            </Box>
+          )}
         </Box>
       );
     }
@@ -177,10 +182,12 @@ const AgentRow = memo(
                 )}
               </>
             )}
-            <Text dimColor>
-              {" · "}
-              {stats}
-            </Text>
+            {showStats && (
+              <Text dimColor>
+                {" · "}
+                {stats}
+              </Text>
+            )}
           </Text>
         </Box>
 
@@ -215,61 +222,63 @@ const AgentRow = memo(
           })}
 
         {/* Status line */}
-        <Box flexDirection="row">
-          {agent.status === "completed" ? (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {"   "}
-                {continueChar}
-              </Text>
-              <Text dimColor>{"   Done"}</Text>
-            </>
-          ) : agent.status === "error" ? (
-            <>
-              <Box width={gutterWidth} flexShrink={0}>
-                <Text>
-                  <Text color={colors.subagent.treeChar}>
-                    {"   "}
-                    {continueChar}
+        {!hideBackgroundStatusLine && (
+          <Box flexDirection="row">
+            {agent.status === "completed" ? (
+              <>
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
+                </Text>
+                <Text dimColor>{"   Done"}</Text>
+              </>
+            ) : agent.status === "error" ? (
+              <>
+                <Box width={gutterWidth} flexShrink={0}>
+                  <Text>
+                    <Text color={colors.subagent.treeChar}>
+                      {"   "}
+                      {continueChar}
+                    </Text>
+                    <Text dimColor>{"   "}</Text>
                   </Text>
-                  <Text dimColor>{"   "}</Text>
+                </Box>
+                <Box flexGrow={1} width={contentWidth}>
+                  <Text wrap="wrap" color={colors.subagent.error}>
+                    {agent.error}
+                  </Text>
+                </Box>
+              </>
+            ) : agent.isBackground ? (
+              <Text>
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
                 </Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth}>
-                <Text wrap="wrap" color={colors.subagent.error}>
-                  {agent.error}
+                <Text dimColor>{"   Running in the background"}</Text>
+              </Text>
+            ) : lastTool ? (
+              <>
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
                 </Text>
-              </Box>
-            </>
-          ) : agent.isBackground ? (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {"   "}
-                {continueChar}
-              </Text>
-              <Text dimColor>{"   Running in the background"}</Text>
-            </>
-          ) : lastTool ? (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {"   "}
-                {continueChar}
-              </Text>
-              <Text dimColor>
-                {"   "}
-                {lastTool.name}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Text color={colors.subagent.treeChar}>
-                {"   "}
-                {continueChar}
-              </Text>
-              <Text dimColor>{"   Starting..."}</Text>
-            </>
-          )}
-        </Box>
+                <Text dimColor>
+                  {"   "}
+                  {lastTool.name}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text color={colors.subagent.treeChar}>
+                  {"   "}
+                  {continueChar}
+                </Text>
+                <Text dimColor>{"   Starting..."}</Text>
+              </>
+            )}
+          </Box>
+        )}
       </Box>
     );
   },

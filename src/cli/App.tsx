@@ -184,6 +184,7 @@ import {
   parseMemoryPreference,
   type ReflectionSettings,
   reflectionSettingsToLegacyMode,
+  shouldFireStepCountTrigger,
 } from "./helpers/memoryReminder";
 import {
   type QueuedMessage,
@@ -728,6 +729,19 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
     return `Compaction event (${behaviorLabel})`;
   }
   return `Step count (every ${settings.stepCount} turns, ${behaviorLabel})`;
+}
+
+const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
+const AUTO_REFLECTION_PROMPT =
+  "Review recent conversation history and update memory files with important information worth preserving.";
+
+function hasActiveReflectionSubagent(): boolean {
+  const snapshot = getSubagentSnapshot();
+  return snapshot.agents.some(
+    (agent) =>
+      agent.type.toLowerCase() === "reflection" &&
+      (agent.status === "pending" || agent.status === "running"),
+  );
 }
 
 function buildTextParts(
@@ -7839,13 +7853,23 @@ ${SYSTEM_REMINDER_CLOSE}
         bashCommandCacheRef.current = [];
       }
 
-      // Build memory reminder if interval is set and we've reached the Nth turn
-      // When MemFS is enabled, this returns a reflection reminder instead
-      const memoryReminderContent = await buildMemoryReminder(
-        turnCountRef.current,
-        agentId,
-      );
       const reflectionSettings = getReflectionSettings();
+      const memfsEnabledForAgent = settingsManager.isMemfsEnabled(agentId);
+      const shouldFireStepTrigger = shouldFireStepCountTrigger(
+        turnCountRef.current,
+        reflectionSettings,
+      );
+      let memoryReminderContent = "";
+      if (
+        shouldFireStepTrigger &&
+        (reflectionSettings.behavior === "reminder" || !memfsEnabledForAgent)
+      ) {
+        // Step-count reminder mode (or non-memfs fallback)
+        memoryReminderContent = await buildMemoryReminder(
+          turnCountRef.current,
+          agentId,
+        );
+      }
 
       // Increment turn count for next iteration
       turnCountRef.current += 1;
@@ -7896,6 +7920,43 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!text) return;
         reminderParts.push({ type: "text", text });
       };
+      const maybeLaunchReflectionSubagent = async (
+        triggerSource: "step-count" | "compaction-event",
+      ) => {
+        if (!memfsEnabledForAgent) {
+          return false;
+        }
+        if (hasActiveReflectionSubagent()) {
+          debugLog(
+            "memory",
+            `Skipping auto reflection launch (${triggerSource}) because one is already active`,
+          );
+          return false;
+        }
+        try {
+          const { spawnBackgroundSubagentTask } = await import(
+            "../tools/impl/Task"
+          );
+          spawnBackgroundSubagentTask({
+            subagentType: "reflection",
+            prompt: AUTO_REFLECTION_PROMPT,
+            description: AUTO_REFLECTION_DESCRIPTION,
+          });
+          debugLog(
+            "memory",
+            `Auto-launched reflection subagent (${triggerSource})`,
+          );
+          return true;
+        } catch (error) {
+          debugWarn(
+            "memory",
+            `Failed to auto-launch reflection subagent (${triggerSource}): ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return false;
+        }
+      };
       pushReminder(sessionContextReminder);
 
       // Inject available skills as system-reminder (LET-7353)
@@ -7941,13 +8002,29 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryReminderContent);
 
-      // Consume compaction-triggered reflection/check reminder on next user turn.
+      // Step-count auto-launch mode: fire reflection in background on interval.
+      if (
+        shouldFireStepTrigger &&
+        reflectionSettings.trigger === "step-count" &&
+        reflectionSettings.behavior === "auto-launch"
+      ) {
+        await maybeLaunchReflectionSubagent("step-count");
+      }
+
+      // Consume compaction-triggered reflection behavior on next user turn.
       if (contextTrackerRef.current.pendingReflectionTrigger) {
         contextTrackerRef.current.pendingReflectionTrigger = false;
         if (reflectionSettings.trigger === "compaction-event") {
-          const compactionReminderContent =
-            await buildCompactionMemoryReminder(agentId);
-          pushReminder(compactionReminderContent);
+          if (
+            reflectionSettings.behavior === "auto-launch" &&
+            memfsEnabledForAgent
+          ) {
+            await maybeLaunchReflectionSubagent("compaction-event");
+          } else {
+            const compactionReminderContent =
+              await buildCompactionMemoryReminder(agentId);
+            pushReminder(compactionReminderContent);
+          }
         }
       }
 

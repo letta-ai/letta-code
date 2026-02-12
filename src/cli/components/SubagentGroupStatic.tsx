@@ -62,6 +62,9 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
   const isRunning = agent.status === "running";
   const shouldDim = isRunning && !agent.isBackground;
+  const showStats = !(agent.isBackground && isRunning);
+  const hideBackgroundStatusLine =
+    agent.isBackground && isRunning && !agent.agentURL;
   const stats = formatStats(agent.toolCount, agent.totalTokens, isRunning);
   const modelDisplay = getSubagentModelDisplay(agent.model);
 
@@ -95,10 +98,12 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
               )}
             </>
           )}
-          <Text dimColor>
-            {" · "}
-            {stats}
-          </Text>
+          {showStats && (
+            <Text dimColor>
+              {" · "}
+              {stats}
+            </Text>
+          )}
         </Text>
       </Box>
 
@@ -115,42 +120,44 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
       )}
 
       {/* Status line */}
-      <Box flexDirection="row">
-        {agent.status === "completed" && !agent.isBackground ? (
-          <>
-            <Text color={colors.subagent.treeChar}>
-              {"   "}
-              {continueChar}
-            </Text>
-            <Text dimColor>{"   Done"}</Text>
-          </>
-        ) : agent.status === "error" ? (
-          <>
-            <Box width={gutterWidth} flexShrink={0}>
-              <Text>
-                <Text color={colors.subagent.treeChar}>
-                  {"   "}
-                  {continueChar}
+      {!hideBackgroundStatusLine && (
+        <Box flexDirection="row">
+          {agent.status === "completed" && !agent.isBackground ? (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
+              </Text>
+              <Text dimColor>{"   Done"}</Text>
+            </>
+          ) : agent.status === "error" ? (
+            <>
+              <Box width={gutterWidth} flexShrink={0}>
+                <Text>
+                  <Text color={colors.subagent.treeChar}>
+                    {"   "}
+                    {continueChar}
+                  </Text>
+                  <Text dimColor>{"   "}</Text>
                 </Text>
-                <Text dimColor>{"   "}</Text>
+              </Box>
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap" color={colors.subagent.error}>
+                  {agent.error}
+                </Text>
+              </Box>
+            </>
+          ) : (
+            <>
+              <Text color={colors.subagent.treeChar}>
+                {"   "}
+                {continueChar}
               </Text>
-            </Box>
-            <Box flexGrow={1} width={contentWidth}>
-              <Text wrap="wrap" color={colors.subagent.error}>
-                {agent.error}
-              </Text>
-            </Box>
-          </>
-        ) : (
-          <>
-            <Text color={colors.subagent.treeChar}>
-              {"   "}
-              {continueChar}
-            </Text>
-            <Text dimColor>{"   Running in the background"}</Text>
-          </>
-        )}
-      </Box>
+              <Text dimColor>{"   Running in the background"}</Text>
+            </>
+          )}
+        </Box>
+      )}
     </Box>
   );
 });
