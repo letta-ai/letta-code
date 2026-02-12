@@ -1,5 +1,5 @@
-import { getClient } from "./client";
 import { debugWarn } from "../utils/debug";
+import { getClient } from "./client";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -88,7 +88,11 @@ async function refreshByokProviders(): Promise<void> {
   } catch (error) {
     // If we can't list providers, just log and continue
     // This might happen on self-hosted servers without the providers endpoint
-    debugWarn("available-models", "Failed to list providers for refresh:", error);
+    debugWarn(
+      "available-models",
+      "Failed to list providers for refresh:",
+      error,
+    );
   }
 }
 

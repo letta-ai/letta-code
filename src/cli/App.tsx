@@ -1265,7 +1265,7 @@ export default function App({
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
-  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
+  const [_currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
   // Derive agentName from agentState (single source of truth)
