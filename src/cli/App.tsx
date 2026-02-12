@@ -197,6 +197,10 @@ import {
 } from "./helpers/queuedMessageParts";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
+import { resolveStatusLineConfig } from "./helpers/statusLineConfig";
+import { formatStatusLineHelp } from "./helpers/statusLineHelp";
+import { buildStatusLinePayload } from "./helpers/statusLinePayload";
+import { executeStatusLineCommand } from "./helpers/statusLineRuntime";
 import { type ApprovalRequest, drainStreamWithResume } from "./helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -231,6 +235,7 @@ import {
   alwaysRequiresUserInput,
   isTaskTool,
 } from "./helpers/toolNameMapping.js";
+import { useConfigurableStatusLine } from "./hooks/useConfigurableStatusLine";
 import { useSuspend } from "./hooks/useSuspend/useSuspend.ts";
 import { useSyncedState } from "./hooks/useSyncedState";
 import { useTerminalRows, useTerminalWidth } from "./hooks/useTerminalWidth";
@@ -332,6 +337,7 @@ const NON_STATE_COMMANDS = new Set([
   "/feedback",
   "/export",
   "/download",
+  "/statusline",
 ]);
 
 // Check if a command is interactive (opens overlay, should not be queued)
@@ -807,6 +813,8 @@ export default function App({
     setAgentState((prev) => (prev ? { ...prev, name } : prev));
   }, []);
 
+  const projectDirectory = process.cwd();
+
   // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
 
@@ -876,12 +884,23 @@ export default function App({
   const [networkPhase, setNetworkPhase] = useState<
     "upload" | "download" | "error" | null
   >(null);
+  // Track permission mode changes for UI updates
+  const [uiPermissionMode, setUiPermissionMode] = useState(
+    permissionMode.getMode(),
+  );
+  const statusLineTriggerVersionRef = useRef(0);
+  const [statusLineTriggerVersion, setStatusLineTriggerVersion] = useState(0);
 
   useEffect(() => {
     if (!streaming) {
       setNetworkPhase(null);
     }
   }, [streaming]);
+
+  const triggerStatusLineRefresh = useCallback(() => {
+    statusLineTriggerVersionRef.current += 1;
+    setStatusLineTriggerVersion(statusLineTriggerVersionRef.current);
+  }, []);
 
   // Guard ref for preventing concurrent processConversation calls
   // Separate from streaming state which may be set early for UI responsiveness
@@ -1935,6 +1954,45 @@ export default function App({
   useEffect(() => {
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
+
+  // Configurable status line hook
+  const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
+  const contextWindowSize = llmConfigRef.current?.context_window;
+  const statusLine = useConfigurableStatusLine({
+    modelId: llmConfigRef.current?.model ?? null,
+    modelDisplayName: currentModelDisplay,
+    currentDirectory: process.cwd(),
+    projectDirectory,
+    sessionId: conversationId,
+    agentName,
+    totalDurationMs: sessionStatsSnapshot.totalWallMs,
+    totalApiDurationMs: sessionStatsSnapshot.totalApiMs,
+    totalInputTokens: sessionStatsSnapshot.usage.promptTokens,
+    totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
+    contextWindowSize,
+    usedContextTokens: contextTrackerRef.current.lastContextTokens,
+    permissionMode: uiPermissionMode,
+    networkPhase,
+    terminalWidth: columns,
+    triggerVersion: statusLineTriggerVersion,
+  });
+
+  const previousStreamingForStatusLineRef = useRef(streaming);
+  useEffect(() => {
+    // Trigger status line when an assistant stream completes.
+    if (previousStreamingForStatusLineRef.current && !streaming) {
+      triggerStatusLineRefresh();
+    }
+    previousStreamingForStatusLineRef.current = streaming;
+  }, [streaming, triggerStatusLineRefresh]);
+
+  const statusLineRefreshIdentity = `${conversationId}|${currentModelDisplay ?? ""}|${currentModelProvider ?? ""}|${agentName ?? ""}|${columns}|${contextWindowSize ?? ""}`;
+
+  // Trigger status line when key session identity/display state changes.
+  useEffect(() => {
+    void statusLineRefreshIdentity;
+    triggerStatusLineRefresh();
+  }, [statusLineRefreshIdentity, triggerStatusLineRefresh]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
@@ -5731,6 +5789,172 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /statusline command
+        if (trimmed === "/statusline" || trimmed.startsWith("/statusline ")) {
+          const parts = trimmed.slice("/statusline".length).trim().split(/\s+/);
+          const sub = parts[0] || "show";
+          const rest = parts.slice(1).join(" ");
+          const cmd = commandRunner.start(trimmed, "Managing status line...");
+
+          (async () => {
+            try {
+              const wd = process.cwd();
+              if (sub === "help") {
+                cmd.finish(formatStatusLineHelp(), true, true);
+              } else if (sub === "show") {
+                // Display config from all levels + resolved effective
+                const lines: string[] = [];
+                try {
+                  const global = settingsManager.getSettings().statusLine;
+                  lines.push(
+                    `Global: ${global?.command ? `command="${global.command}" refreshInterval=${global.refreshIntervalMs ?? "off"} timeout=${global.timeout ?? "default"} debounce=${global.debounceMs ?? "default"} padding=${global.padding ?? 0} disabled=${global.disabled ?? false}` : "(not set)"}`,
+                  );
+                } catch {
+                  lines.push("Global: (unavailable)");
+                }
+                try {
+                  const project =
+                    settingsManager.getProjectSettings(wd)?.statusLine;
+                  lines.push(
+                    `Project: ${project?.command ? `command="${project.command}"` : "(not set)"}`,
+                  );
+                } catch {
+                  lines.push("Project: (not loaded)");
+                }
+                try {
+                  const local =
+                    settingsManager.getLocalProjectSettings(wd)?.statusLine;
+                  lines.push(
+                    `Local: ${local?.command ? `command="${local.command}"` : "(not set)"}`,
+                  );
+                } catch {
+                  lines.push("Local: (not loaded)");
+                }
+                const effective = resolveStatusLineConfig(wd);
+                lines.push(
+                  `Effective: ${effective ? `command="${effective.command}" refreshInterval=${effective.refreshIntervalMs ?? "off"} timeout=${effective.timeout}ms debounce=${effective.debounceMs}ms padding=${effective.padding}` : "(inactive)"}`,
+                );
+                cmd.finish(lines.join("\n"), true);
+              } else if (sub === "set") {
+                if (!rest) {
+                  cmd.finish("Usage: /statusline set <command> [-l|-p]", false);
+                  return;
+                }
+                const isLocal = rest.endsWith(" -l");
+                const isProject = rest.endsWith(" -p");
+                const command = rest.replace(/\s+-(l|p)$/, "");
+                const config = { command };
+                if (isLocal) {
+                  settingsManager.updateLocalProjectSettings(
+                    { statusLine: config },
+                    wd,
+                  );
+                  cmd.finish(`Status line set (local): ${command}`, true);
+                } else if (isProject) {
+                  settingsManager.updateProjectSettings(
+                    { statusLine: config },
+                    wd,
+                  );
+                  cmd.finish(`Status line set (project): ${command}`, true);
+                } else {
+                  settingsManager.updateSettings({ statusLine: config });
+                  cmd.finish(`Status line set (global): ${command}`, true);
+                }
+              } else if (sub === "clear") {
+                const isLocal = rest === "-l";
+                const isProject = rest === "-p";
+                if (isLocal) {
+                  settingsManager.updateLocalProjectSettings(
+                    { statusLine: undefined },
+                    wd,
+                  );
+                  cmd.finish("Status line cleared (local)", true);
+                } else if (isProject) {
+                  settingsManager.updateProjectSettings(
+                    { statusLine: undefined },
+                    wd,
+                  );
+                  cmd.finish("Status line cleared (project)", true);
+                } else {
+                  settingsManager.updateSettings({ statusLine: undefined });
+                  cmd.finish("Status line cleared (global)", true);
+                }
+              } else if (sub === "test") {
+                const config = resolveStatusLineConfig(wd);
+                if (!config) {
+                  cmd.finish("No status line configured", false);
+                  return;
+                }
+                const stats = sessionStatsRef.current.getSnapshot();
+                const result = await executeStatusLineCommand(
+                  config.command,
+                  buildStatusLinePayload({
+                    modelId: llmConfigRef.current?.model ?? null,
+                    modelDisplayName: currentModelDisplay,
+                    currentDirectory: wd,
+                    projectDirectory,
+                    sessionId: conversationIdRef.current,
+                    agentName,
+                    totalDurationMs: stats.totalWallMs,
+                    totalApiDurationMs: stats.totalApiMs,
+                    totalInputTokens: stats.usage.promptTokens,
+                    totalOutputTokens: stats.usage.completionTokens,
+                    contextWindowSize: llmConfigRef.current?.context_window,
+                    usedContextTokens:
+                      contextTrackerRef.current.lastContextTokens,
+                    permissionMode: uiPermissionMode,
+                    networkPhase,
+                    terminalWidth: columns,
+                  }),
+                  { timeout: config.timeout, workingDirectory: wd },
+                );
+                if (result.ok) {
+                  cmd.finish(
+                    `Output: ${result.text} (${result.durationMs}ms)`,
+                    true,
+                  );
+                } else {
+                  cmd.finish(
+                    `Error: ${result.error} (${result.durationMs}ms)`,
+                    false,
+                  );
+                }
+              } else if (sub === "disable") {
+                settingsManager.updateSettings({
+                  statusLine: {
+                    ...settingsManager.getSettings().statusLine,
+                    command:
+                      settingsManager.getSettings().statusLine?.command ?? "",
+                    disabled: true,
+                  },
+                });
+                cmd.finish("Status line disabled", true);
+              } else if (sub === "enable") {
+                const current = settingsManager.getSettings().statusLine;
+                if (current) {
+                  settingsManager.updateSettings({
+                    statusLine: { ...current, disabled: false },
+                  });
+                }
+                cmd.finish("Status line enabled", true);
+              } else {
+                cmd.finish(
+                  `Unknown subcommand: ${sub}. Use help|show|set|clear|test|enable|disable`,
+                  false,
+                );
+              }
+            } catch (error) {
+              cmd.finish(
+                `Error: ${error instanceof Error ? error.message : String(error)}`,
+                false,
+              );
+            }
+          })();
+
+          triggerStatusLineRefresh();
+          return { submitted: true };
+        }
+
         // Special handling for /usage command - show session stats
         if (trimmed === "/usage") {
           const cmd = commandRunner.start(
@@ -9439,11 +9663,6 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Track permission mode changes for UI updates
-  const [uiPermissionMode, setUiPermissionMode] = useState(
-    permissionMode.getMode(),
-  );
-
   // Handle ralph mode exit from Input component (shift+tab)
   const handleRalphExit = useCallback(() => {
     const ralph = ralphMode.getState();
@@ -9459,15 +9678,19 @@ ${SYSTEM_REMINDER_CLOSE}
   }, []);
 
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
-  const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
-    // When entering plan mode via tab cycling, generate and set the plan file path
-    if (mode === "plan") {
-      const planPath = generatePlanFilePath();
-      permissionMode.setPlanFilePath(planPath);
-    }
-    // permissionMode.setMode() is called in InputRich.tsx before this callback
-    setUiPermissionMode(mode);
-  }, []);
+  const handlePermissionModeChange = useCallback(
+    (mode: PermissionMode) => {
+      // When entering plan mode via tab cycling, generate and set the plan file path
+      if (mode === "plan") {
+        const planPath = generatePlanFilePath();
+        permissionMode.setPlanFilePath(planPath);
+      }
+      // permissionMode.setMode() is called in InputRich.tsx before this callback
+      setUiPermissionMode(mode);
+      triggerStatusLineRefresh();
+    },
+    [triggerStatusLineRefresh],
+  );
 
   const handlePlanApprove = useCallback(
     async (acceptEdits: boolean = false) => {
@@ -10354,6 +10577,9 @@ Plan file path: ${planFilePath}`;
                 networkPhase={networkPhase}
                 terminalWidth={columns}
                 shouldAnimate={shouldAnimate}
+                statusLineText={statusLine.text || undefined}
+                statusLineRight={statusLine.rightText || undefined}
+                statusLinePadding={statusLine.padding || 0}
               />
             </Box>
 

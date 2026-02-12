@@ -25,6 +25,19 @@ export interface SessionRef {
 }
 
 /**
+ * Configuration for a user-defined status line command.
+ */
+export interface StatusLineConfig {
+  type?: "command";
+  command: string; // Shell command (receives JSON stdin, outputs text)
+  padding?: number; // Left padding for status line output
+  timeout?: number; // Execution timeout ms (default 5000, max 30000)
+  debounceMs?: number; // Debounce for event-driven refreshes (default 300)
+  refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
+  disabled?: boolean; // Disable at this level
+}
+
+/**
  * Per-agent settings stored in a flat array.
  * baseUrl is omitted/undefined for Letta API (api.letta.com).
  */
@@ -49,6 +62,7 @@ export interface Settings {
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Hook commands that run at various lifecycle points (includes disabled flag)
+  statusLine?: StatusLineConfig; // Configurable status line command
   env?: Record<string, string>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
@@ -74,6 +88,7 @@ export interface Settings {
 export interface ProjectSettings {
   localSharedBlockIds: Record<string, string>;
   hooks?: HooksConfig; // Project-specific hook commands (checked in)
+  statusLine?: StatusLineConfig; // Project-specific status line command
 }
 
 export interface LocalProjectSettings {
@@ -81,6 +96,7 @@ export interface LocalProjectSettings {
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   permissions?: PermissionRules;
   hooks?: HooksConfig; // Project-specific hook commands
+  statusLine?: StatusLineConfig; // Local project-specific status line command
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
   memoryReminderInterval?: number | null; // null = disabled, number = overrides global
@@ -527,6 +543,7 @@ class SettingsManager {
         localSharedBlockIds:
           (rawSettings.localSharedBlockIds as Record<string, string>) ?? {},
         hooks: rawSettings.hooks as HooksConfig | undefined,
+        statusLine: rawSettings.statusLine as StatusLineConfig | undefined,
       };
 
       this.projectSettings.set(workingDirectory, projectSettings);

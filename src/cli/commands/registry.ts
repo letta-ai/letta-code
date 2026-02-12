@@ -226,6 +226,15 @@ export const commands: Record<string, Command> = {
       return "Opening hooks manager...";
     },
   },
+  "/statusline": {
+    desc: "Configure status line (help|show|set|clear|test|enable|disable)",
+    args: "[subcommand]",
+    order: 36.5,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing status line...";
+    },
+  },
   "/terminal": {
     desc: "Setup terminal shortcuts [--revert]",
     order: 37,
