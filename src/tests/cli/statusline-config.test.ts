@@ -8,7 +8,6 @@ import {
   isStatusLineDisabled,
   MAX_STATUS_LINE_TIMEOUT_MS,
   MIN_STATUS_LINE_DEBOUNCE_MS,
-  MIN_STATUS_LINE_INTERVAL_MS,
   normalizeStatusLineConfig,
   resolveStatusLineConfig,
 } from "../../cli/helpers/statusLineConfig";
