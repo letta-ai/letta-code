@@ -10,9 +10,10 @@ import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaAnthropicPrompt from "./prompts/letta_claude.md";
 import lettaCodexPrompt from "./prompts/letta_codex.md";
 import lettaGeminiPrompt from "./prompts/letta_gemini.md";
-import loadedSkillsPrompt from "./prompts/loaded_skills.mdx";
+
 import memoryCheckReminder from "./prompts/memory_check_reminder.txt";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
+import memoryReflectionReminder from "./prompts/memory_reflection_reminder.txt";
 import personaPrompt from "./prompts/persona.mdx";
 import personaClaudePrompt from "./prompts/persona_claude.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -21,8 +22,7 @@ import planModeReminder from "./prompts/plan_mode_reminder.txt";
 import projectPrompt from "./prompts/project.mdx";
 import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
-import skillUnloadReminder from "./prompts/skill_unload_reminder.txt";
-import skillsPrompt from "./prompts/skills.mdx";
+
 import stylePrompt from "./prompts/style.mdx";
 import systemPrompt from "./prompts/system_prompt.txt";
 import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
@@ -30,10 +30,11 @@ import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
 export const SYSTEM_PROMPT = systemPrompt;
 export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
-export const SKILL_UNLOAD_REMINDER = skillUnloadReminder;
+
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
 export const REMEMBER_PROMPT = rememberPrompt;
 export const MEMORY_CHECK_REMINDER = memoryCheckReminder;
+export const MEMORY_REFLECTION_REMINDER = memoryReflectionReminder;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 
@@ -44,8 +45,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "persona_memo.mdx": personaMemoPrompt,
   "human.mdx": humanPrompt,
   "project.mdx": projectPrompt,
-  "skills.mdx": skillsPrompt,
-  "loaded_skills.mdx": loadedSkillsPrompt,
+
   "memory_filesystem.mdx": memoryFilesystemPrompt,
   "style.mdx": stylePrompt,
 };

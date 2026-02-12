@@ -161,9 +161,16 @@ export function SlashCommandAutocomplete({
 
   // Manually manage active state to include the "no matches" case
   useLayoutEffect(() => {
-    const isActive = matches.length > 0 || showNoMatches;
+    const queryLength = queryInfo?.query.length ?? 0;
+    const isActive =
+      !hideAutocomplete && (matches.length > 0 || queryLength > 0);
     onActiveChange?.(isActive);
-  }, [matches.length, showNoMatches, onActiveChange]);
+  }, [
+    hideAutocomplete,
+    matches.length,
+    onActiveChange,
+    queryInfo?.query.length,
+  ]);
 
   // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {

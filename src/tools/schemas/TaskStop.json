@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The ID of the background task to stop"
+    },
+    "shell_id": {
+      "type": "string",
+      "description": "Deprecated: use task_id instead"
+    }
+  },
+  "required": ["task_id"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

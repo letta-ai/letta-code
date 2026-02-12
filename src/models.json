@@ -25,10 +25,21 @@
   },
   {
     "id": "opus",
+    "handle": "anthropic/claude-opus-4-6",
+    "label": "Opus 4.6",
+    "description": "Anthropic's best model with adaptive thinking",
+    "isFeatured": true,
+    "updateArgs": {
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "enable_reasoner": true
+    }
+  },
+  {
+    "id": "opus-4.5",
     "handle": "anthropic/claude-opus-4-5-20251101",
     "label": "Opus 4.5",
-    "description": "Anthropic's best model",
-    "isFeatured": true,
+    "description": "Anthropic's (legacy) best model",
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000,
@@ -57,6 +68,30 @@
     "updateArgs": {
       "context_window": 180000,
       "max_output_tokens": 64000
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-plus-pro-medium",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (med reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-plus-pro-high",
+    "handle": "chatgpt-plus-pro/gpt-5.3-codex",
+    "label": "GPT-5.3 Codex",
+    "description": "GPT-5.3 Codex (high reasoning) via ChatGPT Plus/Pro",
+    "updateArgs": {
+      "reasoning_effort": "high",
+      "verbosity": "medium",
+      "context_window": 272000,
+      "max_output_tokens": 128000
     }
   },
   {
@@ -516,7 +551,8 @@
     "isFeatured": true,
     "free": true,
     "updateArgs": {
-      "context_window": 180000
+      "context_window": 160000,
+      "max_output_tokens": 64000
     }
   },
   {
@@ -525,7 +561,8 @@
     "label": "Minimax M2",
     "description": "Minimax's latest model",
     "updateArgs": {
-      "context_window": 196000
+      "context_window": 160000,
+      "max_output_tokens": 64000
     }
   },
   {

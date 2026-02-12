@@ -39,6 +39,7 @@ export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
   tokenStreaming: boolean;
+  showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
   memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
@@ -91,6 +92,7 @@ export interface LocalProjectSettings {
 const DEFAULT_SETTINGS: Settings = {
   lastAgent: null,
   tokenStreaming: false,
+  showCompactions: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
   memoryReminderInterval: 5, // number = prompt memory check every N turns
@@ -106,6 +108,10 @@ const DEFAULT_LOCAL_PROJECT_SETTINGS: LocalProjectSettings = {
 };
 
 const DEFAULT_LETTA_API_URL = "https://api.letta.com";
+
+function isSubagentProcess(): boolean {
+  return process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+}
 
 /**
  * Normalize a base URL for use as a settings key.
@@ -171,8 +177,10 @@ class SettingsManager {
       // Check secrets availability and warn if not available
       await this.checkSecretsSupport();
 
-      // Migrate tokens to secrets if they exist in settings
-      await this.migrateTokensToSecrets();
+      // Migrate tokens to secrets if they exist in settings (parent process only)
+      if (!isSubagentProcess()) {
+        await this.migrateTokensToSecrets();
+      }
 
       // Migrate pinnedAgents/pinnedAgentsByServer to agents array
       this.migrateToAgentsArray();
@@ -183,7 +191,9 @@ class SettingsManager {
 
       // Still check secrets support and try to migrate in case of partial failure
       await this.checkSecretsSupport();
-      await this.migrateTokensToSecrets();
+      if (!isSubagentProcess()) {
+        await this.migrateTokensToSecrets();
+      }
       this.migrateToAgentsArray();
     }
   }
@@ -248,7 +258,7 @@ class SettingsManager {
             this.settings = updatedSettings;
             await this.persistSettings();
 
-            console.log("Successfully migrated tokens to secrets");
+            debugWarn("settings", "Successfully migrated tokens to secrets");
           } catch (error) {
             console.warn("Failed to migrate tokens to secrets:", error);
             console.warn("Tokens will remain in settings file for persistence");
@@ -1370,10 +1380,17 @@ class SettingsManager {
    * Check if secrets are available
    */
   async isKeychainAvailable(): Promise<boolean> {
-    if (this.secretsAvailable === null) {
-      this.secretsAvailable = await isKeychainAvailable();
+    if (this.secretsAvailable === true) {
+      return true;
     }
-    return this.secretsAvailable;
+
+    const available = await isKeychainAvailable();
+    // Cache only positive availability to avoid pinning transient failures
+    // for the entire process lifetime.
+    if (available) {
+      this.secretsAvailable = true;
+    }
+    return available;
   }
 
   /**

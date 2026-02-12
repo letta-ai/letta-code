@@ -15,7 +15,6 @@ import {
   runPreToolUseHooks,
   runSessionEndHooks,
   runSessionStartHooks,
-  runSetupHooks,
   runStopHooks,
   runSubagentStopHooks,
   runUserPromptSubmitHooks,
@@ -855,58 +854,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
   });
 
   // ============================================================================
-  // Setup Hooks
-  // ============================================================================
-
-  describe("Setup hooks", () => {
-    test("runs on init", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "echo 'initializing'" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("init", tempDir);
-
-      expect(result.results[0]?.stdout).toBe("initializing");
-    });
-
-    test("runs on maintenance", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "echo 'maintenance mode'" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("maintenance", tempDir);
-
-      expect(result.results[0]?.stdout).toBe("maintenance mode");
-    });
-
-    test("receives init_type in input", async () => {
-      createHooksConfig({
-        Setup: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "cat" }],
-          },
-        ],
-      });
-
-      const result = await runSetupHooks("init-only", tempDir);
-
-      const parsed = JSON.parse(result.results[0]?.stdout || "{}");
-      expect(parsed.init_type).toBe("init-only");
-    });
-  });
-
-  // ============================================================================
   // SessionStart Hooks
   // ============================================================================
 
@@ -954,6 +901,36 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(parsed.is_new_session).toBe(false);
       expect(parsed.agent_id).toBe("agent-abc");
       expect(parsed.agent_name).toBe("My Agent");
+    });
+
+    test("collects stdout as feedback regardless of exit code", async () => {
+      createHooksConfig({
+        SessionStart: [
+          {
+            matcher: "*",
+            hooks: [
+              {
+                type: "command",
+                command: "echo 'Session context for agent'",
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await runSessionStartHooks(
+        true,
+        "agent-123",
+        "Test Agent",
+        undefined,
+        tempDir,
+      );
+
+      // SessionStart collects stdout regardless of exit code
+      expect(result.feedback).toHaveLength(1);
+      expect(result.feedback[0]).toContain("Session context for agent");
+      // SessionStart never blocks
+      expect(result.blocked).toBe(false);
     });
   });
 

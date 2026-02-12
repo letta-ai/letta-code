@@ -2,12 +2,12 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import { join } from "node:path";
 import type {
   AgentState,
   AgentType,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import { DEFAULT_AGENT_NAME } from "../constants";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
@@ -19,7 +19,6 @@ import {
 import { updateAgentLLMConfig } from "./modify";
 import { resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
-import { discoverSkills, formatSkillsForMemory, SKILLS_DIR } from "./skills";
 
 /**
  * Describes where a memory block came from
@@ -239,34 +238,6 @@ export async function createAgent(
     }
   }
 
-  // Resolve absolute path for skills directory
-  const resolvedSkillsDirectory =
-    options.skillsDirectory || join(process.cwd(), SKILLS_DIR);
-
-  // Discover skills from .skills directory and populate skills memory block
-  try {
-    const { skills, errors } = await discoverSkills(resolvedSkillsDirectory);
-
-    // Log any errors encountered during skill discovery
-    if (errors.length > 0) {
-      console.warn("Errors encountered during skill discovery:");
-      for (const error of errors) {
-        console.warn(`  ${error.path}: ${error.message}`);
-      }
-    }
-
-    // Find and update the skills memory block with discovered skills
-    const skillsBlock = filteredMemoryBlocks.find((b) => b.label === "skills");
-    if (skillsBlock) {
-      const formatted = formatSkillsForMemory(skills, resolvedSkillsDirectory);
-      skillsBlock.value = formatted;
-    }
-  } catch (error) {
-    console.warn(
-      `Failed to discover skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   // Track provenance: which blocks were created
   // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
@@ -282,10 +253,11 @@ export async function createAgent(
   }
 
   // Get the model's context window from its configuration (if known)
-  // For unknown models (e.g., from self-hosted servers), don't set a context window
-  // and let the server use its default
+  // First try models.json, then fall back to API-cached context window for BYOK models
   const modelUpdateArgs = getModelUpdateArgs(modelHandle);
-  const contextWindow = modelUpdateArgs?.context_window as number | undefined;
+  const contextWindow =
+    (modelUpdateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
 
   // Resolve system prompt content:
   // 1. If systemPromptCustom is provided, use it as-is

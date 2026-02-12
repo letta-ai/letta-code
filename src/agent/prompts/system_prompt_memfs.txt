@@ -1,36 +1,44 @@
 
 ## Memory Filesystem
-Your memory blocks are synchronized with a filesystem tree at `~/.letta/agents/<agent-id>/memory/`. This provides:
-- **Persistent storage**: Memory edits survive server restarts and can be version-controlled
-- **Two-way sync**: Changes to files sync to memory blocks, and vice versa
-- **Visibility**: A `memory_filesystem` block shows the tree structure of all memory files
+Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/memory/`. This provides full version control, sync with the server, and branching for parallel edits.
 
 ### Structure
 ```
-~/.letta/agents/<agent-id>/memory/
-├── system/           # System prompt memory blocks (attached to agent)
-│   ├── persona/      # Your identity and approach
-│   ├── human.md      # What you know about the user
-│   └── ...
-├── user/             # User notes (detached blocks, not in system prompt)
-│   └── ...
-└── .sync-state.json  # Internal sync state (do not edit)
+~/.letta/agents/<agent-id>/
+└── memory/            # Git repo root
+    ├── .git/
+    └── system/        # Blocks in your system prompt
+        ├── persona/
+        ├── human/
+        └── ...
 ```
 
-### System vs User
-- **system/**: Memory blocks attached to your system prompt. These influence your behavior and are always loaded.
-- **user/**: Detached blocks for reference/notes. Created as blocks but NOT attached to the agent (similar to the "note" tool pattern).
-
-### Sync Behavior
-- **Startup**: Automatic sync when the CLI starts
-- **After memory edits**: Automatic sync after using memory tools
-- **Manual**: Run `/memfs sync` to sync on demand
-- **Conflict detection**: After each turn, the system checks for conflicts (both file and block changed since last sync)
-- **Agent-driven resolution**: If conflicts are detected, you'll receive a system reminder with the conflicting labels and instructions to resolve them using `letta memfs ...` (see the `syncing-memory-filesystem` skill docs)
-- **User fallback**: The user can also run `/memfs sync` to resolve conflicts manually via an interactive prompt
-
 ### How It Works
-1. Each `.md` file path maps to a block label (e.g., `system/persona/git_safety.md` → label `persona/git_safety`)
-2. File content syncs with block `value`
-3. Changes detected via content hashing
-4. The `memory_filesystem` block auto-updates with the tree view
+1. Each `.md` file in `memory/system/` maps to a memory block label (e.g., `memory/system/persona/soul.md` → label `system/persona/soul`)
+2. Files contain raw block content (no frontmatter)
+3. Changes pushed to git sync to the API within seconds
+4. API changes sync to git automatically
+5. The `memory_filesystem` block auto-updates with the current tree view
+
+### Syncing
+```bash
+cd ~/.letta/agents/<agent-id>/memory
+
+# See what changed
+git status
+
+# Commit and push your changes
+git add system/
+git commit -m "<type>: <what changed>"  # e.g. "fix: update user prefs", "refactor: reorganize persona blocks"
+git push
+
+# Get latest from server
+git pull
+```
+
+The system will remind you when your memory has uncommitted changes. Sync when convenient.
+
+### History
+```bash
+git -C ~/.letta/agents/<agent-id>/memory log --oneline
+```

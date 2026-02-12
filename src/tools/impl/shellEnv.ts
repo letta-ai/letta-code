@@ -7,6 +7,7 @@
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getServerUrl } from "../../agent/client";
 import { getCurrentAgentId } from "../../agent/context";
 import { settingsManager } from "../../settings-manager";
 
@@ -54,8 +55,11 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
-    const currentPath = env.PATH || "";
-    env.PATH = `${rgBinDir}${path.delimiter}${currentPath}`;
+    // Windows uses "Path" (not "PATH"), and env vars are case-insensitive there.
+    // Find the actual key to avoid clobbering the user's PATH.
+    const pathKey =
+      Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
+    env[pathKey] = `${rgBinDir}${path.delimiter}${env[pathKey] || ""}`;
   }
 
   // Add Letta context for skill scripts
@@ -65,12 +69,15 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     // Context not set yet (e.g., during startup), skip
   }
 
-  // Inject API key from settings if not already in env
-  if (!env.LETTA_API_KEY) {
+  // Inject API key and base URL from settings if not already in env
+  if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {
       const settings = settingsManager.getSettings();
-      if (settings.env?.LETTA_API_KEY) {
+      if (!env.LETTA_API_KEY && settings.env?.LETTA_API_KEY) {
         env.LETTA_API_KEY = settings.env.LETTA_API_KEY;
+      }
+      if (!env.LETTA_BASE_URL) {
+        env.LETTA_BASE_URL = getServerUrl();
       }
     } catch {
       // Settings not initialized yet, skip

@@ -91,9 +91,9 @@ If memfs is **not enabled**, you can use block-level commands:
 
 Ask the user for the source agent's ID (e.g., `agent-abc123`).
 
-If they don't know the ID, load the **finding-agents** skill to search:
+If they don't know the ID, invoke the **finding-agents** skill to search:
 ```
-Skill({ command: "load", skills: ["finding-agents"] })
+Skill({ skill: "finding-agents" })
 ```
 
 Example: "What's the ID of the agent you want to migrate memory from?"

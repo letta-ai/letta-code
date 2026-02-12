@@ -33,6 +33,8 @@ interface StreamMessage {
   subtype?: string;
   message_type?: string;
   stop_reason?: string;
+  request_id?: string;
+  request?: { subtype?: string };
   // biome-ignore lint/suspicious/noExplicitAny: index signature for arbitrary JSON fields
   [key: string]: any;
 }
@@ -77,6 +79,18 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
     let errorSeen = false;
     let resultCount = 0;
     let closing = false;
+    let pendingToolCallId: string | undefined;
+    let promptAttempts = 0;
+
+    const sendPrompt = () => {
+      if (promptAttempts >= 3) return;
+      promptAttempts++;
+      const userMsg = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: BASH_TRIGGER_PROMPT },
+      });
+      proc.stdin?.write(`${userMsg}\n`);
+    };
 
     const timeout = setTimeout(() => {
       if (!closing) {
@@ -105,26 +119,23 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
           console.log("MSG:", JSON.stringify(msg, null, 2));
         }
 
-        // Step 1: Wait for init, then send bash trigger prompt
-        if (msg.type === "system" && msg.subtype === "init" && !initReceived) {
-          initReceived = true;
-          const userMsg = JSON.stringify({
-            type: "user",
-            message: { role: "user", content: BASH_TRIGGER_PROMPT },
-          });
-          proc.stdin?.write(`${userMsg}\n`);
-          return;
-        }
-
-        // Step 2: When we see approval request, send another user message instead
+        // Handle permission control requests from headless.
+        // In some runs, control_request can arrive even when approval stream chunks
+        // are delayed or omitted, so respond directly to avoid deadlocks.
         if (
-          msg.type === "message" &&
-          msg.message_type === "approval_request_message" &&
-          !approvalSeen
+          msg.type === "control_request" &&
+          msg.request?.subtype === "can_use_tool"
         ) {
           approvalSeen = true;
-          // Wait a moment, then send interrupt message (NOT an approval)
-          setTimeout(() => {
+          const requestId = msg.request_id;
+          if (requestId) {
+            if (pendingToolCallId && !requestId.endsWith(pendingToolCallId)) {
+              console.log(
+                `Note: control_request id ${requestId} did not match expected tool id ${pendingToolCallId}`,
+              );
+            }
+
+            // Send the interrupt message while approval is pending, then deny.
             if (!interruptSent) {
               interruptSent = true;
               const userMsg = JSON.stringify({
@@ -133,7 +144,58 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
               });
               proc.stdin?.write(`${userMsg}\n`);
             }
-          }, 500);
+
+            const denyApproval = JSON.stringify({
+              type: "control_response",
+              response: {
+                request_id: requestId,
+                response: {
+                  behavior: "deny",
+                  message:
+                    "Denied by integration test to simulate stale approval",
+                },
+              },
+            });
+            proc.stdin?.write(`${denyApproval}\n`);
+          }
+          return;
+        }
+
+        // Step 1: Wait for init, then send bash trigger prompt
+        if (msg.type === "system" && msg.subtype === "init" && !initReceived) {
+          initReceived = true;
+          sendPrompt();
+          return;
+        }
+
+        // Step 2: When we see approval request, send another user message instead,
+        // then explicitly deny the pending approval so the flow can complete in
+        // headless stream-json mode (which waits for approval responses).
+        if (
+          msg.type === "message" &&
+          msg.message_type === "approval_request_message" &&
+          !approvalSeen
+        ) {
+          approvalSeen = true;
+
+          const toolCall = Array.isArray(msg.tool_call)
+            ? msg.tool_call[0]
+            : msg.tool_call;
+          pendingToolCallId =
+            toolCall && typeof toolCall === "object"
+              ? (toolCall as { tool_call_id?: string }).tool_call_id
+              : undefined;
+
+          // If approval stream chunks arrive before can_use_tool callback,
+          // still send the concurrent user message now.
+          if (!interruptSent) {
+            interruptSent = true;
+            const userMsg = JSON.stringify({
+              type: "user",
+              message: { role: "user", content: INTERRUPT_MESSAGE },
+            });
+            proc.stdin?.write(`${userMsg}\n`);
+          }
           return;
         }
 
@@ -159,11 +221,27 @@ async function runLazyRecoveryTest(timeoutMs = 180000): Promise<{
           }
         }
 
-        // Track results - we need 2 (one for each user message, though first may fail)
+        // Track results and complete once we prove the pending-approval flow unblocks.
         if (msg.type === "result") {
           resultCount++;
-          // After second result (or after seeing error + result), we're done
-          if (resultCount >= 2 || (errorSeen && resultCount >= 1)) {
+          // If model responded without calling a tool, retry prompt (up to 3 attempts)
+          if (!approvalSeen && promptAttempts < 3) {
+            sendPrompt();
+            return;
+          }
+          if (resultCount >= 1 && !approvalSeen) {
+            cleanup();
+            resolve({ messages, success: false, errorSeen });
+            return;
+          }
+
+          // One completed turn is enough once we have confirmed
+          // approval flow + concurrent user message injection.
+          if (
+            resultCount >= 1 &&
+            approvalSeen &&
+            (interruptSent || errorSeen)
+          ) {
             cleanup();
             resolve({ messages, success: true, errorSeen });
           }
@@ -223,11 +301,13 @@ describe("lazy approval recovery", () => {
       }
     }
 
-    // We should have seen the approval request (proves tool requiring approval was called)
-    const approvalRequest = result.messages.find(
-      (m) => m.message_type === "approval_request_message",
+    // We should have seen at least one approval signal (message stream or control callback)
+    const approvalSignal = result.messages.find(
+      (m) =>
+        m.message_type === "approval_request_message" ||
+        (m.type === "control_request" && m.request?.subtype === "can_use_tool"),
     );
-    expect(approvalRequest).toBeDefined();
+    expect(approvalSignal).toBeDefined();
 
     // The test should complete successfully
     expect(result.success).toBe(true);

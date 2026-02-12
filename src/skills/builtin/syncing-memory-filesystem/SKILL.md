@@ -1,81 +1,235 @@
 ---
 name: syncing-memory-filesystem
-description: Manage memory filesystem sync conflicts with git-like commands. Load this skill when you receive a memFS conflict notification, need to check sync status, review diffs, or resolve conflicts between memory blocks and their filesystem counterparts.
+description: Manage git-backed memory repos. Load this skill when working with git-backed agent memory, setting up remote memory repos, resolving sync conflicts, or managing memory via git workflows.
 ---
 
-# Memory Filesystem Sync
+# Git-Backed Memory Repos
 
-When memFS is enabled, your memory blocks are mirrored as `.md` files on disk at `~/.letta/agents/<agent-id>/memory/`. Changes to blocks or files are detected via content hashing and synced at startup and on manual `/memfs sync`.
+Agents with the `git-memory-enabled` tag have their memory blocks stored in git repositories accessible via the Letta API. This enables version control, collaboration, and external editing of agent memory.
 
-**Conflicts** occur when both the file and the block are modified since the last sync (e.g., user edits a file in their editor while the block is also updated manually by the user via the API). Non-conflicting changes (only one side changed) are resolved automatically during the next sync.
+**Features:**
+- Stored in cloud (GCS)
+- Accessible via `$LETTA_BASE_URL/v1/git/<agent-id>/state.git`
+- Bidirectional sync: API <-> Git (webhook-triggered, ~2-3s delay)
+- Structure: `memory/system/*.md` for system blocks
 
-## CLI Commands
+## What the CLI Harness Does Automatically
 
-Use the built-in CLI subcommands. They use the same auth flow as the CLI
-(OAuth/keychain + refresh), and default to `LETTA_AGENT_ID` when available.
+When memfs is enabled, the Letta Code CLI automatically:
 
-```bash
-letta memfs status --agent <agent-id>
-letta memfs diff --agent <agent-id>
-letta memfs resolve --agent <agent-id> --resolutions '<JSON>'
-```
+1. Adds the `git-memory-enabled` tag to the agent (triggers backend to create the git repo)
+2. Clones the repo into `~/.letta/agents/<agent-id>/memory/` (git root is the memory directory)
+3. Configures a **local** credential helper in `memory/.git/config` (so `git push`/`git pull` work without auth ceremony)
+4. Installs a **pre-commit hook** that validates frontmatter before each commit (see below)
+5. On subsequent startups: pulls latest changes, reconfigures credentials and hook (self-healing)
+6. During sessions: periodically checks `git status` and reminds you (the agent) to commit/push if dirty
 
-Auth overrides (optional):
-```bash
-LETTA_API_KEY=... letta memfs status --agent <agent-id>
-LETTA_BASE_URL=http://localhost:8283 LETTA_API_KEY=... letta memfs status --agent <agent-id>
-```
+If any of these steps fail, you can replicate them manually using the sections below.
 
-**Output**: JSON only.
+## Authentication
 
-**Status output fields**:
-- `conflicts` — blocks where both file and block changed
-- `pendingFromFile` — file changed, block didn’t (auto-resolved on sync)
-- `pendingFromBlock` — block changed, file didn’t (auto-resolved on sync)
-- `newFiles` — files without corresponding blocks
-- `newBlocks` — blocks without corresponding files
-- `locationMismatches` — file location doesn’t match attachment state
-- `isClean` — true if everything is in sync
-- `lastSync` — timestamp of last sync
-
-**Diff output**:
-- Writes a markdown diff file and returns `{ diffPath, conflicts, metadataOnly }`
-
-**Resolve output**:
-- Returns the sync result from `syncMemoryFilesystem` (created/updated/deleted blocks/files, conflicts).
-
-## Typical Workflow
-
-1. You receive a system reminder about memFS conflicts
-2. Run `letta memfs diff` to see the full content of both sides
-3. Read the diff file to understand the changes
-4. Decide for each conflict: keep the file version or the block version
-5. Run `letta memfs resolve` with all resolutions at once
-
-## Example
+The harness configures a per-repo credential helper during clone. To verify or reconfigure:
 
 ```bash
-# Step 1: Check status (optional — the system reminder already tells you about conflicts)
-letta memfs status --agent $LETTA_AGENT_ID
+cd ~/.letta/agents/<agent-id>/memory
 
-# Step 2: View the diffs
-letta memfs diff --agent $LETTA_AGENT_ID
-# Output: "Diff (2 conflicts) written to: /path/to/diff.md"
+# Check if configured
+git config --get credential.$LETTA_BASE_URL.helper
 
-# Step 3: Read the diff file (use Read tool on the path from step 2)
-
-# Step 4: Resolve all conflicts
-letta memfs resolve --agent $LETTA_AGENT_ID --resolutions '[{"label":"persona/soul","resolution":"block"},{"label":"human/prefs","resolution":"file"}]'
+# Reconfigure (e.g. after API key rotation)
+git config credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
 ```
 
-## How Conflicts Arise
+For cloning a *different* agent's repo (e.g. during memory migration), set up a global helper:
 
-- **User edits a `.md` file** in their editor or IDE while the corresponding block is also modified manually by the user via the API
-- **Both sides diverge** from the last-synced state — neither can be resolved automatically without potentially losing changes
-- The system detects this after each turn and notifies you via a system reminder
+```bash
+git config --global credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+```
 
-## Notes
+## Pre-Commit Hook (Frontmatter Validation)
 
-- Non-conflicting changes (only one side modified) are resolved automatically during the next sync — you only need to intervene for true conflicts
-- The `/memfs sync` command is still available for users to manually trigger sync and resolve conflicts via the CLI overlay
-- After resolving, the sync state is updated so the same conflicts won't reappear
+The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject.
+
+**Rules:**
+- Every `.md` file must have YAML frontmatter (`---` header and closing `---`)
+- Required fields: `description` (non-empty string), `limit` (positive integer)
+- `read_only` is a **protected field**: you (the agent) cannot add, remove, or change it. Files with `read_only: true` cannot be modified at all. Only the server/user sets this field.
+- Unknown frontmatter keys are rejected
+
+**Valid file format:**
+```markdown
+---
+description: What this block contains
+limit: 20000
+---
+
+Block content goes here.
+```
+
+If the hook rejects a commit, read the error message — it tells you exactly which file and which rule was violated. Fix the file and retry.
+
+## Clone Agent Memory
+
+```bash
+# Clone agent's memory repo
+git clone "$LETTA_BASE_URL/v1/git/<agent-id>/state.git" ~/my-agent-memory
+
+# View memory blocks
+ls ~/my-agent-memory/memory/system/
+cat ~/my-agent-memory/memory/system/human.md
+```
+
+## Enabling Git Memory (Manual)
+
+If the harness `/memfs enable` failed, you can replicate it:
+
+```bash
+AGENT_ID="<your-agent-id>"
+AGENT_DIR=~/.letta/agents/$AGENT_ID
+MEMORY_REPO_DIR="$AGENT_DIR/memory"
+
+# 1. Add git-memory-enabled tag (IMPORTANT: preserve existing tags!)
+# First GET the agent to read current tags, then PATCH with the new tag appended.
+# The harness code does: tags = [...existingTags, "git-memory-enabled"]
+curl -X PATCH "$LETTA_BASE_URL/v1/agents/$AGENT_ID" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"tags": ["origin:letta-code", "git-memory-enabled"]}'
+
+# 2. Clone the repo into memory/
+mkdir -p "$MEMORY_REPO_DIR"
+git clone "$LETTA_BASE_URL/v1/git/$AGENT_ID/state.git" "$MEMORY_REPO_DIR"
+
+# 3. Configure local credential helper
+cd "$MEMORY_REPO_DIR"
+git config credential.$LETTA_BASE_URL.helper \
+  '!f() { echo "username=letta"; echo "password=$LETTA_API_KEY"; }; f'
+```
+
+## Bidirectional Sync
+
+### API Edit -> Git Pull
+
+```bash
+# 1. Edit block via API (or use memory tools)
+# 2. Pull to get changes (webhook creates commit automatically)
+cd ~/.letta/agents/<agent-id>/memory
+git pull
+```
+
+Changes made via the API are automatically committed to git within 2-3 seconds.
+
+### Git Push -> API Update
+
+```bash
+cd ~/.letta/agents/<agent-id>/memory
+
+# 1. Edit files locally
+echo "Updated info" > system/human.md
+
+# 2. Commit and push
+git add system/human.md
+git commit -m "fix: update human block"
+git push
+
+# 3. API automatically reflects changes (webhook-triggered, ~2-3s delay)
+```
+
+## Conflict Resolution
+
+When both API and git have diverged:
+
+```bash
+cd ~/.letta/agents/<agent-id>/memory
+
+# 1. Try to push (will be rejected)
+git push  # -> "fetch first"
+
+# 2. Pull to create merge conflict
+git pull --no-rebase
+# -> CONFLICT in system/human.md
+
+# 3. View conflict markers
+cat system/human.md
+# <<<<<<< HEAD
+# your local changes
+# =======
+# server changes
+# >>>>>>> <commit>
+
+# 4. Resolve
+echo "final resolved content" > system/human.md
+git add system/human.md
+git commit -m "fix: resolved conflict in human block"
+
+# 5. Push resolution
+git push
+# -> API automatically updates with resolved content
+```
+
+## Block Management
+
+### Create New Block
+
+```bash
+# Create file in system/ directory (automatically attached to agent)
+echo "My new block content" > system/new-block.md
+git add system/new-block.md
+git commit -m "feat: add new block"
+git push
+# -> Block automatically created and attached to agent
+```
+
+### Delete/Detach Block
+
+```bash
+# Remove file from system/ directory
+git rm system/persona.md
+git commit -m "chore: remove persona block"
+git push
+# -> Block automatically detached from agent
+```
+
+## Directory Structure
+
+```
+~/.letta/agents/<agent-id>/
+├── .letta/
+│   └── config.json              # Agent metadata
+└── memory/                      # Git repo root
+    ├── .git/                    # Git repo data
+    └── system/                  # System blocks (attached to agent)
+        ├── human.md
+        └── persona.md
+```
+
+**System blocks** (`memory/system/`) are attached to the agent and appear in the agent's system prompt.
+
+## Requirements
+
+- Agent must have `git-memory-enabled` tag
+- Valid API key with agent access
+- Git installed locally
+
+## Troubleshooting
+
+**Clone fails with "Authentication failed":**
+- Check credential helper: `git config --get credential.$LETTA_BASE_URL.helper`
+- Reconfigure: see Authentication section above
+- Verify the endpoint is reachable: `curl -u letta:$LETTA_API_KEY $LETTA_BASE_URL/v1/git/<agent-id>/state.git/info/refs?service=git-upload-pack`
+
+**Push/pull doesn't update API:**
+- Wait 2-3 seconds for webhook processing
+- Verify agent has `git-memory-enabled` tag
+- Check if you have write access to the agent
+
+**Harness setup failed (no .git/ after /memfs enable):**
+- Check debug logs (`LETTA_DEBUG=1`)
+- Follow "Enabling Git Memory (Manual)" steps above
+
+**Can't see changes immediately:**
+- Bidirectional sync has a 2-3 second delay for webhook processing
+- Use `git pull` to get latest API changes
+- Use `git fetch` to check remote without merging

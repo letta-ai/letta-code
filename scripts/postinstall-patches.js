@@ -100,6 +100,7 @@ await copyToResolved(
   "ink/build/hooks/use-input.js",
 );
 await copyToResolved("vendor/ink/build/devtools.js", "ink/build/devtools.js");
+await copyToResolved("vendor/ink/build/log-update.js", "ink/build/log-update.js");
 
 // ink-text-input (optional vendor with externalCursorOffset support)
 await copyToResolved(

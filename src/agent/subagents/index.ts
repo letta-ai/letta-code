@@ -20,6 +20,7 @@ import { MEMORY_BLOCK_LABELS, type MemoryBlockLabel } from "../memory";
 // Built-in subagent definitions (embedded at build time)
 import exploreAgentMd from "./builtin/explore.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
+import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
 import memoryAgentMd from "./builtin/memory.md";
 import planAgentMd from "./builtin/plan.md";
 import recallAgentMd from "./builtin/recall.md";
@@ -27,6 +28,7 @@ import recallAgentMd from "./builtin/recall.md";
 const BUILTIN_SOURCES = [
   exploreAgentMd,
   generalPurposeAgentMd,
+  historyAnalyzerAgentMd,
   memoryAgentMd,
   planAgentMd,
   recallAgentMd,

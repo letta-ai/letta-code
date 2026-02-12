@@ -109,9 +109,15 @@ export function prefetchAvailableModelHandles(): void {
 }
 
 /**
- * Get the max_context_window for a model handle from the cached API response.
- * Returns undefined if not cached or handle not found.
+ * Get the max_context_window for a model handle from the API.
+ * Ensures the cache is populated before reading.
+ * Returns undefined if handle not found in the API response.
  */
-export function getModelContextWindow(handle: string): number | undefined {
+export async function getModelContextWindow(
+  handle: string,
+): Promise<number | undefined> {
+  if (!cache) {
+    await getAvailableModelHandles();
+  }
   return cache?.contextWindows.get(handle);
 }

@@ -3,6 +3,9 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
+import { isInteractiveApprovalTool } from "../../tools/interactivePolicy";
+import { MEMORY_TOOL_NAMES } from "../../tools/toolset";
+
 /**
  * Maps internal tool names to user-friendly display names.
  * Handles multiple tool naming conventions:
@@ -65,7 +68,9 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "Replace" || rawName === "replace") return "Update";
   if (rawName === "WriteFile" || rawName === "write_file") return "Write";
   if (rawName === "KillBash") return "Kill Bash";
-  if (rawName === "BashOutput") return "Shell Output";
+  if (rawName === "BashOutput" || rawName === "TaskOutput") {
+    return "Shell Output";
+  }
   if (rawName === "MultiEdit") return "Update";
 
   // No mapping found, return as-is
@@ -132,18 +137,14 @@ export function isFancyUITool(name: string): boolean {
  * Other tools (bash, file edits) should respect yolo mode and auto-approve.
  */
 export function alwaysRequiresUserInput(name: string): boolean {
-  return (
-    name === "AskUserQuestion" ||
-    name === "EnterPlanMode" ||
-    name === "ExitPlanMode"
-  );
+  return isInteractiveApprovalTool(name);
 }
 
 /**
  * Checks if a tool is a memory tool (server-side memory management)
  */
 export function isMemoryTool(name: string): boolean {
-  return name === "memory" || name === "memory_apply_patch";
+  return MEMORY_TOOL_NAMES.has(name);
 }
 
 /**

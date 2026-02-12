@@ -9,6 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { OPENAI_CODEX_PROVIDER_NAME } from "../providers/openai-codex-provider";
+import { getModelContextWindow } from "./available-models";
 import { getClient } from "./client";
 
 type ModelSettings =
@@ -136,8 +137,12 @@ function buildModelSettings(
     settings = {};
   }
 
-  // Apply max_output_tokens for all providers if specified
-  if (typeof updateArgs?.max_output_tokens === "number") {
+  // Apply max_output_tokens only when provider_type is present.
+  // Without provider_type the discriminated union rejects the payload (e.g. MiniMax).
+  if (
+    typeof updateArgs?.max_output_tokens === "number" &&
+    "provider_type" in settings
+  ) {
     (settings as Record<string, unknown>).max_output_tokens =
       updateArgs.max_output_tokens;
   }
@@ -164,13 +169,19 @@ export async function updateAgentLLMConfig(
   const client = await getClient();
 
   const modelSettings = buildModelSettings(modelHandle, updateArgs);
-  const contextWindow = updateArgs?.context_window as number | undefined;
+  // First try updateArgs, then fall back to API-cached context window for BYOK models
+  const contextWindow =
+    (updateArgs?.context_window as number | undefined) ??
+    (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
 
   await client.agents.update(agentId, {
     model: modelHandle,
     ...(hasModelSettings && { model_settings: modelSettings }),
     ...(contextWindow && { context_window_limit: contextWindow }),
+    ...(typeof updateArgs?.max_output_tokens === "number" && {
+      max_tokens: updateArgs.max_output_tokens,
+    }),
   });
 
   const finalAgent = await client.agents.retrieve(agentId);

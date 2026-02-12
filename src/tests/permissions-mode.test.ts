@@ -452,3 +452,20 @@ test("Permission mode takes precedence over CLI allowedTools", () => {
   // Clean up
   cliPermissions.clear();
 });
+
+test("plan mode - remembers and restores previous mode", () => {
+  permissionMode.setMode("bypassPermissions");
+  expect(permissionMode.getMode()).toBe("bypassPermissions");
+
+  // Enter plan mode - should remember prior mode.
+  permissionMode.setMode("plan");
+  expect(permissionMode.getMode()).toBe("plan");
+  expect(permissionMode.getModeBeforePlan()).toBe("bypassPermissions");
+
+  // Exit plan mode by restoring previous mode.
+  permissionMode.setMode(permissionMode.getModeBeforePlan() ?? "default");
+  expect(permissionMode.getMode()).toBe("bypassPermissions");
+
+  // Once we leave plan mode, the remembered mode is consumed.
+  expect(permissionMode.getModeBeforePlan()).toBe(null);
+});

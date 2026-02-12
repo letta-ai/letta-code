@@ -1,28 +1,41 @@
 {
   "type": "object",
   "properties": {
-    "command": {
+    "description": {
       "type": "string",
-      "enum": ["run", "refresh"],
-      "description": "The operation to perform: \"run\" to spawn a subagent (default), \"refresh\" to re-scan the .letta/agents/ directories and update the available subagents list"
-    },
-    "subagent_type": {
-      "type": "string",
-      "description": "The type of specialized agent to use. Available agents are discovered from .letta/agents/ directory. Required for \"run\" command."
+      "description": "A short (3-5 word) description of the task"
     },
     "prompt": {
       "type": "string",
-      "description": "The task for the agent to perform. Required for \"run\" command."
+      "description": "The task for the agent to perform"
     },
-    "description": {
+    "subagent_type": {
       "type": "string",
-      "description": "A short (3-5 word) description of the task. Required for \"run\" command."
+      "description": "The type of specialized agent to use for this task"
     },
     "model": {
       "type": "string",
-      "description": "Optional model to use for this agent. If not specified, uses the recommended model for the subagent type."
+      "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
+    },
+    "run_in_background": {
+      "type": "boolean",
+      "description": "Set to true to run this agent in the background. The tool result will include an output_file path - use Read tool or Bash tail to check on output."
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Resume from an existing conversation. Does NOT require agent_id (conversation IDs are unique and encode the agent)."
+    },
+    "max_turns": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "Maximum number of agentic turns (API round-trips) before stopping."
     }
   },
+  "required": ["description", "prompt", "subagent_type"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

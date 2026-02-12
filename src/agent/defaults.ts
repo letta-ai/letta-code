@@ -42,7 +42,7 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   incognito: {
     name: "Incognito",
     description: INCOGNITO_DESCRIPTION,
-    initBlocks: ["skills", "loaded_skills"], // Only skills blocks, no personal memory
+    initBlocks: [], // No personal memory blocks
     baseTools: ["web_search", "conversation_search", "fetch_webpage"], // No memory tool
   },
 };

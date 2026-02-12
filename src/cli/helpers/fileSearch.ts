@@ -72,8 +72,10 @@ function searchDirectoryRecursive(
   pattern: string,
   maxResults: number = 200,
   results: FileMatch[] = [],
+  depth: number = 0,
+  maxDepth: number = 10,
 ): FileMatch[] {
-  if (results.length >= maxResults) {
+  if (results.length >= maxResults || depth >= maxDepth) {
     return results;
   }
 
@@ -112,7 +114,14 @@ function searchDirectoryRecursive(
 
         // Recursively search subdirectories
         if (stats.isDirectory()) {
-          searchDirectoryRecursive(fullPath, pattern, maxResults, results);
+          searchDirectoryRecursive(
+            fullPath,
+            pattern,
+            maxResults,
+            results,
+            depth + 1,
+            maxDepth,
+          );
         }
       } catch {}
     }
@@ -167,12 +176,24 @@ export async function searchFiles(
       }
     }
 
-    if (deep) {
+    // If we resolved to a specific directory and the remaining pattern is empty,
+    // the user is browsing that directory (e.g., "@../"), not searching within it.
+    // Use shallow search to avoid recursively walking the entire subtree.
+    const effectiveDeep = deep && searchPattern.length > 0;
+
+    if (effectiveDeep) {
       // Deep search: recursively search subdirectories
+      // Use a shallower depth limit when searching outside the project directory
+      // to avoid walking massive sibling directory trees
+      const isOutsideCwd = !searchDir.startsWith(process.cwd());
+      const maxDepth = isOutsideCwd ? 3 : 10;
       const deepResults = searchDirectoryRecursive(
         searchDir,
         searchPattern,
-        200, // Max 200 results (no depth limit - will search all nested directories)
+        200,
+        [],
+        0,
+        maxDepth,
       );
       results.push(...deepResults);
     } else {

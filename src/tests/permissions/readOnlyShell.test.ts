@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isReadOnlyShellCommand } from "../../permissions/readOnlyShell";
+import { homedir } from "node:os";
+import {
+  isMemoryDirCommand,
+  isReadOnlyShellCommand,
+} from "../../permissions/readOnlyShell";
 
 describe("isReadOnlyShellCommand", () => {
   describe("always safe commands", () => {
@@ -238,6 +242,198 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("mv a b")).toBe(false);
       expect(isReadOnlyShellCommand("chmod 755 file")).toBe(false);
       expect(isReadOnlyShellCommand("curl http://example.com")).toBe(false);
+    });
+  });
+});
+
+describe("isMemoryDirCommand", () => {
+  const AGENT_ID = "agent-test-abc123";
+  // Normalize to forward slashes for shell command strings (even on Windows)
+  const home = homedir().replace(/\\/g, "/");
+  const memDir = `${home}/.letta/agents/${AGENT_ID}/memory`;
+  const worktreeDir = `${home}/.letta/agents/${AGENT_ID}/memory-worktrees`;
+
+  describe("git operations in memory dir", () => {
+    test("allows git add", () => {
+      expect(isMemoryDirCommand(`cd ${memDir} && git add -A`, AGENT_ID)).toBe(
+        true,
+      );
+    });
+
+    test("allows git commit", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git commit -m 'update memory'`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
+    test("allows git push", () => {
+      expect(isMemoryDirCommand(`cd ${memDir} && git push`, AGENT_ID)).toBe(
+        true,
+      );
+    });
+
+    test("allows git rm", () => {
+      expect(
+        isMemoryDirCommand(`cd ${memDir} && git rm file.md`, AGENT_ID),
+      ).toBe(true);
+    });
+
+    test("allows git mv", () => {
+      expect(
+        isMemoryDirCommand(`cd ${memDir} && git mv a.md b.md`, AGENT_ID),
+      ).toBe(true);
+    });
+
+    test("allows git merge", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git merge migration-branch --no-edit`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
+    test("allows git worktree add", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git worktree add ../memory-worktrees/branch-1 -b branch-1`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("chained commands in memory dir", () => {
+    test("allows git add + commit + push chain", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git add -A && git commit -m 'msg' && git push`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
+    test("allows git ls-tree piped to sort", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git ls-tree -r --name-only HEAD | sort`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
+    test("allows git status + git diff chain", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git status --short && git diff --stat`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("git with auth header", () => {
+    test("allows git push with http.extraHeader", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${memDir} && git -c "http.extraHeader=Authorization: Basic abc123" push`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("worktree paths", () => {
+    test("allows git add in worktree", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${worktreeDir}/migration-123 && git add -A`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+
+    test("allows git commit in worktree", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${worktreeDir}/migration-123 && git commit -m 'analysis'`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("file operations in memory dir", () => {
+    test("allows rm in memory dir", () => {
+      expect(isMemoryDirCommand(`rm -rf ${memDir}/memory`, AGENT_ID)).toBe(
+        true,
+      );
+    });
+
+    test("allows mkdir in memory dir", () => {
+      expect(
+        isMemoryDirCommand(`mkdir -p ${memDir}/system/project`, AGENT_ID),
+      ).toBe(true);
+    });
+  });
+
+  describe("tilde path expansion", () => {
+    test("allows tilde-based memory dir path", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ~/.letta/agents/${AGENT_ID}/memory && git status`,
+          AGENT_ID,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("blocks other agent's memory", () => {
+    test("blocks different agent ID", () => {
+      expect(
+        isMemoryDirCommand(
+          `cd ${home}/.letta/agents/agent-OTHER-456/memory && git push`,
+          AGENT_ID,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("blocks commands outside memory dir", () => {
+    test("blocks project directory git push", () => {
+      expect(
+        isMemoryDirCommand(
+          "cd /Users/loaner/dev/project && git push",
+          AGENT_ID,
+        ),
+      ).toBe(false);
+    });
+
+    test("blocks bare git push with no cd", () => {
+      expect(isMemoryDirCommand("git push", AGENT_ID)).toBe(false);
+    });
+
+    test("blocks curl even with no path context", () => {
+      expect(isMemoryDirCommand("curl http://evil.com", AGENT_ID)).toBe(false);
+    });
+  });
+
+  describe("edge cases", () => {
+    test("allows bare cd to memory dir", () => {
+      expect(isMemoryDirCommand(`cd ${memDir}`, AGENT_ID)).toBe(true);
+    });
+
+    test("returns false for empty input", () => {
+      expect(isMemoryDirCommand("", AGENT_ID)).toBe(false);
+      expect(isMemoryDirCommand(null, AGENT_ID)).toBe(false);
+      expect(isMemoryDirCommand(undefined, AGENT_ID)).toBe(false);
+    });
+
+    test("returns false for empty agent ID", () => {
+      expect(isMemoryDirCommand(`cd ${memDir} && git push`, "")).toBe(false);
     });
   });
 });

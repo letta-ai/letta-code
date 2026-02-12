@@ -6,8 +6,15 @@
 
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "../../constants";
-import { runPostToolUseHooks, runPreToolUseHooks } from "../../hooks";
+import {
+  runPostToolUseHooks,
+  runPreCompactHooks,
+  runPreToolUseHooks,
+} from "../../hooks";
+import { debugLog } from "../../utils/debug";
 import { extractCompactionSummary } from "./backfill";
+import type { ContextTracker } from "./contextTracker";
+import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
@@ -155,9 +162,10 @@ export type Line =
       id: string;
       input: string;
       output: string;
-      phase?: "running" | "finished";
+      phase?: "running" | "waiting" | "finished";
       success?: boolean;
       dimOutput?: boolean;
+      preformatted?: boolean;
     }
   | {
       kind: "bash_command";
@@ -212,8 +220,10 @@ export type Buffers = {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-    cachedTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
     reasoningTokens: number;
+    contextTokens?: number;
     stepCount: number;
   };
   // Aggressive static promotion: split streaming content at paragraph boundaries
@@ -221,6 +231,8 @@ export type Buffers = {
   splitCounters: Map<string, number>; // tracks split count per original otid
   // Track server-side tool calls for hook triggering (toolCallId -> info)
   serverToolCalls: Map<string, ServerToolCallInfo>;
+  // Track if this run has pending approvals (used to gate server tool phases)
+  approvalsPending: boolean;
   // Agent ID for passing to hooks (needed for server-side tools like memory)
   agentId?: string;
 };
@@ -239,13 +251,15 @@ export function createBuffers(agentId?: string): Buffers {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
-      cachedTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
       reasoningTokens: 0,
       stepCount: 0,
     },
     tokenStreamingEnabled: false,
     splitCounters: new Map(),
     serverToolCalls: new Map(),
+    approvalsPending: false,
     agentId,
   };
 }
@@ -457,7 +471,11 @@ function trySplitContent(
 }
 
 // Feed one SDK chunk; mutate buffers in place.
-export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
+export function onChunk(
+  b: Buffers,
+  chunk: LettaStreamingResponse,
+  ctx?: ContextTracker,
+) {
   // Skip processing if stream was interrupted mid-turn. handleInterrupt already
   // rendered the cancellation state, so we should ignore any buffered chunks
   // that arrive before drainStream exits.
@@ -583,8 +601,10 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         b.toolCallIdToLineId.set(toolCallId, id);
       }
 
-      // Tool calls should be "ready" (blinking) while pending execution
-      const desiredPhase = "ready";
+      // Tool calls start in "streaming" (static grey) while args stream in.
+      // Approval requests move to "ready" (blinking), server tools move to
+      // "running" once args are complete.
+      const desiredPhase = "streaming";
       let line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
         id,
@@ -608,7 +628,23 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         chunk.message_type === "approval_request_message" &&
         line.phase !== "finished"
       ) {
-        b.byId.set(id, { ...line, phase: "ready" });
+        b.approvalsPending = true;
+        line = { ...line, phase: "ready" };
+        b.byId.set(id, line);
+
+        // Downgrade any server tools to streaming while approvals are pending.
+        for (const [toolCallId] of b.serverToolCalls) {
+          const serverLineId = b.toolCallIdToLineId.get(toolCallId);
+          if (!serverLineId) continue;
+          const serverLine = b.byId.get(serverLineId);
+          if (
+            serverLine &&
+            serverLine.kind === "tool_call" &&
+            serverLine.phase === "running"
+          ) {
+            b.byId.set(serverLineId, { ...serverLine, phase: "streaming" });
+          }
+        }
       }
 
       // if argsText is not empty, add it to the line (immutable update)
@@ -618,6 +654,7 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
           ...line,
           argsText: (line.argsText || "") + argsText,
         };
+        line = updatedLine;
         b.byId.set(id, updatedLine);
         // Count tool call arguments as LLM output tokens
         b.tokenCount += argsText.length;
@@ -652,7 +689,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             toolCallId,
             undefined,
             b.agentId,
-          ).catch(() => {});
+          ).catch((error) => {
+            debugLog("hooks", "PreToolUse hook error (accumulator)", error);
+          });
         }
       }
 
@@ -748,7 +787,9 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
               b.agentId,
               precedingReasoning,
               precedingAssistantMessage,
-            ).catch(() => {});
+            ).catch((error) => {
+              debugLog("hooks", "PostToolUse hook error (accumulator)", error);
+            });
 
             b.serverToolCalls.delete(toolCallId);
           }
@@ -768,6 +809,58 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
       }
       if (chunk.total_tokens !== undefined) {
         b.usage.totalTokens += chunk.total_tokens;
+      }
+      if (
+        chunk.cached_input_tokens !== undefined &&
+        chunk.cached_input_tokens !== null
+      ) {
+        b.usage.cachedInputTokens += chunk.cached_input_tokens;
+      }
+      if (
+        chunk.cache_write_tokens !== undefined &&
+        chunk.cache_write_tokens !== null
+      ) {
+        b.usage.cacheWriteTokens += chunk.cache_write_tokens;
+      }
+      if (
+        chunk.reasoning_tokens !== undefined &&
+        chunk.reasoning_tokens !== null
+      ) {
+        b.usage.reasoningTokens += chunk.reasoning_tokens;
+      }
+      const usageChunk = chunk as typeof chunk & {
+        context_tokens?: number | null;
+      };
+      if (
+        usageChunk.context_tokens !== undefined &&
+        usageChunk.context_tokens !== null
+      ) {
+        // context_tokens is a snapshot metric, not additive.
+        b.usage.contextTokens = usageChunk.context_tokens;
+      }
+      // Use context_tokens from SDK (estimate of tokens in context window)
+      if (ctx) {
+        if (
+          usageChunk.context_tokens !== undefined &&
+          usageChunk.context_tokens !== null
+        ) {
+          ctx.lastContextTokens = usageChunk.context_tokens;
+          // Track history for time-series display
+          const compacted = ctx.pendingCompaction;
+          if (compacted) ctx.pendingCompaction = false;
+          ctx.contextTokensHistory.push({
+            timestamp: Date.now(),
+            tokens: usageChunk.context_tokens,
+            turnId: ctx.currentTurnId,
+            ...(compacted ? { compacted: true } : {}),
+          });
+          // Cap history length to avoid unbounded growth
+          if (ctx.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
+            ctx.contextTokensHistory = ctx.contextTokensHistory.slice(
+              -MAX_CONTEXT_HISTORY,
+            );
+          }
+        }
       }
       if (chunk.step_count !== undefined) {
         b.usage.stepCount += chunk.step_count;
@@ -819,6 +912,15 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
             break;
           }
         }
+
+        // Flag so the next usage_statistics entry is marked as post-compaction.
+        // Set here (not in event_message) because summary_message arrives after
+        // compaction completes, guaranteeing the next usage_statistics has the
+        // reduced token count.
+        if (ctx) {
+          ctx.pendingCompaction = true;
+          ctx.pendingSkillsReinject = true;
+        }
         break;
       }
 
@@ -836,13 +938,30 @@ export function onChunk(b: Buffers, chunk: LettaStreamingResponse) {
         // Handle otid transition (mark previous line as finished)
         handleOtidTransition(b, id);
 
+        const eventType = eventChunk.event_type || "unknown";
         ensure(b, id, () => ({
           kind: "event",
           id,
-          eventType: eventChunk.event_type || "unknown",
+          eventType,
           eventData: eventChunk.event_data || {},
           phase: "running",
         }));
+
+        // Fire PreCompact hooks when server-side auto-compaction starts
+        if (eventType === "compaction") {
+          runPreCompactHooks(
+            ctx?.lastContextTokens,
+            undefined, // max_context_length not available here
+            b.agentId,
+            undefined, // conversationId not available here
+          ).catch((error) => {
+            debugLog("hooks", "PreCompact hook error (accumulator)", error);
+          });
+        }
+
+        // Note: pendingCompaction is set in summary_message (not here) because
+        // usage_statistics for the step that triggered compaction can arrive after
+        // this event_message, and we want to mark the first POST-compaction entry.
         break;
       }
 

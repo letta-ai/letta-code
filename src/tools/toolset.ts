@@ -15,6 +15,16 @@ import {
 const CODEX_TOOLS = OPENAI_PASCAL_TOOLS;
 const GEMINI_TOOLS = GEMINI_PASCAL_TOOLS;
 
+// Server-side memory tool names that can mutate memory blocks.
+// When memfs is enabled, we detach ALL of these from the agent.
+export const MEMORY_TOOL_NAMES = new Set([
+  "memory",
+  "memory_apply_patch",
+  "memory_insert",
+  "memory_replace",
+  "memory_rethink",
+]);
+
 // Toolset type including snake_case variants
 export type ToolsetName =
   | "codex"
@@ -130,7 +140,7 @@ export async function detachMemoryTools(agentId: string): Promise<boolean> {
 
     let detachedAny = false;
     for (const tool of currentTools) {
-      if (tool.name === "memory" || tool.name === "memory_apply_patch") {
+      if (tool.name && MEMORY_TOOL_NAMES.has(tool.name)) {
         if (tool.id) {
           await client.agents.tools.detach(tool.id, { agent_id: agentId });
           detachedAny = true;

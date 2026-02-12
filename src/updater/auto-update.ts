@@ -19,6 +19,56 @@ interface UpdateCheckResult {
   updateAvailable: boolean;
   latestVersion?: string;
   currentVersion: string;
+  /** True when the version check itself failed (network error, registry down, etc.) */
+  checkFailed?: boolean;
+}
+
+// Supported package managers for global install/update
+export type PackageManager = "npm" | "bun" | "pnpm";
+
+const INSTALL_CMD: Record<PackageManager, string> = {
+  npm: "npm install -g @letta-ai/letta-code@latest",
+  bun: "bun add -g @letta-ai/letta-code@latest",
+  pnpm: "pnpm add -g @letta-ai/letta-code@latest",
+};
+
+const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_CMD));
+
+/**
+ * Detect which package manager was used to install this binary.
+ * Checks LETTA_PACKAGE_MANAGER env var first, then inspects the resolved binary path.
+ */
+export function detectPackageManager(): PackageManager {
+  const envOverride = process.env.LETTA_PACKAGE_MANAGER;
+  if (envOverride) {
+    if (VALID_PACKAGE_MANAGERS.has(envOverride)) {
+      debugLog("Package manager from LETTA_PACKAGE_MANAGER:", envOverride);
+      return envOverride as PackageManager;
+    }
+    debugLog(
+      `Invalid LETTA_PACKAGE_MANAGER="${envOverride}", falling back to path detection`,
+    );
+  }
+
+  const argv = process.argv[1] || "";
+  let resolvedPath = argv;
+  try {
+    resolvedPath = realpathSync(argv);
+  } catch {
+    // If realpath fails, use original path
+  }
+
+  if (/[/\\]\.bun[/\\]/.test(resolvedPath)) {
+    debugLog("Detected package manager from path: bun");
+    return "bun";
+  }
+  if (/[/\\]\.?pnpm[/\\]/.test(resolvedPath)) {
+    debugLog("Detected package manager from path: pnpm");
+    return "pnpm";
+  }
+
+  debugLog("Detected package manager from path: npm (default)");
+  return "npm";
 }
 
 function isAutoUpdateEnabled(): boolean {
@@ -46,7 +96,7 @@ function isRunningLocally(): boolean {
   return !resolvedPath.includes("node_modules");
 }
 
-async function checkForUpdate(): Promise<UpdateCheckResult> {
+export async function checkForUpdate(): Promise<UpdateCheckResult> {
   const currentVersion = getVersion();
   debugLog("Current version:", currentVersion);
 
@@ -58,13 +108,20 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   }
 
   try {
-    debugLog("Checking npm for latest version...");
-    const { stdout } = await execAsync(
-      "npm view @letta-ai/letta-code version",
-      { timeout: 5000 },
+    debugLog("Checking registry for latest version...");
+    const res = await fetch(
+      "https://registry.npmjs.org/@letta-ai/letta-code/latest",
+      { signal: AbortSignal.timeout(5000) },
     );
-    const latestVersion = stdout.trim();
-    debugLog("Latest version from npm:", latestVersion);
+    if (!res.ok) {
+      throw new Error(`Registry returned ${res.status}`);
+    }
+    const data = (await res.json()) as { version?: string };
+    if (typeof data.version !== "string") {
+      throw new Error("Unexpected registry response shape");
+    }
+    const latestVersion = data.version;
+    debugLog("Latest version from registry:", latestVersion);
 
     if (latestVersion !== currentVersion) {
       debugLog("Update available!");
@@ -77,6 +134,11 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
     debugLog("Already on latest version");
   } catch (error) {
     debugLog("Failed to check for updates:", error);
+    return {
+      updateAvailable: false,
+      currentVersion,
+      checkFailed: true,
+    };
   }
 
   return {
@@ -123,32 +185,36 @@ async function performUpdate(): Promise<{
   error?: string;
   enotemptyFailed?: boolean;
 }> {
-  // Pre-emptively clean up orphaned directories to prevent ENOTEMPTY errors
-  const globalPath = await getNpmGlobalPath();
-  if (globalPath) {
-    debugLog("Pre-cleaning orphaned directories in:", globalPath);
-    await cleanupOrphanedDirs(globalPath);
+  const pm = detectPackageManager();
+  const installCmd = INSTALL_CMD[pm];
+  debugLog("Detected package manager:", pm);
+  debugLog("Install command:", installCmd);
+
+  // ENOTEMPTY orphan cleanup is npm-specific (npm's temp rename behavior)
+  let globalPath: string | null = null;
+  if (pm === "npm") {
+    globalPath = await getNpmGlobalPath();
+    if (globalPath) {
+      debugLog("Pre-cleaning orphaned directories in:", globalPath);
+      await cleanupOrphanedDirs(globalPath);
+    }
   }
 
   try {
-    debugLog("Running npm install -g @letta-ai/letta-code@latest...");
-    await execAsync("npm install -g @letta-ai/letta-code@latest", {
-      timeout: 60000,
-    });
+    debugLog(`Running ${installCmd}...`);
+    await execAsync(installCmd, { timeout: 60000 });
     debugLog("Update completed successfully");
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // If ENOTEMPTY still occurred (race condition or new orphans), try cleanup + retry once
-    if (errorMsg.includes("ENOTEMPTY") && globalPath) {
+    // ENOTEMPTY retry is npm-specific
+    if (pm === "npm" && errorMsg.includes("ENOTEMPTY") && globalPath) {
       debugLog("ENOTEMPTY detected, attempting cleanup and retry...");
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await execAsync("npm install -g @letta-ai/letta-code@latest", {
-          timeout: 60000,
-        });
+        await execAsync(installCmd, { timeout: 60000 });
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -156,7 +222,6 @@ async function performUpdate(): Promise<{
           retryError instanceof Error ? retryError.message : String(retryError);
         debugLog("Update failed after retry:", retryMsg);
 
-        // If it's still ENOTEMPTY after retry, flag it for user notification
         if (retryMsg.includes("ENOTEMPTY")) {
           return {
             success: false,
@@ -218,6 +283,13 @@ export async function manualUpdate(): Promise<{
   }
 
   const result = await checkForUpdate();
+
+  if (result.checkFailed) {
+    return {
+      success: false,
+      message: "Could not check for updates (network error). Try again later.",
+    };
+  }
 
   if (!result.updateAvailable) {
     return {

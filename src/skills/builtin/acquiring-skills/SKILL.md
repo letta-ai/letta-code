@@ -102,14 +102,7 @@ rm -rf /tmp/skills-temp
 
 ## Registering New Skills
 
-After downloading, refresh the skills list:
-
-```
-Skill(command: "refresh")
-```
-
-This scans `~/.letta/skills/` and `.skills/` and updates your `skills` memory block.
-Agent-scoped skills under `~/.letta/agents/<agent-id>/skills/` are included in the scan as well.
+After downloading a skill, it will be automatically discovered on the next message. Skills are discovered from `~/.letta/skills/`, `.skills/`, and agent-scoped `~/.letta/agents/<agent-id>/skills/` directories.
 
 ## Complete Example
 
@@ -124,7 +117,6 @@ User asks: "Can you help me test my React app's UI?"
    cp -r /tmp/skills-temp/skills/webapp-testing ~/.letta/agents/<agent-id>/skills/
    rm -rf /tmp/skills-temp
    ```
-5. **Refresh**: `Skill(command: "refresh")`
-6. **Inspect scripts**: Read any .py or .ts files before using them
-7. **Load**: `Skill(command: "load", skills: ["webapp-testing"])`
-8. **Use**: Follow the skill's instructions for the user's task
+5. **Inspect scripts**: Read any .py or .ts files before using them
+6. **Invoke**: `Skill(skill: "webapp-testing")`
+7. **Use**: Follow the skill's instructions for the user's task

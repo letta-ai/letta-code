@@ -2,6 +2,7 @@
 // Handles periodic memory reminder logic and preference parsing
 
 import { settingsManager } from "../../settings-manager";
+import { debugLog } from "../../utils/debug";
 
 // Memory reminder interval presets
 const MEMORY_INTERVAL_FREQUENT = 5;
@@ -27,14 +28,39 @@ function getMemoryInterval(): number | null {
 }
 
 /**
- * Build a memory check reminder if the turn count matches the interval
+ * Build a memory check reminder if the turn count matches the interval.
+ *
+ * - MemFS enabled: returns MEMORY_REFLECTION_REMINDER
+ *   (instructs agent to launch background reflection Task)
+ * - MemFS disabled: returns MEMORY_CHECK_REMINDER
+ *   (existing behavior, agent updates memory inline)
+ *
  * @param turnCount - Current conversation turn count
+ * @param agentId - Current agent ID (needed to check MemFS status)
  * @returns Promise resolving to the reminder string (empty if not applicable)
  */
-export async function buildMemoryReminder(turnCount: number): Promise<string> {
+export async function buildMemoryReminder(
+  turnCount: number,
+  agentId: string,
+): Promise<string> {
   const memoryInterval = getMemoryInterval();
 
   if (memoryInterval && turnCount > 0 && turnCount % memoryInterval === 0) {
+    if (settingsManager.isMemfsEnabled(agentId)) {
+      debugLog(
+        "memory",
+        `Reflection reminder fired (turn ${turnCount}, agent ${agentId})`,
+      );
+      const { MEMORY_REFLECTION_REMINDER } = await import(
+        "../../agent/promptAssets.js"
+      );
+      return MEMORY_REFLECTION_REMINDER;
+    }
+
+    debugLog(
+      "memory",
+      `Memory check reminder fired (turn ${turnCount}, agent ${agentId})`,
+    );
     const { MEMORY_CHECK_REMINDER } = await import(
       "../../agent/promptAssets.js"
     );

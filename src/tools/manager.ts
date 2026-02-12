@@ -8,6 +8,7 @@ import {
   runPreToolUseHooks,
 } from "../hooks";
 import { telemetry } from "../telemetry";
+import { debugLog } from "../utils/debug";
 import { TOOL_DEFINITIONS, type ToolName } from "./toolDefinitions";
 
 export const TOOL_NAMES = Object.keys(TOOL_DEFINITIONS) as ToolName[];
@@ -62,13 +63,13 @@ export function getInternalToolName(serverName: string): string {
 export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
-  "BashOutput",
+  "TaskOutput",
   "Edit",
   "EnterPlanMode",
   "ExitPlanMode",
   "Glob",
   "Grep",
-  "KillBash",
+  "TaskStop",
   // "MultiEdit",
   // "LS",
   "Read",
@@ -148,12 +149,14 @@ const TOOL_PERMISSIONS: Record<ToolName, { requiresApproval: boolean }> = {
   AskUserQuestion: { requiresApproval: true },
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
+  TaskOutput: { requiresApproval: false },
   Edit: { requiresApproval: true },
   EnterPlanMode: { requiresApproval: true },
   ExitPlanMode: { requiresApproval: false },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
   KillBash: { requiresApproval: true },
+  TaskStop: { requiresApproval: true },
   LS: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
@@ -357,19 +360,168 @@ export interface ClientTool {
   parameters?: { [key: string]: unknown } | null;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// EXTERNAL TOOLS (SDK-side execution)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * External tool definition from SDK
+ */
+export interface ExternalToolDefinition {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema
+}
+
+/**
+ * Callback to execute an external tool via SDK
+ */
+export type ExternalToolExecutor = (
+  toolCallId: string,
+  toolName: string,
+  input: Record<string, unknown>,
+) => Promise<{
+  content: Array<{
+    type: string;
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  }>;
+  isError: boolean;
+}>;
+
+// Storage for external tool definitions and executor
+const EXTERNAL_TOOLS_KEY = Symbol.for("@letta/externalTools");
+const EXTERNAL_EXECUTOR_KEY = Symbol.for("@letta/externalToolExecutor");
+
+type GlobalWithExternalTools = typeof globalThis & {
+  [EXTERNAL_TOOLS_KEY]?: Map<string, ExternalToolDefinition>;
+  [EXTERNAL_EXECUTOR_KEY]?: ExternalToolExecutor;
+};
+
+function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
+  const global = globalThis as GlobalWithExternalTools;
+  if (!global[EXTERNAL_TOOLS_KEY]) {
+    global[EXTERNAL_TOOLS_KEY] = new Map();
+  }
+  return global[EXTERNAL_TOOLS_KEY];
+}
+
+/**
+ * Register external tools from SDK
+ */
+export function registerExternalTools(tools: ExternalToolDefinition[]): void {
+  const registry = getExternalToolsRegistry();
+  for (const tool of tools) {
+    registry.set(tool.name, tool);
+  }
+}
+
+/**
+ * Set the executor callback for external tools
+ */
+export function setExternalToolExecutor(executor: ExternalToolExecutor): void {
+  (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY] = executor;
+}
+
+/**
+ * Clear external tools (for testing or session cleanup)
+ */
+export function clearExternalTools(): void {
+  getExternalToolsRegistry().clear();
+  delete (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY];
+}
+
+/**
+ * Check if a tool is external (SDK-executed)
+ */
+export function isExternalTool(name: string): boolean {
+  return getExternalToolsRegistry().has(name);
+}
+
+/**
+ * Get external tool definition
+ */
+export function getExternalToolDefinition(
+  name: string,
+): ExternalToolDefinition | undefined {
+  return getExternalToolsRegistry().get(name);
+}
+
+/**
+ * Get all external tools as ClientTool format
+ */
+export function getExternalToolsAsClientTools(): ClientTool[] {
+  return Array.from(getExternalToolsRegistry().values()).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
+}
+
+/**
+ * Execute an external tool via SDK
+ */
+export async function executeExternalTool(
+  toolCallId: string,
+  toolName: string,
+  input: Record<string, unknown>,
+): Promise<ToolExecutionResult> {
+  const executor = (globalThis as GlobalWithExternalTools)[
+    EXTERNAL_EXECUTOR_KEY
+  ];
+  if (!executor) {
+    return {
+      toolReturn: `External tool executor not set for tool: ${toolName}`,
+      status: "error",
+    };
+  }
+
+  try {
+    const result = await executor(toolCallId, toolName, input);
+
+    // Convert external tool result to ToolExecutionResult format
+    const textContent = result.content
+      .filter((c) => c.type === "text" && c.text)
+      .map((c) => c.text)
+      .join("\n");
+
+    return {
+      toolReturn: textContent || JSON.stringify(result.content),
+      status: result.isError ? "error" : "success",
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      toolReturn: `External tool execution error: ${errorMessage}`,
+      status: "error",
+    };
+  }
+}
+
 /**
  * Get all loaded tools in the format expected by the Letta API's client_tools field.
  * Maps internal tool names to server-facing names for proper tool invocation.
+ * Includes both built-in tools and external tools.
  */
 export function getClientToolsFromRegistry(): ClientTool[] {
-  return Array.from(toolRegistry.entries()).map(([name, tool]) => {
-    const serverName = getServerToolName(name);
-    return {
-      name: serverName,
-      description: tool.schema.description,
-      parameters: tool.schema.input_schema,
-    };
-  });
+  // Get built-in tools
+  const builtInTools = Array.from(toolRegistry.entries()).map(
+    ([name, tool]) => {
+      const serverName = getServerToolName(name);
+      return {
+        name: serverName,
+        description: tool.schema.description,
+        parameters: tool.schema.input_schema,
+      };
+    },
+  );
+
+  // Add external tools
+  const externalTools = getExternalToolsAsClientTools();
+
+  return [...builtInTools, ...externalTools];
 }
 
 /**
@@ -873,6 +1025,15 @@ export async function executeTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   },
 ): Promise<ToolExecutionResult> {
+  // Check if this is an external tool (SDK-executed)
+  if (isExternalTool(name)) {
+    return executeExternalTool(
+      options?.toolCallId ?? `ext-${Date.now()}`,
+      name,
+      args as Record<string, unknown>,
+    );
+  }
+
   const internalName = resolveInternalToolName(name);
   if (!internalName) {
     return {
@@ -928,6 +1089,11 @@ export async function executeTool(
       }
     }
 
+    // Inject toolCallId for Skill tool (used for skill content registry)
+    if (internalName === "Skill" && options?.toolCallId) {
+      enhancedArgs = { ...enhancedArgs, toolCallId: options.toolCallId };
+    }
+
     const result = await tool.fn(enhancedArgs);
     const duration = Date.now() - startTime;
 
@@ -976,8 +1142,8 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFeedback = postHookResult.feedback;
-    } catch {
-      // Silently ignore hook errors - don't affect tool execution
+    } catch (error) {
+      debugLog("hooks", "PostToolUse hook error (success path)", error);
     }
 
     // Run PostToolUseFailure hooks when tool returns error status
@@ -1000,8 +1166,12 @@ export async function executeTool(
           undefined, // precedingAssistantMessage - not available in tool manager context
         );
         postToolUseFailureFeedback = failureHookResult.feedback;
-      } catch {
-        // Silently ignore hook execution errors
+      } catch (error) {
+        debugLog(
+          "hooks",
+          "PostToolUseFailure hook error (tool returned error)",
+          error,
+        );
       }
     }
 
@@ -1079,8 +1249,8 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFeedback = postHookResult.feedback;
-    } catch {
-      // Silently ignore hook errors
+    } catch (error) {
+      debugLog("hooks", "PostToolUse hook error (error path)", error);
     }
 
     // Run PostToolUseFailure hooks - exit 2 injects stderr
@@ -1098,8 +1268,12 @@ export async function executeTool(
         undefined, // precedingAssistantMessage - not available in tool manager context
       );
       postToolUseFailureFeedback = failureHookResult.feedback;
-    } catch {
-      // Silently ignore hook execution errors
+    } catch (error) {
+      debugLog(
+        "hooks",
+        "PostToolUseFailure hook error (exception path)",
+        error,
+      );
     }
 
     // Combine feedback from both hook types

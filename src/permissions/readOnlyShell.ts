@@ -1,3 +1,32 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+
+/**
+ * When true, ANY command scoped entirely to the agent's memory directory is auto-approved.
+ * When false, only git + safe file operations are auto-approved in the memory dir.
+ */
+const MEMORY_DIR_APPROVE_ALL = true;
+
+/** Commands allowed in memory dir when MEMORY_DIR_APPROVE_ALL is false */
+const SAFE_MEMORY_DIR_COMMANDS = new Set([
+  "git",
+  "rm",
+  "mv",
+  "mkdir",
+  "cp",
+  "ls",
+  "cat",
+  "head",
+  "tail",
+  "tree",
+  "find",
+  "wc",
+  "split",
+  "echo",
+  "sort",
+  "cd",
+]);
+
 const ALWAYS_SAFE_COMMANDS = new Set([
   "cat",
   "head",
@@ -246,4 +275,190 @@ function extractDashCArgument(tokens: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Build the set of allowed memory directory prefixes for the current agent.
+ * Includes:
+ * - ~/.letta/agents/<agentId>/memory/
+ * - ~/.letta/agents/<agentId>/memory-worktrees/
+ * And if LETTA_PARENT_AGENT_ID is set (subagent context):
+ * - ~/.letta/agents/<parentAgentId>/memory/
+ * - ~/.letta/agents/<parentAgentId>/memory-worktrees/
+ */
+function getAllowedMemoryPrefixes(agentId: string): string[] {
+  const home = homedir();
+  const prefixes: string[] = [
+    normalizeSeparators(resolve(home, ".letta", "agents", agentId, "memory")),
+    normalizeSeparators(
+      resolve(home, ".letta", "agents", agentId, "memory-worktrees"),
+    ),
+  ];
+  const parentId = process.env.LETTA_PARENT_AGENT_ID;
+  if (parentId && parentId !== agentId) {
+    prefixes.push(
+      normalizeSeparators(
+        resolve(home, ".letta", "agents", parentId, "memory"),
+      ),
+      normalizeSeparators(
+        resolve(home, ".letta", "agents", parentId, "memory-worktrees"),
+      ),
+    );
+  }
+  return prefixes;
+}
+
+/**
+ * Normalize a path to forward slashes (for consistent comparison on Windows).
+ */
+function normalizeSeparators(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
+ * Resolve a path that may contain ~ or $HOME to an absolute path.
+ * Always returns forward slashes for cross-platform consistency.
+ */
+function expandPath(p: string): string {
+  const home = homedir();
+  if (p.startsWith("~/")) {
+    return normalizeSeparators(resolve(home, p.slice(2)));
+  }
+  if (p.startsWith("$HOME/")) {
+    return normalizeSeparators(resolve(home, p.slice(6)));
+  }
+  if (p.startsWith('"$HOME/')) {
+    return normalizeSeparators(resolve(home, p.slice(7).replace(/"$/, "")));
+  }
+  return normalizeSeparators(resolve(p));
+}
+
+/**
+ * Check if a path falls within any of the allowed memory directory prefixes.
+ */
+function isUnderMemoryDir(path: string, prefixes: string[]): boolean {
+  const resolved = expandPath(path);
+  return prefixes.some(
+    (prefix) => resolved === prefix || resolved.startsWith(`${prefix}/`),
+  );
+}
+
+/**
+ * Extract the working directory from a command that starts with `cd <path>`.
+ * Returns null if the command doesn't start with cd.
+ */
+function extractCdTarget(segment: string): string | null {
+  const tokens = tokenize(segment);
+  if (tokens[0] === "cd" && tokens[1]) {
+    return tokens[1];
+  }
+  return null;
+}
+
+/**
+ * Check if a shell command exclusively targets the agent's memory directory.
+ *
+ * Unlike isReadOnlyShellCommand, this allows WRITE operations (git commit, rm, etc.)
+ * but only when all paths in the command resolve to the agent's own memory dir.
+ *
+ * @param command - The shell command string
+ * @param agentId - The current agent's ID
+ * @returns true if the command should be auto-approved as a memory dir operation
+ */
+export function isMemoryDirCommand(
+  command: string | string[] | undefined | null,
+  agentId: string,
+): boolean {
+  if (!command || !agentId) {
+    return false;
+  }
+
+  const commandStr = typeof command === "string" ? command : command.join(" ");
+  const trimmed = commandStr.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const prefixes = getAllowedMemoryPrefixes(agentId);
+
+  // Split on && || ; to get individual command segments.
+  // We intentionally do NOT reject $() or > here — those are valid
+  // in memory dir commands (e.g. git push with auth header, echo > file).
+  const segments = trimmed
+    .split(/&&|\|\||;/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return false;
+  }
+
+  // Track the current working directory through the chain.
+  // If first segment is `cd <memory-dir>`, subsequent commands inherit that context.
+  let cwd: string | null = null;
+
+  for (const segment of segments) {
+    // Handle pipe chains: split on | and check each part
+    const pipeParts = segment
+      .split(/\|/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const part of pipeParts) {
+      const cdTarget = extractCdTarget(part);
+      if (cdTarget) {
+        // This is a cd command — check if it targets memory dir
+        const resolved: string = cwd
+          ? expandPath(resolve(expandPath(cwd), cdTarget))
+          : expandPath(cdTarget);
+        if (!isUnderMemoryDir(resolved, prefixes)) {
+          return false;
+        }
+        cwd = resolved;
+        continue;
+      }
+
+      // For non-cd commands, check if we have a memory dir cwd
+      // OR if all path-like arguments point to the memory dir
+      if (cwd && isUnderMemoryDir(cwd, prefixes)) {
+        // We're operating within the memory dir
+        if (!MEMORY_DIR_APPROVE_ALL) {
+          // Strict mode: validate command type
+          const tokens = tokenize(part);
+          const cmd = tokens[0];
+          if (!cmd || !SAFE_MEMORY_DIR_COMMANDS.has(cmd)) {
+            return false;
+          }
+        }
+        continue;
+      }
+
+      // No cd context — check if the command itself references memory dir paths
+      const tokens = tokenize(part);
+      const hasMemoryPath = tokens.some(
+        (t) =>
+          (t.includes(".letta/agents/") && t.includes("/memory")) ||
+          (t.includes(".letta/agents/") && t.includes("/memory-worktrees")),
+      );
+
+      if (hasMemoryPath) {
+        // Verify ALL path-like tokens that reference .letta/agents/ are within allowed prefixes
+        const agentPaths = tokens.filter((t) => t.includes(".letta/agents/"));
+        if (agentPaths.every((p) => isUnderMemoryDir(p, prefixes))) {
+          if (!MEMORY_DIR_APPROVE_ALL) {
+            const cmd = tokens[0];
+            if (!cmd || !SAFE_MEMORY_DIR_COMMANDS.has(cmd)) {
+              return false;
+            }
+          }
+          continue;
+        }
+      }
+
+      // This segment doesn't target memory dir and we're not in a memory dir cwd
+      return false;
+    }
+  }
+
+  return true;
 }

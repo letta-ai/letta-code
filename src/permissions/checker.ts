@@ -2,6 +2,7 @@
 // Main permission checking logic
 
 import { resolve } from "node:path";
+import { getCurrentAgentId } from "../agent/context";
 import { runPermissionRequestHooks } from "../hooks";
 import { cliPermissions } from "./cli";
 import {
@@ -10,7 +11,7 @@ import {
   matchesToolPattern,
 } from "./matcher";
 import { permissionMode } from "./mode";
-import { isReadOnlyShellCommand } from "./readOnlyShell";
+import { isMemoryDirCommand, isReadOnlyShellCommand } from "./readOnlyShell";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,
@@ -161,6 +162,20 @@ export function checkPermission(
         decision: "allow",
         reason: "Read-only shell command",
       };
+    }
+    // Auto-approve commands that exclusively target the agent's memory directory
+    if (shellCommand) {
+      try {
+        const agentId = getCurrentAgentId();
+        if (isMemoryDirCommand(shellCommand, agentId)) {
+          return {
+            decision: "allow",
+            reason: "Agent memory directory operation",
+          };
+        }
+      } catch {
+        // No agent context set — skip memory dir check
+      }
     }
   }
 
@@ -400,16 +415,19 @@ function matchesPattern(
 
 /**
  * Subagent types that are read-only and safe to auto-approve.
- * These only have access to read-only tools (Glob, Grep, Read, LS, BashOutput).
+ * These only have access to read-only tools (Glob, Grep, Read, LS, TaskOutput).
  * See: src/agent/subagents/builtin/*.md for definitions
  */
 const READ_ONLY_SUBAGENT_TYPES = new Set([
-  "explore", // Codebase exploration - Glob, Grep, Read, LS, BashOutput
+  "explore", // Codebase exploration - Glob, Grep, Read, LS, TaskOutput
   "Explore",
-  "plan", // Planning agent - Glob, Grep, Read, LS, BashOutput
+  "plan", // Planning agent - Glob, Grep, Read, LS, TaskOutput
   "Plan",
-  "recall", // Conversation history search - Skill, Bash, Read, BashOutput
+  "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
+  "reflection", // Memory reflection - reads history, writes to agent's own memory files
+  "Reflection",
+  "history-analyzer", // History analysis - reads history files, writes to agent memory
 ]);
 
 /**
@@ -428,7 +446,7 @@ function getDefaultDecision(
     "Glob",
     "Grep",
     "TodoWrite",
-    "BashOutput",
+    "TaskOutput",
     "LS",
     // Codex toolset (snake_case) - tools that don't require approval
     "read_file",

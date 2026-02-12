@@ -276,6 +276,20 @@ export const InlineFileEditApproval = memo(
         }
         if (key.escape) {
           onCancel?.();
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApprove(diffsToPass.size > 0 ? diffsToPass : undefined);
+          return;
+        }
+        if (input === "2" && allowPersistence) {
+          onApproveAlways(
+            "project",
+            diffsToPass.size > 0 ? diffsToPass : undefined,
+          );
+          return;
         }
       },
       { isActive: isFocused },

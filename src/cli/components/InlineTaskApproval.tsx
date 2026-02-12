@@ -109,6 +109,17 @@ export const InlineTaskApproval = memo(
         }
         if (key.escape) {
           onCancel?.();
+          return;
+        }
+
+        // Number keys for quick selection (only for fixed options, not custom text input)
+        if (input === "1") {
+          onApprove();
+          return;
+        }
+        if (input === "2" && allowPersistence) {
+          onApproveAlways("session");
+          return;
         }
       },
       { isActive: isFocused },
@@ -132,53 +143,30 @@ export const InlineTaskApproval = memo(
 
           {/* Header */}
           <Text bold color={colors.approval.header}>
-            Run Task?
+            Dispatch subagent?
           </Text>
 
           {/* Task details */}
           <Box paddingLeft={2} flexDirection="column" marginTop={1}>
-            {/* Subagent type */}
+            {/* Type — Description (with optional model) */}
             <Box flexDirection="row">
-              <Box width={12} flexShrink={0}>
-                <Text dimColor>Type:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
-                <Text wrap="wrap" color={colors.subagent.header}>
-                  {subagentType}
+              <Box flexGrow={1} width={contentWidth}>
+                <Text wrap="wrap">
+                  <Text bold color={colors.subagent.header}>
+                    {subagentType}
+                  </Text>
+                  <Text dimColor>
+                    {" — "}
+                    {description}
+                    {model ? ` (${model})` : ""}
+                  </Text>
                 </Text>
               </Box>
             </Box>
 
-            {/* Model (if specified) */}
-            {model && (
-              <Box flexDirection="row">
-                <Box width={12} flexShrink={0}>
-                  <Text dimColor>Model:</Text>
-                </Box>
-                <Box flexGrow={1} width={contentWidth - 12}>
-                  <Text wrap="wrap" dimColor>
-                    {model}
-                  </Text>
-                </Box>
-              </Box>
-            )}
-
-            {/* Description */}
-            <Box flexDirection="row">
-              <Box width={12} flexShrink={0}>
-                <Text dimColor>Description:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
-                <Text wrap="wrap">{description}</Text>
-              </Box>
-            </Box>
-
             {/* Prompt */}
-            <Box flexDirection="row" marginTop={1}>
-              <Box width={12} flexShrink={0}>
-                <Text dimColor>Prompt:</Text>
-              </Box>
-              <Box flexGrow={1} width={contentWidth - 12}>
+            <Box marginTop={1}>
+              <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap" dimColor>
                   {truncatedPrompt}
                 </Text>
@@ -198,7 +186,7 @@ export const InlineTaskApproval = memo(
 
     // Generate "always" text for Task tool
     const alwaysText =
-      approveAlwaysText || "Yes, allow Task operations during this session";
+      approveAlwaysText || "Yes, allow subagent operations during this session";
 
     return (
       <Box flexDirection="column">

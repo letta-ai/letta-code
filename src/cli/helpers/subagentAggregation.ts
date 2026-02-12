@@ -5,7 +5,7 @@
 
 import type { StaticSubagent } from "../components/SubagentGroupStatic.js";
 import type { Line } from "./accumulator.js";
-import { getSubagentByToolCallId } from "./subagentState.js";
+import { getSubagentByToolCallId, getSubagents } from "./subagentState.js";
 import { isTaskTool } from "./toolNameMapping.js";
 
 /**
@@ -31,15 +31,36 @@ export interface SubagentGroupItem {
 export function hasInProgressTaskToolCalls(
   order: string[],
   byId: Map<string, Line>,
-  emittedIds: Set<string>,
+  _emittedIds: Set<string>,
 ): boolean {
+  // If any foreground subagent is running, treat Task tools as in-progress.
+  // Background subagents shouldn't block grouping into the static area.
+  const hasForegroundRunning = getSubagents().some(
+    (agent) =>
+      !agent.isBackground &&
+      (agent.status === "pending" || agent.status === "running"),
+  );
+  if (hasForegroundRunning) {
+    return true;
+  }
+
   for (const id of order) {
     const ln = byId.get(id);
     if (!ln) continue;
     if (ln.kind === "tool_call" && isTaskTool(ln.name ?? "")) {
-      if (emittedIds.has(id)) continue;
       if (ln.phase !== "finished") {
         return true;
+      }
+      if (ln.toolCallId) {
+        const subagent = getSubagentByToolCallId(ln.toolCallId);
+        if (subagent) {
+          if (
+            !subagent.isBackground &&
+            (subagent.status === "pending" || subagent.status === "running")
+          ) {
+            return true;
+          }
+        }
       }
     }
   }
@@ -75,7 +96,13 @@ export function collectFinishedTaskToolCalls(
     ) {
       // Check if we have subagent data in the state store
       const subagent = getSubagentByToolCallId(ln.toolCallId);
-      if (subagent) {
+      if (
+        subagent &&
+        (subagent.status === "completed" ||
+          subagent.status === "error" ||
+          (subagent.isBackground &&
+            (subagent.status === "pending" || subagent.status === "running")))
+      ) {
         finished.push({
           lineId: id,
           toolCallId: ln.toolCallId,
@@ -103,12 +130,15 @@ export function createSubagentGroupItem(
         id: subagent.id,
         type: subagent.type,
         description: subagent.description,
-        status: subagent.status as "completed" | "error",
+        status: subagent.isBackground
+          ? "running"
+          : (subagent.status as "completed" | "error"),
         toolCount: subagent.toolCalls.length,
         totalTokens: subagent.totalTokens,
         agentURL: subagent.agentURL,
         error: subagent.error,
         model: subagent.model,
+        isBackground: subagent.isBackground,
       });
     }
   }
