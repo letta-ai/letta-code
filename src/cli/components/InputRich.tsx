@@ -174,7 +174,7 @@ function StatusLineContent({
   }
   return (
     <Text wrap="wrap">
-      <Text dimColor>{parts}</Text>
+      <Text>{parts}</Text>
       {modeName && modeColor && (
         <>
           {"\n"}
@@ -311,7 +311,7 @@ const InputFooter = memo(function InputFooter({
           <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : statusLineRight ? (
           statusLineRight.split("\n").map((line) => (
-            <Text key={line} dimColor wrap="truncate-end">
+            <Text key={line} wrap="truncate-end">
               {parseOsc8Line(line, line)}
             </Text>
           ))
