@@ -17,7 +17,13 @@ interface ConversationSelectorProps {
   agentId: string;
   agentName?: string;
   currentConversationId: string;
-  onSelect: (conversationId: string) => void;
+  onSelect: (
+    conversationId: string,
+    context?: {
+      summary?: string;
+      messageCount: number;
+    },
+  ) => void;
   onNewConversation: () => void;
   onCancel: () => void;
 }
@@ -370,7 +376,10 @@ export function ConversationSelector({
     } else if (key.return) {
       const selected = pageConversations[selectedIndex];
       if (selected?.conversation.id) {
-        onSelect(selected.conversation.id);
+        onSelect(selected.conversation.id, {
+          summary: selected.conversation.summary ?? undefined,
+          messageCount: selected.messageCount,
+        });
       }
     } else if (key.escape) {
       onCancel();

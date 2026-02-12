@@ -865,6 +865,11 @@ export default function App({
 
   const resumeKey = useSuspend();
 
+  // Pending conversation switch context — consumed on first message after a switch
+  const pendingConversationSwitchRef = useRef<
+    import("./helpers/conversationSwitchAlert").ConversationSwitchContext | null
+  >(null);
+
   // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
@@ -4997,6 +5002,31 @@ export default function App({
         setLlmConfig(agent.llm_config);
         setConversationId(targetConversationId);
 
+        // Set conversation switch context for agent switch
+        {
+          const { getModelDisplayName } = await import("../agent/model");
+          const modelHandle =
+            agent.model ||
+            (agent.llm_config?.model_endpoint_type && agent.llm_config?.model
+              ? `${agent.llm_config.model_endpoint_type}/${agent.llm_config.model}`
+              : null);
+          const modelLabel =
+            (modelHandle && getModelDisplayName(modelHandle)) ||
+            modelHandle ||
+            "unknown";
+          pendingConversationSwitchRef.current = {
+            origin: "agent-switch",
+            conversationId: targetConversationId,
+            isDefault: targetConversationId === "default",
+            agentSwitchContext: {
+              name: agent.name || targetAgentId,
+              description: agent.description ?? undefined,
+              model: modelLabel,
+              blockCount: agent.blocks?.length ?? 0,
+            },
+          };
+        }
+
         // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
 
@@ -6379,6 +6409,12 @@ export default function App({
             // Update conversationId state
             setConversationId(conversation.id);
 
+            pendingConversationSwitchRef.current = {
+              origin: "new",
+              conversationId: conversation.id,
+              isDefault: false,
+            };
+
             // Save the new session to settings
             settingsManager.setLocalLastSession(
               { agentId, conversationId: conversation.id },
@@ -6451,6 +6487,13 @@ export default function App({
               isolated_block_labels: [...ISOLATED_BLOCK_LABELS],
             });
             setConversationId(conversation.id);
+
+            pendingConversationSwitchRef.current = {
+              origin: "clear",
+              conversationId: conversation.id,
+              isDefault: false,
+            };
+
             settingsManager.setLocalLastSession(
               { agentId, conversationId: conversation.id },
               process.cwd(),
@@ -6777,6 +6820,15 @@ export default function App({
 
                 // Only update state after validation succeeds
                 setConversationId(targetConvId);
+
+                pendingConversationSwitchRef.current = {
+                  origin: "resume-direct",
+                  conversationId: targetConvId,
+                  isDefault: targetConvId === "default",
+                  messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
+                };
+
                 settingsManager.setLocalLastSession(
                   { agentId, conversationId: targetConvId },
                   process.cwd(),
@@ -8047,8 +8099,24 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
+      // Build conversation switch alert if a switch is pending (behind feature flag)
+      let conversationSwitchAlert = "";
+      if (
+        pendingConversationSwitchRef.current &&
+        settingsManager.getSetting("conversationSwitchAlertEnabled")
+      ) {
+        const { buildConversationSwitchAlert } = await import(
+          "./helpers/conversationSwitchAlert"
+        );
+        conversationSwitchAlert = buildConversationSwitchAlert(
+          pendingConversationSwitchRef.current,
+        );
+      }
+      pendingConversationSwitchRef.current = null;
+
       pushReminder(sessionStartHookFeedback);
       pushReminder(permissionModeAlert);
+      pushReminder(conversationSwitchAlert);
       pushReminder(planModeReminder);
       pushReminder(ralphModeReminder);
 
@@ -9793,6 +9861,15 @@ ${SYSTEM_REMINDER_CLOSE}
                 );
 
                 setConversationId(action.conversationId);
+
+                pendingConversationSwitchRef.current = {
+                  origin: "resume-selector",
+                  conversationId: action.conversationId,
+                  isDefault: action.conversationId === "default",
+                  messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
+                };
+
                 settingsManager.setLocalLastSession(
                   { agentId, conversationId: action.conversationId },
                   process.cwd(),
@@ -11009,7 +11086,7 @@ Plan file path: ${planFilePath}`;
                 agentId={agentId}
                 agentName={agentName ?? undefined}
                 currentConversationId={conversationId}
-                onSelect={async (convId) => {
+                onSelect={async (convId, selectorContext) => {
                   const overlayCommand = consumeOverlayCommand("conversations");
                   closeOverlay();
 
@@ -11071,6 +11148,18 @@ Plan file path: ${planFilePath}`;
 
                       // Only update state after validation succeeds
                       setConversationId(convId);
+
+                      pendingConversationSwitchRef.current = {
+                        origin: "resume-selector",
+                        conversationId: convId,
+                        isDefault: convId === "default",
+                        messageCount:
+                          selectorContext?.messageCount ??
+                          resumeData.messageHistory.length,
+                        summary: selectorContext?.summary,
+                        messageHistory: resumeData.messageHistory,
+                      };
+
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: convId },
                         process.cwd(),
@@ -11289,7 +11378,11 @@ Plan file path: ${planFilePath}`;
                 initialQuery={searchQuery || undefined}
                 agentId={agentId}
                 conversationId={conversationId}
-                onOpenConversation={async (targetAgentId, targetConvId) => {
+                onOpenConversation={async (
+                  targetAgentId,
+                  targetConvId,
+                  searchContext,
+                ) => {
                   const overlayCommand = consumeOverlayCommand("search");
                   closeOverlay();
 
@@ -11358,6 +11451,17 @@ Plan file path: ${planFilePath}`;
                       );
 
                       setConversationId(actualTargetConv);
+
+                      pendingConversationSwitchRef.current = {
+                        origin: "search",
+                        conversationId: actualTargetConv,
+                        isDefault: actualTargetConv === "default",
+                        messageCount: resumeData.messageHistory.length,
+                        messageHistory: resumeData.messageHistory,
+                        searchQuery: searchContext?.query,
+                        searchMessage: searchContext?.message,
+                      };
+
                       settingsManager.setLocalLastSession(
                         { agentId, conversationId: actualTargetConv },
                         process.cwd(),
