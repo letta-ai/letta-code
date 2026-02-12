@@ -6171,11 +6171,6 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
-          // Show a lightweight loading indicator while fetching breakdown.
-          // Avoid rendering the full chart in the "running" phase because
-          // tall dynamic-area content on short terminals scrolls into the
-          // terminal scrollback and persists after Ink commits the final
-          // output to <Static>, causing a double render.
           const cmd = commandRunner.start(
             trimmed,
             "Fetching context breakdown...",
