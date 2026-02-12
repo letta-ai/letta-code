@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import type { SubagentState } from "../../cli/helpers/subagentState";
+import {
+  clearAllSubagents,
+  registerSubagent,
+  updateSubagent,
+} from "../../cli/helpers/subagentState";
 import { backgroundTasks } from "../../tools/impl/process_manager";
-import { spawnBackgroundSubagentTask } from "../../tools/impl/Task";
+import {
+  spawnBackgroundSubagentTask,
+  waitForBackgroundSubagentLink,
+} from "../../tools/impl/Task";
 
 describe("spawnBackgroundSubagentTask", () => {
   let subagentCounter = 0;
@@ -70,6 +78,7 @@ describe("spawnBackgroundSubagentTask", () => {
     formatTaskNotificationImpl.mockClear();
     runSubagentStopHooksImpl.mockClear();
     backgroundTasks.clear();
+    clearAllSubagents();
   });
 
   afterEach(() => {
@@ -79,6 +88,7 @@ describe("spawnBackgroundSubagentTask", () => {
       }
     }
     backgroundTasks.clear();
+    clearAllSubagents();
   });
 
   test("runs background subagent and preserves queue + hook behavior on success", async () => {
@@ -170,5 +180,38 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const outputContent = readFileSync(launched.outputFile, "utf-8");
     expect(outputContent).toContain("[error] subagent exploded");
+  });
+});
+
+describe("waitForBackgroundSubagentLink", () => {
+  afterEach(() => {
+    clearAllSubagents();
+  });
+
+  test("returns after agent URL becomes available", async () => {
+    registerSubagent("subagent-link-1", "reflection", "Reflect", "tc-1", true);
+
+    setTimeout(() => {
+      updateSubagent("subagent-link-1", {
+        agentURL: "https://app.letta.com/agents/agent-123",
+      });
+    }, 20);
+
+    const start = Date.now();
+    await waitForBackgroundSubagentLink("subagent-link-1", 300);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeGreaterThanOrEqual(10);
+    expect(elapsed).toBeLessThan(250);
+  });
+
+  test("times out when URL is unavailable", async () => {
+    registerSubagent("subagent-link-2", "reflection", "Reflect", "tc-2", true);
+
+    const start = Date.now();
+    await waitForBackgroundSubagentLink("subagent-link-2", 70);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeGreaterThanOrEqual(50);
   });
 });

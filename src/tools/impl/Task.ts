@@ -46,6 +46,7 @@ interface TaskArgs {
 
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["explore", "general-purpose"]);
+const BACKGROUND_STARTUP_POLL_MS = 50;
 
 type TaskRunResult = {
   agentId: string;
@@ -132,6 +133,46 @@ function writeTaskTranscriptResult(
     outputFile,
     `[error] ${result.error || "Subagent execution failed"}\n\n[Task failed]\n`,
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait briefly for a background subagent to publish its agent URL.
+ * This keeps Task mostly non-blocking while allowing static transcript rows
+ * to include an ADE link in the common case.
+ */
+export async function waitForBackgroundSubagentLink(
+  subagentId: string,
+  timeoutMs: number | null = null,
+  signal?: AbortSignal,
+): Promise<void> {
+  const deadline =
+    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
+
+  while (true) {
+    if (signal?.aborted) {
+      return;
+    }
+
+    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
+    if (!agent) {
+      return;
+    }
+    if (agent.agentURL) {
+      return;
+    }
+    if (agent.status === "error" || agent.status === "completed") {
+      return;
+    }
+    if (deadline !== null && Date.now() >= deadline) {
+      return;
+    }
+
+    await sleep(BACKGROUND_STARTUP_POLL_MS);
+  }
 }
 
 /**
@@ -372,7 +413,7 @@ export async function task(args: TaskArgs): Promise<string> {
 
   // Handle background execution
   if (isBackground) {
-    const { taskId, outputFile } = spawnBackgroundSubagentTask({
+    const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: subagent_type,
       prompt,
       description,
@@ -382,6 +423,8 @@ export async function task(args: TaskArgs): Promise<string> {
       existingConversationId: args.conversation_id,
       maxTurns: args.max_turns,
     });
+
+    await waitForBackgroundSubagentLink(subagentId, null, signal);
 
     return `Task running in background with ID: ${taskId}\nOutput file: ${outputFile}`;
   }
