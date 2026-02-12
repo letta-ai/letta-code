@@ -59,7 +59,7 @@ export interface Settings {
   reflectionTrigger: "off" | "step-count" | "compaction-event";
   reflectionBehavior: "reminder" | "auto-launch";
   reflectionStepCount: number;
-  conversationSwitchAlertEnabled: boolean; // Send system-alert when switching conversations/agents
+  conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
