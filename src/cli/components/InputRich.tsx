@@ -310,9 +310,9 @@ const InputFooter = memo(function InputFooter({
         {hideFooterContent ? (
           <Text>{" ".repeat(rightColumnWidth)}</Text>
         ) : statusLineRight ? (
-          statusLineRight.split("\n").map((line) => (
-            <Text key={line} wrap="truncate-end">
-              {parseOsc8Line(line, line)}
+          statusLineRight.split("\n").map((line, i) => (
+            <Text key={`${i}-${line}`} wrap="truncate-end">
+              {parseOsc8Line(line, `r${i}`)}
             </Text>
           ))
         ) : (
