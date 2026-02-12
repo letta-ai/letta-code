@@ -1208,7 +1208,9 @@ export default function App({
   }, [llmConfig]);
   const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
-  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(null);
+  const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
+    null,
+  );
   // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -6159,15 +6161,7 @@ export default function App({
             );
           } catch (error) {
             const errorDetails = formatErrorDetails(error, agentId);
-            buffersRef.current.byId.set(cmdId, {
-              kind: "command",
-              id: cmdId,
-              input: msg,
-              output: `Failed: ${errorDetails}`,
-              phase: "finished",
-              success: false,
-            });
-            refreshDerived();
+            cmd.fail(`Failed: ${errorDetails}`);
           } finally {
             setCommandRunning(false);
           }
@@ -6178,22 +6172,20 @@ export default function App({
         // Supports: /compact, /compact all, /compact sliding_window
         if (msg.trim().startsWith("/compact")) {
           const parts = msg.trim().split(/\s+/);
-          const modeArg = parts[1] as
-            | "all"
-            | "sliding_window"
-            | undefined;
+          const modeArg = parts[1] as "all" | "sliding_window" | undefined;
           const validModes = ["all", "sliding_window"];
 
           // Validate mode if provided
           if (modeArg && !validModes.includes(modeArg)) {
             const cmd = commandRunner.start(
               msg.trim(),
-              `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`
+              `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`,
             );
-            cmd.fail(`Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`);
+            cmd.fail(
+              `Invalid mode "${modeArg}". Valid modes: ${validModes.join(", ")}`,
+            );
             return { submitted: true };
           }
-
 
           const modeDisplay = modeArg ? ` (mode: ${modeArg})` : "";
           const cmd = commandRunner.start(
@@ -6222,20 +6214,22 @@ export default function App({
             const client = await getClient();
 
             // Compute model handle from llmConfig
-            const modelHandle = llmConfig?.model_endpoint_type && llmConfig?.model
-              ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-              : llmConfig?.model || null;
+            const modelHandle =
+              llmConfig?.model_endpoint_type && llmConfig?.model
+                ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
+                : llmConfig?.model || null;
 
             // Build compaction settings if mode was specified
             // Pass mode-specific prompt to override any agent defaults
-            const compactParams = modeArg && modelHandle
-              ? {
-                  compaction_settings: {
-                    mode: modeArg,
-                    model: modelHandle,
-                  },
-                }
-              : undefined;
+            const compactParams =
+              modeArg && modelHandle
+                ? {
+                    compaction_settings: {
+                      mode: modeArg,
+                      model: modelHandle,
+                    },
+                  }
+                : undefined;
 
             // Use agent-level compact API for "default" conversation,
             // otherwise use conversation-level API
