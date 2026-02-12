@@ -7549,13 +7549,15 @@ MEMORY SYNC: Your memory directory has uncommitted changes or is ahead of the re
 
 ${gitStatus.summary}
 
-To sync:
+Sync when convenient by running these commands:
 \`\`\`bash
 cd ~/.letta/agents/${agentId}/memory
 git add system/
 git commit -m "<type>: <what changed>"
 git push
 \`\`\`
+
+You should do this soon to avoid losing memory updates. It only takes a few seconds.
 ${SYSTEM_REMINDER_CLOSE}
 `;
         // Clear after injecting so it doesn't repeat
