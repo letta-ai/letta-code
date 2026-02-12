@@ -451,6 +451,18 @@ function extractTextPart(v: unknown): string {
   return "";
 }
 
+function resolveLineIdForKind(
+  b: Buffers,
+  canonicalId: string,
+  kind: "assistant" | "reasoning",
+): string {
+  const existing = b.byId.get(canonicalId);
+  if (!existing || existing.kind === kind) return canonicalId;
+
+  // Avoid cross-kind collisions when providers reuse the same id/otid.
+  return `${kind}:${canonicalId}`;
+}
+
 function resolveAssistantLineId(
   b: Buffers,
   chunk: LettaStreamingResponse & { id?: string; otid?: string },
@@ -499,7 +511,13 @@ function resolveAssistantLineId(
     b.assistantCanonicalByOtid.set(otid, canonical);
   }
 
-  return canonical;
+  const lineId = resolveLineIdForKind(b, canonical, "assistant");
+  if (lineId !== canonical) {
+    if (messageId) b.assistantCanonicalByMessageId.set(messageId, lineId);
+    if (otid) b.assistantCanonicalByOtid.set(otid, lineId);
+  }
+
+  return lineId;
 }
 
 function resolveReasoningLineId(
@@ -549,7 +567,13 @@ function resolveReasoningLineId(
     b.reasoningCanonicalByOtid.set(otid, canonical);
   }
 
-  return canonical;
+  const lineId = resolveLineIdForKind(b, canonical, "reasoning");
+  if (lineId !== canonical) {
+    if (messageId) b.reasoningCanonicalByMessageId.set(messageId, lineId);
+    if (otid) b.reasoningCanonicalByOtid.set(otid, lineId);
+  }
+
+  return lineId;
 }
 
 /**
