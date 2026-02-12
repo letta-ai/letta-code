@@ -45,11 +45,22 @@ export async function buildMemoryReminder(
 ): Promise<string> {
   const memoryInterval = getMemoryInterval();
 
-  if (memoryInterval && turnCount > 0 && turnCount % memoryInterval === 0) {
-    if (settingsManager.isMemfsEnabled(agentId)) {
+  // When memfs is enabled, the reflection subagent handles memory consolidation
+  // asynchronously, so a slower cadence (occasional) is appropriate.
+  const memfsEnabled = settingsManager.isMemfsEnabled(agentId);
+  const effectiveInterval = memfsEnabled
+    ? Math.max(memoryInterval ?? 0, MEMORY_INTERVAL_OCCASIONAL)
+    : memoryInterval;
+
+  if (
+    effectiveInterval &&
+    turnCount > 0 &&
+    turnCount % effectiveInterval === 0
+  ) {
+    if (memfsEnabled) {
       debugLog(
         "memory",
-        `Reflection reminder fired (turn ${turnCount}, agent ${agentId})`,
+        `Reflection reminder fired (turn ${turnCount}, interval ${effectiveInterval}, agent ${agentId})`,
       );
       const { MEMORY_REFLECTION_REMINDER } = await import(
         "../../agent/promptAssets.js"
@@ -59,7 +70,7 @@ export async function buildMemoryReminder(
 
     debugLog(
       "memory",
-      `Memory check reminder fired (turn ${turnCount}, agent ${agentId})`,
+      `Memory check reminder fired (turn ${turnCount}, interval ${effectiveInterval}, agent ${agentId})`,
     );
     const { MEMORY_CHECK_REMINDER } = await import(
       "../../agent/promptAssets.js"
