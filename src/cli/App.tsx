@@ -10666,7 +10666,7 @@ Plan file path: ${planFilePath}`;
               {item.kind === "welcome" ? (
                 <WelcomeScreen loadingState="ready" {...item.snapshot} />
               ) : item.kind === "user" ? (
-                <UserMessage line={item} />
+                <UserMessage line={item} prompt={statusLine.prompt} />
               ) : item.kind === "reasoning" ? (
                 <ReasoningMessage line={item} />
               ) : item.kind === "assistant" ? (
@@ -10799,7 +10799,7 @@ Plan file path: ${planFilePath}`;
                             showPreview={showApprovalPreview}
                           />
                         ) : ln.kind === "user" ? (
-                          <UserMessage line={ln} />
+                          <UserMessage line={ln} prompt={statusLine.prompt} />
                         ) : ln.kind === "reasoning" ? (
                           <ReasoningMessage line={ln} />
                         ) : ln.kind === "assistant" ? (
