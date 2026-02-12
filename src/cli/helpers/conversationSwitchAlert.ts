@@ -1,7 +1,5 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-
-const SYSTEM_ALERT_OPEN = "<system-alert>";
-const SYSTEM_ALERT_CLOSE = "</system-alert>";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "../../constants";
 
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_MESSAGE_CHARS = 500;
@@ -83,7 +81,7 @@ export function buildConversationSwitchAlert(
     parts.push("Review the in-context messages for full conversation history.");
   }
 
-  return `${SYSTEM_ALERT_OPEN}\n${parts.join("\n")}\n${SYSTEM_ALERT_CLOSE}\n\n`;
+  return `${SYSTEM_REMINDER_OPEN}\n${parts.join("\n")}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
 }
 
 function pushConversationMeta(
