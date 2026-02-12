@@ -10,7 +10,7 @@ export function formatStatusLineHelp(): string {
   return [
     "/statusline help",
     "",
-    "Configure a custom CLI status line command (Claude-compatible superset).",
+    "Configure a custom CLI status line command.",
     "",
     "USAGE",
     "  /statusline show",

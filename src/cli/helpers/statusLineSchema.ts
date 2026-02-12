@@ -1,7 +1,4 @@
-// Claude-compatible status line schema support matrix for Letta Code.
-//
-// This intentionally documents which Claude statusline fields are fully native
-// or derived/approximate in Letta.
+// Status line input field definitions for Letta Code.
 
 export interface StatusLineFieldSpec {
   path: string;
@@ -21,6 +18,9 @@ export const STATUSLINE_NATIVE_FIELDS: StatusLineFieldSpec[] = [
   { path: "context_window.context_window_size" },
   { path: "context_window.total_input_tokens" },
   { path: "context_window.total_output_tokens" },
+  { path: "permission_mode" },
+  { path: "network_phase" },
+  { path: "terminal_width" },
 ];
 
 export const STATUSLINE_DERIVED_FIELDS: StatusLineFieldSpec[] = [

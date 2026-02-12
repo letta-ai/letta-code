@@ -14,7 +14,7 @@ export const DEFAULT_STATUS_LINE_TIMEOUT_MS = 5_000;
 /** Maximum allowed execution timeout (30 seconds). */
 export const MAX_STATUS_LINE_TIMEOUT_MS = 30_000;
 
-/** Default trigger debounce (300ms, Claude-compatible behavior). */
+/** Default trigger debounce (300ms). */
 export const DEFAULT_STATUS_LINE_DEBOUNCE_MS = 300;
 
 /** Minimum allowed debounce. */

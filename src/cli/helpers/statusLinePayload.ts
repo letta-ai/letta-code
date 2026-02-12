@@ -19,10 +19,9 @@ export interface StatusLinePayloadBuildInput {
 }
 
 /**
- * Claude-compatible status line payload with Letta extensions under `letta`.
+ * Status line payload piped as JSON to the command's stdin.
  *
- * Unsupported Claude fields are set to null (or omitted if optional object absent)
- * so users can understand compatibility while keeping JSON stable for scripts.
+ * Unsupported fields are set to null to keep JSON stable for scripts.
  */
 export interface StatusLinePayload {
   cwd: string;
@@ -67,11 +66,9 @@ export interface StatusLinePayload {
   agent: {
     name: string | null;
   };
-  letta: {
-    permission_mode: string | null;
-    network_phase: "upload" | "download" | "error" | null;
-    terminal_width: number | null;
-  };
+  permission_mode: string | null;
+  network_phase: "upload" | "download" | "error" | null;
+  terminal_width: number | null;
 }
 
 export function calculateContextPercentages(
@@ -152,10 +149,8 @@ export function buildStatusLinePayload(
     agent: {
       name: input.agentName ?? null,
     },
-    letta: {
-      permission_mode: input.permissionMode ?? null,
-      network_phase: input.networkPhase ?? null,
-      terminal_width: input.terminalWidth ?? null,
-    },
+    permission_mode: input.permissionMode ?? null,
+    network_phase: input.networkPhase ?? null,
+    terminal_width: input.terminalWidth ?? null,
   };
 }

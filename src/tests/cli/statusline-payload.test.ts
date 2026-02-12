@@ -5,7 +5,7 @@ import {
 } from "../../cli/helpers/statusLinePayload";
 
 describe("statusLinePayload", () => {
-  test("builds Claude-compatible structure with Letta extras", () => {
+  test("builds payload with all fields", () => {
     const payload = buildStatusLinePayload({
       modelId: "anthropic/claude-sonnet-4",
       modelDisplayName: "Sonnet",
@@ -31,9 +31,9 @@ describe("statusLinePayload", () => {
     expect(payload.model.display_name).toBe("Sonnet");
     expect(payload.context_window.used_percentage).toBe(20);
     expect(payload.context_window.remaining_percentage).toBe(80);
-    expect(payload.letta.permission_mode).toBe("default");
-    expect(payload.letta.network_phase).toBe("download");
-    expect(payload.letta.terminal_width).toBe(120);
+    expect(payload.permission_mode).toBe("default");
+    expect(payload.network_phase).toBe("download");
+    expect(payload.terminal_width).toBe(120);
   });
 
   test("marks unsupported fields as null", () => {

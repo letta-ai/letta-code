@@ -127,8 +127,7 @@ export function useConfigurableStatusLine(
     const config = configRef.current ?? resolveActiveConfig();
     if (!config) return;
 
-    // Claude-style behavior: if a new trigger comes while command is still running,
-    // cancel in-flight execution and only keep latest execution.
+    // Cancel in-flight execution so only the latest result is used.
     abortRef.current?.abort();
 
     const ac = new AbortController();

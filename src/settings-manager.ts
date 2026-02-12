@@ -26,12 +26,6 @@ export interface SessionRef {
 
 /**
  * Configuration for a user-defined status line command.
- *
- * Claude-compatible fields:
- * - type, command, padding
- *
- * Letta extensions:
- * - timeout, debounceMs, refreshIntervalMs
  */
 export interface StatusLineConfig {
   type?: "command";
