@@ -167,6 +167,10 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   buffers.toolCallIdToLineId.clear();
   buffers.pendingToolByRun.clear();
   buffers.lastOtid = null;
+  buffers.assistantCanonicalByMessageId.clear();
+  buffers.assistantCanonicalByOtid.clear();
+  buffers.reasoningCanonicalByMessageId.clear();
+  buffers.reasoningCanonicalByOtid.clear();
   // Note: we don't reset tokenCount here (it resets per-turn in onSubmit)
 
   // Iterate over the history and add the messages to the buffers

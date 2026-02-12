@@ -105,4 +105,136 @@ describe("accumulator usage statistics", () => {
     expect(tracker.pendingSkillsReinject).toBe(true);
     expect(tracker.pendingReflectionTrigger).toBe(true);
   });
+
+  test("accumulates assistant messages when otid is missing but id is present", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-fallback-1",
+      content: [{ type: "text", text: "Hello " }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-fallback-1",
+      content: [{ type: "text", text: "world" }],
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("assistant-fallback-1");
+    expect(line?.kind).toBe("assistant");
+    expect(line && "text" in line ? line.text : "").toBe("Hello world");
+  });
+
+  test("keeps one assistant line when stream transitions id -> both -> otid", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-1",
+      content: [{ type: "text", text: "Hello " }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-1",
+      otid: "assistant-otid-1",
+      content: [{ type: "text", text: "from " }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      otid: "assistant-otid-1",
+      content: [{ type: "text", text: "stream" }],
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("assistant-msg-1");
+    expect(line?.kind).toBe("assistant");
+    expect(line && "text" in line ? line.text : "").toBe("Hello from stream");
+    expect(buffers.byId.get("assistant-otid-1")).toBeUndefined();
+  });
+
+  test("keeps one assistant line when stream transitions otid -> both -> id", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      otid: "assistant-otid-2",
+      content: [{ type: "text", text: "Hello " }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-2",
+      otid: "assistant-otid-2",
+      content: [{ type: "text", text: "from " }],
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "assistant_message",
+      id: "assistant-msg-2",
+      content: [{ type: "text", text: "stream" }],
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("assistant-otid-2");
+    expect(line?.kind).toBe("assistant");
+    expect(line && "text" in line ? line.text : "").toBe("Hello from stream");
+    expect(buffers.byId.get("assistant-msg-2")).toBeUndefined();
+  });
+
+  test("keeps one reasoning line when stream transitions id -> both -> otid", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-1",
+      reasoning: "Think ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-1",
+      otid: "reasoning-otid-1",
+      reasoning: "through ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      otid: "reasoning-otid-1",
+      reasoning: "it",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-msg-1");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe("Think through it");
+    expect(buffers.byId.get("reasoning-otid-1")).toBeUndefined();
+  });
+
+  test("keeps one reasoning line when stream transitions otid -> both -> id", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      otid: "reasoning-otid-2",
+      reasoning: "Think ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-2",
+      otid: "reasoning-otid-2",
+      reasoning: "through ",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-2",
+      reasoning: "it",
+    } as unknown as LettaStreamingResponse);
+
+    const line = buffers.byId.get("reasoning-otid-2");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe("Think through it");
+    expect(buffers.byId.get("reasoning-msg-2")).toBeUndefined();
+  });
 });
