@@ -32,7 +32,7 @@
     "max_turns": {
       "type": "integer",
       "exclusiveMinimum": 0,
-      "description": "Maximum number of agentic turns (API round-trips) before stopping."
+      "description": "Maximum number of agentic turns (API round-trips) before stopping. Defaults to unlimited (recommended for most use cases)."
     }
   },
   "required": ["description", "prompt", "subagent_type"],
