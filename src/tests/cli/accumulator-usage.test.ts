@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers, onChunk } from "../../cli/helpers/accumulator";
+import { createContextTracker } from "../../cli/helpers/contextTracker";
 
 function usageChunk(
   fields: Record<string, number | null | undefined>,
@@ -71,5 +72,37 @@ describe("accumulator usage statistics", () => {
     expect(buffers.usage.cacheWriteTokens).toBe(0);
     expect(buffers.usage.reasoningTokens).toBe(0);
     expect(buffers.usage.contextTokens).toBeUndefined();
+  });
+
+  test("sets reflection trigger only after compaction summary message", () => {
+    const buffers = createBuffers("agent-1");
+    const tracker = createContextTracker();
+
+    onChunk(
+      buffers,
+      {
+        message_type: "event_message",
+        otid: "evt-compaction-1",
+        event_type: "compaction",
+        event_data: {},
+      },
+      tracker,
+    );
+
+    expect(tracker.pendingReflectionTrigger).toBe(false);
+
+    onChunk(
+      buffers,
+      {
+        message_type: "summary_message",
+        otid: "evt-compaction-1",
+        summary: "Compaction completed",
+      },
+      tracker,
+    );
+
+    expect(tracker.pendingCompaction).toBe(true);
+    expect(tracker.pendingSkillsReinject).toBe(true);
+    expect(tracker.pendingReflectionTrigger).toBe(true);
   });
 });

@@ -77,7 +77,6 @@ OPTIONS
                         Emit stream_event wrappers for each chunk (stream-json only)
   --from-agent <id>     Inject agent-to-agent system reminder (headless mode)
   --skills <path>       Custom path to skills directory (default: .skills in current directory)
-  --sleeptime           Enable sleeptime memory management (only for new agents)
   --import <path>       Create agent from an AgentFile (.af) template
                         Use @author/name to import from the agent registry
   --memfs               Enable memory filesystem for this agent
@@ -438,7 +437,6 @@ async function main(): Promise<void> {
         "from-agent": { type: "string" },
         skills: { type: "string" },
         "pre-load-skills": { type: "string" },
-        sleeptime: { type: "boolean" },
         "from-af": { type: "string" },
         import: { type: "string" },
 
@@ -553,7 +551,6 @@ async function main(): Promise<void> {
     (values["memory-blocks"] as string | undefined) ?? undefined;
   const specifiedToolset = (values.toolset as string | undefined) ?? undefined;
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
-  const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile =
@@ -1597,18 +1594,15 @@ async function main(): Promise<void> {
           }
 
           const updateArgs = getModelUpdateArgs(effectiveModel);
-          const result = await createAgent(
-            undefined,
-            effectiveModel,
-            undefined,
+          const result = await createAgent({
+            model: effectiveModel,
             updateArgs,
             skillsDirectory,
-            true, // parallelToolCalls always enabled
-            sleeptimeFlag ?? settings.enableSleeptime,
+            parallelToolCalls: true,
             systemPromptPreset,
             initBlocks,
             baseTools,
-          );
+          });
           agent = result.agent;
           setAgentProvenance(result.provenance);
         }

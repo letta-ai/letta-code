@@ -60,6 +60,14 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
+  "/sleeptime": {
+    desc: "Configure reflection reminder trigger settings",
+    order: 15.5,
+    handler: () => {
+      // Handled specially in App.tsx to open sleeptime settings
+      return "Opening sleeptime settings...";
+    },
+  },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
     args: "[enable|disable|sync|reset]",

@@ -119,7 +119,6 @@ export async function handleHeadlessCommand(
       yolo: { type: "boolean" },
       skills: { type: "string" },
       "pre-load-skills": { type: "string" },
-      sleeptime: { type: "boolean" },
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
@@ -261,7 +260,6 @@ export async function handleHeadlessCommand(
   const blockValueArgs = values["block-value"] as string[] | undefined;
   const initBlocksRaw = values["init-blocks"] as string | undefined;
   const baseToolsRaw = values["base-tools"] as string | undefined;
-  const sleeptimeFlag = (values.sleeptime as boolean | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
   const fromAfFile = values["from-af"] as string | undefined;
@@ -573,7 +571,6 @@ export async function handleHeadlessCommand(
       updateArgs,
       skillsDirectory,
       parallelToolCalls: true,
-      enableSleeptime: sleeptimeFlag ?? settings.enableSleeptime,
       systemPromptPreset,
       systemPromptCustom: systemCustom,
       systemPromptAppend: systemAppend,
