@@ -427,6 +427,7 @@ const READ_ONLY_SUBAGENT_TYPES = new Set([
   "Recall",
   "reflection", // Memory reflection - reads history, writes to agent's own memory files
   "Reflection",
+  "history-analyzer", // History analysis - reads history files, writes to agent memory
 ]);
 
 /**
