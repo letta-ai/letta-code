@@ -21,7 +21,7 @@ interface MessageSearchProps {
   onOpenConversation?: (
     agentId: string,
     conversationId?: string,
-    searchContext?: { query: string; messagePreview: string },
+    searchContext?: { query: string; message: string },
   ) => void;
 }
 
@@ -351,10 +351,10 @@ export function MessageSearch({
           conversation_id?: string;
         };
         if (msgData.agent_id) {
-          const preview = getMessageText(expandedMessage).slice(0, 200);
+          const fullText = getMessageText(expandedMessage);
           onOpenConversation(msgData.agent_id, msgData.conversation_id, {
             query: activeQuery,
-            messagePreview: preview,
+            message: fullText,
           });
         }
       }

@@ -1,10 +1,10 @@
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+
 const SYSTEM_ALERT_OPEN = "<system-alert>";
 const SYSTEM_ALERT_CLOSE = "</system-alert>";
 
-export interface ConversationSwitchPreviewLine {
-  role: "user" | "assistant";
-  text: string;
-}
+const MAX_HISTORY_MESSAGES = 8;
+const MAX_MESSAGE_CHARS = 500;
 
 export interface ConversationSwitchContext {
   origin:
@@ -19,10 +19,10 @@ export interface ConversationSwitchContext {
 
   summary?: string;
   messageCount?: number;
-  previewLines?: ConversationSwitchPreviewLine[];
+  messageHistory?: Message[];
 
   searchQuery?: string;
-  searchMessagePreview?: string;
+  searchMessage?: string;
 
   agentSwitchContext?: {
     name: string;
@@ -46,10 +46,11 @@ export function buildConversationSwitchAlert(
     parts.push(
       `Conversation switched. The user searched for "${ctx.searchQuery}" and jumped to this conversation based on a matching message.`,
     );
-    if (ctx.searchMessagePreview) {
-      parts.push(`Selected message: "${ctx.searchMessagePreview}"`);
+    if (ctx.searchMessage) {
+      parts.push(`Selected message: "${ctx.searchMessage}"`);
     }
     pushConversationMeta(parts, ctx);
+    pushMessageHistory(parts, ctx);
   } else if (ctx.origin === "agent-switch" && ctx.agentSwitchContext) {
     const a = ctx.agentSwitchContext;
     parts.push("Switched to a different agent.");
@@ -60,6 +61,7 @@ export function buildConversationSwitchAlert(
     parts.push(
       `Model: ${a.model} · ${a.blockCount} memory block${a.blockCount === 1 ? "" : "s"}`,
     );
+    pushMessageHistory(parts, ctx);
     parts.push(
       "The conversation context has changed entirely — review the in-context messages.",
     );
@@ -70,18 +72,18 @@ export function buildConversationSwitchAlert(
     parts.push(
       "This conversation is shared across all sessions that don't use explicit conversation IDs.",
     );
-    pushConversationPreview(parts, ctx);
+    pushMessageHistory(parts, ctx);
     parts.push("Review the in-context messages for full conversation history.");
   } else {
     const via =
       ctx.origin === "resume-selector" ? "/resume selector" : "/resume";
     parts.push(`Conversation resumed via ${via}.`);
     pushConversationMeta(parts, ctx);
-    pushConversationPreview(parts, ctx);
+    pushMessageHistory(parts, ctx);
     parts.push("Review the in-context messages for full conversation history.");
   }
 
-  return `${SYSTEM_ALERT_OPEN}${parts.join("\n")}${SYSTEM_ALERT_CLOSE}\n\n`;
+  return `${SYSTEM_ALERT_OPEN}\n${parts.join("\n")}\n${SYSTEM_ALERT_CLOSE}\n\n`;
 }
 
 function pushConversationMeta(
@@ -97,15 +99,56 @@ function pushConversationMeta(
   }
 }
 
-function pushConversationPreview(
+function extractMessageText(msg: Message): string | null {
+  const content = (
+    msg as Message & {
+      content?: string | Array<{ type?: string; text?: string }>;
+    }
+  ).content;
+
+  if (!content) return null;
+
+  if (typeof content === "string") return content.trim();
+
+  if (Array.isArray(content)) {
+    const texts = content
+      .filter(
+        (p): p is { type: string; text: string } =>
+          p?.type === "text" && !!p.text,
+      )
+      .map((p) => p.text.trim())
+      .filter(Boolean);
+    return texts.join("\n") || null;
+  }
+
+  return null;
+}
+
+function pushMessageHistory(
   parts: string[],
   ctx: ConversationSwitchContext,
 ): void {
-  if (ctx.previewLines && ctx.previewLines.length > 0) {
-    parts.push("The user saw this preview when selecting:");
-    for (const line of ctx.previewLines) {
-      const emoji = line.role === "assistant" ? "👾" : "👤";
-      parts.push(`  ${emoji} ${line.text}`);
-    }
+  if (!ctx.messageHistory || ctx.messageHistory.length === 0) return;
+
+  const relevant = ctx.messageHistory
+    .filter(
+      (m) =>
+        m.message_type === "user_message" ||
+        m.message_type === "assistant_message",
+    )
+    .slice(-MAX_HISTORY_MESSAGES);
+
+  if (relevant.length === 0) return;
+
+  parts.push("Recent conversation messages:");
+  for (const msg of relevant) {
+    const text = extractMessageText(msg);
+    if (!text) continue;
+    const role = msg.message_type === "user_message" ? "user" : "assistant";
+    const clipped =
+      text.length > MAX_MESSAGE_CHARS
+        ? `${text.slice(0, MAX_MESSAGE_CHARS)}...`
+        : text;
+    parts.push(`[${role}] ${clipped}`);
   }
 }

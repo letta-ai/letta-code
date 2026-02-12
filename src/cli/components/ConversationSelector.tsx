@@ -22,7 +22,6 @@ interface ConversationSelectorProps {
     context?: {
       summary?: string;
       messageCount: number;
-      previewLines: PreviewLine[];
     },
   ) => void;
   onNewConversation: () => void;
@@ -380,7 +379,6 @@ export function ConversationSelector({
         onSelect(selected.conversation.id, {
           summary: selected.conversation.summary ?? undefined,
           messageCount: selected.messageCount,
-          previewLines: selected.previewLines,
         });
       }
     } else if (key.escape) {

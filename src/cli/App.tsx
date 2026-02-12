@@ -6785,6 +6785,7 @@ export default function App({
                   conversationId: targetConvId,
                   isDefault: targetConvId === "default",
                   messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
                 };
 
                 settingsManager.setLocalLastSession(
@@ -8057,17 +8058,20 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Build conversation switch alert if a switch is pending
+      // Build conversation switch alert if a switch is pending (behind feature flag)
       let conversationSwitchAlert = "";
-      if (pendingConversationSwitchRef.current) {
+      if (
+        pendingConversationSwitchRef.current &&
+        settingsManager.getSetting("conversationSwitchAlertEnabled")
+      ) {
         const { buildConversationSwitchAlert } = await import(
           "./helpers/conversationSwitchAlert"
         );
         conversationSwitchAlert = buildConversationSwitchAlert(
           pendingConversationSwitchRef.current,
         );
-        pendingConversationSwitchRef.current = null;
       }
+      pendingConversationSwitchRef.current = null;
 
       pushReminder(sessionStartHookFeedback);
       pushReminder(permissionModeAlert);
@@ -9822,6 +9826,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   conversationId: action.conversationId,
                   isDefault: action.conversationId === "default",
                   messageCount: resumeData.messageHistory.length,
+                  messageHistory: resumeData.messageHistory,
                 };
 
                 settingsManager.setLocalLastSession(
@@ -11111,7 +11116,7 @@ Plan file path: ${planFilePath}`;
                           selectorContext?.messageCount ??
                           resumeData.messageHistory.length,
                         summary: selectorContext?.summary,
-                        previewLines: selectorContext?.previewLines,
+                        messageHistory: resumeData.messageHistory,
                       };
 
                       settingsManager.setLocalLastSession(
@@ -11411,8 +11416,9 @@ Plan file path: ${planFilePath}`;
                         conversationId: actualTargetConv,
                         isDefault: actualTargetConv === "default",
                         messageCount: resumeData.messageHistory.length,
+                        messageHistory: resumeData.messageHistory,
                         searchQuery: searchContext?.query,
-                        searchMessagePreview: searchContext?.messagePreview,
+                        searchMessage: searchContext?.message,
                       };
 
                       settingsManager.setLocalLastSession(
