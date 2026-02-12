@@ -42,7 +42,7 @@ export interface Settings {
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
-  memoryReminderInterval: number | null; // null = disabled, number = prompt memory check every N turns
+  memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // null = disabled, number = every N turns, string = compaction-triggered modes
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
@@ -83,7 +83,7 @@ export interface LocalProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
-  memoryReminderInterval?: number | null; // null = disabled, number = overrides global
+  memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // null = disabled, number/string overrides global
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL

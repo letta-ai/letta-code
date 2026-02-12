@@ -130,6 +130,7 @@ import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { formatDuration, formatUsageStats } from "./components/SessionStats";
+import { SleeptimeSelector } from "./components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
 import { StatusMessage } from "./components/StatusMessage";
@@ -177,7 +178,10 @@ import {
 import { formatCompact } from "./helpers/format";
 import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
+  buildCompactionMemoryReminder,
   buildMemoryReminder,
+  getMemoryReminderMode,
+  type MemoryReminderMode,
   parseMemoryPreference,
 } from "./helpers/memoryReminder";
 import {
@@ -305,6 +309,7 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/system",
   "/subagents",
   "/memory",
+  "/sleeptime",
   "/mcp",
   "/help",
   "/agents",
@@ -706,6 +711,19 @@ function stripSystemReminders(text: string): string {
     .trim();
 }
 
+function formatMemoryReminderMode(mode: MemoryReminderMode): string {
+  if (typeof mode === "number") {
+    return `Step count (every ${mode} turns)`;
+  }
+  if (mode === "compaction") {
+    return "Compaction event (agent reminder)";
+  }
+  if (mode === "auto-compaction") {
+    return "Compaction event (automatic)";
+  }
+  return "Off";
+}
+
 function buildTextParts(
   ...parts: Array<string | undefined | null>
 ): Array<{ type: "text"; text: string }> {
@@ -1103,6 +1121,7 @@ export default function App({
   // Overlay/selector state - only one can be open at a time
   type ActiveOverlay =
     | "model"
+    | "sleeptime"
     | "toolset"
     | "system"
     | "agent"
@@ -1161,6 +1180,7 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
+    | { type: "set_sleeptime"; mode: MemoryReminderMode; commandId?: string }
     | {
         type: "switch_conversation";
         conversationId: string;
@@ -5508,6 +5528,18 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /sleeptime command - opens reflection settings
+        if (trimmed === "/sleeptime") {
+          startOverlayCommand(
+            "sleeptime",
+            "/sleeptime",
+            "Opening sleeptime settings...",
+            "Sleeptime settings dismissed",
+          );
+          setActiveOverlay("sleeptime");
+          return { submitted: true };
+        }
+
         // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
           startOverlayCommand(
@@ -6206,6 +6238,11 @@ export default function App({
 
             // Update command with success
             cmd.finish(outputLines.join("\n"), true);
+
+            // Manual /compact bypasses stream compaction events, so trigger
+            // post-compaction reminder/skills reinjection on the next user turn.
+            contextTrackerRef.current.pendingReflectionTrigger = true;
+            contextTrackerRef.current.pendingSkillsReinject = true;
           } catch (error) {
             let errorOutput: string;
 
@@ -7536,6 +7573,7 @@ ${SYSTEM_REMINDER_CLOSE}
         turnCountRef.current,
         agentId,
       );
+      const memoryReminderMode = getMemoryReminderMode();
 
       // Increment turn count for next iteration
       turnCountRef.current += 1;
@@ -7630,6 +7668,17 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryReminderContent);
+
+      // Consume compaction-triggered reflection/check reminder on next user turn.
+      if (contextTrackerRef.current.pendingReflectionTrigger) {
+        contextTrackerRef.current.pendingReflectionTrigger = false;
+        if (memoryReminderMode === "compaction") {
+          const compactionReminderContent =
+            await buildCompactionMemoryReminder(agentId);
+          pushReminder(compactionReminderContent);
+        }
+      }
+
       pushReminder(memoryGitReminder);
       const messageContent =
         reminderParts.length > 0
@@ -9149,6 +9198,69 @@ ${SYSTEM_REMINDER_CLOSE}
     ],
   );
 
+  const handleSleeptimeModeSelect = useCallback(
+    async (mode: MemoryReminderMode, commandId?: string | null) => {
+      const overlayCommand = commandId
+        ? commandRunner.getHandle(commandId, "/sleeptime")
+        : consumeOverlayCommand("sleeptime");
+
+      if (isAgentBusy()) {
+        setActiveOverlay(null);
+        const cmd =
+          overlayCommand ??
+          commandRunner.start(
+            "/sleeptime",
+            "Sleeptime settings update queued – will apply after current task completes",
+          );
+        cmd.update({
+          output:
+            "Sleeptime settings update queued – will apply after current task completes",
+          phase: "running",
+        });
+        setQueuedOverlayAction({
+          type: "set_sleeptime",
+          mode,
+          commandId: cmd.id,
+        });
+        return;
+      }
+
+      await withCommandLock(async () => {
+        const cmd =
+          overlayCommand ??
+          commandRunner.start("/sleeptime", "Saving sleeptime settings...");
+        cmd.update({
+          output: "Saving sleeptime settings...",
+          phase: "running",
+        });
+
+        try {
+          settingsManager.updateLocalProjectSettings({
+            memoryReminderInterval: mode,
+          });
+          settingsManager.updateSettings({
+            memoryReminderInterval: mode,
+          });
+
+          cmd.finish(
+            `Updated sleeptime trigger to: ${formatMemoryReminderMode(mode)}`,
+            true,
+          );
+        } catch (error) {
+          const errorDetails = formatErrorDetails(error, agentId);
+          cmd.fail(`Failed to save sleeptime settings: ${errorDetails}`);
+        }
+      });
+    },
+    [
+      agentId,
+      commandRunner,
+      consumeOverlayCommand,
+      isAgentBusy,
+      withCommandLock,
+    ],
+  );
+
   const handleToolsetSelect = useCallback(
     async (
       toolsetId:
@@ -9238,6 +9350,8 @@ ${SYSTEM_REMINDER_CLOSE}
       } else if (action.type === "switch_model") {
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(action.modelId, action.commandId);
+      } else if (action.type === "set_sleeptime") {
+        handleSleeptimeModeSelect(action.mode, action.commandId);
       } else if (action.type === "switch_conversation") {
         const cmd = action.commandId
           ? commandRunner.getHandle(action.commandId, "/resume")
@@ -9307,6 +9421,7 @@ ${SYSTEM_REMINDER_CLOSE}
     queuedOverlayAction,
     handleAgentSelect,
     handleModelSelect,
+    handleSleeptimeModeSelect,
     handleToolsetSelect,
     handleSystemPromptSelect,
     agentId,
@@ -10374,6 +10489,15 @@ Plan file path: ${planFilePath}`;
                     "https://api.letta.com";
                   return !baseURL.includes("api.letta.com");
                 })()}
+              />
+            )}
+
+            {activeOverlay === "sleeptime" && (
+              <SleeptimeSelector
+                initialMode={getMemoryReminderMode()}
+                memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
+                onSave={handleSleeptimeModeSelect}
+                onCancel={closeOverlay}
               />
             )}
 

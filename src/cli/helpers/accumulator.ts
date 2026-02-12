@@ -18,6 +18,34 @@ import { MAX_CONTEXT_HISTORY } from "./contextTracker";
 import { findLastSafeSplitPoint } from "./markdownSplit";
 import { isShellTool } from "./toolNameMapping";
 
+type CompactionSummaryMessageChunk = {
+  message_type: "summary_message";
+  id?: string;
+  otid?: string;
+  summary?: string;
+  compaction_stats?: {
+    trigger?: string;
+    context_tokens_before?: number;
+    context_tokens_after?: number;
+    context_window?: number;
+    messages_count_before?: number;
+    messages_count_after?: number;
+  };
+};
+
+type CompactionEventMessageChunk = {
+  message_type: "event_message";
+  id?: string;
+  otid?: string;
+  event_type?: string;
+  event_data?: Record<string, unknown>;
+};
+
+type StreamingChunk =
+  | LettaStreamingResponse
+  | CompactionSummaryMessageChunk
+  | CompactionEventMessageChunk;
+
 // Constants for streaming output
 const MAX_TAIL_LINES = 5;
 const MAX_BUFFER_SIZE = 100_000; // 100KB
@@ -473,7 +501,7 @@ function trySplitContent(
 // Feed one SDK chunk; mutate buffers in place.
 export function onChunk(
   b: Buffers,
-  chunk: LettaStreamingResponse,
+  chunk: StreamingChunk,
   ctx?: ContextTracker,
 ) {
   // Skip processing if stream was interrupted mid-turn. handleInterrupt already
@@ -920,6 +948,7 @@ export function onChunk(
         if (ctx) {
           ctx.pendingCompaction = true;
           ctx.pendingSkillsReinject = true;
+          ctx.pendingReflectionTrigger = true;
         }
         break;
       }

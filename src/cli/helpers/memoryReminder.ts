@@ -8,23 +8,64 @@ import { debugLog } from "../../utils/debug";
 const MEMORY_INTERVAL_FREQUENT = 5;
 const MEMORY_INTERVAL_OCCASIONAL = 10;
 
+export type MemoryReminderMode =
+  | number
+  | null
+  | "compaction"
+  | "auto-compaction";
+
 /**
- * Get the effective memory reminder interval (local setting takes precedence over global)
- * @returns The memory interval setting, or null if disabled
+ * Get the effective memory reminder mode (local setting takes precedence over global)
+ * @returns The reminder mode (number, compaction mode, or null if disabled)
  */
-function getMemoryInterval(): number | null {
+export function getMemoryReminderMode(): MemoryReminderMode {
   // Check local settings first (may not be loaded, so catch errors)
   try {
     const localSettings = settingsManager.getLocalProjectSettings();
     if (localSettings.memoryReminderInterval !== undefined) {
-      return localSettings.memoryReminderInterval;
+      return localSettings.memoryReminderInterval as MemoryReminderMode;
     }
   } catch {
     // Local settings not loaded, fall through to global
   }
 
   // Fall back to global setting
-  return settingsManager.getSetting("memoryReminderInterval");
+  return settingsManager.getSetting(
+    "memoryReminderInterval",
+  ) as MemoryReminderMode;
+}
+
+async function buildMemfsAwareMemoryReminder(
+  agentId: string,
+  trigger: "interval" | "compaction",
+): Promise<string> {
+  if (settingsManager.isMemfsEnabled(agentId)) {
+    debugLog(
+      "memory",
+      `Reflection reminder fired (${trigger}, agent ${agentId})`,
+    );
+    const { MEMORY_REFLECTION_REMINDER } = await import(
+      "../../agent/promptAssets.js"
+    );
+    return MEMORY_REFLECTION_REMINDER;
+  }
+
+  debugLog(
+    "memory",
+    `Memory check reminder fired (${trigger}, agent ${agentId})`,
+  );
+  const { MEMORY_CHECK_REMINDER } = await import("../../agent/promptAssets.js");
+  return MEMORY_CHECK_REMINDER;
+}
+
+/**
+ * Build a compaction-triggered memory reminder. Uses the same memfs-aware
+ * selection as interval reminders.
+ */
+export async function buildCompactionMemoryReminder(
+  agentId: string,
+): Promise<string> {
+  return buildMemfsAwareMemoryReminder(agentId, "compaction");
 }
 
 /**
@@ -43,28 +84,17 @@ export async function buildMemoryReminder(
   turnCount: number,
   agentId: string,
 ): Promise<string> {
-  const memoryInterval = getMemoryInterval();
+  const memoryMode = getMemoryReminderMode();
+  if (typeof memoryMode !== "number" || memoryMode <= 0) {
+    return "";
+  }
 
-  if (memoryInterval && turnCount > 0 && turnCount % memoryInterval === 0) {
-    if (settingsManager.isMemfsEnabled(agentId)) {
-      debugLog(
-        "memory",
-        `Reflection reminder fired (turn ${turnCount}, agent ${agentId})`,
-      );
-      const { MEMORY_REFLECTION_REMINDER } = await import(
-        "../../agent/promptAssets.js"
-      );
-      return MEMORY_REFLECTION_REMINDER;
-    }
-
+  if (turnCount > 0 && turnCount % memoryMode === 0) {
     debugLog(
       "memory",
-      `Memory check reminder fired (turn ${turnCount}, agent ${agentId})`,
+      `Turn-based memory reminder fired (turn ${turnCount}, interval ${memoryMode}, agent ${agentId})`,
     );
-    const { MEMORY_CHECK_REMINDER } = await import(
-      "../../agent/promptAssets.js"
-    );
-    return MEMORY_CHECK_REMINDER;
+    return buildMemfsAwareMemoryReminder(agentId, "interval");
   }
 
   return "";
