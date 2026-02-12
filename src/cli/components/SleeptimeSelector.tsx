@@ -1,67 +1,68 @@
 import { Box, useInput } from "ink";
-import { useMemo, useState } from "react";
-import type { MemoryReminderMode } from "../helpers/memoryReminder";
+import { useEffect, useMemo, useState } from "react";
+import type {
+  ReflectionBehavior,
+  ReflectionSettings,
+  ReflectionTrigger,
+} from "../helpers/memoryReminder";
 import { useTerminalWidth } from "../hooks/useTerminalWidth";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
+const BEHAVIOR_OPTIONS: ReflectionBehavior[] = ["reminder", "auto-launch"];
 
-type TriggerMode = "step-count" | "compaction-event";
-type CompactionBehavior = "reminder" | "auto-launch";
-type FocusRow = "trigger" | "value";
+type FocusRow = "trigger" | "behavior" | "step-count";
 
 interface SleeptimeSelectorProps {
-  initialMode: MemoryReminderMode;
+  initialSettings: ReflectionSettings;
   memfsEnabled: boolean;
-  onSave: (mode: MemoryReminderMode) => void;
+  onSave: (settings: ReflectionSettings) => void;
   onCancel: () => void;
 }
 
-function parseInitialState(initialMode: MemoryReminderMode): {
-  trigger: TriggerMode;
-  behavior: CompactionBehavior;
+function getTriggerOptions(memfsEnabled: boolean): ReflectionTrigger[] {
+  return memfsEnabled
+    ? ["off", "step-count", "compaction-event"]
+    : ["off", "step-count"];
+}
+
+function cycleOption<T extends string>(
+  options: readonly T[],
+  current: T,
+  direction: -1 | 1,
+): T {
+  if (options.length === 0) {
+    return current;
+  }
+  const currentIndex = options.indexOf(current);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + direction + options.length) % options.length;
+  return options[nextIndex] ?? current;
+}
+
+function parseInitialState(initialSettings: ReflectionSettings): {
+  trigger: ReflectionTrigger;
+  behavior: ReflectionBehavior;
   stepCount: string;
 } {
-  if (typeof initialMode === "number" && Number.isFinite(initialMode)) {
-    const value = Math.max(1, Math.floor(initialMode));
-    return {
-      trigger: "step-count",
-      behavior: "reminder",
-      stepCount: String(value),
-    };
-  }
-
-  if (initialMode === "auto-compaction") {
-    return {
-      trigger: "compaction-event",
-      behavior: "auto-launch",
-      stepCount: DEFAULT_STEP_COUNT,
-    };
-  }
-
-  if (initialMode === "compaction") {
-    return {
-      trigger: "compaction-event",
-      behavior: "reminder",
-      stepCount: DEFAULT_STEP_COUNT,
-    };
-  }
-
   return {
-    trigger: "step-count",
-    behavior: "reminder",
-    stepCount: DEFAULT_STEP_COUNT,
+    trigger:
+      initialSettings.trigger === "off" ||
+      initialSettings.trigger === "step-count" ||
+      initialSettings.trigger === "compaction-event"
+        ? initialSettings.trigger
+        : "step-count",
+    behavior:
+      initialSettings.behavior === "auto-launch" ? "auto-launch" : "reminder",
+    stepCount: String(
+      Number.isInteger(initialSettings.stepCount) &&
+        initialSettings.stepCount > 0
+        ? initialSettings.stepCount
+        : Number(DEFAULT_STEP_COUNT),
+    ),
   };
-}
-
-function nextTrigger(mode: TriggerMode): TriggerMode {
-  return mode === "step-count" ? "compaction-event" : "step-count";
-}
-
-function nextBehavior(mode: CompactionBehavior): CompactionBehavior {
-  return mode === "reminder" ? "auto-launch" : "reminder";
 }
 
 function parseStepCount(raw: string): number | null {
@@ -73,7 +74,7 @@ function parseStepCount(raw: string): number | null {
 }
 
 export function SleeptimeSelector({
-  initialMode,
+  initialSettings,
   memfsEnabled,
   onSave,
   onCancel,
@@ -81,36 +82,67 @@ export function SleeptimeSelector({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const initialState = useMemo(
-    () => parseInitialState(initialMode),
-    [initialMode],
+    () => parseInitialState(initialSettings),
+    [initialSettings],
   );
 
-  const [trigger, setTrigger] = useState<TriggerMode>(
-    memfsEnabled ? initialState.trigger : "step-count",
-  );
-  const [behavior, setBehavior] = useState<CompactionBehavior>(
+  const [trigger, setTrigger] = useState<ReflectionTrigger>(() => {
+    if (!memfsEnabled && initialState.trigger === "compaction-event") {
+      return "step-count";
+    }
+    return initialState.trigger;
+  });
+  const [behavior, setBehavior] = useState<ReflectionBehavior>(
     initialState.behavior,
   );
   const [stepCountInput, setStepCountInput] = useState(initialState.stepCount);
-  const [focusRow, setFocusRow] = useState<FocusRow>(
-    memfsEnabled ? "trigger" : "value",
-  );
+  const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
   const [validationError, setValidationError] = useState<string | null>(null);
+  const triggerOptions = useMemo(
+    () => getTriggerOptions(memfsEnabled),
+    [memfsEnabled],
+  );
+  const visibleRows = useMemo(() => {
+    const rows: FocusRow[] = ["trigger"];
+    if (memfsEnabled && trigger !== "off") {
+      rows.push("behavior");
+    }
+    if (trigger === "step-count") {
+      rows.push("step-count");
+    }
+    return rows;
+  }, [memfsEnabled, trigger]);
   const isEditingStepCount =
-    !memfsEnabled || (focusRow === "value" && trigger === "step-count");
+    focusRow === "step-count" && trigger === "step-count";
+
+  useEffect(() => {
+    if (!visibleRows.includes(focusRow)) {
+      setFocusRow(visibleRows[visibleRows.length - 1] ?? "trigger");
+    }
+  }, [focusRow, visibleRows]);
 
   const saveSelection = () => {
-    if (!memfsEnabled || trigger === "step-count") {
+    if (trigger === "step-count") {
       const stepCount = parseStepCount(stepCountInput);
       if (stepCount === null) {
         setValidationError("must be a positive integer");
         return;
       }
-      onSave(stepCount);
+      onSave({
+        trigger,
+        behavior: memfsEnabled ? behavior : "reminder",
+        stepCount,
+      });
       return;
     }
 
-    onSave(behavior === "auto-launch" ? "auto-compaction" : "compaction");
+    const fallbackStepCount =
+      parseStepCount(stepCountInput) ?? Number(DEFAULT_STEP_COUNT);
+    onSave({
+      trigger,
+      behavior: memfsEnabled ? behavior : "reminder",
+      stepCount: fallbackStepCount,
+    });
   };
 
   useInput((input, key) => {
@@ -129,18 +161,26 @@ export function SleeptimeSelector({
       return;
     }
 
-    if (memfsEnabled && (key.upArrow || key.downArrow)) {
+    if (key.upArrow || key.downArrow) {
+      if (visibleRows.length === 0) return;
       setValidationError(null);
-      setFocusRow((prev) => (prev === "trigger" ? "value" : "trigger"));
+      const direction = key.downArrow ? 1 : -1;
+      const currentIndex = visibleRows.indexOf(focusRow);
+      const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex =
+        (safeIndex + direction + visibleRows.length) % visibleRows.length;
+      const nextRow = visibleRows[nextIndex] ?? "trigger";
+      setFocusRow(nextRow);
       return;
     }
 
-    if (memfsEnabled && (key.leftArrow || key.rightArrow || key.tab)) {
+    if (key.leftArrow || key.rightArrow || key.tab) {
       setValidationError(null);
+      const direction: -1 | 1 = key.leftArrow ? -1 : 1;
       if (focusRow === "trigger") {
-        setTrigger((prev) => nextTrigger(prev));
-      } else if (trigger === "compaction-event") {
-        setBehavior((prev) => nextBehavior(prev));
+        setTrigger((prev) => cycleOption(triggerOptions, prev, direction));
+      } else if (focusRow === "behavior" && memfsEnabled && trigger !== "off") {
+        setBehavior((prev) => cycleOption(BEHAVIOR_OPTIONS, prev, direction));
       }
       return;
     }
@@ -191,6 +231,16 @@ export function SleeptimeSelector({
             <Text>{"   "}</Text>
             <Text
               backgroundColor={
+                trigger === "off" ? colors.selector.itemHighlighted : undefined
+              }
+              color={trigger === "off" ? "black" : undefined}
+              bold={trigger === "off"}
+            >
+              {" Off "}
+            </Text>
+            <Text> </Text>
+            <Text
+              backgroundColor={
                 trigger === "step-count"
                   ? colors.selector.itemHighlighted
                   : undefined
@@ -214,63 +264,103 @@ export function SleeptimeSelector({
             </Text>
           </Box>
 
-          <Box height={1} />
-
-          {trigger === "step-count" ? (
-            <Box flexDirection="row">
-              <Text>{focusRow === "value" ? "> " : "  "}</Text>
-              <Text bold>Step count: </Text>
-              <Text>{stepCountInput}</Text>
-              {isEditingStepCount && <Text>█</Text>}
-              {validationError && (
-                <Text color={colors.error.text}>
-                  {` (error: ${validationError})`}
+          {trigger !== "off" && (
+            <>
+              <Box height={1} />
+              <Box flexDirection="row">
+                <Text>{focusRow === "behavior" ? "> " : "  "}</Text>
+                <Text bold>Trigger behavior:</Text>
+                <Text>{"  "}</Text>
+                <Text
+                  backgroundColor={
+                    behavior === "reminder"
+                      ? colors.selector.itemHighlighted
+                      : undefined
+                  }
+                  color={behavior === "reminder" ? "black" : undefined}
+                  bold={behavior === "reminder"}
+                >
+                  {" Reminder "}
                 </Text>
-              )}
-            </Box>
-          ) : (
-            <Box flexDirection="row">
-              <Text>{focusRow === "value" ? "> " : "  "}</Text>
-              <Text bold>Trigger behavior:</Text>
-              <Text>{"  "}</Text>
-              <Text
-                backgroundColor={
-                  behavior === "reminder"
-                    ? colors.selector.itemHighlighted
-                    : undefined
-                }
-                color={behavior === "reminder" ? "black" : undefined}
-                bold={behavior === "reminder"}
-              >
-                {" Reminder "}
-              </Text>
-              <Text> </Text>
-              <Text
-                backgroundColor={
-                  behavior === "auto-launch"
-                    ? colors.selector.itemHighlighted
-                    : undefined
-                }
-                color={behavior === "auto-launch" ? "black" : undefined}
-                bold={behavior === "auto-launch"}
-              >
-                {" Auto-launch "}
-              </Text>
-            </Box>
+                <Text> </Text>
+                <Text
+                  backgroundColor={
+                    behavior === "auto-launch"
+                      ? colors.selector.itemHighlighted
+                      : undefined
+                  }
+                  color={behavior === "auto-launch" ? "black" : undefined}
+                  bold={behavior === "auto-launch"}
+                >
+                  {" Auto-launch "}
+                </Text>
+              </Box>
+            </>
+          )}
+
+          {trigger === "step-count" && (
+            <>
+              <Box height={1} />
+              <Box flexDirection="row">
+                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
+                <Text bold>Step count: </Text>
+                <Text>{stepCountInput}</Text>
+                {isEditingStepCount && <Text>█</Text>}
+                {validationError && (
+                  <Text color={colors.error.text}>
+                    {` (error: ${validationError})`}
+                  </Text>
+                )}
+              </Box>
+            </>
           )}
         </>
       ) : (
-        <Box flexDirection="row">
-          <Text>{"> "}</Text>
-          <Text bold>Step count: </Text>
-          <Text>{stepCountInput}</Text>
-          {isEditingStepCount && <Text>█</Text>}
-          {validationError && (
-            <Text color={colors.error.text}>
-              {` (error: ${validationError})`}
+        <>
+          <Box flexDirection="row">
+            <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
+            <Text bold>Trigger:</Text>
+            <Text>{"   "}</Text>
+            <Text
+              backgroundColor={
+                trigger === "off" ? colors.selector.itemHighlighted : undefined
+              }
+              color={trigger === "off" ? "black" : undefined}
+              bold={trigger === "off"}
+            >
+              {" Off "}
             </Text>
+            <Text> </Text>
+            <Text
+              backgroundColor={
+                trigger === "step-count"
+                  ? colors.selector.itemHighlighted
+                  : undefined
+              }
+              color={trigger === "step-count" ? "black" : undefined}
+              bold={trigger === "step-count"}
+            >
+              {" Step count "}
+            </Text>
+          </Box>
+
+          {trigger === "step-count" && (
+            <>
+              <Box height={1} />
+              <Box flexDirection="row">
+                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
+                <Text bold>Step count: </Text>
+                <Text>{stepCountInput}</Text>
+                {isEditingStepCount && <Text>█</Text>}
+                {validationError && (
+                  <Text color={colors.error.text}>
+                    {` (error: ${validationError})`}
+                  </Text>
+                )}
+              </Box>
+            </>
           )}
-        </Box>
+        </>
       )}
 
       <Box height={1} />

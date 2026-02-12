@@ -180,9 +180,10 @@ import { parsePatchOperations } from "./helpers/formatArgsDisplay";
 import {
   buildCompactionMemoryReminder,
   buildMemoryReminder,
-  getMemoryReminderMode,
-  type MemoryReminderMode,
+  getReflectionSettings,
   parseMemoryPreference,
+  type ReflectionSettings,
+  reflectionSettingsToLegacyMode,
 } from "./helpers/memoryReminder";
 import {
   type QueuedMessage,
@@ -711,17 +712,16 @@ function stripSystemReminders(text: string): string {
     .trim();
 }
 
-function formatMemoryReminderMode(mode: MemoryReminderMode): string {
-  if (typeof mode === "number") {
-    return `Step count (every ${mode} turns)`;
+function formatReflectionSettings(settings: ReflectionSettings): string {
+  if (settings.trigger === "off") {
+    return "Off";
   }
-  if (mode === "compaction") {
-    return "Compaction event (agent reminder)";
+  const behaviorLabel =
+    settings.behavior === "auto-launch" ? "auto-launch" : "reminder";
+  if (settings.trigger === "compaction-event") {
+    return `Compaction event (${behaviorLabel})`;
   }
-  if (mode === "auto-compaction") {
-    return "Compaction event (automatic)";
-  }
-  return "Off";
+  return `Step count (every ${settings.stepCount} turns, ${behaviorLabel})`;
 }
 
 function buildTextParts(
@@ -1180,7 +1180,11 @@ export default function App({
   type QueuedOverlayAction =
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
-    | { type: "set_sleeptime"; mode: MemoryReminderMode; commandId?: string }
+    | {
+        type: "set_sleeptime";
+        settings: ReflectionSettings;
+        commandId?: string;
+      }
     | {
         type: "switch_conversation";
         conversationId: string;
@@ -7573,7 +7577,7 @@ ${SYSTEM_REMINDER_CLOSE}
         turnCountRef.current,
         agentId,
       );
-      const memoryReminderMode = getMemoryReminderMode();
+      const reflectionSettings = getReflectionSettings();
 
       // Increment turn count for next iteration
       turnCountRef.current += 1;
@@ -7672,7 +7676,7 @@ ${SYSTEM_REMINDER_CLOSE}
       // Consume compaction-triggered reflection/check reminder on next user turn.
       if (contextTrackerRef.current.pendingReflectionTrigger) {
         contextTrackerRef.current.pendingReflectionTrigger = false;
-        if (memoryReminderMode === "compaction") {
+        if (reflectionSettings.trigger === "compaction-event") {
           const compactionReminderContent =
             await buildCompactionMemoryReminder(agentId);
           pushReminder(compactionReminderContent);
@@ -9199,7 +9203,10 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   const handleSleeptimeModeSelect = useCallback(
-    async (mode: MemoryReminderMode, commandId?: string | null) => {
+    async (
+      reflectionSettings: ReflectionSettings,
+      commandId?: string | null,
+    ) => {
       const overlayCommand = commandId
         ? commandRunner.getHandle(commandId, "/sleeptime")
         : consumeOverlayCommand("sleeptime");
@@ -9219,7 +9226,7 @@ ${SYSTEM_REMINDER_CLOSE}
         });
         setQueuedOverlayAction({
           type: "set_sleeptime",
-          mode,
+          settings: reflectionSettings,
           commandId: cmd.id,
         });
         return;
@@ -9235,15 +9242,22 @@ ${SYSTEM_REMINDER_CLOSE}
         });
 
         try {
+          const legacyMode = reflectionSettingsToLegacyMode(reflectionSettings);
           settingsManager.updateLocalProjectSettings({
-            memoryReminderInterval: mode,
+            memoryReminderInterval: legacyMode,
+            reflectionTrigger: reflectionSettings.trigger,
+            reflectionBehavior: reflectionSettings.behavior,
+            reflectionStepCount: reflectionSettings.stepCount,
           });
           settingsManager.updateSettings({
-            memoryReminderInterval: mode,
+            memoryReminderInterval: legacyMode,
+            reflectionTrigger: reflectionSettings.trigger,
+            reflectionBehavior: reflectionSettings.behavior,
+            reflectionStepCount: reflectionSettings.stepCount,
           });
 
           cmd.finish(
-            `Updated sleeptime trigger to: ${formatMemoryReminderMode(mode)}`,
+            `Updated sleeptime settings to: ${formatReflectionSettings(reflectionSettings)}`,
             true,
           );
         } catch (error) {
@@ -9351,7 +9365,7 @@ ${SYSTEM_REMINDER_CLOSE}
         // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(action.modelId, action.commandId);
       } else if (action.type === "set_sleeptime") {
-        handleSleeptimeModeSelect(action.mode, action.commandId);
+        handleSleeptimeModeSelect(action.settings, action.commandId);
       } else if (action.type === "switch_conversation") {
         const cmd = action.commandId
           ? commandRunner.getHandle(action.commandId, "/resume")
@@ -10494,7 +10508,7 @@ Plan file path: ${planFilePath}`;
 
             {activeOverlay === "sleeptime" && (
               <SleeptimeSelector
-                initialMode={getMemoryReminderMode()}
+                initialSettings={getReflectionSettings()}
                 memfsEnabled={settingsManager.isMemfsEnabled(agentId)}
                 onSave={handleSleeptimeModeSelect}
                 onCancel={closeOverlay}

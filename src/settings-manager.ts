@@ -42,7 +42,10 @@ export interface Settings {
   showCompactions?: boolean;
   enableSleeptime: boolean;
   sessionContextEnabled: boolean; // Send device/agent context on first message of each session
-  memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // null = disabled, number = every N turns, string = compaction-triggered modes
+  memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
+  reflectionTrigger: "off" | "step-count" | "compaction-event";
+  reflectionBehavior: "reminder" | "auto-launch";
+  reflectionStepCount: number;
   globalSharedBlockIds: Record<string, string>; // DEPRECATED: kept for backwards compat
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
@@ -83,7 +86,10 @@ export interface LocalProjectSettings {
   hooks?: HooksConfig; // Project-specific hook commands
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   pinnedAgents?: string[]; // DEPRECATED: kept for backwards compat, use pinnedAgentsByServer
-  memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // null = disabled, number/string overrides global
+  memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
+  reflectionTrigger?: "off" | "step-count" | "compaction-event";
+  reflectionBehavior?: "reminder" | "auto-launch";
+  reflectionStepCount?: number;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   pinnedAgentsByServer?: Record<string, string[]>; // key = normalized base URL
@@ -95,7 +101,10 @@ const DEFAULT_SETTINGS: Settings = {
   showCompactions: false,
   enableSleeptime: false,
   sessionContextEnabled: true,
-  memoryReminderInterval: 5, // number = prompt memory check every N turns
+  memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
+  reflectionTrigger: "step-count",
+  reflectionBehavior: "reminder",
+  reflectionStepCount: 25,
   globalSharedBlockIds: {},
 };
 
