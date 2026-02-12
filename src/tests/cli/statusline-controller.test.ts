@@ -11,14 +11,6 @@ describe("statusline controller-related config", () => {
     expect(normalized.refreshIntervalMs).toBeUndefined();
   });
 
-  test("maps legacy interval to refreshIntervalMs", () => {
-    const normalized = normalizeStatusLineConfig({
-      command: "echo hi",
-      interval: 2500,
-    });
-    expect(normalized.refreshIntervalMs).toBe(2500);
-  });
-
   test("keeps explicit refreshIntervalMs", () => {
     const normalized = normalizeStatusLineConfig({
       command: "echo hi",

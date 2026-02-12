@@ -45,14 +45,6 @@ describe("normalizeStatusLineConfig", () => {
     expect(result.padding).toBe(0);
   });
 
-  test("maps legacy interval to refreshIntervalMs", () => {
-    const result = normalizeStatusLineConfig({
-      command: "echo hi",
-      interval: 100,
-    });
-    expect(result.refreshIntervalMs).toBe(MIN_STATUS_LINE_INTERVAL_MS);
-  });
-
   test("respects explicit refreshIntervalMs", () => {
     const result = normalizeStatusLineConfig({
       command: "echo hi",

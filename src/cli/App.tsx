@@ -5807,7 +5807,7 @@ export default function App({
                 try {
                   const global = settingsManager.getSettings().statusLine;
                   lines.push(
-                    `Global: ${global?.command ? `command="${global.command}" refreshInterval=${global.refreshIntervalMs ?? global.interval ?? "off"} timeout=${global.timeout ?? "default"} debounce=${global.debounceMs ?? "default"} padding=${global.padding ?? 0} disabled=${global.disabled ?? false}` : "(not set)"}`,
+                    `Global: ${global?.command ? `command="${global.command}" refreshInterval=${global.refreshIntervalMs ?? "off"} timeout=${global.timeout ?? "default"} debounce=${global.debounceMs ?? "default"} padding=${global.padding ?? 0} disabled=${global.disabled ?? false}` : "(not set)"}`,
                   );
                 } catch {
                   lines.push("Global: (unavailable)");

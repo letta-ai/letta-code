@@ -5,9 +5,6 @@ import type { StatusLineConfig } from "../../settings-manager";
 import { settingsManager } from "../../settings-manager";
 import { debugLog } from "../../utils/debug";
 
-/** Legacy/default polling interval (10 seconds). Used for legacy `interval` mapping. */
-export const DEFAULT_STATUS_LINE_INTERVAL_MS = 10_000;
-
 /** Minimum allowed polling interval (1 second). */
 export const MIN_STATUS_LINE_INTERVAL_MS = 1_000;
 
@@ -45,11 +42,10 @@ export interface NormalizedStatusLineConfig {
 export function normalizeStatusLineConfig(
   config: StatusLineConfig,
 ): NormalizedStatusLineConfig {
-  const intervalRaw = config.refreshIntervalMs ?? config.interval;
   const refreshIntervalMs =
-    intervalRaw === undefined
+    config.refreshIntervalMs === undefined
       ? undefined
-      : Math.max(MIN_STATUS_LINE_INTERVAL_MS, intervalRaw);
+      : Math.max(MIN_STATUS_LINE_INTERVAL_MS, config.refreshIntervalMs);
 
   return {
     type: "command",

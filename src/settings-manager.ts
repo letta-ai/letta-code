@@ -32,7 +32,6 @@ export interface SessionRef {
  *
  * Letta extensions:
  * - timeout, debounceMs, refreshIntervalMs
- * - interval (legacy alias for refreshIntervalMs)
  */
 export interface StatusLineConfig {
   type?: "command";
@@ -41,7 +40,6 @@ export interface StatusLineConfig {
   timeout?: number; // Execution timeout ms (default 5000, max 30000)
   debounceMs?: number; // Debounce for event-driven refreshes (default 300)
   refreshIntervalMs?: number; // Optional polling interval ms (opt-in)
-  interval?: number; // Legacy alias for refreshIntervalMs
   disabled?: boolean; // Disable at this level
 }
 

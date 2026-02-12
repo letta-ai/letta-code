@@ -42,7 +42,6 @@ export function formatStatusLineHelp(): string {
     "  timeout            command timeout in ms (default 5000, max 30000)",
     "  debounceMs         event debounce in ms (default 300)",
     "  refreshIntervalMs  optional polling interval in ms (off by default)",
-    "  interval           legacy alias for refreshIntervalMs",
     "",
     "INPUT (via JSON stdin)",
     fieldList,
