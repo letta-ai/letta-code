@@ -6171,23 +6171,12 @@ export default function App({
           const usedTokens = contextTrackerRef.current.lastContextTokens;
           const history = contextTrackerRef.current.contextTokensHistory;
 
-          // Phase 1: Show single-color bar + chart + "Fetching breakdown..."
-          // Stays in dynamic area ("running" phase) so it can be updated
-          const initialOutput = renderContextUsage({
-            usedTokens,
-            contextWindow,
-            model,
-            history,
-          });
+          const cmd = commandRunner.start(
+            trimmed,
+            "Fetching context breakdown...",
+          );
 
-          const cmd = commandRunner.start(trimmed, "");
-          cmd.update({
-            output: initialOutput,
-            phase: "running",
-            preformatted: true,
-          });
-
-          // Phase 2: Fetch breakdown (5s timeout), then finish with color-coded bar
+          // Fetch breakdown (5s timeout)
           let breakdown: ContextWindowOverview | undefined;
           try {
             const settings =
@@ -6215,7 +6204,7 @@ export default function App({
             // Timeout or network error — proceed without breakdown
           }
 
-          // Finish with breakdown (bar colors + legend) or fallback
+          // Render the full chart once, directly into the finished output
           cmd.finish(
             renderContextUsage({
               usedTokens,
