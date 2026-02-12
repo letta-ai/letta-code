@@ -49,7 +49,7 @@ const COMPACT_PAD = 1;
  * System-reminder blocks are identified by <system-reminder>...</system-reminder> tags.
  * Returns array of { text, isSystemReminder } objects in order.
  */
-function splitSystemReminderBlocks(
+export function splitSystemReminderBlocks(
   text: string,
 ): Array<{ text: string; isSystemReminder: boolean }> {
   const blocks: Array<{ text: string; isSystemReminder: boolean }> = [];
@@ -69,23 +69,23 @@ function splitSystemReminderBlocks(
       break;
     }
 
+    // Find the closing tag
+    const closeIdx = remaining.indexOf(tagClose, openIdx);
+    if (closeIdx === -1) {
+      // Malformed/incomplete tag - treat the whole remainder as literal user text.
+      const literal = remaining.trim();
+      if (literal) {
+        blocks.push({ text: literal, isSystemReminder: false });
+      }
+      break;
+    }
+
     // Content before the tag is user content
     if (openIdx > 0) {
       const before = remaining.slice(0, openIdx).trim();
       if (before) {
         blocks.push({ text: before, isSystemReminder: false });
       }
-    }
-
-    // Find the closing tag
-    const closeIdx = remaining.indexOf(tagClose, openIdx);
-    if (closeIdx === -1) {
-      // Malformed - no closing tag, treat rest as system-reminder
-      blocks.push({
-        text: remaining.slice(openIdx).trim(),
-        isSystemReminder: true,
-      });
-      break;
     }
 
     // Extract the full system-reminder block (including tags)
