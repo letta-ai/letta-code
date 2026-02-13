@@ -178,6 +178,7 @@ import {
 import { setErrorContext } from "./helpers/errorContext";
 import {
   formatErrorDetails,
+  getRetryStatusMessage,
   isEncryptedContentError,
 } from "./helpers/errorFormatter";
 import { formatCompact } from "./helpers/format";
@@ -4365,9 +4366,7 @@ export default function App({
 
             // Show subtle grey status message
             const statusId = uid("status");
-            const statusLines = [
-              "Unexpected downstream LLM API error, retrying...",
-            ];
+            const statusLines = [getRetryStatusMessage(detailFromRun)];
             buffersRef.current.byId.set(statusId, {
               kind: "status",
               id: statusId,
