@@ -8070,10 +8070,11 @@ ${SYSTEM_REMINDER_CLOSE}
           try {
             const { discoverSkills: discover, SKILLS_DIR: defaultDir } =
               await import("../agent/skills");
-            const { getSkillsDirectory } = await import("../agent/context");
+            const { getSkillsDirectory, getNoSkills } = await import(
+              "../agent/context"
+            );
             const skillsDir =
               getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { getNoSkills } = await import("../agent/context");
             const { skills } = await discover(skillsDir, agentId, {
               skipBundled: getNoSkills(),
             });
