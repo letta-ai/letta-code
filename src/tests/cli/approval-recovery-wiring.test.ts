@@ -21,7 +21,7 @@ describe("approval recovery wiring", () => {
 
     expect(segment).toContain("extractConflictDetail(preStreamError)");
     expect(segment).toContain("getPreStreamErrorAction(");
-    expect(segment).toContain('preStreamAction === "resolve_approval_pending"');
+    expect(segment).toContain("shouldAttemptApprovalRecovery(");
     expect(segment).toContain("rebuildInputWithFreshDenials(");
   });
 
@@ -39,7 +39,7 @@ describe("approval recovery wiring", () => {
 
     const segment = source.slice(start, end);
 
-    expect(segment).toContain("approvalPendingDetected &&");
+    expect(segment).toContain("shouldAttemptApprovalRecovery(");
     expect(segment).not.toContain("!hasApprovalInPayload &&");
   });
 

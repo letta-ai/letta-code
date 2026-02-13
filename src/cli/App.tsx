@@ -35,6 +35,7 @@ import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
   rebuildInputWithFreshDenials,
+  shouldAttemptApprovalRecovery,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -3157,8 +3158,12 @@ export default function App({
             // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
             // Resets on each processConversation entry and on success.
             if (
-              preStreamAction === "resolve_approval_pending" &&
-              llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+              shouldAttemptApprovalRecovery({
+                approvalPendingDetected:
+                  preStreamAction === "resolve_approval_pending",
+                retries: llmApiErrorRetriesRef.current,
+                maxRetries: LLM_API_ERROR_MAX_RETRIES,
+              })
             ) {
               llmApiErrorRetriesRef.current += 1;
               try {
@@ -4315,8 +4320,11 @@ export default function App({
             isApprovalPendingError(latestErrorText);
 
           if (
-            approvalPendingDetected &&
-            llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+            shouldAttemptApprovalRecovery({
+              approvalPendingDetected,
+              retries: llmApiErrorRetriesRef.current,
+              maxRetries: LLM_API_ERROR_MAX_RETRIES,
+            })
           ) {
             llmApiErrorRetriesRef.current += 1;
 
