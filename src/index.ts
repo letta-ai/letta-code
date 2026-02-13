@@ -4,7 +4,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeData, type ResumeData } from "./agent/check-approval";
-import { getClient, getServerUrl } from "./agent/client";
+import { getClient } from "./agent/client";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
@@ -1684,14 +1684,10 @@ async function main(): Promise<void> {
         // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
         try {
-          const { applyMemfsFlags } = await import(
-            "./agent/memoryFilesystem"
-          );
+          const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
           await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag);
         } catch (error) {
-          console.error(
-            error instanceof Error ? error.message : String(error),
-          );
+          console.error(error instanceof Error ? error.message : String(error));
           process.exit(1);
         }
 

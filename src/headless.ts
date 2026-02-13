@@ -14,7 +14,7 @@ import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
-import { getClient, getServerUrl } from "./agent/client";
+import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
