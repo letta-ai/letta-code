@@ -9,6 +9,7 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
+  extractConflictDetail,
   fetchRunErrorDetail,
   getPreStreamErrorAction,
   isApprovalPendingError,
@@ -1188,30 +1189,8 @@ ${SYSTEM_REMINDER_CLOSE}
           agentId: agent.id,
         });
       } catch (preStreamError) {
-        // Extract error detail from APIError
-        let errorDetail = "";
-        if (
-          preStreamError instanceof APIError &&
-          preStreamError.error &&
-          typeof preStreamError.error === "object"
-        ) {
-          const errObj = preStreamError.error as Record<string, unknown>;
-          if (
-            errObj.error &&
-            typeof errObj.error === "object" &&
-            "detail" in errObj.error
-          ) {
-            const nested = errObj.error as Record<string, unknown>;
-            errorDetail =
-              typeof nested.detail === "string" ? nested.detail : "";
-          }
-          if (!errorDetail && typeof errObj.detail === "string") {
-            errorDetail = errObj.detail;
-          }
-        }
-        if (!errorDetail && preStreamError instanceof Error) {
-          errorDetail = preStreamError.message;
-        }
+        // Extract error detail using shared helper (handles nested/direct/message shapes)
+        const errorDetail = extractConflictDetail(preStreamError);
 
         const preStreamAction = getPreStreamErrorAction(
           errorDetail,
@@ -2444,31 +2423,14 @@ async function runBidirectionalMode(
               agentId: agent.id,
             });
           } catch (preStreamError) {
-            let errorDetail = "";
-            if (
-              preStreamError instanceof APIError &&
-              preStreamError.error &&
-              typeof preStreamError.error === "object"
-            ) {
-              const errObj = preStreamError.error as Record<string, unknown>;
-              if (
-                errObj.error &&
-                typeof errObj.error === "object" &&
-                "detail" in errObj.error
-              ) {
-                const nested = errObj.error as Record<string, unknown>;
-                errorDetail =
-                  typeof nested.detail === "string" ? nested.detail : "";
-              }
-              if (!errorDetail && typeof errObj.detail === "string") {
-                errorDetail = errObj.detail;
-              }
-            }
-            if (!errorDetail && preStreamError instanceof Error) {
-              errorDetail = preStreamError.message;
-            }
+            // Extract error detail using shared helper (handles nested/direct/message shapes)
+            const errorDetail = extractConflictDetail(preStreamError);
 
-            if (isApprovalPendingError(errorDetail)) {
+            // Route through shared pre-stream conflict classifier (parity with main loop + TUI)
+            // Bidir mode has no conversation-busy retry budget, so pass 0/0 to disable busy-retry.
+            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0);
+
+            if (preStreamAction === "resolve_approval_pending") {
               const recoveryMsg: RecoveryMessage = {
                 type: "recovery",
                 recovery_type: "approval_pending",
