@@ -51,6 +51,10 @@ cd "$MEMORY_DIR"
 git worktree add "$WORKTREE_DIR/$BRANCH_NAME" -b "$BRANCH_NAME"
 ```
 
+If `git worktree add` fails because main is locked or busy,
+retry up to 3 times with backoff (sleep 2, 5, 10 seconds).
+Never delete `.git/index.lock` manually.
+
 All your edits go in `$WORKTREE_DIR/$BRANCH_NAME/`.
 
 ### 2. Read existing memory
@@ -76,16 +80,36 @@ Write memory files the way the agent would want to read them — clean, actionab
 
 ### 6. Commit
 
+Use Conventional Commits format with the `(history-analyzer)`
+scope and ⏳ signature:
+
 ```bash
 cd $WORKTREE_DIR/$BRANCH_NAME
 git add -A
-git commit -m "history-analyzer: [summary of what was learned]
+git commit -m "<type>(history-analyzer): [summary] ⏳
 
 Source: [file path] ([N] prompts, [DATE RANGE])
 Key updates:
 - [file]: [what was added/changed]
-..."
+...
+
+Generated-By: Letta Code
+Agent-ID: $LETTA_AGENT_ID
+Parent-Agent-ID: $LETTA_PARENT_AGENT_ID"
 ```
+
+**Commit type** — pick the one that fits:
+- `chore` — routine history ingestion (most common)
+- `feat` — adding wholly new memory blocks/topics
+- `refactor` — reorganizing memory by domain/project
+
+**Example subjects:**
+- `chore(history-analyzer): ingest Claude Code history 2025-09 ⏳`
+- `refactor(history-analyzer): reorganize memory by project domain ⏳`
+
+**Trailers:** Omit `Agent-ID` or `Parent-Agent-ID` if the
+corresponding environment variable is unset (don't write
+the literal variable name).
 
 ## Important
 
