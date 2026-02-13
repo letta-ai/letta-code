@@ -734,74 +734,23 @@ git push
 
 ## Letta Agent History Analysis (Optional)
 
-This section runs only if the user approved during upfront questions. It uses the same parallel `history-analyzer` subagent pattern as the Claude/Codex analysis above, but reads from your **own** past conversations via the Letta API.
+This section runs only if the user approved during upfront questions. It follows the same pattern as Claude/Codex analysis above: pre-extract data → launch parallel `history-analyzer` subagents → merge worktree branches.
 
-**When this is useful:** When the agent has accumulated thousands of messages across sessions — preferences, patterns, project context, and decisions that have long since fallen out of context. A systematic review with parallel subagents can rediscover this information and capture it in memory files.
+### Step 1: Split History Into Chunks
 
-**Architecture:** The **main agent** pre-extracts messages from the API into text files on disk, then launches parallel `history-analyzer` subagents. Each subagent reads its local chunk file (no API access needed), analyzes the content, writes memory files in its own git worktree, and commits. The main agent then merges all branches and curates the results.
-
-**Prerequisites:**
-- `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- `LETTA_AGENT_ID`, `LETTA_API_KEY`, and `LETTA_BASE_URL` must be set in env
-
-**Scripts included in this skill:**
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/detect-own-history.ts` | List conversations and get date ranges for the current agent |
-| `scripts/split-history.ts` | Split all history into chunk files (conversation × month) in one shot |
-| `scripts/extract-messages.ts` | Extract a single chunk (low-level, used for manual/custom splits) |
-
-### Step 1: Detect History
-
-Run the detection script to understand what history exists and confirm with the user:
+The main agent runs this — subagents just read the output files. Produces one file per (conversation × month), skipping empties.
 
 ```bash
-bun <skill-dir>/scripts/detect-own-history.ts
+bun <skill-dir>/scripts/split-history.ts [--months 1] [--max-conversations 50] [--output-dir /tmp/letta-history-splits]
 ```
 
-This outputs JSON with `conversations`, `date_range`, and `has_significant_history`.
+Outputs a JSON manifest to stdout with all chunk files and message counts. Messages are filtered for signal: user messages in full, assistant truncated to 500 chars, reasoning to 200 chars, tool calls as one-liners, tool returns dropped.
 
-### Step 2: Split All History Into Chunks
+To check what history exists before splitting, run `bun <skill-dir>/scripts/detect-own-history.ts` for a quick summary.
 
-**The main agent runs this step — NOT the subagents.** This produces one file per (conversation × month), e.g. `default-2026-jan.txt`, `conv-abc123-2026-feb.txt`. Empty chunks are skipped automatically.
+### Step 2: Launch Workers
 
-```bash
-bun <skill-dir>/scripts/split-history.ts [--output-dir /tmp/letta-history-splits] [--months 1] [--max-conversations 50]
-```
-
-Options:
-- `--months N` — how far back to look (default: 1). Keeps extraction fast and focused on recent signal.
-- `--max-conversations N` — cap on conversations to process, most recent first (default: 50)
-- `--output-dir` — where to write chunk files (default: `/tmp/letta-history-splits`)
-
-The script:
-1. Lists conversations (most recent first, capped at `--max-conversations`)
-2. Computes monthly time buckets across the date range (clamped to `--months`)
-3. Extracts messages for each (conversation, month) pair into a separate file (3 API pages max per chunk)
-4. Skips empty chunks and non-overlapping conversation/month pairs
-5. Outputs a JSON **manifest** to stdout listing every chunk file, message counts, and metadata
-6. Messages are filtered and truncated for signal: user messages in full, assistant truncated to 500 chars, reasoning to 200 chars, tool calls to a one-liner (name + brief args), tool returns dropped entirely
-
-Progress is logged to stderr. The JSON manifest on stdout looks like:
-
-```json
-{
-  "agent_id": "agent-...",
-  "chunks_produced": 12,
-  "chunks": [
-    { "file": "/tmp/.../default-2026-jan.txt", "conversation_label": "default", "time_label": "2026-jan", "messages_kept": 84 },
-    { "file": "/tmp/.../conv-abc123-2026-jan.txt", "conversation_label": "some_summary", "time_label": "2026-jan", "messages_kept": 23 }
-  ]
-}
-```
-
-Use this manifest to assign chunk files to workers. Group chunks so each worker gets roughly equal message counts (or just divide the chunk list evenly across 3-5 workers).
-
-### Step 3: Launch Workers in Parallel
-
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-extracted chunk file, directly updates memory files, and commits. Workers do NOT merge.
+Divide chunk files from the manifest across 3-5 workers. Send all Task calls in **a single message**:
 
 ```
 Task({
@@ -809,37 +758,16 @@ Task({
   description: "Process Letta history chunk [N]",
   prompt: `## Assignment
 - **Memory dir**: [MEMORY_DIR]
-- **History chunk**: /tmp/letta-history-splits/chunk-[N].txt
+- **History chunks**: /tmp/letta-history-splits/chunk-a.txt, chunk-b.txt, ...
 - **Source**: Letta agent conversation history (NOT Claude/Codex)
-- **Date range**: [START] to [END]
 
-Read the history chunk file at the path above. It contains timestamped
-messages from the agent's own past conversations with the user.
-Analyze for preferences, patterns, conventions, project context, and
-anything that would help the agent work better with this user.
-
-Ignore the migrating-from-codex-and-claude-code skill — it is not
-relevant here. Just read the chunk file directly with the Read tool.
+Read the chunk files above with the Read tool. Analyze for user preferences,
+corrections, patterns, conventions, and project context.
+Ignore the migrating-from-codex-and-claude-code skill.
 `
 })
 ```
 
-### Step 4: Merge Worker Branches and Curate Memory
+### Step 3: Merge and Curate
 
-This step is **identical** to Step 3 in the Claude/Codex Historical Session Analysis section above. Follow the same process:
-
-1. **Merge branches** — `git merge` each `migration-*` branch
-2. **Review and curate** — deduplicate, reformat, move reference content out of `system/`
-3. **Reorganize** — split oversized files, merge near-duplicates
-4. **Clean up** — remove worktrees and branches, push
-
-Refer to the Claude/Codex section's Step 3 (3a through 3d) for the full procedure.
-
-### Troubleshooting
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| `detect-own-history.ts` fails with auth error | Missing or invalid `LETTA_API_KEY` | Ensure env vars are set (check with `echo $LETTA_API_KEY`) |
-| `extract-messages.ts` produces empty file | Date range has no messages, or conversation ID is wrong | Verify dates from detect output; try without `--conversation-id` |
-| Chunk file says `[TRUNCATED]` | Too many messages in the date range | Use more workers with smaller date ranges |
-| Subagent reads Claude/Codex skill instead of chunk | Subagent has `migrating-from-codex-and-claude-code` auto-loaded | The prompt explicitly tells it to ignore that skill and read the chunk file |
+Same as the Claude/Codex section's Step 3 (3a–3d): merge `migration-*` branches, deduplicate, curate, clean up worktrees, push.
