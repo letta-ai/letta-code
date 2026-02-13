@@ -7331,15 +7331,6 @@ export default function App({
           }
 
           if (subcommand === "enable") {
-            // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-            const serverUrl = getServerUrl();
-            if (!serverUrl.includes("api.letta.com")) {
-              cmd.fail(
-                "Memory filesystem is only available on Letta Cloud (api.letta.com).",
-              );
-              return { submitted: true };
-            }
-
             updateMemorySyncCommand(
               cmdId,
               "Enabling memory filesystem...",
@@ -7350,30 +7341,13 @@ export default function App({
             setCommandRunning(true);
 
             try {
-              // 1. Detach memory tools from agent
-              const { detachMemoryTools } = await import("../tools/toolset");
-              await detachMemoryTools(agentId);
-
-              // 2. Update settings
-              settingsManager.setMemfsEnabled(agentId, true);
-
-              // 3. Update system prompt to include memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "../agent/modify"
+              const { applyMemfsFlags } = await import(
+                "../agent/memoryFilesystem"
               );
-              await updateAgentSystemPromptMemfs(agentId, true);
-
-              // 4. Add git-memory-enabled tag and clone repo
-              const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } =
-                await import("../agent/memoryGit");
-              await addGitMemoryTag(agentId);
-              if (!isGitRepo(agentId)) {
-                await cloneMemoryRepo(agentId);
-              }
-              const memoryDir = getMemoryFilesystemRoot(agentId);
+              const result = await applyMemfsFlags(agentId, true, false);
               updateMemorySyncCommand(
                 cmdId,
-                `Memory filesystem enabled (git-backed).\nPath: ${memoryDir}`,
+                `Memory filesystem enabled (git-backed).\nPath: ${result.memoryDir}`,
                 true,
                 msg,
               );

@@ -14,7 +14,7 @@ import {
   isApprovalPendingError,
   isInvalidToolCallIdsError,
 } from "./agent/approval-recovery";
-import { getClient, getServerUrl } from "./agent/client";
+import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { ISOLATED_BLOCK_LABELS } from "./agent/memory";
@@ -678,52 +678,25 @@ export async function handleHeadlessCommand(
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
-  if (memfsFlag) {
-    // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-    const serverUrl = getServerUrl();
-    if (!serverUrl.includes("api.letta.com")) {
-      console.error(
-        "--memfs is only available on Letta Cloud (api.letta.com).",
-      );
-      process.exit(1);
-    }
-    settingsManager.setMemfsEnabled(agent.id, true);
-  } else if (noMemfsFlag) {
-    settingsManager.setMemfsEnabled(agent.id, false);
-  }
-
-  // Ensure agent's system prompt includes/excludes memfs section to match setting
-  if (memfsFlag || noMemfsFlag) {
-    const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
-    await updateAgentSystemPromptMemfs(
+  try {
+    const { applyMemfsFlags } = await import("./agent/memoryFilesystem");
+    const memfsResult = await applyMemfsFlags(
       agent.id,
-      settingsManager.isMemfsEnabled(agent.id),
+      memfsFlag,
+      noMemfsFlag,
+      { pullOnExistingRepo: true },
     );
-  }
-
-  // Git-backed memory: clone or pull on startup (only if memfs is enabled)
-  if (settingsManager.isMemfsEnabled(agent.id)) {
-    try {
-      const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-        "./agent/memoryGit"
-      );
-      if (!isGitRepo(agent.id)) {
-        await cloneMemoryRepo(agent.id);
-      } else {
-        const result = await pullMemory(agent.id);
-        if (result.summary.includes("CONFLICT")) {
-          console.error(
-            "Memory has merge conflicts. Run in interactive mode to resolve.",
-          );
-          process.exit(1);
-        }
-      }
-    } catch (error) {
+    if (memfsResult.pullSummary?.includes("CONFLICT")) {
       console.error(
-        `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        "Memory has merge conflicts. Run in interactive mode to resolve.",
       );
       process.exit(1);
     }
+  } catch (error) {
+    console.error(
+      `Memory git sync failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
   }
 
   // Determine which blocks to isolate for the conversation
