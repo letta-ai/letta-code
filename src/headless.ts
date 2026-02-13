@@ -79,6 +79,7 @@ export async function handleHeadlessCommand(
   argv: string[],
   model?: string,
   skillsDirectory?: string,
+  noSkills?: boolean,
 ) {
   const settings = settingsManager.getSettings();
 
@@ -125,6 +126,7 @@ export async function handleHeadlessCommand(
 
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
+      "no-skills": { type: "boolean" },
       "max-turns": { type: "string" }, // Maximum number of agentic turns
     },
     strict: false,
@@ -807,7 +809,7 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory);
+  setAgentContext(agent.id, skillsDirectory, noSkills);
 
   // Validate output format
   const outputFormat =
@@ -1071,7 +1073,9 @@ ${SYSTEM_REMINDER_CLOSE}
     const { join } = await import("node:path");
     try {
       const skillsDir = getSkillsDirectory() || join(process.cwd(), defaultDir);
-      const { skills } = await discoverSkills(skillsDir, agent.id);
+      const { skills } = await discoverSkills(skillsDir, agent.id, {
+        skipBundled: noSkills,
+      });
       const skillsReminder = formatSkillsAsSystemReminder(skills);
       if (skillsReminder) {
         pushPart(skillsReminder);
