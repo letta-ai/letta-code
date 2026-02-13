@@ -218,7 +218,7 @@ export function SleeptimeSelector({
       <Box height={1} />
 
       <Text bold color={colors.selector.title}>
-        Configure your sleeptime (reflection) settings
+        Configure your sleep-time (reflection) settings
       </Text>
 
       <Box height={1} />
@@ -227,7 +227,7 @@ export function SleeptimeSelector({
         <>
           <Box flexDirection="row">
             <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger:</Text>
+            <Text bold>Trigger event:</Text>
             <Text>{"   "}</Text>
             <Text
               backgroundColor={
@@ -269,7 +269,7 @@ export function SleeptimeSelector({
               <Box height={1} />
               <Box flexDirection="row">
                 <Text>{focusRow === "behavior" ? "> " : "  "}</Text>
-                <Text bold>Trigger behavior:</Text>
+                <Text bold>Forced:</Text>
                 <Text>{"  "}</Text>
                 <Text
                   backgroundColor={
@@ -280,7 +280,7 @@ export function SleeptimeSelector({
                   color={behavior === "reminder" ? "black" : undefined}
                   bold={behavior === "reminder"}
                 >
-                  {" Reminder "}
+                  {" No (reminder only) "}
                 </Text>
                 <Text> </Text>
                 <Text
@@ -292,7 +292,7 @@ export function SleeptimeSelector({
                   color={behavior === "auto-launch" ? "black" : undefined}
                   bold={behavior === "auto-launch"}
                 >
-                  {" Auto-launch "}
+                  {" Yes (auto-launch) "}
                 </Text>
               </Box>
             </>
@@ -319,7 +319,7 @@ export function SleeptimeSelector({
         <>
           <Box flexDirection="row">
             <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger:</Text>
+            <Text bold>Trigger event:</Text>
             <Text>{"   "}</Text>
             <Text
               backgroundColor={
