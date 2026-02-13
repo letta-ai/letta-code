@@ -1683,46 +1683,16 @@ async function main(): Promise<void> {
 
         // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-        if (memfsFlag) {
-          // memfs requires Letta Cloud (git memfs not supported on self-hosted)
-          const serverUrl = getServerUrl();
-          if (!serverUrl.includes("api.letta.com")) {
-            console.error(
-              "--memfs is only available on Letta Cloud (api.letta.com).",
-            );
-            process.exit(1);
-          }
-          settingsManager.setMemfsEnabled(agent.id, true);
-        } else if (noMemfsFlag) {
-          settingsManager.setMemfsEnabled(agent.id, false);
-        }
-
-        // When memfs is being enabled via flag, detach old API-based memory tools
-        if (settingsManager.isMemfsEnabled(agent.id) && memfsFlag) {
-          const { detachMemoryTools } = await import("./tools/toolset");
-          await detachMemoryTools(agent.id);
-        }
-
-        // Ensure agent's system prompt includes/excludes memfs section to match setting
-        if (memfsFlag || noMemfsFlag) {
-          const { updateAgentSystemPromptMemfs } = await import(
-            "./agent/modify"
+        try {
+          const { applyMemfsFlags } = await import(
+            "./agent/memoryFilesystem"
           );
-          await updateAgentSystemPromptMemfs(
-            agent.id,
-            settingsManager.isMemfsEnabled(agent.id),
+          await applyMemfsFlags(agent.id, memfsFlag, noMemfsFlag);
+        } catch (error) {
+          console.error(
+            error instanceof Error ? error.message : String(error),
           );
-        }
-
-        // Git-backed memory: ensure tag + repo are set up
-        if (settingsManager.isMemfsEnabled(agent.id)) {
-          const { addGitMemoryTag, isGitRepo, cloneMemoryRepo } = await import(
-            "./agent/memoryGit"
-          );
-          await addGitMemoryTag(agent.id);
-          if (!isGitRepo(agent.id)) {
-            await cloneMemoryRepo(agent.id);
-          }
+          process.exit(1);
         }
 
         // Check if we're resuming an existing agent
