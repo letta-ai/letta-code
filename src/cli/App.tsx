@@ -29,10 +29,12 @@ import {
   getDisplayableToolReturn,
 } from "../agent/approval-execution";
 import {
+  extractConflictDetail,
   fetchRunErrorDetail,
+  getPreStreamErrorAction,
   isApprovalPendingError,
-  isConversationBusyError,
   isInvalidToolCallIdsError,
+  rebuildInputWithFreshDenials,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -3141,40 +3143,48 @@ export default function App({
               { agentId: agentIdRef.current },
             );
           } catch (preStreamError) {
-            // Extract error detail from APIError (handles both direct and nested structures)
-            // Direct: e.error.detail | Nested: e.error.error.detail (matches formatErrorDetails)
-            let errorDetail = "";
+            // Extract error detail using shared helper (handles nested/direct/message shapes)
+            const errorDetail = extractConflictDetail(preStreamError);
+
+            // Route through shared pre-stream conflict classifier (parity with headless.ts)
+            const preStreamAction = getPreStreamErrorAction(
+              errorDetail,
+              conversationBusyRetriesRef.current,
+              CONVERSATION_BUSY_MAX_RETRIES,
+            );
+
+            // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
+            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
+            // Resets on each processConversation entry and on success.
             if (
-              preStreamError instanceof APIError &&
-              preStreamError.error &&
-              typeof preStreamError.error === "object"
+              preStreamAction === "resolve_approval_pending" &&
+              llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
             ) {
-              const errObj = preStreamError.error as Record<string, unknown>;
-              // Check nested structure first: e.error.error.detail
-              if (
-                errObj.error &&
-                typeof errObj.error === "object" &&
-                "detail" in errObj.error
-              ) {
-                const nested = errObj.error as Record<string, unknown>;
-                errorDetail =
-                  typeof nested.detail === "string" ? nested.detail : "";
+              llmApiErrorRetriesRef.current += 1;
+              try {
+                const client = await getClient();
+                const agent = await client.agents.retrieve(agentIdRef.current);
+                const { pendingApprovals: existingApprovals } =
+                  await getResumeData(client, agent, conversationIdRef.current);
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  existingApprovals ?? [],
+                  "Auto-denied: stale approval from interrupted session",
+                );
+              } catch {
+                // Fetch failed — strip stale payload and retry plain message
+                currentInput = rebuildInputWithFreshDenials(
+                  currentInput,
+                  [],
+                  "",
+                );
               }
-              // Fallback to direct structure: e.error.detail
-              if (!errorDetail && typeof errObj.detail === "string") {
-                errorDetail = errObj.detail;
-              }
-            }
-            // Final fallback: use Error.message
-            if (!errorDetail && preStreamError instanceof Error) {
-              errorDetail = preStreamError.message;
+              buffersRef.current.interrupted = false;
+              continue;
             }
 
-            // Check for 409 "conversation busy" error - retry once with delay
-            if (
-              isConversationBusyError(errorDetail) &&
-              conversationBusyRetriesRef.current < CONVERSATION_BUSY_MAX_RETRIES
-            ) {
+            // Check for 409 "conversation busy" error - retry with exponential backoff
+            if (preStreamAction === "retry_conversation_busy") {
               conversationBusyRetriesRef.current += 1;
               const retryDelayMs =
                 CONVERSATION_BUSY_RETRY_BASE_DELAY_MS *
@@ -4296,14 +4306,15 @@ export default function App({
             }
           }
 
-          // Check for approval pending error (sent user message while approval waiting)
-          // This is the lazy recovery path for when needsEagerApprovalCheck is false
+          // Check for approval pending error (sent user message while approval waiting).
+          // This is the lazy recovery path: fetch real pending approvals, auto-deny, retry.
+          // Works regardless of hasApprovalInPayload — stale queued approvals from an
+          // interrupt may have been rejected by the backend.
           const approvalPendingDetected =
             isApprovalPendingError(detailFromRun) ||
             isApprovalPendingError(latestErrorText);
 
           if (
-            !hasApprovalInPayload &&
             approvalPendingDetected &&
             llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
           ) {
@@ -4315,28 +4326,14 @@ export default function App({
               const agent = await client.agents.retrieve(agentIdRef.current);
               const { pendingApprovals: existingApprovals } =
                 await getResumeData(client, agent, conversationIdRef.current);
-
-              if (existingApprovals && existingApprovals.length > 0) {
-                // Create denial results for all stale approvals
-                // Use the same format as handleCancelApprovals (lines 6390-6395)
-                const denialResults = existingApprovals.map((approval) => ({
-                  type: "approval" as const,
-                  tool_call_id: approval.toolCallId,
-                  approve: false,
-                  reason:
-                    "Auto-denied: stale approval from interrupted session",
-                }));
-
-                // Prepend approval denials to the current input (keeps user message)
-                const approvalPayload: ApprovalCreate = {
-                  type: "approval",
-                  approvals: denialResults,
-                };
-                currentInput.unshift(approvalPayload);
-              }
-              // else: No approvals found - server state may have cleared, just retry
+              currentInput = rebuildInputWithFreshDenials(
+                currentInput,
+                existingApprovals ?? [],
+                "Auto-denied: stale approval from interrupted session",
+              );
             } catch {
-              // If we can't fetch approvals, just retry the original message
+              // Fetch failed — strip stale payload and retry plain message
+              currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
             }
 
             // Reset interrupted flag so retry stream chunks are processed
@@ -4769,6 +4766,20 @@ export default function App({
       setIsExecutingTool(false);
       toolResultsInFlightRef.current = false;
       refreshDerived();
+
+      // Send cancel request to backend (fire-and-forget).
+      // Without this, the backend stays in requires_approval state after tool interrupt,
+      // causing CONFLICT on the next user message.
+      getClient()
+        .then((client) => {
+          if (conversationIdRef.current === "default") {
+            return client.agents.messages.cancel(agentIdRef.current);
+          }
+          return client.conversations.cancel(conversationIdRef.current);
+        })
+        .catch(() => {
+          // Silently ignore - cancellation already happened client-side
+        });
 
       // Delay flag reset to ensure React has flushed state updates before dequeue can fire.
       // Use setTimeout(50) instead of setTimeout(0) - the longer delay ensures React's
