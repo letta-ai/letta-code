@@ -129,6 +129,14 @@ to search the parent agent's history, not your own.
 - Prefer substance over trivia.
 - Corrections and frustrations are HIGH priority.
 
+**If nothing is worth saving** (rare — most conversations
+have at least something): If after thorough review you
+genuinely find nothing new worth preserving, skip Phase 4,
+clean up the worktree (Step 5d), and report "reviewed N
+messages, no updates needed." But be sure you've looked
+carefully — corrections, preferences, and project context
+are easy to overlook.
+
 ### Phase 4: Update Memory Files in Worktree
 
 Edit files in the **worktree**, not the main memory dir:
