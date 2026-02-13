@@ -466,11 +466,11 @@ async function isRetriableError(
       const run = await client.runs.retrieve(lastRunId);
       const metaError = run.metadata?.error as
         | {
-            error_type?: string;
-            detail?: string;
-            // Handle nested error structure (error.error) that can occur in some edge cases
-            error?: { error_type?: string; detail?: string };
-          }
+          error_type?: string;
+          detail?: string;
+          // Handle nested error structure (error.error) that can occur in some edge cases
+          error?: { error_type?: string; detail?: string };
+        }
         | undefined;
 
       // Check for llm_error at top level or nested (handles error.error nesting)
@@ -767,43 +767,43 @@ function buildTextParts(
 // Items that have finished rendering and no longer change
 type StaticItem =
   | {
-      kind: "welcome";
-      id: string;
-      snapshot: {
-        continueSession: boolean;
-        agentState?: AgentState | null;
-        agentProvenance?: AgentProvenance | null;
-        terminalWidth: number;
-      };
-    }
+    kind: "welcome";
+    id: string;
+    snapshot: {
+      continueSession: boolean;
+      agentState?: AgentState | null;
+      agentProvenance?: AgentProvenance | null;
+      terminalWidth: number;
+    };
+  }
   | {
-      kind: "subagent_group";
+    kind: "subagent_group";
+    id: string;
+    agents: Array<{
       id: string;
-      agents: Array<{
-        id: string;
-        type: string;
-        description: string;
-        status: "completed" | "error" | "running";
-        toolCount: number;
-        totalTokens: number;
-        agentURL: string | null;
-        error?: string;
-      }>;
-    }
+      type: string;
+      description: string;
+      status: "completed" | "error" | "running";
+      toolCount: number;
+      totalTokens: number;
+      agentURL: string | null;
+      error?: string;
+    }>;
+  }
   | {
-      // Preview content committed early during approval to enable flicker-free UI
-      // When an approval's content is tall enough to overflow the viewport,
-      // we commit the preview to static and only show small approval options in dynamic
-      kind: "approval_preview";
-      id: string;
-      toolCallId: string;
-      toolName: string;
-      toolArgs: string;
-      // Optional precomputed/cached data for rendering
-      precomputedDiff?: AdvancedDiffSuccess;
-      planContent?: string; // For ExitPlanMode
-      planFilePath?: string; // For ExitPlanMode
-    }
+    // Preview content committed early during approval to enable flicker-free UI
+    // When an approval's content is tall enough to overflow the viewport,
+    // we commit the preview to static and only show small approval options in dynamic
+    kind: "approval_preview";
+    id: string;
+    toolCallId: string;
+    toolName: string;
+    toolArgs: string;
+    // Optional precomputed/cached data for rendering
+    precomputedDiff?: AdvancedDiffSuccess;
+    planContent?: string; // For ExitPlanMode
+    planFilePath?: string; // For ExitPlanMode
+  }
   | Line;
 
 export default function App({
@@ -825,11 +825,11 @@ export default function App({
   agentState?: AgentState | null;
   conversationId: string; // Required: created at startup
   loadingState?:
-    | "assembling"
-    | "importing"
-    | "initializing"
-    | "checking"
-    | "ready";
+  | "assembling"
+  | "importing"
+  | "initializing"
+  | "checking"
+  | "ready";
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
   startupApprovals?: ApprovalRequest[];
@@ -1228,26 +1228,26 @@ export default function App({
     | { type: "switch_agent"; agentId: string; commandId?: string }
     | { type: "switch_model"; modelId: string; commandId?: string }
     | {
-        type: "set_sleeptime";
-        settings: ReflectionSettings;
-        commandId?: string;
-      }
+      type: "set_sleeptime";
+      settings: ReflectionSettings;
+      commandId?: string;
+    }
     | {
-        type: "switch_conversation";
-        conversationId: string;
-        commandId?: string;
-      }
+      type: "switch_conversation";
+      conversationId: string;
+      commandId?: string;
+    }
     | {
-        type: "switch_toolset";
-        toolsetId:
-          | "codex"
-          | "codex_snake"
-          | "default"
-          | "gemini"
-          | "gemini_snake"
-          | "none";
-        commandId?: string;
-      }
+      type: "switch_toolset";
+      toolsetId:
+      | "codex"
+      | "codex_snake"
+      | "default"
+      | "gemini"
+      | "gemini_snake"
+      | "none";
+      commandId?: string;
+    }
     | { type: "switch_system"; promptId: string; commandId?: string }
     | null;
   const [queuedOverlayAction, setQueuedOverlayAction] =
@@ -2533,7 +2533,7 @@ export default function App({
       // Check if agent is pinned (locally or globally)
       const isPinned = agentState?.id
         ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        settingsManager.getGlobalPinnedAgents().includes(agentState.id)
         : false;
 
       // Build status message
@@ -2555,27 +2555,27 @@ export default function App({
       // - New session + pinned: show /memory (they're already saved)
       const commandHints = isResumingConversation
         ? [
+          "→ **/agents**    list all agents",
+          "→ **/resume**    browse all conversations",
+          "→ **/new**       start a new conversation",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
+        : isPinned
+          ? [
             "→ **/agents**    list all agents",
-            "→ **/resume**    browse all conversations",
-            "→ **/new**       start a new conversation",
+            "→ **/resume**    resume a previous conversation",
+            "→ **/memory**    view your agent's memory blocks",
             "→ **/init**      initialize your agent's memory",
             "→ **/remember**  teach your agent",
           ]
-        : isPinned
-          ? [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/memory**    view your agent's memory blocks",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ]
           : [
-              "→ **/agents**    list all agents",
-              "→ **/resume**    resume a previous conversation",
-              "→ **/pin**       save + name your agent",
-              "→ **/init**      initialize your agent's memory",
-              "→ **/remember**  teach your agent",
-            ];
+            "→ **/agents**    list all agents",
+            "→ **/resume**    resume a previous conversation",
+            "→ **/pin**       save + name your agent",
+            "→ **/init**      initialize your agent's memory",
+            "→ **/remember**  teach your agent",
+          ];
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -2738,7 +2738,7 @@ export default function App({
           pendingGitReminderRef.current =
             status.dirty || status.aheadOfRemote ? status : null;
         })
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => {
           memfsGitCheckInFlightRef.current = false;
         });
@@ -3030,7 +3030,7 @@ export default function App({
         const canInjectInterruptRecovery =
           pendingInterruptRecoveryConversationIdRef.current !== null &&
           pendingInterruptRecoveryConversationIdRef.current ===
-            conversationIdRef.current;
+          conversationIdRef.current;
         if (
           cacheIsAllUserMsgs &&
           lastSentInputRef.current &&
@@ -3041,14 +3041,14 @@ export default function App({
             ...currentInput.map((m) =>
               m.type === "message" && m.role === "user"
                 ? {
-                    ...m,
-                    content: [
-                      { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
-                      ...(typeof m.content === "string"
-                        ? [{ type: "text" as const, text: m.content }]
-                        : m.content),
-                    ],
-                  }
+                  ...m,
+                  content: [
+                    { type: "text" as const, text: INTERRUPT_RECOVERY_ALERT },
+                    ...(typeof m.content === "string"
+                      ? [{ type: "text" as const, text: m.content }]
+                      : m.content),
+                  ],
+                }
                 : m,
             ),
           ];
@@ -3922,13 +3922,13 @@ export default function App({
               autoAllowedResults =
                 autoAllowed.length > 0
                   ? await executeAutoAllowedTools(
-                      autoAllowed,
-                      (chunk) => onChunk(buffersRef.current, chunk),
-                      {
-                        abortSignal: autoAllowedAbortController.signal,
-                        onStreamingOutput: updateStreamingOutput,
-                      },
-                    )
+                    autoAllowed,
+                    (chunk) => onChunk(buffersRef.current, chunk),
+                    {
+                      abortSignal: autoAllowedAbortController.signal,
+                      onStreamingOutput: updateStreamingOutput,
+                    },
+                  )
                   : [];
 
               // Create denial results for auto-denied tools and update buffers
@@ -3981,10 +3981,10 @@ export default function App({
               }
               const autoAllowedMetadata = autoAllowedExecutionRef.current
                 ? {
-                    conversationId:
-                      autoAllowedExecutionRef.current.conversationId,
-                    generation: conversationGenerationRef.current,
-                  }
+                  conversationId:
+                    autoAllowedExecutionRef.current.conversationId,
+                  generation: conversationGenerationRef.current,
+                }
                 : undefined;
 
               // If all are auto-handled, continue immediately without showing dialog
@@ -4418,7 +4418,7 @@ export default function App({
               ? "FallbackError"
               : stopReasonToHandle || "unknown_stop_reason",
             fallbackError ||
-              `Stream stopped with reason: ${stopReasonToHandle}`,
+            `Stream stopped with reason: ${stopReasonToHandle}`,
             "message_stream",
             {
               modelId: currentModelId || undefined,
@@ -4583,9 +4583,9 @@ export default function App({
         // Extract HTTP status code if available (API errors often have this)
         const httpStatus =
           e &&
-          typeof e === "object" &&
-          "status" in e &&
-          typeof e.status === "number"
+            typeof e === "object" &&
+            "status" in e &&
+            typeof e.status === "number"
             ? e.status
             : undefined;
 
@@ -4718,9 +4718,9 @@ export default function App({
       const autoAllowedResults = autoAllowedExecutionRef.current?.results;
       const autoAllowedMetadata = autoAllowedExecutionRef.current
         ? {
-            conversationId: autoAllowedExecutionRef.current.conversationId,
-            generation: conversationGenerationRef.current,
-          }
+          conversationId: autoAllowedExecutionRef.current.conversationId,
+          generation: conversationGenerationRef.current,
+        }
         : undefined;
       if (autoAllowedResults && autoAllowedResults.length > 0) {
         queueApprovalResults(autoAllowedResults, autoAllowedMetadata);
@@ -5069,14 +5069,14 @@ export default function App({
           opts?.conversationId && opts.conversationId !== "default";
         const successOutput = isSpecificConv
           ? [
-              `Switched to **${agentLabel}**`,
-              `⎿  Conversation: ${opts.conversationId}`,
-            ].join("\n")
+            `Switched to **${agentLabel}**`,
+            `⎿  Conversation: ${opts.conversationId}`,
+          ].join("\n")
           : [
-              `Resumed the default conversation with **${agentLabel}**.`,
-              `⎿  Type /resume to browse all conversations`,
-              `⎿  Type /new to start a new conversation`,
-            ].join("\n");
+            `Resumed the default conversation with **${agentLabel}**.`,
+            `⎿  Type /resume to browse all conversations`,
+            `⎿  Type /new to start a new conversation`,
+          ].join("\n");
         const separator = {
           kind: "separator" as const,
           id: uid("sep"),
@@ -5296,8 +5296,8 @@ export default function App({
           errOutput =
             error instanceof Error
               ? (error as { stderr?: string; stdout?: string }).stderr ||
-                (error as { stdout?: string }).stdout ||
-                error.message
+              (error as { stdout?: string }).stdout ||
+              error.message
               : String(error);
         }
 
@@ -5458,9 +5458,9 @@ export default function App({
         }
         const autoAllowedMetadata = autoAllowedExecutionRef.current
           ? {
-              conversationId: autoAllowedExecutionRef.current.conversationId,
-              generation: conversationGenerationRef.current,
-            }
+            conversationId: autoAllowedExecutionRef.current.conversationId,
+            generation: conversationGenerationRef.current,
+          }
           : undefined;
 
         if (
@@ -5553,11 +5553,11 @@ export default function App({
       const hookResult = isSystemOnly
         ? { blocked: false, feedback: [] as string[] }
         : await runUserPromptSubmitHooks(
-            userTextForInput,
-            isCommand,
-            agentId,
-            conversationIdRef.current,
-          );
+          userTextForInput,
+          isCommand,
+          agentId,
+          conversationIdRef.current,
+        );
       if (!isSystemOnly && hookResult.blocked) {
         // Show feedback from hook in the transcript
         const feedbackId = uid("status");
@@ -5740,7 +5740,7 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
-          const adeUrl = `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
+          const adeUrl = conversationIdRef.current === "default" ? `https://app.letta.com/agents/${agentId}` : `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
           const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
@@ -6146,11 +6146,11 @@ export default function App({
               // Silently skip if endpoint not available (not deployed yet or self-hosted)
               let balance:
                 | {
-                    total_balance: number;
-                    monthly_credit_balance: number;
-                    purchased_credit_balance: number;
-                    billing_tier: string;
-                  }
+                  total_balance: number;
+                  monthly_credit_balance: number;
+                  purchased_credit_balance: number;
+                  billing_tier: string;
+                }
                 | undefined;
 
               try {
@@ -6468,7 +6468,7 @@ export default function App({
                   sessionStartFeedbackRef.current = result.feedback;
                 }
               })
-              .catch(() => {});
+              .catch(() => { });
             sessionHooksRanRef.current = true;
 
             // Update command with success
@@ -6546,7 +6546,7 @@ export default function App({
                   sessionStartFeedbackRef.current = result.feedback;
                 }
               })
-              .catch(() => {});
+              .catch(() => { });
             sessionHooksRanRef.current = true;
 
             // Update command with success
@@ -6619,11 +6619,11 @@ export default function App({
             const compactParams =
               modeArg && modelHandle
                 ? {
-                    compaction_settings: {
-                      mode: modeArg,
-                      model: modelHandle,
-                    },
-                  }
+                  compaction_settings: {
+                    mode: modeArg,
+                    model: modelHandle,
+                  },
+                }
                 : undefined;
 
             // Use agent-level compact API for "default" conversation,
@@ -6632,9 +6632,9 @@ export default function App({
               conversationIdRef.current === "default"
                 ? await client.agents.messages.compact(agentId, compactParams)
                 : await client.conversations.messages.compact(
-                    conversationIdRef.current,
-                    compactParams,
-                  );
+                  conversationIdRef.current,
+                  compactParams,
+                );
 
             // Format success message with before/after counts and summary
             const outputLines = [
@@ -6867,15 +6867,15 @@ export default function App({
                 const successLines =
                   resumeData.messageHistory.length > 0
                     ? [
-                        `Resumed conversation with "${currentAgentName}"`,
-                        `⎿  Agent: ${agentId}`,
-                        `⎿  Conversation: ${targetConvId}`,
-                      ]
+                      `Resumed conversation with "${currentAgentName}"`,
+                      `⎿  Agent: ${agentId}`,
+                      `⎿  Conversation: ${targetConvId}`,
+                    ]
                     : [
-                        `Switched to conversation with "${currentAgentName}"`,
-                        `⎿  Agent: ${agentId}`,
-                        `⎿  Conversation: ${targetConvId} (empty)`,
-                      ];
+                      `Switched to conversation with "${currentAgentName}"`,
+                      `⎿  Agent: ${agentId}`,
+                      `⎿  Conversation: ${targetConvId} (empty)`,
+                    ];
                 const successOutput = successLines.join("\n");
                 cmd.finish(successOutput, true);
                 const successItem: StaticItem = {
@@ -8080,8 +8080,7 @@ ${SYSTEM_REMINDER_CLOSE}
         } catch (error) {
           debugWarn(
             "memory",
-            `Failed to auto-launch reflection subagent (${triggerSource}): ${
-              error instanceof Error ? error.message : String(error)
+            `Failed to auto-launch reflection subagent (${triggerSource}): ${error instanceof Error ? error.message : String(error)
             }`,
           );
           return false;
@@ -8396,13 +8395,13 @@ ${SYSTEM_REMINDER_CLOSE}
                 autoAllowedResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                        },
-                      )
+                      autoAllowed,
+                      (chunk) => onChunk(buffersRef.current, chunk),
+                      {
+                        abortSignal: autoAllowedAbortController.signal,
+                        onStreamingOutput: updateStreamingOutput,
+                      },
+                    )
                     : [];
 
                 // Create denial results for auto-denied and update UI
@@ -8411,7 +8410,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   const reason = ac.permission.reason
                     ? `Permission denied: ${ac.permission.reason}`
                     : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
+                      ac.permission.matchedRule
                       ? `Permission denied by rule: ${ac.permission.matchedRule}`
                       : "Permission denied: Unknown";
 
@@ -8452,10 +8451,10 @@ ${SYSTEM_REMINDER_CLOSE}
                 }
                 const autoAllowedMetadata = autoAllowedExecutionRef.current
                   ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
+                    conversationId:
+                      autoAllowedExecutionRef.current.conversationId,
+                    generation: conversationGenerationRef.current,
+                  }
                   : undefined;
 
                 if (
@@ -8640,13 +8639,13 @@ ${SYSTEM_REMINDER_CLOSE}
                 autoAllowedWithResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
-                        autoAllowed,
-                        (chunk) => onChunk(buffersRef.current, chunk),
-                        {
-                          abortSignal: autoAllowedAbortController.signal,
-                          onStreamingOutput: updateStreamingOutput,
-                        },
-                      )
+                      autoAllowed,
+                      (chunk) => onChunk(buffersRef.current, chunk),
+                      {
+                        abortSignal: autoAllowedAbortController.signal,
+                        onStreamingOutput: updateStreamingOutput,
+                      },
+                    )
                     : [];
 
                 // Create denial reasons for auto-denied and update UI
@@ -8655,7 +8654,7 @@ ${SYSTEM_REMINDER_CLOSE}
                   const reason = ac.permission.reason
                     ? `Permission denied: ${ac.permission.reason}`
                     : "matchedRule" in ac.permission &&
-                        ac.permission.matchedRule
+                      ac.permission.matchedRule
                       ? `Permission denied by rule: ${ac.permission.matchedRule}`
                       : "Permission denied: Unknown";
 
@@ -8699,10 +8698,10 @@ ${SYSTEM_REMINDER_CLOSE}
                 }
                 const autoAllowedMetadata = autoAllowedExecutionRef.current
                   ? {
-                      conversationId:
-                        autoAllowedExecutionRef.current.conversationId,
-                      generation: conversationGenerationRef.current,
-                    }
+                    conversationId:
+                      autoAllowedExecutionRef.current.conversationId,
+                    generation: conversationGenerationRef.current,
+                  }
                   : undefined;
 
                 if (
@@ -9277,13 +9276,13 @@ ${SYSTEM_REMINDER_CLOSE}
             | { type: "approve"; approval: ApprovalRequest }
             | { type: "deny"; approval: ApprovalRequest; reason: string }
           > = [
-            ...approvalResultsSnapshot, // Include decisions from previous rounds
-            { type: "approve", approval: currentApproval },
-            ...nowAutoAllowed.map((r) => ({
-              type: "approve" as const,
-              approval: r.approval,
-            })),
-          ];
+              ...approvalResultsSnapshot, // Include decisions from previous rounds
+              { type: "approve", approval: currentApproval },
+              ...nowAutoAllowed.map((r) => ({
+                type: "approve" as const,
+                approval: r.approval,
+              })),
+            ];
 
           // Clear dialog state immediately
           setPendingApprovals([]);
@@ -9547,10 +9546,10 @@ ${SYSTEM_REMINDER_CLOSE}
             | "gemini"
             | "gemini_snake"
             | "none" = isOpenAIModel(modelHandle)
-            ? "codex"
-            : isGeminiModel(modelHandle)
-              ? "gemini"
-              : "default";
+              ? "codex"
+              : isGeminiModel(modelHandle)
+                ? "gemini"
+                : "default";
 
           let toolsetName:
             | "codex"
@@ -9861,9 +9860,9 @@ ${SYSTEM_REMINDER_CLOSE}
         const cmd = action.commandId
           ? commandRunner.getHandle(action.commandId, "/resume")
           : commandRunner.start(
-              "/resume",
-              "Processing queued conversation switch...",
-            );
+            "/resume",
+            "Processing queued conversation switch...",
+          );
         cmd.update({
           output: "Processing queued conversation switch...",
           phase: "running",
@@ -10252,8 +10251,8 @@ ${SYSTEM_REMINDER_CLOSE}
         const plansDir = join(homedir(), ".letta", "plans");
         handlePlanKeepPlanning(
           `You must write your plan to a plan file before exiting plan mode.\n` +
-            (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
-            `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
+          (planFilePath ? `Plan file path: ${planFilePath}\n` : "") +
+          `Use a write tool to create your plan in ${plansDir}, then use ExitPlanMode to present the plan to the user.`,
         );
       }
     }
@@ -10564,7 +10563,7 @@ Plan file path: ${planFilePath}`;
       // Check if agent is pinned (locally or globally)
       const isPinned = agentState?.id
         ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        settingsManager.getGlobalPinnedAgents().includes(agentState.id)
         : false;
 
       // Build status message based on session type
@@ -10578,19 +10577,19 @@ Plan file path: ${planFilePath}`;
       // Command hints - for pinned agents show /memory, for unpinned show /pin
       const commandHints = isPinned
         ? [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/memory**    view your agent's memory blocks",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ]
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/memory**    view your agent's memory blocks",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ]
         : [
-            "→ **/agents**    list all agents",
-            "→ **/resume**    resume a previous conversation",
-            "→ **/pin**       save + name your agent",
-            "→ **/init**      initialize your agent's memory",
-            "→ **/remember**  teach your agent",
-          ];
+          "→ **/agents**    list all agents",
+          "→ **/resume**    resume a previous conversation",
+          "→ **/pin**       save + name your agent",
+          "→ **/init**      initialize your agent's memory",
+          "→ **/remember**  teach your agent",
+        ];
 
       // Build status lines with optional release notes above header
       const statusLines: string[] = [];
@@ -10685,7 +10684,7 @@ Plan file path: ${planFilePath}`;
                 <StatusMessage line={item} />
               ) : item.kind === "event" ? (
                 !showCompactionsEnabled &&
-                item.eventType === "compaction" ? null : (
+                  item.eventType === "compaction" ? null : (
                   <EventMessage line={item} />
                 )
               ) : item.kind === "separator" ? (
@@ -10918,12 +10917,12 @@ Plan file path: ${planFilePath}`;
                     <Text color={colors.link.url}>
                       {/* Show -n "name" if agent has name and is pinned, otherwise --agent */}
                       {agentName &&
-                      (settingsManager
-                        .getLocalPinnedAgents()
-                        .includes(agentId) ||
-                        settingsManager
-                          .getGlobalPinnedAgents()
-                          .includes(agentId))
+                        (settingsManager
+                          .getLocalPinnedAgents()
+                          .includes(agentId) ||
+                          settingsManager
+                            .getGlobalPinnedAgents()
+                            .includes(agentId))
                         ? `letta -n "${agentName}"`
                         : `letta --agent ${agentId}`}
                     </Text>
@@ -11200,15 +11199,15 @@ Plan file path: ${planFilePath}`;
                       const successLines =
                         resumeData.messageHistory.length > 0
                           ? [
-                              `Resumed conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId}`,
-                            ]
+                            `Resumed conversation with "${currentAgentName}"`,
+                            `⎿  Agent: ${agentId}`,
+                            `⎿  Conversation: ${convId}`,
+                          ]
                           : [
-                              `Switched to conversation with "${currentAgentName}"`,
-                              `⎿  Agent: ${agentId}`,
-                              `⎿  Conversation: ${convId} (empty)`,
-                            ];
+                            `Switched to conversation with "${currentAgentName}"`,
+                            `⎿  Agent: ${agentId}`,
+                            `⎿  Conversation: ${convId} (empty)`,
+                          ];
                       const successOutput = successLines.join("\n");
                       cmd.finish(successOutput, true);
                       const successItem: StaticItem = {
@@ -11657,9 +11656,9 @@ Plan file path: ${planFilePath}`;
                     );
                   cmd.finish(
                     `Successfully created MCP server "${serverName}"\n` +
-                      `ID: ${serverId}\n` +
-                      `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
-                      "Open /mcp to attach or detach tools for this server.",
+                    `ID: ${serverId}\n` +
+                    `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
+                    "Open /mcp to attach or detach tools for this server.",
                     true,
                   );
                 }}
