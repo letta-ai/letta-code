@@ -546,10 +546,22 @@
     }
   },
   {
+    "id": "minimax-m2.5",
+    "handle": "minimax/MiniMax-M2.5",
+    "label": "MiniMax 2.5",
+    "description": "MiniMax's latest coding model",
+    "isFeatured": true,
+    "free": true,
+    "updateArgs": {
+      "context_window": 160000,
+      "max_output_tokens": 64000
+    }
+  },
+  {
     "id": "minimax-m2.1",
     "handle": "minimax/MiniMax-M2.1",
     "label": "MiniMax 2.1",
-    "description": "MiniMax's latest coding model",
+    "description": "MiniMax's latest coding model (legacy)",
     "isFeatured": true,
     "free": true,
     "updateArgs": {
