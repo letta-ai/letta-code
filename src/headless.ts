@@ -692,6 +692,12 @@ export async function handleHeadlessCommand(
     settingsManager.setMemfsEnabled(agent.id, false);
   }
 
+  // When memfs is being enabled via flag, detach old API-based memory tools
+  if (settingsManager.isMemfsEnabled(agent.id) && memfsFlag) {
+    const { detachMemoryTools } = await import("./tools/toolset");
+    await detachMemoryTools(agent.id);
+  }
+
   // Ensure agent's system prompt includes/excludes memfs section to match setting
   if (memfsFlag || noMemfsFlag) {
     const { updateAgentSystemPromptMemfs } = await import("./agent/modify");
@@ -701,12 +707,12 @@ export async function handleHeadlessCommand(
     );
   }
 
-  // Git-backed memory: clone or pull on startup (only if memfs is enabled)
+  // Git-backed memory: ensure tag + repo are set up
   if (settingsManager.isMemfsEnabled(agent.id)) {
     try {
-      const { isGitRepo, cloneMemoryRepo, pullMemory } = await import(
-        "./agent/memoryGit"
-      );
+      const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
+        await import("./agent/memoryGit");
+      await addGitMemoryTag(agent.id);
       if (!isGitRepo(agent.id)) {
         await cloneMemoryRepo(agent.id);
       } else {
