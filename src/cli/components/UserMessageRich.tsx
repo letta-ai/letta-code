@@ -112,7 +112,8 @@ export function splitSystemReminderBlocks(
 }
 
 /**
- * Render a block of text with "> " prefix (first line) and "  " continuation.
+ * Render a block of text with a prompt prefix (first line) and matching-width
+ * continuation spaces on subsequent lines.
  * If highlighted, applies background and foreground colors. Otherwise plain text.
  */
 function renderBlock(
@@ -121,6 +122,8 @@ function renderBlock(
   columns: number,
   highlighted: boolean,
   colorAnsi: string, // combined bg + fg ANSI codes
+  promptPrefix: string,
+  continuationPrefix: string,
 ): string[] {
   const inputLines = text.split("\n");
   const outputLines: string[] = [];
@@ -141,13 +144,20 @@ function renderBlock(
   const isSingleLine = outputLines.length === 1;
 
   return outputLines.map((ol, i) => {
-    const prefix = i === 0 ? "> " : "  ";
-    const content = prefix + ol;
+    const prefix = i === 0 ? promptPrefix : continuationPrefix;
 
     if (!highlighted) {
-      return content;
+      return prefix + ol;
     }
 
+    // Re-apply colorAnsi after the prompt character on the first line because
+    // the prompt string may contain an ANSI reset (\x1b[0m) that clears
+    // the background highlight. Insert before the trailing space so it's
+    // also highlighted.
+    const content =
+      i === 0
+        ? `${promptPrefix.slice(0, -1)}${colorAnsi} ${ol}`
+        : `${prefix}${ol}`;
     const visWidth = stringWidth(content);
     if (isSingleLine) {
       return `${colorAnsi}${content}${" ".repeat(COMPACT_PAD)}\x1b[0m`;
@@ -161,48 +171,57 @@ function renderBlock(
  * UserMessageRich - Rich formatting for user messages with background highlight
  *
  * Renders user messages as pre-formatted text with ANSI background codes:
- * - "> " prompt prefix on first line, "  " continuation on subsequent lines
+ * - Custom prompt prefix on first line, matching-width spaces on subsequent lines
  * - Single-line messages: compact highlight (content + small padding)
  * - Multi-line messages: full-width highlight box extending to terminal edge
- * - Word wrapping respects the 2-char prefix width
+ * - Word wrapping respects the prompt prefix width
  * - System-reminder parts are shown plain (no highlight), user parts highlighted
  */
-export const UserMessage = memo(({ line }: { line: UserLine }) => {
-  const columns = useTerminalWidth();
-  const contentWidth = Math.max(1, columns - 2);
-  const cleanedText = extractTaskNotificationsForDisplay(line.text).cleanedText;
-  const displayText = cleanedText.trim();
-  if (!displayText) {
-    return null;
-  }
-
-  // Build combined ANSI code for background + optional foreground
-  const { background, text: textColor } = colors.userMessage;
-  const bgAnsi = hexToBgAnsi(background);
-  const fgAnsi = textColor ? hexToFgAnsi(textColor) : "";
-  const colorAnsi = bgAnsi + fgAnsi;
-
-  // Split into system-reminder blocks and user content blocks
-  const blocks = splitSystemReminderBlocks(displayText);
-
-  const allLines: string[] = [];
-
-  for (const block of blocks) {
-    if (!block.text.trim()) continue;
-    if (allLines.length > 0) {
-      allLines.push("");
+export const UserMessage = memo(
+  ({ line, prompt }: { line: UserLine; prompt?: string }) => {
+    const columns = useTerminalWidth();
+    const promptPrefix = `${prompt || ">"} `;
+    const prefixWidth = stringWidth(promptPrefix);
+    const continuationPrefix = " ".repeat(prefixWidth);
+    const contentWidth = Math.max(1, columns - prefixWidth);
+    const cleanedText = extractTaskNotificationsForDisplay(
+      line.text,
+    ).cleanedText;
+    const displayText = cleanedText.trim();
+    if (!displayText) {
+      return null;
     }
-    const blockLines = renderBlock(
-      block.text,
-      contentWidth,
-      columns,
-      !block.isSystemReminder,
-      colorAnsi,
-    );
-    allLines.push(...blockLines);
-  }
 
-  return <Text>{allLines.join("\n")}</Text>;
-});
+    // Build combined ANSI code for background + optional foreground
+    const { background, text: textColor } = colors.userMessage;
+    const bgAnsi = hexToBgAnsi(background);
+    const fgAnsi = textColor ? hexToFgAnsi(textColor) : "";
+    const colorAnsi = bgAnsi + fgAnsi;
+
+    // Split into system-reminder blocks and user content blocks
+    const blocks = splitSystemReminderBlocks(displayText);
+
+    const allLines: string[] = [];
+
+    for (const block of blocks) {
+      if (!block.text.trim()) continue;
+      if (allLines.length > 0) {
+        allLines.push("");
+      }
+      const blockLines = renderBlock(
+        block.text,
+        contentWidth,
+        columns,
+        !block.isSystemReminder,
+        colorAnsi,
+        promptPrefix,
+        continuationPrefix,
+      );
+      allLines.push(...blockLines);
+    }
+
+    return <Text>{allLines.join("\n")}</Text>;
+  },
+);
 
 UserMessage.displayName = "UserMessage";

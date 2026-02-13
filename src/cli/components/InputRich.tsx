@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import stringWidth from "string-width";
 import { LETTA_CLOUD_API_URL } from "../../auth/oauth";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
@@ -538,6 +539,7 @@ export function Input({
   statusLineText,
   statusLineRight,
   statusLinePadding = 0,
+  statusLinePrompt,
 }: {
   visible?: boolean;
   streaming: boolean;
@@ -576,6 +578,7 @@ export function Input({
   statusLineText?: string;
   statusLineRight?: string;
   statusLinePadding?: number;
+  statusLinePrompt?: string;
 }) {
   const [value, setValue] = useState("");
   const [escapePressed, setEscapePressed] = useState(false);
@@ -592,7 +595,13 @@ export function Input({
 
   // Terminal width is sourced from App.tsx to avoid duplicate resize subscriptions.
   const columns = terminalWidth;
-  const contentWidth = Math.max(0, columns - 2);
+
+  // Bash mode state (declared early so prompt width can feed into contentWidth)
+  const [isBashMode, setIsBashMode] = useState(false);
+
+  const promptChar = isBashMode ? "!" : statusLinePrompt || ">";
+  const promptVisualWidth = stringWidth(promptChar) + 1; // +1 for trailing space
+  const contentWidth = Math.max(0, columns - promptVisualWidth);
 
   const interactionEnabled = visible && inputEnabled;
   const reserveInputSpace = !collapseInputWhenDisabled;
@@ -667,9 +676,6 @@ export function Input({
 
   // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
-
-  // Bash mode state
-  const [isBashMode, setIsBashMode] = useState(false);
 
   // Restore input from error (only if current value is empty)
   useEffect(() => {
@@ -1247,11 +1253,11 @@ export function Input({
 
             {/* Two-column layout for input, matching message components */}
             <Box flexDirection="row">
-              <Box width={2} flexShrink={0}>
+              <Box width={promptVisualWidth} flexShrink={0}>
                 <Text
                   color={isBashMode ? colors.bash.prompt : colors.input.prompt}
                 >
-                  {isBashMode ? "!" : ">"}
+                  {promptChar}
                 </Text>
                 <Text> </Text>
               </Box>
@@ -1356,6 +1362,8 @@ export function Input({
     statusLineText,
     statusLineRight,
     statusLinePadding,
+    promptChar,
+    promptVisualWidth,
   ]);
 
   // If not visible, render nothing but keep component mounted to preserve state

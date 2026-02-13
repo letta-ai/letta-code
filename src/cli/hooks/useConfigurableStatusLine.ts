@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type NormalizedStatusLineConfig,
+  resolvePromptChar,
   resolveStatusLineConfig,
 } from "../helpers/statusLineConfig";
 import {
@@ -46,6 +47,7 @@ export interface StatusLineState {
   executing: boolean;
   lastError: string | null;
   padding: number;
+  prompt: string;
 }
 
 function toPayloadInput(inputs: StatusLineInputs): StatusLinePayloadBuildInput {
@@ -77,6 +79,7 @@ export function useConfigurableStatusLine(
   const [executing, setExecuting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [padding, setPadding] = useState(0);
+  const [prompt, setPrompt] = useState(">");
 
   const inputsRef = useRef(inputs);
   const configRef = useRef<NormalizedStatusLineConfig | null>(null);
@@ -107,6 +110,9 @@ export function useConfigurableStatusLine(
   const resolveActiveConfig = useCallback(() => {
     const workingDirectory = inputsRef.current.currentDirectory;
     const config = resolveStatusLineConfig(workingDirectory);
+
+    // Always resolve prompt, independent of whether a command is configured.
+    setPrompt(resolvePromptChar(workingDirectory));
 
     if (!config) {
       configRef.current = null;
@@ -225,5 +231,5 @@ export function useConfigurableStatusLine(
     currentDirectory,
   ]);
 
-  return { text, rightText, active, executing, lastError, padding };
+  return { text, rightText, active, executing, lastError, padding, prompt };
 }

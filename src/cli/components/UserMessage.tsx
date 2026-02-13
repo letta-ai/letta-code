@@ -7,6 +7,8 @@ type UserLine = {
   text: string;
 };
 
-export const UserMessage = memo(({ line }: { line: UserLine }) => {
-  return <Text>{`> ${line.text}`}</Text>;
-});
+export const UserMessage = memo(
+  ({ line, prompt }: { line: UserLine; prompt?: string }) => {
+    return <Text>{`${prompt || ">"} ${line.text}`}</Text>;
+  },
+);
