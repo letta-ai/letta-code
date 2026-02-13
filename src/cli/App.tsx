@@ -5137,6 +5137,12 @@ export default function App({
         // Create the new agent
         const { agent } = await createAgent(name);
 
+        // Enable memfs by default on Letta Cloud for new agents
+        const { enableMemfsIfCloud } = await import(
+          "../agent/memoryFilesystem"
+        );
+        await enableMemfsIfCloud(agent.id);
+
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 

@@ -31,7 +31,7 @@ const INCOGNITO_DESCRIPTION =
  */
 export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   memo: {
-    name: "Memo",
+    name: "Letta Code",
     description: MEMO_DESCRIPTION,
     // Uses default memory blocks and tools (full stateful config)
     // Override persona block with Memo-specific personality
@@ -90,6 +90,11 @@ export async function ensureDefaultAgents(
     const { agent } = await createAgent(DEFAULT_AGENT_CONFIGS.memo);
     await addTagToAgent(client, agent.id, MEMO_TAG);
     settingsManager.pinGlobal(agent.id);
+
+    // Enable memfs by default on Letta Cloud
+    const { enableMemfsIfCloud } = await import("./memoryFilesystem");
+    await enableMemfsIfCloud(agent.id);
+
     return agent;
   } catch (err) {
     // Re-throw so caller can handle/exit appropriately
