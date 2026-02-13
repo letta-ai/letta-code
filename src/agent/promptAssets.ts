@@ -25,9 +25,11 @@ import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
 
 import stylePrompt from "./prompts/style.mdx";
 import systemPrompt from "./prompts/system_prompt.txt";
+import systemPromptMemoryAddon from "./prompts/system_prompt_memory.txt";
 import systemPromptMemfsAddon from "./prompts/system_prompt_memfs.txt";
 
 export const SYSTEM_PROMPT = systemPrompt;
+export const SYSTEM_PROMPT_MEMORY_ADDON = systemPromptMemoryAddon;
 export const SYSTEM_PROMPT_MEMFS_ADDON = systemPromptMemfsAddon;
 export const PLAN_MODE_REMINDER = planModeReminder;
 

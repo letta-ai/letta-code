@@ -17,7 +17,7 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { resolveSystemPrompt } from "./promptAssets";
+import { SYSTEM_PROMPT_MEMORY_ADDON, resolveSystemPrompt } from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 
 /**
@@ -269,6 +269,10 @@ export async function createAgent(
   } else {
     systemPromptContent = await resolveSystemPrompt(options.systemPromptPreset);
   }
+
+  // Append the non-memfs memory section by default.
+  // If memfs is enabled, updateAgentSystemPromptMemfs() will swap it for the memfs version.
+  systemPromptContent = `${systemPromptContent}\n${SYSTEM_PROMPT_MEMORY_ADDON}`;
 
   // Append additional instructions if provided
   if (options.systemPromptAppend) {

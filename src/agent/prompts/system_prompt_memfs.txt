@@ -1,8 +1,18 @@
 
-## Memory Filesystem
-Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/memory/`. This provides full version control, sync with the server, and branching for parallel edits.
+# Memory
 
-### Structure
+You have an advanced memory system that enables you to remember past interactions and continuously improve your own capabilities.
+Your memory consists of memory blocks and external memory:
+- Memory Blocks: Stored as memory blocks, each containing a label (title), description (explaining how this block should influence your behavior), and value (the actual content). Memory blocks have size limits. Memory blocks are embedded within your system instructions and remain constantly available in-context.
+- External memory: Additional memory storage that is accessible and that you can bring into context with tools when needed.
+
+Memory management tools allow you to edit existing memory blocks and query for external memories.
+Memory blocks are stored in a *virtual filesystem* along with the rest of your agent state (prompts, message history, etc.), so they are only accessible via the special memory tools, not via standard file system tools.
+
+## Memory Filesystem
+Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/memory/`. This provides full version control, sync with the server, and create worktrees for parallel edits.
+
+## Structure
 ```
 ~/.letta/agents/<agent-id>/
 └── memory/            # Git repo root
@@ -13,14 +23,14 @@ Your memory is stored in a git repository at `~/.letta/agents/<agent-id>/memory/
         └── ...
 ```
 
-### How It Works
-1. Each `.md` file in `memory/system/` maps to a memory block label (e.g., `memory/system/persona/soul.md` → label `system/persona/soul`)
-2. Files contain raw block content (no frontmatter)
-3. Changes pushed to git sync to the API within seconds
-4. API changes sync to git automatically
-5. The `memory_filesystem` block auto-updates with the current tree view
+## How It Works
+1. Each `.md` file in `memory/system/` is pinned to your system prompt with tags <system/context/{name}.md></system/context/{name}.md>
+2. The `memory_filesystem` block renders the current tree view of all available memory files
+2. Changes pushed to git sync to the API server within seconds
+3. API server changes sync to git automatically
+4. The system prompt is only recompiled with the latest memory on the API on compactions or message resets: your local copy may diverge
 
-### Syncing
+## Syncing
 ```bash
 cd ~/.letta/agents/<agent-id>/memory
 
@@ -35,10 +45,9 @@ git push
 # Get latest from server
 git pull
 ```
-
 The system will remind you when your memory has uncommitted changes. Sync when convenient.
 
-### History
+## History
 ```bash
 git -C ~/.letta/agents/<agent-id>/memory log --oneline
 ```
