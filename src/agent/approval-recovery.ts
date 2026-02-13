@@ -1,3 +1,5 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getClient } from "./client";
 
 // Error when approval tool call IDs don't match what server expects
@@ -130,4 +132,71 @@ export async function fetchRunErrorDetail(
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract error detail string from a pre-stream APIError's nested body.
+ *
+ * Handles the common SDK error shapes:
+ * - Nested: `e.error.error.detail` → `e.error.error.message`
+ * - Direct: `e.error.detail` → `e.error.message`
+ * - Error: `e.message`
+ *
+ * Checks `detail` first (specific) then `message` (generic) at each level.
+ */
+export function extractConflictDetail(error: unknown): string {
+  if (error && typeof error === "object" && "error" in error) {
+    const errObj = (error as Record<string, unknown>).error;
+    if (errObj && typeof errObj === "object") {
+      const outer = errObj as Record<string, unknown>;
+      // Nested: e.error.error.detail → e.error.error.message
+      if (outer.error && typeof outer.error === "object") {
+        const nested = outer.error as Record<string, unknown>;
+        if (typeof nested.detail === "string") return nested.detail;
+        if (typeof nested.message === "string") return nested.message;
+      }
+      // Direct: e.error.detail → e.error.message
+      if (typeof outer.detail === "string") return outer.detail;
+      if (typeof outer.message === "string") return outer.message;
+    }
+  }
+  if (error instanceof Error) return error.message;
+  return "";
+}
+
+interface PendingApprovalInfo {
+  toolCallId: string;
+  toolName: string;
+  toolArgs: string;
+}
+
+/**
+ * Strip stale approval payloads from the message input array and optionally
+ * prepend fresh denial results for the actual pending approvals from the server.
+ *
+ * Used during approval-conflict recovery: the original payload may contain
+ * queued approvals from an interrupt that the backend already rejected. This
+ * replaces them with denials for the real pending approvals.
+ */
+export function rebuildInputWithFreshDenials(
+  currentInput: Array<MessageCreate | ApprovalCreate>,
+  serverApprovals: PendingApprovalInfo[],
+  denialReason: string,
+): Array<MessageCreate | ApprovalCreate> {
+  const stripped = currentInput.filter((item) => item?.type !== "approval");
+
+  if (serverApprovals.length > 0) {
+    const denials: ApprovalCreate = {
+      type: "approval",
+      approvals: serverApprovals.map((a) => ({
+        type: "approval" as const,
+        tool_call_id: a.toolCallId,
+        approve: false,
+        reason: denialReason,
+      })),
+    };
+    return [denials, ...stripped];
+  }
+
+  return stripped;
 }
