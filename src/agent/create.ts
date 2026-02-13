@@ -17,7 +17,10 @@ import {
   resolveModel,
 } from "./model";
 import { updateAgentLLMConfig } from "./modify";
-import { SYSTEM_PROMPT_MEMORY_ADDON, resolveSystemPrompt } from "./promptAssets";
+import {
+  resolveSystemPrompt,
+  SYSTEM_PROMPT_MEMORY_ADDON,
+} from "./promptAssets";
 import { SLEEPTIME_MEMORY_PERSONA } from "./prompts/sleeptime";
 
 /**
