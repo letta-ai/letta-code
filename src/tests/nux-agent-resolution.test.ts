@@ -132,6 +132,16 @@ describe("resolveStartupTarget", () => {
     expect(result).toEqual({ action: "select" });
   });
 
+  test("needsModelPicker takes priority over pinned selector", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        needsModelPicker: true,
+        mergedPinnedCount: 5,
+      }),
+    );
+    expect(result).toEqual({ action: "select" });
+  });
+
   test("local LRU with null conversation → resumes without conversation", () => {
     const result = resolveStartupTarget(
       makeInput({
@@ -161,5 +171,31 @@ describe("resolveStartupTarget", () => {
     });
     // Verify no conversationId key (not even undefined)
     expect("conversationId" in result).toBe(false);
+  });
+
+  test("same local/global ID invalid + no pinned → create", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        localAgentId: "agent-same",
+        localAgentExists: false,
+        globalAgentId: "agent-same",
+        globalAgentExists: false,
+        mergedPinnedCount: 0,
+      }),
+    );
+    expect(result).toEqual({ action: "create" });
+  });
+
+  test("same local/global ID invalid + pinned → select", () => {
+    const result = resolveStartupTarget(
+      makeInput({
+        localAgentId: "agent-same",
+        localAgentExists: false,
+        globalAgentId: "agent-same",
+        globalAgentExists: false,
+        mergedPinnedCount: 1,
+      }),
+    );
+    expect(result).toEqual({ action: "select" });
   });
 });
