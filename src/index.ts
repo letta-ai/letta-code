@@ -442,6 +442,7 @@ async function main(): Promise<void> {
 
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },
+        "no-skills": { type: "boolean" },
         "max-turns": { type: "string" },
       },
       strict: true,
@@ -553,6 +554,7 @@ async function main(): Promise<void> {
   const skillsDirectory = (values.skills as string | undefined) ?? undefined;
   const memfsFlag = values.memfs as boolean | undefined;
   const noMemfsFlag = values["no-memfs"] as boolean | undefined;
+  const noSkillsFlag = values["no-skills"] as boolean | undefined;
   const fromAfFile =
     (values.import as string | undefined) ??
     (values["from-af"] as string | undefined);
@@ -946,7 +948,12 @@ async function main(): Promise<void> {
     markMilestone("TOOLS_LOADED");
 
     const { handleHeadlessCommand } = await import("./headless");
-    await handleHeadlessCommand(process.argv, specifiedModel, skillsDirectory);
+    await handleHeadlessCommand(
+      process.argv,
+      specifiedModel,
+      skillsDirectory,
+      noSkillsFlag,
+    );
     return;
   }
 
@@ -1679,7 +1686,7 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory);
+        setAgentContext(agent.id, skillsDirectory, noSkillsFlag);
 
         // Apply memfs flag if explicitly specified (memfs is opt-in via /memfs enable or --memfs)
         const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";

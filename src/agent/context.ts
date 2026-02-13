@@ -6,6 +6,7 @@
 interface AgentContext {
   agentId: string | null;
   skillsDirectory: string | null;
+  noSkills: boolean;
   conversationId: string | null;
 }
 
@@ -23,6 +24,7 @@ function getContext(): AgentContext {
     global[CONTEXT_KEY] = {
       agentId: null,
       skillsDirectory: null,
+      noSkills: false,
       conversationId: null,
     };
   }
@@ -35,13 +37,16 @@ const context = getContext();
  * Set the current agent context
  * @param agentId - The agent ID
  * @param skillsDirectory - Optional skills directory path
+ * @param noSkills - Whether to skip bundled skills
  */
 export function setAgentContext(
   agentId: string,
   skillsDirectory?: string,
+  noSkills?: boolean,
 ): void {
   context.agentId = agentId;
   context.skillsDirectory = skillsDirectory || null;
+  context.noSkills = noSkills ?? false;
 }
 
 /**
@@ -68,6 +73,13 @@ export function getCurrentAgentId(): string {
  */
 export function getSkillsDirectory(): string | null {
   return context.skillsDirectory;
+}
+
+/**
+ * Get whether bundled skills should be skipped
+ */
+export function getNoSkills(): boolean {
+  return context.noSkills;
 }
 
 /**

@@ -8073,7 +8073,10 @@ ${SYSTEM_REMINDER_CLOSE}
             const { getSkillsDirectory } = await import("../agent/context");
             const skillsDir =
               getSkillsDirectory() || join(process.cwd(), defaultDir);
-            const { skills } = await discover(skillsDir, agentId);
+            const { getNoSkills } = await import("../agent/context");
+            const { skills } = await discover(skillsDir, agentId, {
+              skipBundled: getNoSkills(),
+            });
             discoveredSkillsRef.current = skills;
           } catch {
             discoveredSkillsRef.current = [];

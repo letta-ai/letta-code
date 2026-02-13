@@ -167,14 +167,17 @@ async function discoverSkillsFromDir(
 export async function discoverSkills(
   projectSkillsPath: string = join(process.cwd(), SKILLS_DIR),
   agentId?: string,
+  options?: { skipBundled?: boolean },
 ): Promise<SkillDiscoveryResult> {
   const allErrors: SkillDiscoveryError[] = [];
   const skillsById = new Map<string, Skill>();
 
   // 1. Start with bundled skills (lowest priority)
-  const bundledSkills = await getBundledSkills();
-  for (const skill of bundledSkills) {
-    skillsById.set(skill.id, skill);
+  if (!options?.skipBundled) {
+    const bundledSkills = await getBundledSkills();
+    for (const skill of bundledSkills) {
+      skillsById.set(skill.id, skill);
+    }
   }
 
   // 2. Add global skills (override bundled)
