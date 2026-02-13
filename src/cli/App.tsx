@@ -5740,7 +5740,10 @@ export default function App({
 
         // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
-          const adeUrl = conversationIdRef.current === "default" ? `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}` : `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
+          const adeUrl =
+            conversationIdRef.current === "default"
+              ? `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`
+              : `https://app.letta.com/agents/${agentId}?conversation=${conversationIdRef.current}`;
           const cmd = commandRunner.start("/ade", "Opening ADE...");
 
           // Fire-and-forget browser open
