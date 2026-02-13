@@ -426,7 +426,14 @@ export async function task(args: TaskArgs): Promise<string> {
 
     await waitForBackgroundSubagentLink(subagentId, null, signal);
 
-    return `Task running in background with ID: ${taskId}\nOutput file: ${outputFile}`;
+    // Extract Letta agent ID from subagent state (available after link resolves)
+    const linkedAgent = getSubagentSnapshot().agents.find(
+      (a) => a.id === subagentId,
+    );
+    const agentId = linkedAgent?.agentURL?.split("/agents/")[1] ?? null;
+    const agentIdLine = agentId ? `\nAgent ID: ${agentId}` : "";
+
+    return `Task running in background with task ID: ${taskId}${agentIdLine}\nOutput file: ${outputFile}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll, sleep-wait, or check the output file. Just continue with your current work.`;
   }
 
   // Register subagent with state store for UI display (foreground path)
