@@ -5821,6 +5821,50 @@ export default function App({
           return { submitted: true };
         }
 
+        // Special handling for /listen command - start listener mode
+        if (trimmed.startsWith("/listen")) {
+          const parts = trimmed.split(/\s+/);
+          
+          // Parse flags
+          let name: string | undefined;
+          let listenAgentId: string | undefined;
+          
+          for (let i = 1; i < parts.length; i++) {
+            if (parts[i] === "--name" && parts[i + 1]) {
+              // Remove quotes if present
+              name = parts[i + 1].replace(/^["']|["']$/g, "");
+              i++;
+            } else if (parts[i] === "--agent" && parts[i + 1]) {
+              listenAgentId = parts[i + 1];
+              i++;
+            }
+          }
+
+          // Default to current agent if not specified
+          const targetAgentId = listenAgentId || agentId;
+
+          const cmd = commandRunner.start(msg, "Starting listener...");
+          const {
+            handleListen,
+            setActiveCommandId: setActiveListenCommandId,
+          } = await import("./commands/listen");
+          setActiveListenCommandId(cmd.id);
+          try {
+            await handleListen(
+              {
+                buffersRef,
+                refreshDerived,
+                setCommandRunning,
+              },
+              msg,
+              { name, agentId: targetAgentId },
+            );
+          } finally {
+            setActiveListenCommandId(null);
+          }
+          return { submitted: true };
+        }
+
         // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
           startOverlayCommand(

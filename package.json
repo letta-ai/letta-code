@@ -31,10 +31,12 @@
   },
   "dependencies": {
     "@letta-ai/letta-client": "^1.7.8",
+    "@types/ws": "^8.18.1",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "open": "^10.2.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "ws": "^8.19.0"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"

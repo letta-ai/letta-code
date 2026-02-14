@@ -1,0 +1,158 @@
+/**
+ * CLI subcommand: letta listen --name "george"
+ * Register letta-code as a listener to receive messages from Letta Cloud
+ */
+
+import { hostname } from "node:os";
+import { settingsManager } from "../../settings-manager";
+import { getServerUrl } from "../../agent/client";
+import { parseArgs } from "node:util";
+import React from "react";
+import { render } from "ink";
+import { ListenerStatusUI } from "../components/ListenerStatusUI";
+
+export async function runListenSubcommand(argv: string[]): Promise<number> {
+  // Parse arguments
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      name: { type: "string" },
+      agent: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+    allowPositionals: false,
+  });
+
+  // Show help
+  if (values.help) {
+    console.log("Usage: letta listen --name <connection-name> [--agent <agent-id>]\n");
+    console.log("Register this letta-code instance to receive messages from Letta Cloud.\n");
+    console.log("Options:");
+    console.log("  --name <name>      Friendly name for this connection (required)");
+    console.log("  --agent <id>       Bind connection to specific agent (required for CLI usage)");
+    console.log("  -h, --help         Show this help message\n");
+    console.log("Examples:");
+    console.log('  letta listen --name "george" --agent agent-abc123');
+    console.log('  letta listen --name "laptop-work" --agent agent-xyz789\n');
+    console.log("Once connected, this instance will listen for incoming messages from cloud agents.");
+    console.log("Messages will be executed locally using your letta-code environment.");
+    return 0;
+  }
+
+  const connectionName = values.name;
+  const agentId = values.agent;
+
+  if (!connectionName) {
+    console.error("Error: --name is required\n");
+    console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
+    console.error("Provide a friendly name to identify this connection (e.g., your name, device name).");
+    return 1;
+  }
+
+  if (!agentId) {
+    console.error("Error: --agent is required\n");
+    console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
+    console.error("A listener connection needs a default agent to execute messages.");
+    console.error("Specify which agent should receive messages from this connection.");
+    return 1;
+  }
+
+  try {
+    // Get device ID
+    const deviceId = settingsManager.getOrCreateDeviceId();
+
+    // Get API key
+    const apiKey =
+      process.env.LETTA_API_KEY ||
+      settingsManager.getSettings().env?.LETTA_API_KEY;
+
+    if (!apiKey) {
+      console.error("Error: LETTA_API_KEY not found");
+      console.error("Set your API key with: export LETTA_API_KEY=<your-key>");
+      return 1;
+    }
+
+    // Register with cloud
+    const serverUrl = getServerUrl();
+    const registerUrl = `${serverUrl}/v1/listeners/register`;
+
+    const registerResponse = await fetch(registerUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "X-Letta-Source": "letta-code",
+      },
+      body: JSON.stringify({
+        deviceId,
+        connectionName,
+        agentId,
+      }),
+    });
+
+    if (!registerResponse.ok) {
+      const error = await registerResponse.json();
+      console.error(`Registration failed: ${error.message || "Unknown error"}`);
+      return 1;
+    }
+
+    const { connectionId, wsUrl } = (await registerResponse.json()) as {
+      connectionId: string;
+      wsUrl: string;
+    };
+
+    // Clear screen and render Ink UI
+    console.clear();
+
+    let updateStatusCallback: ((status: "idle" | "receiving" | "processing") => void) | null = null;
+
+    const { unmount } = render(
+      <ListenerStatusUI
+        agentId={agentId}
+        connectionId={connectionId}
+        onReady={(callbacks) => {
+          updateStatusCallback = callbacks.updateStatus;
+        }}
+      />,
+    );
+
+    // Import and start WebSocket client
+    const { startListenerClient } = await import(
+      "../../websocket/listen-client"
+    );
+
+    await startListenerClient({
+      connectionId,
+      wsUrl,
+      deviceId,
+      connectionName,
+      agentId,
+      onStatusChange: (status) => {
+        updateStatusCallback?.(status);
+      },
+      onConnected: () => {
+        // UI already rendered, just set status to idle
+        updateStatusCallback?.("idle");
+      },
+      onDisconnected: () => {
+        unmount();
+        console.log("\n✗ Listener disconnected");
+        console.log("Connection to Letta Cloud was lost.\n");
+        process.exit(1);
+      },
+      onError: (error: Error) => {
+        unmount();
+        console.error(`\n✗ Listener error: ${error.message}\n`);
+        process.exit(1);
+      },
+    });
+
+    // Keep process alive
+    return new Promise<number>(() => {
+      // Never resolves - runs until Ctrl+C
+    });
+  } catch (error) {
+    console.error(`Failed to start listener: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
