@@ -1949,8 +1949,8 @@ async function main(): Promise<void> {
         lruAgentId: null,
         loading: true, // Show loading state while checking
         freshRepoMode: true,
-        onSelect: () => { },
-        onCreateNew: () => { },
+        onSelect: () => {},
+        onCreateNew: () => {},
         onExit: () => process.exit(0),
       });
     }
