@@ -6213,20 +6213,13 @@ export default function App({
 
             const client = await getClient();
 
-            // Compute model handle from llmConfig
-            const modelHandle =
-              llmConfig?.model_endpoint_type && llmConfig?.model
-                ? `${llmConfig.model_endpoint_type}/${llmConfig.model}`
-                : llmConfig?.model || null;
-
             // Build compaction settings if mode was specified
             // Pass mode-specific prompt to override any agent defaults
             const compactParams =
-              modeArg && modelHandle
+              modeArg
                 ? {
                     compaction_settings: {
                       mode: modeArg,
-                      model: modelHandle,
                     },
                   }
                 : undefined;
