@@ -16,7 +16,7 @@ export async function replace(
   args: ReplaceGeminiArgs,
 ): Promise<{ message: string }> {
   // Adapt Gemini params to Letta Code's Edit tool
-  // Gemini uses expected_replacements, Letta Code uses replace_all
+  // expected_replacements acts as a safety check and determines multi-replace behavior.
   const lettaArgs = {
     file_path: args.file_path,
     old_string: args.old_string,
@@ -24,6 +24,7 @@ export async function replace(
     replace_all: !!(
       args.expected_replacements && args.expected_replacements > 1
     ),
+    expected_replacements: args.expected_replacements,
   };
 
   const result = await edit(lettaArgs);
