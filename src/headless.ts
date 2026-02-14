@@ -82,8 +82,6 @@ export async function handleHeadlessCommand(
   skillsDirectory?: string,
   noSkills?: boolean,
 ) {
-  const settings = settingsManager.getSettings();
-
   // Parse CLI args
   // Include all flags from index.ts to prevent them from being treated as positionals
   const { values, positionals } = parseArgs({
@@ -601,47 +599,57 @@ export async function handleHeadlessCommand(
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
+
+    // Enable memfs by default on Letta Cloud for new agents
+    const { enableMemfsIfCloud } = await import("./agent/memoryFilesystem");
+    await enableMemfsIfCloud(agent.id);
   }
 
   // Priority 4: Try to resume from project settings (.letta/settings.local.json)
+  // Store local conversation ID for use in conversation resolution below
+  let resolvedLocalConvId: string | null = null;
   if (!agent) {
     await settingsManager.loadLocalProjectSettings();
-    const localProjectSettings = settingsManager.getLocalProjectSettings();
-    if (localProjectSettings?.lastAgent) {
+    const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+    if (localAgentId) {
       try {
-        agent = await client.agents.retrieve(localProjectSettings.lastAgent);
+        agent = await client.agents.retrieve(localAgentId);
+        // Store local conversation for downstream resolution
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
+        resolvedLocalConvId = localSession?.conversationId ?? null;
       } catch (_error) {
         // Local LRU agent doesn't exist - log and continue
-        console.error(
-          `Unable to locate agent ${localProjectSettings.lastAgent} in .letta/`,
-        );
+        console.error(`Unable to locate agent ${localAgentId} in .letta/`);
       }
     }
   }
 
-  // Priority 5: Try to reuse global lastAgent if --continue flag is passed
-  if (!agent && shouldContinue) {
-    if (settings.lastAgent) {
+  // Priority 5: Try to reuse global LRU (covers directory-switching case)
+  // Do NOT restore global conversation — use default (project-scoped conversations)
+  if (!agent) {
+    const globalAgentId = settingsManager.getGlobalLastAgentId();
+    if (globalAgentId) {
       try {
-        agent = await client.agents.retrieve(settings.lastAgent);
+        agent = await client.agents.retrieve(globalAgentId);
       } catch (_error) {
         // Global LRU agent doesn't exist
       }
     }
-    // --continue requires an LRU agent to exist
-    if (!agent) {
-      console.error("No recent session found in .letta/ or ~/.letta.");
-      console.error("Run 'letta' to get started.");
-      process.exit(1);
-    }
   }
 
-  // Priority 6: Fresh user with no LRU - create Memo (same as interactive mode)
+  // Priority 6: --continue with no agent found → error
+  if (!agent && shouldContinue) {
+    console.error("No recent session found in .letta/ or ~/.letta.");
+    console.error("Run 'letta' to get started.");
+    process.exit(1);
+  }
+
+  // Priority 7: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("./agent/defaults");
-    const memoAgent = await ensureDefaultAgents(client);
-    if (memoAgent) {
-      agent = memoAgent;
+    const defaultAgent = await ensureDefaultAgents(client);
+    if (defaultAgent) {
+      agent = defaultAgent;
     }
   }
 
@@ -786,8 +794,21 @@ export async function handleHeadlessCommand(
       isolated_block_labels: isolatedBlockLabels,
     });
     conversationId = conversation.id;
+  } else if (resolvedLocalConvId) {
+    // Resumed from local LRU — restore the local conversation
+    if (resolvedLocalConvId === "default") {
+      conversationId = "default";
+    } else {
+      try {
+        await client.conversations.retrieve(resolvedLocalConvId);
+        conversationId = resolvedLocalConvId;
+      } catch {
+        // Local conversation no longer exists — fall back to default
+        conversationId = "default";
+      }
+    }
   } else {
-    // Default (including --new-agent, --agent): use the agent's "default" conversation
+    // Default (including --new-agent, --agent, global LRU fallback): use "default" conversation
     conversationId = "default";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");

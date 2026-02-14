@@ -215,3 +215,21 @@ export async function applyMemfsFlags(
     pullSummary,
   };
 }
+
+/**
+ * Enable memfs for a newly created agent if on Letta Cloud.
+ * Non-fatal: logs a warning on failure. Skips on self-hosted.
+ */
+export async function enableMemfsIfCloud(agentId: string): Promise<void> {
+  const { getServerUrl } = await import("./client");
+  const serverUrl = getServerUrl();
+  if (!serverUrl.includes("api.letta.com")) return;
+
+  try {
+    await applyMemfsFlags(agentId, true, undefined);
+  } catch (error) {
+    console.warn(
+      `Warning: Could not enable memfs for new agent: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}

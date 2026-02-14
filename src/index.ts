@@ -1147,7 +1147,6 @@ async function main(): Promise<void> {
         // Load settings
         await settingsManager.loadLocalProjectSettings();
         const localSettings = settingsManager.getLocalProjectSettings();
-        const globalPinned = settingsManager.getGlobalPinnedAgents();
         const client = await getClient();
 
         // For self-hosted servers, pre-fetch available models
@@ -1330,63 +1329,89 @@ async function main(): Promise<void> {
 
         // =====================================================================
         // DEFAULT PATH: No special flags
-        // Check local LRU, then selector, then defaults
+        // Check local LRU → global LRU → selector → create default
         // =====================================================================
 
-        // Check if user would see selector (fresh dir, no bypass flags)
-        const wouldShowSelector =
-          !localSettings.lastAgent && !forceNew && !agentIdArg && !fromAfFile;
+        // Short-circuit: flags handled by init() skip resolution entirely
+        if (forceNew || agentIdArg || fromAfFile) {
+          setLoadingState("assembling");
+          return;
+        }
 
-        if (
-          wouldShowSelector &&
-          globalPinned.length === 0 &&
-          !needsModelPicker
-        ) {
-          // New user with no pinned agents - create a fresh Memo agent
-          // NOTE: Always creates a new agent (no server-side tag lookup) to avoid
-          // picking up agents created by other users on shared orgs.
-          // Skip if needsModelPicker is true - let user select a model first.
-          const { ensureDefaultAgents } = await import("./agent/defaults");
+        // Step 1: Check local project LRU (session helpers centralize legacy fallback)
+        const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
+        let localAgentExists = false;
+        if (localAgentId) {
           try {
-            const memoAgent = await ensureDefaultAgents(client);
-            if (memoAgent) {
-              setSelectedGlobalAgentId(memoAgent.id);
-              setLoadingState("assembling");
-              return;
-            }
-            // If memoAgent is null (createDefaultAgents disabled), fall through
-          } catch (err) {
-            console.error(
-              `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+            await client.agents.retrieve(localAgentId);
+            localAgentExists = true;
+          } catch {
+            setFailedAgentMessage(
+              `Unable to locate recently used agent ${localAgentId}`,
             );
-            process.exit(1);
           }
         }
 
-        // If there's a local LRU, use it directly (takes priority over model picker)
-        if (localSettings.lastAgent) {
+        // Step 2: Check global LRU (covers directory-switching case)
+        const globalAgentId = settingsManager.getGlobalLastAgentId();
+        let globalAgentExists = false;
+        if (globalAgentId && globalAgentId !== localAgentId) {
           try {
-            await client.agents.retrieve(localSettings.lastAgent);
+            await client.agents.retrieve(globalAgentId);
+            globalAgentExists = true;
+          } catch {
+            // Global agent doesn't exist either
+          }
+        } else if (globalAgentId && globalAgentId === localAgentId) {
+          globalAgentExists = localAgentExists;
+        }
+
+        // Step 3: Resolve startup target using pure decision logic
+        const mergedPinned = settingsManager.getMergedPinnedAgents(
+          process.cwd(),
+        );
+        const { resolveStartupTarget } = await import(
+          "./agent/resolve-startup-agent"
+        );
+        const target = resolveStartupTarget({
+          localAgentId,
+          localConversationId: null, // DEFAULT PATH always uses default conv
+          localAgentExists,
+          globalAgentId,
+          globalAgentExists,
+          mergedPinnedCount: mergedPinned.length,
+          forceNew: false, // forceNew short-circuited above
+          needsModelPicker,
+        });
+
+        switch (target.action) {
+          case "resume":
+            setSelectedGlobalAgentId(target.agentId);
+            // Don't set selectedConversationId — DEFAULT PATH uses default conv.
+            // Conversation restoration is handled by --continue path instead.
             setLoadingState("assembling");
             return;
-          } catch {
-            // LRU agent doesn't exist, show message and fall through to selector
-            setFailedAgentMessage(
-              `Unable to locate recently used agent ${localSettings.lastAgent}`,
-            );
+          case "select":
+            setLoadingState("selecting_global");
+            return;
+          case "create": {
+            const { ensureDefaultAgents } = await import("./agent/defaults");
+            try {
+              const defaultAgent = await ensureDefaultAgents(client);
+              if (defaultAgent) {
+                setSelectedGlobalAgentId(defaultAgent.id);
+                setLoadingState("assembling");
+                return;
+              }
+              // If null (createDefaultAgents disabled), fall through
+            } catch (err) {
+              console.error(
+                `Failed to create default agent: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              process.exit(1);
+            }
+            break;
           }
-        }
-
-        // On self-hosted with unavailable default model, show selector to pick a model
-        if (needsModelPicker) {
-          setLoadingState("selecting_global");
-          return;
-        }
-
-        // Show selector if there are pinned agents to choose from
-        if (wouldShowSelector && globalPinned.length > 0) {
-          setLoadingState("selecting_global");
-          return;
         }
 
         setLoadingState("assembling");
@@ -1613,6 +1638,12 @@ async function main(): Promise<void> {
           });
           agent = result.agent;
           setAgentProvenance(result.provenance);
+
+          // Enable memfs by default on Letta Cloud for new agents
+          const { enableMemfsIfCloud } = await import(
+            "./agent/memoryFilesystem"
+          );
+          await enableMemfsIfCloud(agent.id);
         }
 
         // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
