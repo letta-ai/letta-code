@@ -439,6 +439,7 @@ async function main(): Promise<void> {
         "pre-load-skills": { type: "string" },
         "from-af": { type: "string" },
         import: { type: "string" },
+        tags: { type: "string" },
 
         memfs: { type: "boolean" },
         "no-memfs": { type: "boolean" },

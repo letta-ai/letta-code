@@ -73,6 +73,8 @@ export interface CreateAgentOptions {
   >;
   /** Override values for preset blocks (label → value) */
   blockValues?: Record<string, string>;
+  /** Tags to organize and categorize the agent */
+  tags?: string[];
 }
 
 export async function createAgent(
@@ -289,6 +291,9 @@ export async function createAgent(
   const tags = ["origin:letta-code"];
   if (isSubagent) {
     tags.push("role:subagent");
+  }
+  if (options.tags && Array.isArray(options.tags)) {
+    tags.push(...options.tags);
   }
 
   const agentDescription =

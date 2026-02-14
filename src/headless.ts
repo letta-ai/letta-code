@@ -124,6 +124,7 @@ export async function handleHeadlessCommand(
       "init-blocks": { type: "string" },
       "base-tools": { type: "string" },
       "from-af": { type: "string" },
+      tags: { type: "string" },
 
       memfs: { type: "boolean" },
       "no-memfs": { type: "boolean" },
@@ -268,6 +269,7 @@ export async function handleHeadlessCommand(
   const fromAfFile = values["from-af"] as string | undefined;
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
+  const tags = values["tags"] as string[] | undefined;
 
   // Parse and validate max-turns if provided
   let maxTurns: number | undefined;
@@ -581,6 +583,7 @@ export async function handleHeadlessCommand(
       baseTools,
       memoryBlocks,
       blockValues,
+      tags,
     };
     const result = await createAgent(createOptions);
     agent = result.agent;
