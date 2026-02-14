@@ -578,6 +578,30 @@ async function executeSubagent(
       process.env.LETTA_CODE_BIN ||
       (currentScript.endsWith(".js") ? currentScript : null) ||
       "letta";
+
+    // Optional argv prefix for explicit child-spawn invocation.
+    //
+    // This is useful when LETTA_CODE_BIN points at a runtime (e.g. bun/node)
+    // and callers need to prepend loader flags and the actual entrypoint.
+    // Example:
+    //   LETTA_CODE_BIN=bun
+    //   LETTA_CODE_BIN_ARGS_JSON='["--loader=.md:text","run","/path/to/src/index.ts"]'
+    const lettaCmdArgsPrefix: string[] = [];
+    const explicitArgsJson = process.env.LETTA_CODE_BIN_ARGS_JSON?.trim();
+    if (process.env.LETTA_CODE_BIN && explicitArgsJson) {
+      try {
+        const parsed = JSON.parse(explicitArgsJson) as unknown;
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((v) => typeof v === "string")
+        ) {
+          lettaCmdArgsPrefix.push(...(parsed as string[]));
+        }
+      } catch {
+        // Ignore malformed JSON and fall back to spawning without a prefix.
+      }
+    }
+
     // In dev mode (running .ts file via bun), use the runtime binary directly
     // and prepend the script path to the CLI args
     if (currentScript.endsWith(".ts") && !process.env.LETTA_CODE_BIN) {
@@ -600,7 +624,7 @@ async function executeSubagent(
     const inheritedBaseUrl =
       process.env.LETTA_BASE_URL || settings.env?.LETTA_BASE_URL;
 
-    const proc = spawn(lettaCmd, cliArgs, {
+    const proc = spawn(lettaCmd, [...lettaCmdArgsPrefix, ...cliArgs], {
       cwd: process.cwd(),
       env: {
         ...process.env,
