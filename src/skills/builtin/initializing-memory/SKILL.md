@@ -309,15 +309,17 @@ You should ask these questions at the start (bundle them together in one AskUser
 1. **Research depth**: "Standard or deep research (comprehensive, as long as needed)?"
 2. **Identity**: "Which contributor are you?" (You can often infer this from git logs - e.g., if git shows "cpacker" as a top contributor, ask "Are you cpacker?")
 3. **Related repos**: "Are there other repositories I should know about and consider in my research?" (e.g., backend monorepo, shared libraries)
-4. **Historical sessions** (include this question if history data was found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
-5. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
-6. **Communication style**: "Terse or detailed responses?"
-7. **Any specific rules**: "Rules I should always follow?"
+4. **Historical sessions — Claude/Codex** (include if Claude/Codex history found in step 2): "I found Claude Code / Codex history on your machine. Should I analyze it to learn your preferences, coding patterns, and project context? This significantly improves how I work with you but uses additional time and tokens." Options: "Yes, analyze history" / "Skip for now". Use "History" as the header.
+5. **Historical sessions — Letta agent** (include if agent has > 500 messages — check `memory_metadata`): "I have [N] previous messages in my conversation history spanning [date range]. Should I do a deep analysis of our past conversations to rediscover preferences, patterns, and project context?" Options: "Yes, analyze agent history" / "Skip for now". Use "Agent history" as the header.
+6. **Memory updates**: "How often should I check if I should update my memory?" with options "Frequent (every 3-5 turns)" and "Occasional (every 8-10 turns)". This should be a binary question with "Memory" as the header.
+7. **Communication style**: "Terse or detailed responses?"
+8. **Any specific rules**: "Rules I should always follow?"
 
 **Why these matter:**
 - Identity lets you correlate git history to the user (their commits, PRs, coding style)
 - Related repos provide crucial context (many projects span multiple repos)
 - Historical sessions from Claude Code/Codex can reveal preferences, communication style, and project knowledge — but processing them is expensive (parallel subagents, multiple LLM calls), so always ask first
+- Letta agent history is your own past conversations — a goldmine for rediscovering preferences, project context, and decisions that have fallen out of context. Also uses parallel subagents, so ask first
 - Workflow/communication style should be stored in `system/human/prefs/`
 - Rules go in `system/persona/`
 
@@ -428,9 +430,17 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 1. **Check memory filesystem status**: Look for the `memory_filesystem` section in your system prompt to confirm the filesystem is enabled.
 
-2. **Check for historical session data**: Run `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null` to see if Claude Code or Codex history exists. You need this result BEFORE asking upfront questions so you know whether to include the history question.
+2. **Check for historical session data**: Run these checks BEFORE asking upfront questions so you know which history questions to include:
+   - **Claude/Codex**: `ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null`
+   - **Letta agent history**: Check your `memory_metadata` section in the system prompt for the previous message count. If > 500 messages, also run the detect script to get conversation details:
+     ```bash
+     bun <skill-dir>/scripts/detect-own-history.ts
+     ```
+     This outputs JSON with conversation list, date ranges, and a `has_significant_history` flag. You need `LETTA_AGENT_ID`, `LETTA_API_KEY`, and `LETTA_BASE_URL` set in env (these are already available in your environment).
 
-3. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it. **If history data exists (from step 2), you MUST include the historical sessions question.**
+3. **Ask upfront questions**: Use AskUserQuestion with the recommended questions above (bundled together). This is critical - don't skip it. **If history data exists (from step 2), you MUST include the relevant history questions:**
+   - If Claude/Codex history exists: include the Claude/Codex historical sessions question
+   - If Letta agent history is significant (> 500 messages): include a question like "I found [N] previous messages in your Letta agent history spanning [date range]. Should I analyze this to rediscover preferences, patterns, and project context?" Options: "Yes, analyze my history" / "Skip for now". Header: "Agent history"
 
 4. **Inspect existing memory**: 
    - If memfs enabled: Use `ls -la ~/.letta/agents/<agent-id>/memory/system/` to see the file structure
@@ -443,7 +453,10 @@ And add memory files that you think make sense to add (e.g., `project/architectu
 
 7. **Research the project**: Explore based on chosen depth. Use your TODO or plan tool to create a systematic research plan.
 
-8. **Historical session analysis (if approved)**: If the user approved Claude Code / Codex history analysis in step 3, follow the **Historical Session Analysis** section below. This launches parallel subagents to process history data and synthesize findings into memory. Skip this step if the user chose "Skip".
+8. **Historical session analysis (if approved)**: If the user approved history analysis in step 3, follow the relevant section(s) below:
+   - **Claude Code / Codex history**: Follow the **Historical Session Analysis** section
+   - **Letta agent history**: Follow the **Letta Agent History Analysis** section
+   Both use parallel subagents to process history data and synthesize findings into memory. Skip whichever the user chose "Skip" for.
 
 9. **Create/update memory structure** (can happen incrementally alongside steps 7-8):
    - **With memfs enabled**: Create a deeply hierarchical file structure using bash commands
@@ -718,3 +731,43 @@ git push
 | Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
 | Merge conflict during synthesis | Workers touched overlapping files | Resolve by checking `git log` for context |
 | Auth fails on push ("repository not found") | Credential helper broken | Use `http.extraHeader` (see syncing-memory-filesystem skill) |
+
+## Letta Agent History Analysis (Optional)
+
+This section runs only if the user approved during upfront questions. It follows the same pattern as Claude/Codex analysis above: pre-extract data → launch parallel `history-analyzer` subagents → merge worktree branches.
+
+### Step 1: Split History Into Chunks
+
+The main agent runs this — subagents just read the output files. Produces one file per (conversation × month), skipping empties.
+
+```bash
+bun <skill-dir>/scripts/split-history.ts [--months 1] [--max-conversations 50] [--output-dir /tmp/letta-history-splits]
+```
+
+Outputs a JSON manifest to stdout with all chunk files and message counts. Messages are filtered for signal: user messages in full, assistant truncated to 500 chars, reasoning to 200 chars, tool calls as one-liners, tool returns dropped.
+
+To check what history exists before splitting, run `bun <skill-dir>/scripts/detect-own-history.ts` for a quick summary.
+
+### Step 2: Launch Workers
+
+Divide chunk files from the manifest across 3-5 workers. Send all Task calls in **a single message**:
+
+```
+Task({
+  subagent_type: "history-analyzer",
+  description: "Process Letta history chunk [N]",
+  prompt: `## Assignment
+- **Memory dir**: [MEMORY_DIR]
+- **History chunks**: /tmp/letta-history-splits/chunk-a.txt, chunk-b.txt, ...
+- **Source**: Letta agent conversation history (NOT Claude/Codex)
+
+Read the chunk files above with the Read tool. Analyze for user preferences,
+corrections, patterns, conventions, and project context.
+Ignore the migrating-from-codex-and-claude-code skill.
+`
+})
+```
+
+### Step 3: Merge and Curate
+
+Same as the Claude/Codex section's Step 3 (3a–3d): merge `migration-*` branches, deduplicate, curate, clean up worktrees, push.
