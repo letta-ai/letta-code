@@ -7,7 +7,7 @@
     },
     "old_string": {
       "type": "string",
-      "description": "The text to replace (must be non-empty and match file content exactly)"
+      "description": "The text to replace"
     },
     "new_string": {
       "type": "string",
@@ -17,11 +17,6 @@
       "type": "boolean",
       "default": false,
       "description": "Replace all occurrences of old_string (default false)"
-    },
-    "expected_replacements": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Optional safety check: exact number of matches expected in file. If greater than 1, all matches are replaced."
     }
   },
   "required": ["file_path", "old_string", "new_string"],
