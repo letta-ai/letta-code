@@ -88,6 +88,7 @@ export interface SystemInitMessage extends MessageEnvelope {
   mcp_servers: Array<{ name: string; status: string }>;
   permission_mode: string;
   slash_commands: string[];
+  memfs_enabled?: boolean;
   // output_style omitted - Letta Code doesn't have output styles feature
 }
 

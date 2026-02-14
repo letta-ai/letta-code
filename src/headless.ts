@@ -872,6 +872,7 @@ export async function handleHeadlessCommand(
       mcp_servers: [],
       permission_mode: "",
       slash_commands: [],
+      memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
       uuid: `init-${agent.id}`,
     };
     console.log(JSON.stringify(initEvent));
@@ -1935,6 +1936,7 @@ async function runBidirectionalMode(
     model: agent.llm_config?.model,
     tools: availableTools,
     cwd: process.cwd(),
+    memfs_enabled: settingsManager.isMemfsEnabled(agent.id),
     uuid: `init-${agent.id}`,
   };
   console.log(JSON.stringify(initEvent));
