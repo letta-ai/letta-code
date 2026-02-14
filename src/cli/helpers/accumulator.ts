@@ -481,6 +481,28 @@ function resolveAssistantLineId(
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
 
+  // When a new otid arrives whose messageId maps to an already-finished line,
+  // start a fresh canonical so the new content block gets its own line.
+  // This handles Anthropic responses like [text, thinking, text] where both
+  // text blocks share the same message id but need separate rendering lifecycles
+  // (the first gets committed to static before the second starts streaming).
+  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
+    const existingLineId = resolveLineIdForKind(
+      b,
+      canonicalFromMessageId,
+      "assistant",
+    );
+    const existingLine = b.byId.get(existingLineId);
+    if (
+      existingLine &&
+      existingLine.kind === "assistant" &&
+      "phase" in existingLine &&
+      existingLine.phase === "finished"
+    ) {
+      canonical = otid;
+    }
+  }
+
   // If both aliases exist but disagree, prefer the one that already has a line.
   if (
     canonicalFromMessageId &&
@@ -537,6 +559,25 @@ function resolveReasoningLineId(
   let canonical =
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
+
+  // Same fix as resolveAssistantLineId: when a new otid maps to a
+  // finished reasoning line via messageId, start a fresh canonical.
+  if (otid && !canonicalFromOtid && canonicalFromMessageId) {
+    const existingLineId = resolveLineIdForKind(
+      b,
+      canonicalFromMessageId,
+      "reasoning",
+    );
+    const existingLine = b.byId.get(existingLineId);
+    if (
+      existingLine &&
+      existingLine.kind === "reasoning" &&
+      "phase" in existingLine &&
+      existingLine.phase === "finished"
+    ) {
+      canonical = otid;
+    }
+  }
 
   if (
     canonicalFromMessageId &&
