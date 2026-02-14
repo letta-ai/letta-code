@@ -7,10 +7,70 @@ interface EditArgs {
   old_string: string;
   new_string: string;
   replace_all?: boolean;
+  expected_replacements?: number;
 }
 interface EditResult {
   message: string;
   replacements: number;
+}
+
+function countOccurrences(content: string, needle: string): number {
+  if (needle.length === 0) {
+    return 0;
+  }
+  return content.split(needle).length - 1;
+}
+
+function hasSmartQuoteMismatch(content: string, oldString: string): boolean {
+  const withRightSingle = oldString.replace(/'/g, "\u2019");
+  const withLeftDouble = oldString.replace(/"/g, "\u201C");
+  const withRightDouble = oldString.replace(/"/g, "\u201D");
+  if (withRightSingle !== oldString && content.includes(withRightSingle)) {
+    return true;
+  }
+  if (withLeftDouble !== oldString && content.includes(withLeftDouble)) {
+    return true;
+  }
+  if (withRightDouble !== oldString && content.includes(withRightDouble)) {
+    return true;
+  }
+  return false;
+}
+
+function buildNotFoundError(
+  originalOldString: string,
+  normalizedOldString: string,
+  content: string,
+): Error {
+  const hints: string[] = [];
+  const trimmed = normalizedOldString.trim();
+  if (
+    trimmed !== normalizedOldString &&
+    countOccurrences(content, trimmed) > 0
+  ) {
+    hints.push("Leading or trailing whitespace differs from the file.");
+  }
+  if (hasSmartQuoteMismatch(content, normalizedOldString)) {
+    hints.push("Quote characters may differ (straight vs smart quotes).");
+  }
+  const oldCollapsed = normalizedOldString.replace(/\s+/g, " ").trim();
+  const contentCollapsed = content.replace(/\s+/g, " ");
+  if (
+    oldCollapsed.length >= 20 &&
+    oldCollapsed !== normalizedOldString &&
+    contentCollapsed.includes(oldCollapsed)
+  ) {
+    hints.push("Line breaks or indentation may not match exactly.");
+  }
+  if (hints.length === 0) {
+    hints.push(
+      "The snippet may be stale; re-read the file and copy exact text.",
+    );
+  }
+
+  return new Error(
+    `String to replace not found in file.\nString: ${originalOldString}\nPossible mismatch reasons:\n- ${hints.join("\n- ")}`,
+  );
 }
 
 /**
@@ -20,7 +80,7 @@ interface EditResult {
  * LLMs sometimes generate strings with extra escape characters like:
  * - \\n instead of \n (newline)
  * - \\t instead of \t (tab)
- * - \\" instead of " (quote)
+ * - \\\" instead of " (quote)
  * - \\` instead of ` (backtick)
  */
 export function unescapeOverEscapedString(input: string): string {
@@ -61,10 +121,23 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     ["file_path", "old_string", "new_string"],
     "Edit",
   );
-  const { file_path, replace_all = false } = args;
+  const { file_path, replace_all = false, expected_replacements } = args;
   // Normalize line endings in old_string and new_string to match file normalization
   const old_string = args.old_string.replace(/\r\n/g, "\n");
   const new_string = args.new_string.replace(/\r\n/g, "\n");
+  if (old_string.length === 0) {
+    throw new Error(
+      "old_string cannot be empty. Provide the exact text you want to replace.",
+    );
+  }
+  if (
+    expected_replacements !== undefined &&
+    (!Number.isInteger(expected_replacements) || expected_replacements < 1)
+  ) {
+    throw new Error(
+      "expected_replacements must be a positive integer when provided.",
+    );
+  }
   const userCwd = process.env.USER_CWD || process.cwd();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
@@ -77,14 +150,14 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     const rawContent = await fs.readFile(resolvedPath, "utf-8");
     // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     const content = rawContent.replace(/\r\n/g, "\n");
-    let occurrences = content.split(old_string).length - 1;
+    let occurrences = countOccurrences(content, old_string);
     let finalOldString = old_string;
     const finalNewString = new_string;
 
     // If no match found, try unescaping old_string in case LLM over-escaped it
     if (occurrences === 0) {
       const unescapedOld = unescapeOverEscapedString(old_string);
-      const unescapedOccurrences = content.split(unescapedOld).length - 1;
+      const unescapedOccurrences = countOccurrences(content, unescapedOld);
 
       if (unescapedOccurrences > 0) {
         // Unescaping old_string worked - use it for matching
@@ -97,12 +170,21 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     }
 
     if (occurrences === 0)
+      throw buildNotFoundError(old_string, finalOldString, content);
+    if (
+      expected_replacements !== undefined &&
+      occurrences !== expected_replacements
+    ) {
       throw new Error(
-        `String to replace not found in file.\nString: ${old_string}`,
+        `Expected ${expected_replacements} occurrence${expected_replacements === 1 ? "" : "s"} but found ${occurrences}. Update old_string to be more specific, or set replace_all/expected_replacements correctly.`,
       );
+    }
+    const effectiveReplaceAll =
+      replace_all ||
+      (expected_replacements !== undefined && expected_replacements > 1);
     let newContent: string;
     let replacements: number;
-    if (replace_all) {
+    if (effectiveReplaceAll) {
       newContent = content.split(finalOldString).join(finalNewString);
       replacements = occurrences;
     } else {
