@@ -3,12 +3,10 @@
  * Register letta-code as a listener to receive messages from Letta Cloud
  */
 
-import { hostname } from "node:os";
-import { settingsManager } from "../../settings-manager";
-import { getServerUrl } from "../../agent/client";
 import { parseArgs } from "node:util";
-import React from "react";
 import { render } from "ink";
+import { getServerUrl } from "../../agent/client";
+import { settingsManager } from "../../settings-manager";
 import { ListenerStatusUI } from "../components/ListenerStatusUI";
 
 export async function runListenSubcommand(argv: string[]): Promise<number> {
@@ -25,17 +23,29 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Show help
   if (values.help) {
-    console.log("Usage: letta listen --name <connection-name> [--agent <agent-id>]\n");
-    console.log("Register this letta-code instance to receive messages from Letta Cloud.\n");
+    console.log(
+      "Usage: letta listen --name <connection-name> [--agent <agent-id>]\n",
+    );
+    console.log(
+      "Register this letta-code instance to receive messages from Letta Cloud.\n",
+    );
     console.log("Options:");
-    console.log("  --name <name>      Friendly name for this connection (required)");
-    console.log("  --agent <id>       Bind connection to specific agent (required for CLI usage)");
+    console.log(
+      "  --name <name>      Friendly name for this connection (required)",
+    );
+    console.log(
+      "  --agent <id>       Bind connection to specific agent (required for CLI usage)",
+    );
     console.log("  -h, --help         Show this help message\n");
     console.log("Examples:");
     console.log('  letta listen --name "george" --agent agent-abc123');
     console.log('  letta listen --name "laptop-work" --agent agent-xyz789\n');
-    console.log("Once connected, this instance will listen for incoming messages from cloud agents.");
-    console.log("Messages will be executed locally using your letta-code environment.");
+    console.log(
+      "Once connected, this instance will listen for incoming messages from cloud agents.",
+    );
+    console.log(
+      "Messages will be executed locally using your letta-code environment.",
+    );
     return 0;
   }
 
@@ -45,15 +55,21 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   if (!connectionName) {
     console.error("Error: --name is required\n");
     console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
-    console.error("Provide a friendly name to identify this connection (e.g., your name, device name).");
+    console.error(
+      "Provide a friendly name to identify this connection (e.g., your name, device name).",
+    );
     return 1;
   }
 
   if (!agentId) {
     console.error("Error: --agent is required\n");
     console.error('Usage: letta listen --name "george" --agent agent-abc123\n');
-    console.error("A listener connection needs a default agent to execute messages.");
-    console.error("Specify which agent should receive messages from this connection.");
+    console.error(
+      "A listener connection needs a default agent to execute messages.",
+    );
+    console.error(
+      "Specify which agent should receive messages from this connection.",
+    );
     return 1;
   }
 
@@ -104,7 +120,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Clear screen and render Ink UI
     console.clear();
 
-    let updateStatusCallback: ((status: "idle" | "receiving" | "processing") => void) | null = null;
+    let updateStatusCallback:
+      | ((status: "idle" | "receiving" | "processing") => void)
+      | null = null;
+    let updateRetryStatusCallback:
+      | ((attempt: number, nextRetryIn: number) => void)
+      | null = null;
+    let clearRetryStatusCallback: (() => void) | null = null;
 
     const { unmount } = render(
       <ListenerStatusUI
@@ -112,6 +134,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         connectionId={connectionId}
         onReady={(callbacks) => {
           updateStatusCallback = callbacks.updateStatus;
+          updateRetryStatusCallback = callbacks.updateRetryStatus;
+          clearRetryStatusCallback = callbacks.clearRetryStatus;
         }}
       />,
     );
@@ -128,11 +152,15 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       connectionName,
       agentId,
       onStatusChange: (status) => {
+        clearRetryStatusCallback?.();
         updateStatusCallback?.(status);
       },
       onConnected: () => {
-        // UI already rendered, just set status to idle
+        clearRetryStatusCallback?.();
         updateStatusCallback?.("idle");
+      },
+      onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+        updateRetryStatusCallback?.(attempt, nextRetryIn);
       },
       onDisconnected: () => {
         unmount();
@@ -152,7 +180,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // Never resolves - runs until Ctrl+C
     });
   } catch (error) {
-    console.error(`Failed to start listener: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `Failed to start listener: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return 1;
   }
 }

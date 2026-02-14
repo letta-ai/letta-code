@@ -4,10 +4,9 @@
  */
 
 import { hostname } from "node:os";
+import { getServerUrl } from "../../agent/client";
 import { settingsManager } from "../../settings-manager";
-import { getClient, getServerUrl } from "../../agent/client";
 import type { Buffers, Line } from "../helpers/accumulator";
-import { getErrorMessage } from "../../utils/error";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -98,8 +97,6 @@ export async function handleListen(
   msg: string,
   opts: ListenOptions = {},
 ): Promise<void> {
-  const parts = msg.trim().split(/\s+/);
-
   // Show usage if needed
   if (msg.includes("--help") || msg.includes("-h")) {
     addCommandResult(
@@ -182,7 +179,6 @@ export async function handleListen(
     );
 
     // Register with cloud to get connectionId
-    const client = await getClient();
     const serverUrl = getServerUrl();
 
     // Call register endpoint
@@ -262,6 +258,20 @@ export async function handleListen(
           "finished",
         );
       },
+      onRetrying: (attempt, _maxAttempts, nextRetryIn) => {
+        const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}`;
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          `Reconnecting to Letta Cloud...\n` +
+            `Attempt ${attempt}, retrying in ${Math.round(nextRetryIn / 1000)}s\n\n` +
+            `View in ADE → ${adeUrl}`,
+          true,
+          "running",
+        );
+      },
       onConnected: () => {
         const adeUrl = `https://app.letta.com/agents/${agentId}?deviceId=${connectionId}`;
 
@@ -284,8 +294,7 @@ export async function handleListen(
           ctx.refreshDerived,
           cmdId,
           msg,
-          `✗ Listener disconnected\n\n` +
-            `Connection to Letta Cloud was lost.`,
+          `✗ Listener disconnected\n\n` + `Connection to Letta Cloud was lost.`,
           false,
           "finished",
         );
