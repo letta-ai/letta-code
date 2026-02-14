@@ -135,6 +135,7 @@ import { PinDialog, validateAgentName } from "./components/PinDialog";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ReasoningMessage } from "./components/ReasoningMessageRich";
 import { formatDuration, formatUsageStats } from "./components/SessionStats";
+import { SkillsDialog } from "./components/SkillsDialog";
 import { SleeptimeSelector } from "./components/SleeptimeSelector";
 // InlinePlanApproval kept for easy rollback if needed
 // import { InlinePlanApproval } from "./components/InlinePlanApproval";
@@ -1190,6 +1191,7 @@ export default function App({
     | "help"
     | "hooks"
     | "connect"
+    | "skills"
     | null;
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const pendingOverlayCommandRef = useRef<{
@@ -7551,9 +7553,23 @@ export default function App({
           return { submitted: true };
         }
 
-        // Special handling for /skill command - enter skill creation mode
-        if (trimmed.startsWith("/skill")) {
-          // Extract optional description after `/skill`
+        // /skills - browse available skills overlay
+        if (trimmed === "/skills") {
+          startOverlayCommand(
+            "skills",
+            "/skills",
+            "Opening skills browser...",
+            "Skills browser dismissed",
+          );
+          setActiveOverlay("skills");
+          return { submitted: true };
+        }
+
+        // /skill-creator - enter skill creation mode
+        if (
+          trimmed === "/skill-creator" ||
+          trimmed.startsWith("/skill-creator ")
+        ) {
           const [, ...rest] = trimmed.split(/\s+/);
           const description = rest.join(" ").trim();
 
@@ -7567,7 +7583,7 @@ export default function App({
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
-              "Pending approval(s). Resolve approvals before running /skill.",
+              "Pending approval(s). Resolve approvals before running /skill-creator.",
             );
             return { submitted: false }; // Keep /skill in input box, user handles approval first
           }
@@ -7583,7 +7599,7 @@ export default function App({
             // Build system-reminder content for skill creation
             const userDescriptionLine = description
               ? `\n\nUser-provided skill description:\n${description}`
-              : "\n\nThe user did not provide a description with /skill. Ask what kind of skill they want to create before proceeding.";
+              : "\n\nThe user did not provide a description with /skill-creator. Ask what kind of skill they want to create before proceeding.";
 
             const skillMessage = `${SYSTEM_REMINDER_OPEN}\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n${SYSTEM_REMINDER_CLOSE}`;
 
@@ -11675,6 +11691,11 @@ Plan file path: ${planFilePath}`;
 
             {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
+
+            {/* Skills Dialog - browse available skills */}
+            {activeOverlay === "skills" && (
+              <SkillsDialog onClose={closeOverlay} agentId={agentId} />
+            )}
 
             {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (

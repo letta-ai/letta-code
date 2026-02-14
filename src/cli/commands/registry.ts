@@ -44,9 +44,17 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/skill": {
-    desc: "Enter skill creation mode (/skill [description])",
-    order: 28, // Advanced feature, moved below visible commands
+  "/skills": {
+    desc: "Browse available skills",
+    order: 28,
+    handler: () => {
+      // Handled specially in App.tsx to open skills browser overlay
+      return "Opening skills browser...";
+    },
+  },
+  "/skill-creator": {
+    desc: "Enter skill creation mode (/skill-creator [description])",
+    order: 28.5,
     handler: () => {
       // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
