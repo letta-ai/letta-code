@@ -13,13 +13,58 @@ interface EditResult {
   replacements: number;
 }
 
+/**
+ * Unescapes a string that might have been overly escaped by an LLM.
+ * Based on Gemini CLI's unescapeStringForGeminiBug function.
+ *
+ * LLMs sometimes generate strings with extra escape characters like:
+ * - \\n instead of \n (newline)
+ * - \\t instead of \t (tab)
+ * - \\" instead of " (quote)
+ * - \\` instead of ` (backtick)
+ */
+export function unescapeOverEscapedString(input: string): string {
+  // Match one or more backslashes followed by an escapable character
+  // and reduce to the proper single escape sequence.
+  // Based on Gemini CLI's unescapeStringForGeminiBug - intentionally conservative
+  // to avoid over-correcting intentional escapes in shell/regex contexts.
+  return input.replace(
+    /\\+(n|t|r|'|"|`|\\|\n)/g,
+    (_match: string, capturedChar: string): string => {
+      switch (capturedChar) {
+        case "n":
+          return "\n";
+        case "t":
+          return "\t";
+        case "r":
+          return "\r";
+        case "'":
+          return "'";
+        case '"':
+          return '"';
+        case "`":
+          return "`";
+        case "\\":
+          return "\\";
+        case "\n":
+          return "\n";
+        default:
+          return _match;
+      }
+    },
+  );
+}
+
 export async function edit(args: EditArgs): Promise<EditResult> {
   validateRequiredParams(
     args,
     ["file_path", "old_string", "new_string"],
     "Edit",
   );
-  const { file_path, old_string, new_string, replace_all = false } = args;
+  const { file_path, replace_all = false } = args;
+  // Normalize line endings in old_string and new_string to match file normalization
+  const old_string = args.old_string.replace(/\r\n/g, "\n");
+  const new_string = args.new_string.replace(/\r\n/g, "\n");
   const userCwd = process.env.USER_CWD || process.cwd();
   const resolvedPath = path.isAbsolute(file_path)
     ? file_path
@@ -32,7 +77,25 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     const rawContent = await fs.readFile(resolvedPath, "utf-8");
     // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     const content = rawContent.replace(/\r\n/g, "\n");
-    const occurrences = content.split(old_string).length - 1;
+    let occurrences = content.split(old_string).length - 1;
+    let finalOldString = old_string;
+    const finalNewString = new_string;
+
+    // If no match found, try unescaping old_string in case LLM over-escaped it
+    if (occurrences === 0) {
+      const unescapedOld = unescapeOverEscapedString(old_string);
+      const unescapedOccurrences = content.split(unescapedOld).length - 1;
+
+      if (unescapedOccurrences > 0) {
+        // Unescaping old_string worked - use it for matching
+        // NOTE: We intentionally do NOT unescape new_string here.
+        // The user's replacement text should be used as-is. If they want
+        // actual newlines, they should provide actual newlines.
+        finalOldString = unescapedOld;
+        occurrences = unescapedOccurrences;
+      }
+    }
+
     if (occurrences === 0)
       throw new Error(
         `String to replace not found in file.\nString: ${old_string}`,
@@ -40,16 +103,16 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     let newContent: string;
     let replacements: number;
     if (replace_all) {
-      newContent = content.split(old_string).join(new_string);
+      newContent = content.split(finalOldString).join(finalNewString);
       replacements = occurrences;
     } else {
-      const index = content.indexOf(old_string);
+      const index = content.indexOf(finalOldString);
       if (index === -1)
-        throw new Error(`String not found in file: ${old_string}`);
+        throw new Error(`String not found in file: ${finalOldString}`);
       newContent =
         content.substring(0, index) +
-        new_string +
-        content.substring(index + old_string.length);
+        finalNewString +
+        content.substring(index + finalOldString.length);
       replacements = 1;
     }
     await fs.writeFile(resolvedPath, newContent, "utf-8");
