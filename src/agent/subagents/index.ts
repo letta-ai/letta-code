@@ -3,11 +3,11 @@
  *
  * Built-in subagents are bundled with the package.
  * Users can also define custom subagents as Markdown files with YAML frontmatter
- * in the .letta/agents/ directory.
+ * in project directories (.agents/, legacy .letta/agents/) and global ~/.letta/agents/.
  */
 
-import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { type Dirent, existsSync } from "node:fs";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getErrorMessage } from "../../utils/error";
 import {
@@ -78,9 +78,14 @@ export interface SubagentDiscoveryResult {
 // ============================================================================
 
 /**
- * Directory for subagent files (relative to project root)
+ * Directory for project subagent files (relative to project root)
  */
-export const AGENTS_DIR = ".letta/agents";
+export const AGENTS_DIR = ".agents";
+
+/**
+ * Legacy project directory for subagent files (relative to project root)
+ */
+export const LEGACY_AGENTS_DIR = ".letta/agents";
 
 /**
  * Global directory for subagent files (in user's home directory)
@@ -283,56 +288,115 @@ async function discoverSubagentsFromDir(
   seenNames: Set<string>,
   subagents: SubagentConfig[],
   errors: Array<{ path: string; message: string }>,
+  options?: { recursive?: boolean },
 ): Promise<void> {
   if (!existsSync(agentsDir)) {
     return;
   }
 
-  try {
-    const entries = await readdir(agentsDir, { withFileTypes: true });
+  const visitedDirectories = new Set<string>();
+
+  const registerSubagent = (config: SubagentConfig): void => {
+    if (seenNames.has(config.name)) {
+      const existingIndex = subagents.findIndex((s) => s.name === config.name);
+      if (existingIndex !== -1) {
+        subagents.splice(existingIndex, 1);
+      }
+    }
+
+    seenNames.add(config.name);
+    subagents.push(config);
+  };
+
+  const processSubagentFile = async (filePath: string): Promise<void> => {
+    try {
+      const config = await parseSubagentFile(filePath);
+      if (config) {
+        registerSubagent(config);
+      }
+    } catch (error) {
+      errors.push({
+        path: filePath,
+        message: getErrorMessage(error),
+      });
+    }
+  };
+
+  const isMarkdown = (name: string): boolean =>
+    name.toLowerCase().endsWith(".md");
+
+  const walk = async (currentDir: string): Promise<void> => {
+    try {
+      const canonicalDir = await realpath(currentDir);
+      if (visitedDirectories.has(canonicalDir)) {
+        return;
+      }
+      visitedDirectories.add(canonicalDir);
+    } catch (error) {
+      errors.push({
+        path: currentDir,
+        message: `Failed to resolve directory path: ${getErrorMessage(error)}`,
+      });
+      return;
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true });
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (error) {
+      errors.push({
+        path: currentDir,
+        message: `Failed to read agents directory: ${getErrorMessage(error)}`,
+      });
+      return;
+    }
 
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) {
+      const fullPath = join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!options?.recursive) {
+          continue;
+        }
+        await walk(fullPath);
         continue;
       }
 
-      const filePath = join(agentsDir, entry.name);
+      if (entry.isFile() && isMarkdown(entry.name)) {
+        await processSubagentFile(fullPath);
+        continue;
+      }
+
+      if (!entry.isSymbolicLink()) {
+        continue;
+      }
 
       try {
-        const config = await parseSubagentFile(filePath);
-        if (config) {
-          // Check for duplicate names (later directories override earlier ones)
-          if (seenNames.has(config.name)) {
-            // Remove the existing one and replace with this one
-            const existingIndex = subagents.findIndex(
-              (s) => s.name === config.name,
-            );
-            if (existingIndex !== -1) {
-              subagents.splice(existingIndex, 1);
-            }
+        const target = await stat(fullPath);
+        if (target.isDirectory()) {
+          if (!options?.recursive) {
+            continue;
           }
-
-          seenNames.add(config.name);
-          subagents.push(config);
+          await walk(fullPath);
+        } else if (target.isFile() && isMarkdown(entry.name)) {
+          await processSubagentFile(fullPath);
         }
       } catch (error) {
         errors.push({
-          path: filePath,
-          message: getErrorMessage(error),
+          path: fullPath,
+          message: `Failed to resolve symlink target: ${getErrorMessage(error)}`,
         });
       }
     }
-  } catch (error) {
-    errors.push({
-      path: agentsDir,
-      message: `Failed to read agents directory: ${getErrorMessage(error)}`,
-    });
-  }
+  };
+
+  await walk(agentsDir);
 }
 
 /**
- * Discover subagents from global (~/.letta/agents) and project (.letta/agents) directories
- * Project-level subagents override global ones with the same name
+ * Discover subagents from global and project directories.
+ * Precedence (highest to lowest): .agents, legacy .letta/agents, global ~/.letta/agents
  */
 export async function discoverSubagents(
   workingDirectory: string = process.cwd(),
@@ -347,16 +411,29 @@ export async function discoverSubagents(
     seenNames,
     subagents,
     errors,
+    { recursive: false },
   );
 
-  // Then, discover from project directory (.letta/agents)
-  // Project-level overrides global with same name
+  // Then, discover from legacy project directory (.letta/agents)
+  // Legacy project-level overrides global with same name
+  const legacyProjectAgentsDir = join(workingDirectory, LEGACY_AGENTS_DIR);
+  await discoverSubagentsFromDir(
+    legacyProjectAgentsDir,
+    seenNames,
+    subagents,
+    errors,
+    { recursive: true },
+  );
+
+  // Finally, discover from project directory (.agents)
+  // .agents has the highest project-level priority
   const projectAgentsDir = join(workingDirectory, AGENTS_DIR);
   await discoverSubagentsFromDir(
     projectAgentsDir,
     seenNames,
     subagents,
     errors,
+    { recursive: true },
   );
 
   return { subagents, errors };
@@ -364,7 +441,7 @@ export async function discoverSubagents(
 
 /**
  * Get all subagent configurations
- * Includes built-in subagents and any user-defined ones from .letta/agents/
+ * Includes built-in subagents and any user-defined ones from project/global directories
  * User-defined subagents override built-ins with the same name
  * Results are cached per working directory
  */
@@ -379,7 +456,7 @@ export async function getAllSubagentConfigs(
   // Start with a copy of built-in subagents (don't mutate the cache)
   const configs: Record<string, SubagentConfig> = { ...getBuiltinSubagents() };
 
-  // Discover user-defined subagents from .letta/agents/
+  // Discover user-defined subagents from global + project directories
   const { subagents, errors } = await discoverSubagents(workingDirectory);
 
   // Log any discovery errors
