@@ -54,6 +54,24 @@ interface LettaInvocation {
 
 const LETTA_BIN_ARGS_ENV = "LETTA_CODE_BIN_ARGS_JSON";
 
+function normalizeInvocationCommand(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const wrappedInDoubleQuotes =
+    trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"');
+  const wrappedInSingleQuotes =
+    trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'");
+
+  const normalized =
+    wrappedInDoubleQuotes || wrappedInSingleQuotes
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+
+  return normalized || null;
+}
+
 function parseInvocationArgs(raw: string | undefined): string[] {
   if (!raw) return [];
   try {
@@ -80,7 +98,7 @@ export function resolveLettaInvocation(
   argv: string[] = process.argv,
   execPath: string = process.execPath,
 ): LettaInvocation | null {
-  const explicitBin = env.LETTA_CODE_BIN?.trim();
+  const explicitBin = normalizeInvocationCommand(env.LETTA_CODE_BIN);
   if (explicitBin) {
     return {
       command: explicitBin,

@@ -24,6 +24,22 @@ describe("shellEnv letta shim", () => {
     });
   });
 
+  test("resolveLettaInvocation strips accidental wrapping quotes in LETTA_CODE_BIN", () => {
+    const invocation = resolveLettaInvocation(
+      {
+        LETTA_CODE_BIN:
+          '"C:\\Users\\Example User\\AppData\\Roaming\\npm\\letta.cmd"',
+      },
+      ["node", "/irrelevant/script.js"],
+      "/opt/homebrew/bin/bun",
+    );
+
+    expect(invocation).toEqual({
+      command: "C:\\Users\\Example User\\AppData\\Roaming\\npm\\letta.cmd",
+      args: [],
+    });
+  });
+
   test("resolveLettaInvocation infers dev entrypoint launcher", () => {
     const invocation = resolveLettaInvocation(
       {},
