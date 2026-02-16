@@ -119,7 +119,11 @@ async function configureLocalCredentialHelper(
   const helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
 
   // Primary config: normalized origin key (most robust for git's credential lookup)
-  await runGit(dir, ["config", `credential.${normalizedBaseUrl}.helper`, helper]);
+  await runGit(dir, [
+    "config",
+    `credential.${normalizedBaseUrl}.helper`,
+    helper,
+  ]);
 
   // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
