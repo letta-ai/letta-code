@@ -397,3 +397,25 @@ test("File pattern: UNC absolute path matches normalized UNC pattern", () => {
     matchesFilePattern(query, "Edit(//server/share/folder/**)", workingDir),
   ).toBe(true);
 });
+
+test("File pattern: extended Windows drive path matches canonical drive pattern", () => {
+  const query = String.raw`Edit(\\?\C:\Users\Aaron\folder\file.md)`;
+  const workingDir = String.raw`C:\Users\Aaron\repo`;
+
+  expect(
+    matchesFilePattern(query, "Edit(C:/Users/Aaron/folder/**)", workingDir),
+  ).toBe(true);
+});
+
+test("File pattern: extended UNC pattern matches UNC query path", () => {
+  const query = String.raw`Edit(\\server\share\folder\file.md)`;
+  const workingDir = String.raw`C:\Users\Aaron\repo`;
+
+  expect(
+    matchesFilePattern(
+      query,
+      "Edit(//?/UNC/server/share/folder/**)",
+      workingDir,
+    ),
+  ).toBe(true);
+});
