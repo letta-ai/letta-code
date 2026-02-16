@@ -185,61 +185,76 @@ function isSafeSegment(segment: string): boolean {
     return isReadOnlyShellCommand(stripQuotes(nested));
   }
 
-  if (!ALWAYS_SAFE_COMMANDS.has(command)) {
-    if (command === "git") {
-      const subcommand = tokens[1];
-      if (!subcommand) {
-        return false;
-      }
-      return SAFE_GIT_SUBCOMMANDS.has(subcommand);
+  if (ALWAYS_SAFE_COMMANDS.has(command)) {
+    // `cd` only changes working directory and does not itself read/write content.
+    // Keep it read-only-safe so plan mode still allows common `cd && git status` flows.
+    if (command === "cd") {
+      return true;
     }
-    if (command === "gh") {
-      const category = tokens[1];
-      if (!category) {
-        return false;
-      }
-      if (!(category in SAFE_GH_COMMANDS)) {
-        return false;
-      }
-      const allowedActions = SAFE_GH_COMMANDS[category];
-      // null means any action is allowed (e.g., gh search, gh api, gh status)
-      if (allowedActions === null) {
-        return true;
-      }
-      // undefined means category not in map (shouldn't happen after 'in' check)
-      if (allowedActions === undefined) {
-        return false;
-      }
-      const action = tokens[2];
-      if (!action) {
-        return false;
-      }
-      return allowedActions.has(action);
+
+    // For other "always safe" commands, ensure they don't read sensitive files
+    // outside the allowed directories.
+    const hasExternalPath = tokens
+      .slice(1)
+      .some((t) => hasAbsoluteOrTraversalPathArg(t));
+
+    if (hasExternalPath) {
+      return false;
     }
-    if (command === "letta") {
-      const group = tokens[1];
-      if (!group) {
-        return false;
-      }
-      if (!(group in SAFE_LETTA_COMMANDS)) {
-        return false;
-      }
-      const action = tokens[2];
-      if (!action) {
-        return false;
-      }
-      return SAFE_LETTA_COMMANDS[group]?.has(action) ?? false;
-    }
-    if (command === "find") {
-      return !/-delete|\s-exec\b/.test(segment);
-    }
-    if (command === "sort") {
-      return !/\s-o\b/.test(segment);
-    }
-    return false;
+    return true;
   }
 
-  return true;
+  if (command === "git") {
+    const subcommand = tokens[1];
+    if (!subcommand) {
+      return false;
+    }
+    return SAFE_GIT_SUBCOMMANDS.has(subcommand);
+  }
+  if (command === "gh") {
+    const category = tokens[1];
+    if (!category) {
+      return false;
+    }
+    if (!(category in SAFE_GH_COMMANDS)) {
+      return false;
+    }
+    const allowedActions = SAFE_GH_COMMANDS[category];
+    // null means any action is allowed (e.g., gh search, gh api, gh status)
+    if (allowedActions === null) {
+      return true;
+    }
+    // undefined means category not in map (shouldn't happen after 'in' check)
+    if (allowedActions === undefined) {
+      return false;
+    }
+    const action = tokens[2];
+    if (!action) {
+      return false;
+    }
+    return allowedActions.has(action);
+  }
+  if (command === "letta") {
+    const group = tokens[1];
+    if (!group) {
+      return false;
+    }
+    if (!(group in SAFE_LETTA_COMMANDS)) {
+      return false;
+    }
+    const action = tokens[2];
+    if (!action) {
+      return false;
+    }
+    return SAFE_LETTA_COMMANDS[group]?.has(action) ?? false;
+  }
+  if (command === "find") {
+    return !/-delete|\s-exec\b/.test(segment);
+  }
+  if (command === "sort") {
+    return !/\s-o\b/.test(segment);
+  }
+  return false;
 }
 
 function isShellExecutor(command: string): boolean {
@@ -275,6 +290,42 @@ function extractDashCArgument(tokens: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function isAbsolutePathArg(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  // POSIX absolute paths
+  if (value.startsWith("/")) {
+    return true;
+  }
+
+  // Windows absolute paths (drive letter and UNC)
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
+function isHomeAnchoredPathArg(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return (
+    value.startsWith("~/") ||
+    value.startsWith("$HOME/") ||
+    value.startsWith("%USERPROFILE%\\") ||
+    value.startsWith("%USERPROFILE%/")
+  );
+}
+
+function hasAbsoluteOrTraversalPathArg(value: string): boolean {
+  if (isAbsolutePathArg(value) || isHomeAnchoredPathArg(value)) {
+    return true;
+  }
+
+  // Path traversal segments only
+  return /(^|[\\/])\.\.([\\/]|$)/.test(value);
 }
 
 /**
@@ -422,9 +473,34 @@ export function isMemoryDirCommand(
       // OR if all path-like arguments point to the memory dir
       if (cwd && isUnderMemoryDir(cwd, prefixes)) {
         // We're operating within the memory dir
+        const tokens = tokenize(part);
+
+        const currentCwd = cwd;
+        if (!currentCwd) {
+          return false;
+        }
+
+        // Even if we're in the memory dir, we must ensure the command doesn't
+        // escape it via absolute paths or parent directory references.
+        const hasExternalPath = tokens.some((t) => {
+          if (isAbsolutePathArg(t) || isHomeAnchoredPathArg(t)) {
+            return !isUnderMemoryDir(t, prefixes);
+          }
+
+          if (hasAbsoluteOrTraversalPathArg(t)) {
+            const resolved = expandPath(resolve(expandPath(currentCwd), t));
+            return !isUnderMemoryDir(resolved, prefixes);
+          }
+
+          return false;
+        });
+
+        if (hasExternalPath) {
+          return false;
+        }
+
         if (!MEMORY_DIR_APPROVE_ALL) {
           // Strict mode: validate command type
-          const tokens = tokenize(part);
           const cmd = tokens[0];
           if (!cmd || !SAFE_MEMORY_DIR_COMMANDS.has(cmd)) {
             return false;
