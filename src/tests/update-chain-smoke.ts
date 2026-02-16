@@ -153,7 +153,7 @@ packages:
 auth:
   htpasswd:
     file: /verdaccio/storage/htpasswd
-    max_users: -1
+    max_users: 1000
 server:
   keepAliveTimeout: 60
 logs:
