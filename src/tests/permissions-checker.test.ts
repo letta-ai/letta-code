@@ -272,6 +272,53 @@ test("Allow exact Bash command", () => {
   expect(result2.decision).toBe("ask"); // Doesn't match exact
 });
 
+test("Issue #969: legacy Windows Edit allow rule matches memory project file", () => {
+  const permissions: PermissionRules = {
+    allow: [
+      "Edit(/C:\\Users\\Aaron\\.letta\\agents\\agent-7dcc\\memory\\system\\project/**)",
+    ],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Edit",
+    {
+      file_path:
+        "C:\\Users\\Aaron\\.letta\\agents\\agent-7dcc\\memory\\system\\project\\tech_stack.md",
+    },
+    permissions,
+    "C:\\Users\\Aaron\\repo",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toBe(
+    "Edit(/C:\\Users\\Aaron\\.letta\\agents\\agent-7dcc\\memory\\system\\project/**)",
+  );
+});
+
+test("Issue #969 guardrail: Windows legacy Edit rule does not over-match sibling subtree", () => {
+  const permissions: PermissionRules = {
+    allow: [
+      "Edit(/C:\\Users\\Aaron\\.letta\\agents\\agent-7dcc\\memory\\system\\project/**)",
+    ],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Edit",
+    {
+      file_path:
+        "C:\\Users\\Aaron\\.letta\\agents\\agent-7dcc\\memory\\system\\other\\x.md",
+    },
+    permissions,
+    "C:\\Users\\Aaron\\repo",
+  );
+
+  expect(result.decision).toBe("ask");
+});
+
 // ============================================================================
 // Ask Rule Tests
 // ============================================================================
