@@ -455,7 +455,7 @@ describe("rebuildInputWithFreshDenials", () => {
 
     // Stale approval stripped, fresh denial prepended, message preserved
     expect(result).toHaveLength(2);
-    expect(result[0]!.type).toBe("approval");
+    expect(result[0]?.type).toBe("approval");
     const approvalPayload = result[0] as {
       type: "approval";
       approvals: Array<{
@@ -464,10 +464,10 @@ describe("rebuildInputWithFreshDenials", () => {
         reason: string;
       }>;
     };
-    expect(approvalPayload.approvals[0]!.tool_call_id).toBe("real-id");
-    expect(approvalPayload.approvals[0]!.approve).toBe(false);
-    expect(approvalPayload.approvals[0]!.reason).toBe("Auto-denied");
-    expect(result[1]!.type).toBe("message");
+    expect(approvalPayload.approvals[0]?.tool_call_id).toBe("real-id");
+    expect(approvalPayload.approvals[0]?.approve).toBe(false);
+    expect(approvalPayload.approvals[0]?.reason).toBe("Auto-denied");
+    expect(result[1]?.type).toBe("message");
   });
 
   test("strips stale approval with no server approvals (clean retry)", () => {
@@ -480,7 +480,7 @@ describe("rebuildInputWithFreshDenials", () => {
 
     // Only message remains
     expect(result).toHaveLength(1);
-    expect(result[0]!.type).toBe("message");
+    expect(result[0]?.type).toBe("message");
   });
 
   test("prepends fresh denials when no stale approvals to strip", () => {
@@ -499,8 +499,8 @@ describe("rebuildInputWithFreshDenials", () => {
 
     // Fresh denial prepended, message preserved
     expect(result).toHaveLength(2);
-    expect(result[0]!.type).toBe("approval");
-    expect(result[1]!.type).toBe("message");
+    expect(result[0]?.type).toBe("approval");
+    expect(result[1]?.type).toBe("message");
   });
 
   test("handles multiple stale approvals and multiple server approvals", () => {
@@ -542,15 +542,15 @@ describe("rebuildInputWithFreshDenials", () => {
 
     // Both stale approvals stripped, one fresh denial payload prepended, message kept
     expect(result).toHaveLength(2);
-    expect(result[0]!.type).toBe("approval");
+    expect(result[0]?.type).toBe("approval");
     const approvalPayload = result[0] as {
       type: "approval";
       approvals: Array<{ tool_call_id: string }>;
     };
     expect(approvalPayload.approvals).toHaveLength(2);
-    expect(approvalPayload.approvals[0]!.tool_call_id).toBe("new-1");
-    expect(approvalPayload.approvals[1]!.tool_call_id).toBe("new-2");
-    expect(result[1]!.type).toBe("message");
+    expect(approvalPayload.approvals[0]?.tool_call_id).toBe("new-1");
+    expect(approvalPayload.approvals[1]?.tool_call_id).toBe("new-2");
+    expect(result[1]?.type).toBe("message");
   });
 });
 

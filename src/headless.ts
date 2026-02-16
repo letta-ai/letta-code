@@ -267,7 +267,7 @@ export async function handleHeadlessCommand(
   const fromAfFile = values["from-af"] as string | undefined;
   const preLoadSkillsRaw = values["pre-load-skills"] as string | undefined;
   const maxTurnsRaw = values["max-turns"] as string | undefined;
-  const tagsRaw = values["tags"] as string | undefined;
+  const tagsRaw = values.tags as string | undefined;
 
   // Parse and validate base tools
   let tags: string[] | undefined;

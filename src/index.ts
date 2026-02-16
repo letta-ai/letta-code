@@ -19,6 +19,7 @@ import { ProfileSelectionInline } from "./cli/profile-selection";
 import { runSubcommand } from "./cli/subcommands/router";
 import { permissionMode } from "./permissions/mode";
 import { settingsManager } from "./settings-manager";
+import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { telemetry } from "./telemetry";
 import { loadTools } from "./tools/manager";
 import { markMilestone } from "./utils/timing";
@@ -365,21 +366,7 @@ async function main(): Promise<void> {
 
   // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("./updater/auto-update");
-  checkAndAutoUpdate()
-    .then((result) => {
-      // Surface ENOTEMPTY failures so users know how to fix
-      if (result?.enotemptyFailed) {
-        console.error(
-          "\nAuto-update failed due to filesystem issue (ENOTEMPTY).",
-        );
-        console.error(
-          "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
-        );
-      }
-    })
-    .catch(() => {
-      // Silently ignore other update failures (network timeouts, etc.)
-    });
+  startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
   // Clean up old overflow files (non-blocking, 24h retention)
   const { cleanupOldOverflowFiles } = await import("./tools/impl/overflow");
@@ -472,6 +459,16 @@ async function main(): Promise<void> {
   // Handle help flag first
   if (values.help) {
     printHelp();
+
+    // Test-only hook to keep process alive briefly so startup auto-update can run.
+    const helpDelayMs = Number.parseInt(
+      process.env.LETTA_TEST_HELP_EXIT_DELAY_MS ?? "",
+      10,
+    );
+    if (Number.isFinite(helpDelayMs) && helpDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, helpDelayMs));
+    }
+
     process.exit(0);
   }
 
