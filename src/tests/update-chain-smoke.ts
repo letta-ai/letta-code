@@ -217,12 +217,20 @@ async function buildAndPackVersion(
 
 async function authenticateToRegistry(env: NodeJS.ProcessEnv): Promise<void> {
   await runCommand(
-    "npm",
-    ["adduser", "--registry", REGISTRY_URL, "--auth-type", "legacy"],
+    "bash",
+    [
+      "-lc",
+      'printf \'%s\n%s\n%s\n\' "$NPM_USER" "$NPM_PASS" "$NPM_EMAIL" | npm adduser --registry "$NPM_REGISTRY_URL" --auth-type legacy',
+    ],
     {
-      env,
+      env: {
+        ...env,
+        NPM_USER: REGISTRY_USER,
+        NPM_PASS: REGISTRY_PASS,
+        NPM_EMAIL: REGISTRY_EMAIL,
+        NPM_REGISTRY_URL: REGISTRY_URL,
+      },
       timeoutMs: 60000,
-      stdin: `${REGISTRY_USER}\n${REGISTRY_PASS}\n${REGISTRY_EMAIL}\n`,
     },
   );
 }
