@@ -62,6 +62,8 @@
     "check": "bun run scripts/check.js",
     "dev": "bun --loader:.md=text --loader:.mdx=text --loader:.txt=text run src/index.ts",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
+    "test:update-chain:manual": "bun run src/tests/update-chain-smoke.ts --mode manual",
+    "test:update-chain:startup": "bun run src/tests/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
     "postinstall": "node scripts/postinstall-patches.js"
   },

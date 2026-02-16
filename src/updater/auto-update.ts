@@ -1,11 +1,11 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getVersion } from "../version";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Debug logging - set LETTA_DEBUG_AUTOUPDATE=1 to enable
 const DEBUG = process.env.LETTA_DEBUG_AUTOUPDATE === "1";
@@ -26,13 +26,97 @@ interface UpdateCheckResult {
 // Supported package managers for global install/update
 export type PackageManager = "npm" | "bun" | "pnpm";
 
-const INSTALL_CMD: Record<PackageManager, string> = {
-  npm: "npm install -g @letta-ai/letta-code@latest",
-  bun: "bun add -g @letta-ai/letta-code@latest",
-  pnpm: "pnpm add -g @letta-ai/letta-code@latest",
+const DEFAULT_UPDATE_PACKAGE_NAME = "@letta-ai/letta-code";
+const DEFAULT_UPDATE_REGISTRY_BASE_URL = "https://registry.npmjs.org";
+const UPDATE_PACKAGE_NAME_ENV = "LETTA_UPDATE_PACKAGE_NAME";
+const UPDATE_REGISTRY_BASE_URL_ENV = "LETTA_UPDATE_REGISTRY_BASE_URL";
+const UPDATE_INSTALL_REGISTRY_URL_ENV = "LETTA_UPDATE_INSTALL_REGISTRY_URL";
+
+const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
+  npm: ["install", "-g"],
+  bun: ["add", "-g"],
+  pnpm: ["add", "-g"],
 };
 
-const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_CMD));
+const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
+
+function normalizeUpdatePackageName(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value) return null;
+  // Basic npm package name validation: no whitespace/shell separators.
+  if (/\s/.test(value) || /["'`;|&$]/.test(value)) return null;
+  return value;
+}
+
+function normalizeRegistryUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value || /\s/.test(value) || /["'`;|&$]/.test(value)) return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return value.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+export function resolveUpdatePackageName(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const custom = normalizeUpdatePackageName(env[UPDATE_PACKAGE_NAME_ENV]);
+  if (custom) {
+    return custom;
+  }
+  return DEFAULT_UPDATE_PACKAGE_NAME;
+}
+
+export function resolveUpdateRegistryBaseUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const custom = normalizeRegistryUrl(env[UPDATE_REGISTRY_BASE_URL_ENV]);
+  if (custom) {
+    return custom;
+  }
+  return DEFAULT_UPDATE_REGISTRY_BASE_URL;
+}
+
+export function resolveUpdateInstallRegistryUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return normalizeRegistryUrl(env[UPDATE_INSTALL_REGISTRY_URL_ENV]);
+}
+
+export function buildLatestVersionUrl(
+  packageName: string,
+  registryBaseUrl: string,
+): string {
+  return `${registryBaseUrl.replace(/\/+$/, "")}/${packageName}/latest`;
+}
+
+export function buildInstallCommand(
+  pm: PackageManager,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return `${pm} ${buildInstallArgs(pm, env).join(" ")}`;
+}
+
+export function buildInstallArgs(
+  pm: PackageManager,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const packageName = resolveUpdatePackageName(env);
+  const installRegistry = resolveUpdateInstallRegistryUrl(env);
+  const args = [...INSTALL_ARG_PREFIX[pm], `${packageName}@latest`];
+  if (installRegistry) {
+    args.push("--registry", installRegistry);
+  }
+  return args;
+}
 
 /**
  * Detect which package manager was used to install this binary.
@@ -107,12 +191,15 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     return { updateAvailable: false, currentVersion };
   }
 
+  const packageName = resolveUpdatePackageName();
+  const registryBaseUrl = resolveUpdateRegistryBaseUrl();
+  const latestUrl = buildLatestVersionUrl(packageName, registryBaseUrl);
+
   try {
-    debugLog("Checking registry for latest version...");
-    const res = await fetch(
-      "https://registry.npmjs.org/@letta-ai/letta-code/latest",
-      { signal: AbortSignal.timeout(5000) },
-    );
+    debugLog("Checking registry for latest version:", latestUrl);
+    const res = await fetch(latestUrl, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (!res.ok) {
       throw new Error(`Registry returned ${res.status}`);
     }
@@ -152,7 +239,9 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
  */
 async function getNpmGlobalPath(): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("npm prefix -g", { timeout: 5000 });
+    const { stdout } = await execFileAsync("npm", ["prefix", "-g"], {
+      timeout: 5000,
+    });
     return stdout.trim();
   } catch {
     return null;
@@ -186,7 +275,8 @@ async function performUpdate(): Promise<{
   enotemptyFailed?: boolean;
 }> {
   const pm = detectPackageManager();
-  const installCmd = INSTALL_CMD[pm];
+  const installCmd = buildInstallCommand(pm);
+  const installArgs = buildInstallArgs(pm);
   debugLog("Detected package manager:", pm);
   debugLog("Install command:", installCmd);
 
@@ -202,7 +292,7 @@ async function performUpdate(): Promise<{
 
   try {
     debugLog(`Running ${installCmd}...`);
-    await execAsync(installCmd, { timeout: 60000 });
+    await execFileAsync(pm, installArgs, { timeout: 60000 });
     debugLog("Update completed successfully");
     return { success: true };
   } catch (error) {
@@ -214,7 +304,7 @@ async function performUpdate(): Promise<{
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await execAsync(installCmd, { timeout: 60000 });
+        await execFileAsync(pm, installArgs, { timeout: 60000 });
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
