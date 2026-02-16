@@ -14,6 +14,8 @@ import {
   getPreStreamErrorAction,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  parseRetryAfterHeaderMs,
+  shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
 import { getClient } from "./agent/client";
 import { setAgentContext, setConversationId } from "./agent/context";
@@ -1235,6 +1237,14 @@ ${SYSTEM_REMINDER_CLOSE}
           errorDetail,
           conversationBusyRetries,
           CONVERSATION_BUSY_MAX_RETRIES,
+          {
+            status:
+              preStreamError instanceof APIError
+                ? preStreamError.status
+                : undefined,
+            transientRetries: llmApiErrorRetries,
+            maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+          },
         );
 
         // Check for pending approval blocking new messages - resolve and retry.
@@ -1287,6 +1297,41 @@ ${SYSTEM_REMINDER_CLOSE}
           await new Promise((resolve) =>
             setTimeout(resolve, CONVERSATION_BUSY_RETRY_DELAY_MS),
           );
+          continue;
+        }
+
+        if (preStreamAction === "retry_transient") {
+          const attempt = llmApiErrorRetries + 1;
+          const retryAfterMs =
+            preStreamError instanceof APIError
+              ? parseRetryAfterHeaderMs(
+                  preStreamError.headers?.get("retry-after"),
+                )
+              : null;
+          const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+
+          llmApiErrorRetries = attempt;
+
+          if (outputFormat === "stream-json") {
+            const retryMsg: RetryMessage = {
+              type: "retry",
+              reason: "llm_api_error",
+              attempt,
+              max_attempts: LLM_API_ERROR_MAX_RETRIES,
+              delay_ms: delayMs,
+              session_id: sessionId,
+              uuid: `retry-pre-stream-${crypto.randomUUID()}`,
+            };
+            console.log(JSON.stringify(retryMsg));
+          } else {
+            const delaySeconds = Math.round(delayMs / 1000);
+            console.error(
+              `Transient API error before streaming (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
+            );
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          conversationBusyRetries = 0;
           continue;
         }
 
@@ -1696,31 +1741,9 @@ ${SYSTEM_REMINDER_CLOSE}
           const errorType =
             metaError?.error_type ?? metaError?.error?.error_type;
 
-          // Fallback: detect LLM provider errors from detail even if misclassified
-          // Patterns are derived from handle_llm_error() message formats in the backend
           const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
 
-          // Don't retry 4xx client errors (validation, auth, malformed requests)
-          // These are not transient and won't succeed on retry
-          const is4xxError = /Error code: 4\d{2}/.test(detail);
-
-          const llmProviderPatterns = [
-            "Anthropic API error", // anthropic_client.py:759
-            "OpenAI API error", // openai_client.py:1034
-            "Google Vertex API error", // google_vertex_client.py:848
-            "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
-            "api_error", // Anthropic SDK error type field
-            "Network error", // Transient network failures during streaming
-            "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
-          ];
-          const isLlmErrorFromDetail = llmProviderPatterns.some((pattern) =>
-            detail.includes(pattern),
-          );
-
-          if (
-            (errorType === "llm_error" || isLlmErrorFromDetail) &&
-            !is4xxError
-          ) {
+          if (shouldRetryRunMetadataError(errorType, detail)) {
             const attempt = llmApiErrorRetries + 1;
             const baseDelayMs = 1000;
             const delayMs = baseDelayMs * 2 ** (attempt - 1);
@@ -2397,6 +2420,7 @@ async function runBidirectionalMode(
         let numTurns = 0;
         let lastStopReason: StopReasonType | null = null; // Track for result subtype
         let sawStreamError = false; // Track if we emitted an error during streaming
+        let preStreamTransientRetries = 0;
 
         // Inject available skills as system-reminder for bidirectional mode (LET-7353)
         let enrichedContent = userContent;
@@ -2468,7 +2492,14 @@ async function runBidirectionalMode(
 
             // Route through shared pre-stream conflict classifier (parity with main loop + TUI)
             // Bidir mode has no conversation-busy retry budget, so pass 0/0 to disable busy-retry.
-            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0);
+            const preStreamAction = getPreStreamErrorAction(errorDetail, 0, 0, {
+              status:
+                preStreamError instanceof APIError
+                  ? preStreamError.status
+                  : undefined,
+              transientRetries: preStreamTransientRetries,
+              maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+            });
 
             if (preStreamAction === "resolve_approval_pending") {
               const recoveryMsg: RecoveryMessage = {
@@ -2484,8 +2515,35 @@ async function runBidirectionalMode(
               continue;
             }
 
+            if (preStreamAction === "retry_transient") {
+              const attempt = preStreamTransientRetries + 1;
+              const retryAfterMs =
+                preStreamError instanceof APIError
+                  ? parseRetryAfterHeaderMs(
+                      preStreamError.headers?.get("retry-after"),
+                    )
+                  : null;
+              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+              preStreamTransientRetries = attempt;
+
+              const retryMsg: RetryMessage = {
+                type: "retry",
+                reason: "llm_api_error",
+                attempt,
+                max_attempts: LLM_API_ERROR_MAX_RETRIES,
+                delay_ms: delayMs,
+                session_id: sessionId,
+                uuid: `retry-bidir-${crypto.randomUUID()}`,
+              };
+              console.log(JSON.stringify(retryMsg));
+
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
+
             throw preStreamError;
           }
+          preStreamTransientRetries = 0;
           const streamJsonHook: DrainStreamHook = ({
             chunk,
             shouldOutput,

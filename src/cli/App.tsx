@@ -34,8 +34,10 @@ import {
   getPreStreamErrorAction,
   isApprovalPendingError,
   isInvalidToolCallIdsError,
+  parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   shouldAttemptApprovalRecovery,
+  shouldRetryRunMetadataError,
 } from "../agent/approval-recovery";
 import { prefetchAvailableModelHandles } from "../agent/available-models";
 import { getResumeData } from "../agent/check-approval";
@@ -482,28 +484,7 @@ async function isRetriableError(
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
       const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
 
-      // Don't retry 4xx client errors (validation, auth, malformed requests)
-      // These are not transient and won't succeed on retry
-      const is4xxError = /Error code: 4\d{2}/.test(detail);
-
-      if (errorType === "llm_error" && !is4xxError) return true;
-
-      // Fallback: detect LLM provider errors from detail even if misclassified
-      // This handles edge cases where streaming errors weren't properly converted to LLMError
-      // Patterns are derived from handle_llm_error() message formats in the backend
-      const llmProviderPatterns = [
-        "Anthropic API error", // anthropic_client.py:759
-        "OpenAI API error", // openai_client.py:1034
-        "Google Vertex API error", // google_vertex_client.py:848
-        "overloaded", // anthropic_client.py:753 - used for LLMProviderOverloaded
-        "api_error", // Anthropic SDK error type field
-        "Network error", // Transient network failures during streaming
-        "Connection error during Anthropic streaming", // Peer disconnections, incomplete chunked reads
-      ];
-      if (
-        llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
-        !is4xxError
-      ) {
+      if (shouldRetryRunMetadataError(errorType, detail)) {
         return true;
       }
 
@@ -3155,6 +3136,14 @@ export default function App({
               errorDetail,
               conversationBusyRetriesRef.current,
               CONVERSATION_BUSY_MAX_RETRIES,
+              {
+                status:
+                  preStreamError instanceof APIError
+                    ? preStreamError.status
+                    : undefined,
+                transientRetries: llmApiErrorRetriesRef.current,
+                maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+              },
             );
 
             // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
@@ -3232,6 +3221,54 @@ export default function App({
               if (!cancelled) {
                 // Reset interrupted flag so retry stream chunks are processed
                 buffersRef.current.interrupted = false;
+                continue;
+              }
+              // User pressed ESC - fall through to error handling
+            }
+
+            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
+            if (preStreamAction === "retry_transient") {
+              llmApiErrorRetriesRef.current += 1;
+              const attempt = llmApiErrorRetriesRef.current;
+              const retryAfterMs =
+                preStreamError instanceof APIError
+                  ? parseRetryAfterHeaderMs(
+                      preStreamError.headers?.get("retry-after"),
+                    )
+                  : null;
+              const delayMs = retryAfterMs ?? 1000 * 2 ** (attempt - 1);
+
+              const statusId = uid("status");
+              buffersRef.current.byId.set(statusId, {
+                kind: "status",
+                id: statusId,
+                lines: [getRetryStatusMessage(errorDetail)],
+              });
+              buffersRef.current.order.push(statusId);
+              refreshDerived();
+
+              let cancelled = false;
+              const startTime = Date.now();
+              while (Date.now() - startTime < delayMs) {
+                if (
+                  abortControllerRef.current?.signal.aborted ||
+                  userCancelledRef.current
+                ) {
+                  cancelled = true;
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+
+              buffersRef.current.byId.delete(statusId);
+              buffersRef.current.order = buffersRef.current.order.filter(
+                (id) => id !== statusId,
+              );
+              refreshDerived();
+
+              if (!cancelled) {
+                buffersRef.current.interrupted = false;
+                conversationBusyRetriesRef.current = 0;
                 continue;
               }
               // User pressed ESC - fall through to error handling
