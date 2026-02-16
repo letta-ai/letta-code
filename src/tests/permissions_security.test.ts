@@ -18,6 +18,12 @@ test("FIX: isReadOnlyShellCommand should not auto-approve reading sensitive file
   // Normal safe commands should still work
   expect(isReadOnlyShellCommand("ls")).toBe(true);
   expect(isReadOnlyShellCommand("cat README.md")).toBe(true);
+
+  // Ensure `cd` cannot be used to bypass path checks via later relative reads
+  expect(isReadOnlyShellCommand("cd / && cat etc/passwd")).toBe(false);
+  expect(isReadOnlyShellCommand("cd C:\\ && type Windows\\win.ini")).toBe(
+    false,
+  );
 });
 
 test("FIX: isMemoryDirCommand should not allow command injection via cd bypass", () => {

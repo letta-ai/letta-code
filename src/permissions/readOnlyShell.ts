@@ -186,10 +186,10 @@ function isSafeSegment(segment: string): boolean {
   }
 
   if (ALWAYS_SAFE_COMMANDS.has(command)) {
-    // `cd` only changes working directory and does not itself read/write content.
-    // Keep it read-only-safe so plan mode still allows common `cd && git status` flows.
+    // `cd` is read-only, but it should still respect path restrictions so
+    // `cd / && cat relative/path` cannot bypass path checks on later segments.
     if (command === "cd") {
-      return true;
+      return !tokens.slice(1).some((t) => hasAbsoluteOrTraversalPathArg(t));
     }
 
     // For other "always safe" commands, ensure they don't read sensitive files
