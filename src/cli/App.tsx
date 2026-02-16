@@ -5693,6 +5693,15 @@ export default function App({
         setDequeueEpoch((e) => e + 1);
       }
 
+      const isSlashCommand = userTextForInput.startsWith("/");
+      if (isAgentBusy() && isSlashCommand) {
+        const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
+        const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
+        const cmd = commandRunner.start(userTextForInput, disabledMessage);
+        cmd.fail(disabledMessage);
+        return { submitted: true }; // Clears input
+      }
+
       // Interactive slash commands (like /memory, /model, /agents) bypass queueing
       // so users can browse/view while the agent is working.
       // Changes made in these overlays will be queued until end_turn.
