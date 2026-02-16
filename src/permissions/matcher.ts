@@ -15,6 +15,85 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
+function isWindowsDrivePath(p: string): boolean {
+  return /^[a-zA-Z]:\//.test(p);
+}
+
+function isWindowsUncPath(p: string): boolean {
+  return /^\/\/[^/]+\/[^/]+/.test(p);
+}
+
+function isWindowsExtendedDrivePath(p: string): boolean {
+  return /^\/\/\?\/[a-zA-Z]:\//.test(p);
+}
+
+function isWindowsExtendedUncPath(p: string): boolean {
+  return /^\/\/\?\/UNC\/[^/]+\/[^/]+/i.test(p);
+}
+
+function isWindowsContext(workingDirectory: string): boolean {
+  const normalizedWorkingDir = normalizePath(workingDirectory);
+  return (
+    process.platform === "win32" ||
+    isWindowsDrivePath(normalizedWorkingDir) ||
+    normalizedWorkingDir.startsWith("//")
+  );
+}
+
+function canonicalizeWindowsAbsolutePath(path: string): string {
+  let normalized = normalizePath(path);
+
+  if (isWindowsExtendedUncPath(normalized)) {
+    normalized = `//${normalized.slice("//?/UNC/".length)}`;
+  } else if (isWindowsExtendedDrivePath(normalized)) {
+    normalized = normalized.slice("//?/".length);
+  }
+
+  if (/^\/+[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.replace(/^\/+/, "");
+  }
+
+  if (isWindowsDrivePath(normalized)) {
+    normalized = `${normalized[0]?.toUpperCase() ?? ""}${normalized.slice(1)}`;
+  }
+
+  return normalized;
+}
+
+function isWindowsAbsolutePath(path: string): boolean {
+  const canonicalPath = canonicalizeWindowsAbsolutePath(path);
+  return isWindowsDrivePath(canonicalPath) || isWindowsUncPath(canonicalPath);
+}
+
+function normalizeAbsolutePattern(
+  globPattern: string,
+  workingDirectory: string,
+): string {
+  if (isWindowsContext(workingDirectory)) {
+    return canonicalizeWindowsAbsolutePath(globPattern);
+  }
+
+  // Claude-style Unix absolute path prefix: //absolute/path -> /absolute/path
+  if (globPattern.startsWith("//")) {
+    return globPattern.slice(1);
+  }
+
+  return globPattern;
+}
+
+function resolveFilePathForMatching(
+  filePath: string,
+  workingDirectory: string,
+  windowsContext: boolean,
+): string {
+  if (windowsContext && isWindowsAbsolutePath(filePath)) {
+    return canonicalizeWindowsAbsolutePath(filePath);
+  }
+
+  const resolved = normalizePath(resolve(workingDirectory, filePath));
+  return windowsContext ? canonicalizeWindowsAbsolutePath(resolved) : resolved;
+}
+
 /**
  * Check if a file path matches a permission pattern.
  *
@@ -70,17 +149,24 @@ export function matchesFilePattern(
     globPattern = globPattern.replace(/^~/, homedir);
   }
 
-  // Handle absolute paths (Claude Code uses // prefix)
-  if (globPattern.startsWith("//")) {
-    globPattern = globPattern.slice(1); // Remove one slash to make it absolute
-  }
+  globPattern = normalizeAbsolutePattern(globPattern, workingDirectory);
 
   // Resolve file path to absolute and normalize separators
-  const absoluteFilePath = normalizePath(resolve(workingDirectory, filePath));
+  const windowsContext = isWindowsContext(workingDirectory);
+  const absoluteFilePath = resolveFilePathForMatching(
+    filePath,
+    workingDirectory,
+    windowsContext,
+  );
 
   // If pattern is absolute, compare directly
-  if (globPattern.startsWith("/")) {
-    return minimatch(absoluteFilePath, globPattern);
+  if (globPattern.startsWith("/") || isWindowsAbsolutePath(globPattern)) {
+    const patternToMatch = windowsContext
+      ? canonicalizeWindowsAbsolutePath(globPattern)
+      : globPattern;
+    return minimatch(absoluteFilePath, patternToMatch, {
+      nocase: windowsContext,
+    });
   }
 
   // If pattern is relative, compare against both:

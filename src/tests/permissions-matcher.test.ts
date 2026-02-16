@@ -349,3 +349,51 @@ test("File pattern: Windows absolute path in working directory", () => {
     ),
   ).toBe(true);
 });
+
+test("File pattern: Windows absolute variants are equivalent", () => {
+  const query =
+    "Edit(C:\\Users\\Aaron\\.letta\\agents\\agent-1\\memory\\system\\project\\tech_stack.md)";
+  const workingDir = "C:\\Users\\Aaron\\repo";
+
+  expect(
+    matchesFilePattern(
+      query,
+      "Edit(/C:/Users/Aaron/.letta/agents/agent-1/memory/system/project/**)",
+      workingDir,
+    ),
+  ).toBe(true);
+
+  expect(
+    matchesFilePattern(
+      query,
+      "Edit(//C:/Users/Aaron/.letta/agents/agent-1/memory/system/project/**)",
+      workingDir,
+    ),
+  ).toBe(true);
+
+  expect(
+    matchesFilePattern(
+      query,
+      "Edit(C:/Users/Aaron/.letta/agents/agent-1/memory/system/project/**)",
+      workingDir,
+    ),
+  ).toBe(true);
+});
+
+test("File pattern: Windows drive-letter matching is case-insensitive", () => {
+  const query = "Edit(c:\\users\\aaron\\repo\\src\\file.ts)";
+  const workingDir = "C:\\Users\\Aaron\\repo";
+
+  expect(
+    matchesFilePattern(query, "Edit(C:/Users/Aaron/repo/src/**)", workingDir),
+  ).toBe(true);
+});
+
+test("File pattern: UNC absolute path matches normalized UNC pattern", () => {
+  const query = "Edit(\\\\server\\share\\folder\\file.md)";
+  const workingDir = "C:\\Users\\Aaron\\repo";
+
+  expect(
+    matchesFilePattern(query, "Edit(//server/share/folder/**)", workingDir),
+  ).toBe(true);
+});
