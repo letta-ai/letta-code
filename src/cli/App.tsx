@@ -500,7 +500,7 @@ async function isRetriableError(
         "api_error", // Anthropic SDK error type field
         "Network error", // Transient network failures during streaming
         "Connection error during", // Peer disconnections, incomplete chunked reads (Anthropic, ChatGPT streaming)
-      ]
+      ];
       if (
         llmProviderPatterns.some((pattern) => detail.includes(pattern)) &&
         !is4xxError
