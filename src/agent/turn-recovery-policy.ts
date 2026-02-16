@@ -15,6 +15,39 @@ const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
 const CONVERSATION_BUSY_DETAIL_FRAGMENT =
   "another request is currently being processed";
+const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
+  "Anthropic API error",
+  "OpenAI API error",
+  "Google Vertex API error",
+  "ChatGPT API error",
+  "ChatGPT server error",
+  "Connection error during Anthropic streaming",
+  "Connection error during streaming",
+  "upstream connect error",
+  "connection termination",
+  "peer closed connection",
+  "incomplete chunked read",
+  "Network error",
+  "Connection error",
+  "Request timed out",
+  "overloaded",
+  "api_error",
+];
+const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
+  "invalid api key",
+  "incorrect api key",
+  "authentication error",
+  "unauthorized",
+  "permission denied",
+  "forbidden",
+  "invalid_request_error",
+  "invalid model",
+  "model_not_found",
+  "context_length_exceeded",
+  "invalid_encrypted_content",
+];
+const NON_RETRYABLE_4XX_PATTERN = /Error code:\s*4(0[0-8]|1\d|2\d|3\d|4\d|51)/i;
+const RETRYABLE_429_PATTERN = /Error code:\s*429|rate limit|too many requests/i;
 
 // ── Classifiers ─────────────────────────────────────────────────────
 
@@ -36,6 +69,75 @@ export function isConversationBusyError(detail: unknown): boolean {
   return detail.toLowerCase().includes(CONVERSATION_BUSY_DETAIL_FRAGMENT);
 }
 
+/** Transient provider/network detail that is usually safe to retry. */
+export function isRetryableProviderErrorDetail(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  return RETRYABLE_PROVIDER_DETAIL_PATTERNS.some((pattern) =>
+    detail.includes(pattern),
+  );
+}
+
+/** Non-transient auth/validation style provider detail that should not be retried. */
+export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
+  if (typeof detail !== "string") return false;
+  const normalized = detail.toLowerCase();
+  if (NON_RETRYABLE_4XX_PATTERN.test(detail)) return true;
+  return NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS.some((pattern) =>
+    normalized.includes(pattern),
+  );
+}
+
+/** Retry decision for run-metadata fallback classification. */
+export function shouldRetryRunMetadataError(
+  errorType: unknown,
+  detail: unknown,
+): boolean {
+  const explicitLlmError = errorType === "llm_error";
+  const retryable429Detail =
+    typeof detail === "string" && RETRYABLE_429_PATTERN.test(detail);
+  const retryableDetail = isRetryableProviderErrorDetail(detail);
+  const nonRetryableDetail = isNonRetryableProviderErrorDetail(detail);
+
+  if (nonRetryableDetail && !retryable429Detail) return false;
+  if (explicitLlmError) return true;
+  return retryable429Detail || retryableDetail;
+}
+
+/** Retry decision for pre-stream send failures before any chunks are yielded. */
+export function shouldRetryPreStreamTransientError(opts: {
+  status: number | undefined;
+  detail: unknown;
+}): boolean {
+  const { status, detail } = opts;
+  if (status === 429) return true;
+  if (status !== undefined && status >= 500) return true;
+  if (status !== undefined && status >= 400) return false;
+
+  const retryable429Detail =
+    typeof detail === "string" && RETRYABLE_429_PATTERN.test(detail);
+  if (retryable429Detail) return true;
+  if (isNonRetryableProviderErrorDetail(detail)) return false;
+  return isRetryableProviderErrorDetail(detail);
+}
+
+/** Parse Retry-After header to milliseconds (seconds or HTTP-date forms). */
+export function parseRetryAfterHeaderMs(
+  retryAfterValue: string | null | undefined,
+): number | null {
+  if (!retryAfterValue) return null;
+
+  const seconds = Number(retryAfterValue);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+
+  const retryAtMs = Date.parse(retryAfterValue);
+  if (Number.isNaN(retryAtMs)) return null;
+
+  const delayMs = retryAtMs - Date.now();
+  return delayMs > 0 ? delayMs : 0;
+}
+
 // ── Pre-stream conflict routing ─────────────────────────────────────
 
 export type PreStreamConflictKind =
@@ -46,7 +148,14 @@ export type PreStreamConflictKind =
 export type PreStreamErrorAction =
   | "resolve_approval_pending"
   | "retry_conversation_busy"
+  | "retry_transient"
   | "rethrow";
+
+export interface PreStreamErrorOptions {
+  status?: number;
+  transientRetries?: number;
+  maxTransientRetries?: number;
+}
 
 /** Classify a pre-stream 409 conflict detail string. */
 export function classifyPreStreamConflict(
@@ -62,6 +171,7 @@ export function getPreStreamErrorAction(
   detail: unknown,
   conversationBusyRetries: number,
   maxConversationBusyRetries: number,
+  opts?: PreStreamErrorOptions,
 ): PreStreamErrorAction {
   const kind = classifyPreStreamConflict(detail);
 
@@ -74,6 +184,14 @@ export function getPreStreamErrorAction(
     conversationBusyRetries < maxConversationBusyRetries
   ) {
     return "retry_conversation_busy";
+  }
+
+  if (
+    opts &&
+    shouldRetryPreStreamTransientError({ status: opts.status, detail }) &&
+    (opts.transientRetries ?? 0) < (opts.maxTransientRetries ?? 0)
+  ) {
+    return "retry_transient";
   }
 
   return "rethrow";

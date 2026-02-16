@@ -23,6 +23,7 @@ describe("approval recovery wiring", () => {
     expect(segment).toContain("getPreStreamErrorAction(");
     expect(segment).toContain("shouldAttemptApprovalRecovery(");
     expect(segment).toContain("rebuildInputWithFreshDenials(");
+    expect(segment).toContain('preStreamAction === "retry_transient"');
   });
 
   test("lazy recovery is not gated by hasApprovalInPayload", () => {

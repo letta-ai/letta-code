@@ -448,6 +448,22 @@ export function getRetryStatusMessage(
 
   if (errorDetail.includes("Anthropic API is overloaded"))
     return "Anthropic API is overloaded, retrying...";
+  if (
+    errorDetail.includes("ChatGPT API error") ||
+    errorDetail.includes("ChatGPT server error") ||
+    errorDetail.includes("upstream connect error")
+  ) {
+    return "OpenAI ChatGPT backend connection failed, retrying...";
+  }
+  if (
+    errorDetail.includes("Connection error during streaming") ||
+    errorDetail.includes("incomplete chunked read") ||
+    errorDetail.includes("connection termination")
+  ) {
+    return "OpenAI ChatGPT streaming connection dropped, retrying...";
+  }
+  if (errorDetail.includes("OpenAI API error"))
+    return "OpenAI API error, retrying...";
 
   return DEFAULT_RETRY_MESSAGE;
 }

@@ -6,8 +6,13 @@ import {
   isApprovalPendingError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
+  isNonRetryableProviderErrorDetail,
+  isRetryableProviderErrorDetail,
+  parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   shouldAttemptApprovalRecovery,
+  shouldRetryPreStreamTransientError,
+  shouldRetryRunMetadataError,
 } from "../agent/turn-recovery-policy";
 
 // ── Classifier parity ───────────────────────────────────────────────
@@ -120,6 +125,30 @@ describe("getPreStreamErrorAction", () => {
     expect(getPreStreamErrorAction("Connection refused", 0, 3)).toBe("rethrow");
   });
 
+  test("transient 5xx with retry budget → retry_transient", () => {
+    expect(
+      getPreStreamErrorAction(
+        "ChatGPT server error: upstream connect error",
+        0,
+        1,
+        {
+          status: 502,
+          transientRetries: 0,
+          maxTransientRetries: 3,
+        },
+      ),
+    ).toBe("retry_transient");
+  });
+
+  test("transient retry budget exhausted → rethrow", () => {
+    expect(
+      getPreStreamErrorAction("Connection error during streaming", 0, 1, {
+        transientRetries: 3,
+        maxTransientRetries: 3,
+      }),
+    ).toBe("rethrow");
+  });
+
   // Parity: TUI and headless both pass the same (detail, retries, max) triple
   // to this function — verifying the action is deterministic from those inputs.
   test("same inputs always produce same action (determinism)", () => {
@@ -129,6 +158,80 @@ describe("getPreStreamErrorAction", () => {
     const b = getPreStreamErrorAction(detail, 1, 3);
     expect(a).toBe(b);
     expect(a).toBe("resolve_approval_pending");
+  });
+});
+
+describe("provider detail retry helpers", () => {
+  test("detects retryable ChatGPT transient patterns", () => {
+    expect(
+      isRetryableProviderErrorDetail(
+        "ChatGPT server error: upstream connect error or disconnect/reset before headers",
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail(
+        "Connection error during streaming: incomplete chunked read",
+      ),
+    ).toBe(true);
+  });
+
+  test("detects non-retryable auth patterns", () => {
+    expect(
+      isNonRetryableProviderErrorDetail("OpenAI API error: invalid API key"),
+    ).toBe(true);
+    expect(isNonRetryableProviderErrorDetail("Error code: 401")).toBe(true);
+  });
+
+  test("run metadata retry classification respects llm_error + non-retryable", () => {
+    expect(
+      shouldRetryRunMetadataError(
+        "llm_error",
+        "ChatGPT server error: upstream connect error",
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryRunMetadataError(
+        "llm_error",
+        "OpenAI API error: invalid_request_error",
+      ),
+    ).toBe(false);
+  });
+
+  test("pre-stream transient classifier handles status and detail", () => {
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: 503,
+        detail: "server error",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: 429,
+        detail: "rate limited",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: 401,
+        detail: "unauthorized",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: undefined,
+        detail: "Connection error during streaming",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("parseRetryAfterHeaderMs", () => {
+  test("parses delta seconds", () => {
+    expect(parseRetryAfterHeaderMs("2")).toBe(2000);
+  });
+
+  test("returns null for invalid header", () => {
+    expect(parseRetryAfterHeaderMs("not-a-date")).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ export type {
   PendingApprovalInfo,
   PreStreamConflictKind,
   PreStreamErrorAction,
+  PreStreamErrorOptions,
 } from "./turn-recovery-policy";
 // ── Re-export pure policy helpers (single source of truth) ──────────
 export {
@@ -21,8 +22,13 @@ export {
   isApprovalPendingError,
   isConversationBusyError,
   isInvalidToolCallIdsError,
+  isNonRetryableProviderErrorDetail,
+  isRetryableProviderErrorDetail,
+  parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   shouldAttemptApprovalRecovery,
+  shouldRetryPreStreamTransientError,
+  shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
 // ── Async helpers (network side effects — stay here) ────────────────

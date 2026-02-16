@@ -226,8 +226,9 @@ export async function drainStream(
       fallbackError = errorMessage;
     }
 
-    // Set error stop reason so drainStreamWithResume can try to reconnect
-    stopReason = "error";
+    // Preserve a stop reason already parsed from stream chunks (e.g. llm_api_error)
+    // and only fall back to generic "error" when none is available.
+    stopReason = streamProcessor.stopReason || "error";
     markIncompleteToolsAsCancelled(buffers, true, "stream_error");
     queueMicrotask(refresh);
   } finally {
