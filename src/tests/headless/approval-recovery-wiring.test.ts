@@ -48,6 +48,7 @@ describe("headless approval recovery wiring", () => {
     // Should use shared router, NOT bespoke isApprovalPendingError check
     expect(segment).toContain("getPreStreamErrorAction(");
     expect(segment).toContain('preStreamAction === "resolve_approval_pending"');
+    expect(segment).toContain('preStreamAction === "retry_transient"');
   });
 
   test("main loop pre-stream uses getPreStreamErrorAction router", () => {
