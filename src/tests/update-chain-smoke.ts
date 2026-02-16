@@ -22,6 +22,9 @@ const NEW_VERSION = "0.0.2";
 const REGISTRY_PORT = 4873;
 const REGISTRY_URL = `http://127.0.0.1:${REGISTRY_PORT}`;
 const VERDACCIO_IMAGE = "verdaccio/verdaccio:5";
+const REGISTRY_USER = "ci-user";
+const REGISTRY_PASS = "ci-pass";
+const REGISTRY_EMAIL = "ci@example.com";
 
 function parseArgs(argv: string[]): Args {
   const args: Args = { mode: "manual" };
@@ -59,6 +62,7 @@ async function runCommand(
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
     expectExit?: number;
+    stdin?: string;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   const {
@@ -66,6 +70,7 @@ async function runCommand(
     env = process.env,
     timeoutMs = 180000,
     expectExit = 0,
+    stdin,
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -74,6 +79,11 @@ async function runCommand(
       env,
       shell: false,
     });
+
+    if (typeof stdin === "string") {
+      proc.stdin?.write(stdin);
+      proc.stdin?.end();
+    }
 
     let stdout = "";
     let stderr = "";
@@ -205,6 +215,18 @@ async function buildAndPackVersion(
   return targetTarball;
 }
 
+async function authenticateToRegistry(env: NodeJS.ProcessEnv): Promise<void> {
+  await runCommand(
+    "npm",
+    ["adduser", "--registry", REGISTRY_URL, "--auth-type", "legacy"],
+    {
+      env,
+      timeoutMs: 60000,
+      stdin: `${REGISTRY_USER}\n${REGISTRY_PASS}\n${REGISTRY_EMAIL}\n`,
+    },
+  );
+}
+
 async function publishTarball(
   tarballPath: string,
   env: NodeJS.ProcessEnv,
@@ -316,6 +338,7 @@ async function main() {
   const workspaceDir = join(tempRoot, "workspace");
   const npmPrefix = join(tempRoot, "npm-prefix");
   const npmCache = join(tempRoot, "npm-cache");
+  const npmUserConfig = join(tempRoot, ".npmrc");
   const verdaccioConfigPath = join(tempRoot, "verdaccio.yaml");
   const containerName = `letta-update-smoke-${Date.now()}`;
 
@@ -323,8 +346,10 @@ async function main() {
     ...process.env,
     npm_config_prefix: npmPrefix,
     npm_config_cache: npmCache,
+    npm_config_userconfig: npmUserConfig,
     NPM_CONFIG_PREFIX: npmPrefix,
     NPM_CONFIG_CACHE: npmCache,
+    NPM_CONFIG_USERCONFIG: npmUserConfig,
   };
 
   writePermissiveVerdaccioConfig(verdaccioConfigPath);
@@ -346,6 +371,7 @@ async function main() {
     await waitForVerdaccio();
 
     await prepareWorkspace(baseEnv, workspaceDir);
+    await authenticateToRegistry(baseEnv);
 
     const oldTarball = await buildAndPackVersion(
       workspaceDir,
