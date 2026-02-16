@@ -28,11 +28,6 @@
     "conversation_id": {
       "type": "string",
       "description": "Resume from an existing conversation. Does NOT require agent_id (conversation IDs are unique and encode the agent)."
-    },
-    "max_turns": {
-      "type": "integer",
-      "exclusiveMinimum": 0,
-      "description": "Maximum number of agentic turns (API round-trips) before stopping. Defaults to unlimited (recommended for most use cases)."
     }
   },
   "required": ["description", "prompt", "subagent_type"],
